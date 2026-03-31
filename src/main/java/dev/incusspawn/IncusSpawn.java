@@ -1,0 +1,25 @@
+package dev.incusspawn;
+
+import dev.incusspawn.command.*;
+import io.quarkus.picocli.runtime.annotations.TopCommand;
+import picocli.CommandLine.Command;
+
+@TopCommand
+@Command(
+        name = "incus-spawn",
+        description = "Manage isolated Incus development environments",
+        mixinStandardHelpOptions = true,
+        version = "incus-spawn 0.1.0",
+        subcommands = {
+                InitCommand.class,
+                BuildCommand.class,
+                ProjectCommand.class,
+                CreateCommand.class,
+                ShellCommand.class,
+                ListCommand.class,
+                DestroyCommand.class,
+                UpdateAllCommand.class
+        }
+)
+public class IncusSpawn {
+}

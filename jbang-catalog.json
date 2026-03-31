@@ -1,0 +1,10 @@
+{
+  "catalogs": {},
+  "templates": {},
+  "aliases": {
+    "incus-spawn": {
+      "script-ref": "target/quarkus-app/quarkus-run.jar",
+      "description": "Manage isolated Incus development environments"
+    }
+  }
+}

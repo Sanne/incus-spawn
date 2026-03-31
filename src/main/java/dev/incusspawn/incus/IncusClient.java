@@ -1,0 +1,263 @@
+package dev.incusspawn.incus;
+
+import jakarta.enterprise.context.ApplicationScoped;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Wraps the incus CLI for container/VM lifecycle operations.
+ */
+@ApplicationScoped
+public class IncusClient {
+
+    public record ExecResult(int exitCode, String stdout, String stderr) {
+        public boolean success() {
+            return exitCode == 0;
+        }
+
+        public ExecResult assertSuccess(String context) {
+            if (!success()) {
+                throw new IncusException(context + ": " + stderr.strip());
+            }
+            return this;
+        }
+    }
+
+    public ExecResult exec(String... args) {
+        return exec(List.of(args));
+    }
+
+    public ExecResult exec(List<String> args) {
+        var command = new ArrayList<String>();
+        command.add("incus");
+        command.addAll(args);
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.environment().putAll(System.getenv());
+            var process = pb.start();
+            var stdout = readStream(process.getInputStream());
+            var stderr = readStream(process.getErrorStream());
+            int exitCode = process.waitFor();
+            return new ExecResult(exitCode, stdout, stderr);
+        } catch (IOException | InterruptedException e) {
+            throw new IncusException("Failed to execute: incus " + String.join(" ", args), e);
+        }
+    }
+
+    /**
+     * Execute an incus command with inherited IO, so progress output is visible.
+     * Use this for long-running operations like launch, image downloads, package installs.
+     */
+    public int execInteractive(String... args) {
+        return execInteractive(List.of(args));
+    }
+
+    public int execInteractive(List<String> args) {
+        var command = new ArrayList<String>();
+        command.add("incus");
+        command.addAll(args);
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.inheritIO();
+            return pb.start().waitFor();
+        } catch (IOException | InterruptedException e) {
+            throw new IncusException("Failed to execute: incus " + String.join(" ", args), e);
+        }
+    }
+
+    /**
+     * Execute a command inside a container as a given user.
+     */
+    public ExecResult execInContainer(String container, String user, String... command) {
+        var args = new ArrayList<String>();
+        args.add("exec");
+        args.add(container);
+        args.add("--");
+        args.add("su");
+        args.add("-");
+        args.add(user);
+        if (command.length > 0) {
+            args.add("-c");
+            args.add(String.join(" ", command));
+        }
+        return exec(args);
+    }
+
+    /**
+     * Execute a command inside a container as root, with inherited IO for progress output.
+     */
+    public int shellExecInteractive(String container, String... command) {
+        var args = new ArrayList<String>();
+        args.add("exec");
+        args.add(container);
+        args.add("--");
+        args.addAll(List.of(command));
+        return execInteractive(args);
+    }
+
+    /**
+     * Execute a command inside a container as root.
+     */
+    public ExecResult shellExec(String container, String... command) {
+        var args = new ArrayList<String>();
+        args.add("exec");
+        args.add(container);
+        args.add("--");
+        args.addAll(List.of(command));
+        return exec(args);
+    }
+
+    /**
+     * Open an interactive shell in a container, inheriting stdio.
+     */
+    public int interactiveShell(String container, String user) {
+        try {
+            var pb = new ProcessBuilder(
+                    "incus", "exec", container, "--", "su", "-", user
+            );
+            pb.inheritIO();
+            return pb.start().waitFor();
+        } catch (IOException | InterruptedException e) {
+            throw new IncusException("Failed to open shell in " + container, e);
+        }
+    }
+
+    /**
+     * Launch a new container or VM from an image.
+     */
+    public void launch(String image, String name, boolean vm) {
+        var args = new ArrayList<String>();
+        args.add("launch");
+        args.add(image);
+        args.add(name);
+        if (vm) {
+            args.add("--vm");
+        }
+        int exitCode = execInteractive(args);
+        if (exitCode != 0) {
+            throw new IncusException("Failed to launch " + name + " (exit code " + exitCode + ")");
+        }
+    }
+
+    /**
+     * Copy (clone) an existing container/VM.
+     */
+    public void copy(String source, String target) {
+        exec("copy", source, target).assertSuccess("Failed to copy " + source + " to " + target);
+    }
+
+    /**
+     * Start a stopped container/VM.
+     */
+    public void start(String name) {
+        exec("start", name).assertSuccess("Failed to start " + name);
+    }
+
+    /**
+     * Stop a running container/VM.
+     */
+    public void stop(String name) {
+        exec("stop", name).assertSuccess("Failed to stop " + name);
+    }
+
+    /**
+     * Restart a container/VM.
+     */
+    public void restart(String name) {
+        exec("restart", name).assertSuccess("Failed to restart " + name);
+    }
+
+    /**
+     * Delete a container/VM.
+     */
+    public void delete(String name, boolean force) {
+        var args = new ArrayList<String>();
+        args.add("delete");
+        args.add(name);
+        if (force) {
+            args.add("--force");
+        }
+        exec(args).assertSuccess("Failed to delete " + name);
+    }
+
+    /**
+     * Set a config key on a container/VM.
+     */
+    public void configSet(String name, String key, String value) {
+        exec("config", "set", name, key, value)
+                .assertSuccess("Failed to set config " + key + " on " + name);
+    }
+
+    /**
+     * Add a device to a container/VM.
+     */
+    public void deviceAdd(String container, String deviceName, String type, String... props) {
+        var args = new ArrayList<String>();
+        args.add("config");
+        args.add("device");
+        args.add("add");
+        args.add(container);
+        args.add(deviceName);
+        args.add(type);
+        args.addAll(List.of(props));
+        exec(args).assertSuccess("Failed to add device " + deviceName + " to " + container);
+    }
+
+    /**
+     * Get a specific config value.
+     */
+    public String configGet(String name, String key) {
+        return exec("config", "get", name, key)
+                .assertSuccess("Failed to get config " + key + " from " + name)
+                .stdout().strip();
+    }
+
+    /**
+     * List containers/VMs with their status and type.
+     * Returns a list of maps with keys: name, status, type.
+     */
+    public List<Map<String, String>> list() {
+        var result = exec("list", "--format=csv", "--columns=nst")
+                .assertSuccess("Failed to list instances");
+        if (result.stdout().isBlank()) {
+            return List.of();
+        }
+        return result.stdout().strip().lines()
+                .map(line -> {
+                    var parts = line.split(",", 3);
+                    return Map.of(
+                            "name", parts[0],
+                            "status", parts.length > 1 ? parts[1] : "",
+                            "type", parts.length > 2 ? parts[2] : ""
+                    );
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Check if an instance exists.
+     */
+    public boolean exists(String name) {
+        return exec("info", name).success();
+    }
+
+    /**
+     * Push a file into a container.
+     */
+    public void filePush(String source, String container, String destPath) {
+        exec("file", "push", source, container + destPath)
+                .assertSuccess("Failed to push file to " + container);
+    }
+
+    private String readStream(java.io.InputStream is) throws IOException {
+        try (var reader = new BufferedReader(new InputStreamReader(is))) {
+            return reader.lines().collect(Collectors.joining("\n"));
+        }
+    }
+}
