@@ -2,6 +2,8 @@ package dev.incusspawn;
 
 import dev.incusspawn.command.*;
 import io.quarkus.picocli.runtime.annotations.TopCommand;
+import jakarta.inject.Inject;
+import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 @TopCommand
@@ -21,5 +23,14 @@ import picocli.CommandLine.Command;
                 UpdateAllCommand.class
         }
 )
-public class IncusSpawn {
+public class IncusSpawn implements Runnable {
+
+    @Inject
+    CommandLine.IFactory factory;
+
+    @Override
+    public void run() {
+        // Default action when no subcommand is given: show the list
+        new CommandLine(ListCommand.class, factory).execute();
+    }
 }
