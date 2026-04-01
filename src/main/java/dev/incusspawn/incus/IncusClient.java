@@ -16,6 +16,48 @@ import java.util.stream.Collectors;
 @ApplicationScoped
 public class IncusClient {
 
+    private volatile Boolean needsSg;
+
+    private boolean needsSg() {
+        if (needsSg == null) {
+            synchronized (this) {
+                if (needsSg == null) {
+                    needsSg = detectSgRequirement();
+                }
+            }
+        }
+        return needsSg;
+    }
+
+    private static boolean detectSgRequirement() {
+        // Test with 'incus list' since 'incus version' succeeds even without daemon access.
+        try {
+            var pb = new ProcessBuilder("incus", "list", "--format=csv", "--columns=n");
+            pb.redirectErrorStream(true);
+            var p = pb.start();
+            p.getInputStream().readAllBytes();
+            if (p.waitFor() == 0) {
+                return false;
+            }
+        } catch (Exception e) {
+            // incus not installed or not accessible
+        }
+
+        // Direct access failed — check if sg would help
+        try {
+            var pb = new ProcessBuilder("sg", "incus-admin", "-c", "incus version");
+            pb.redirectErrorStream(true);
+            var p = pb.start();
+            p.getInputStream().readAllBytes();
+            if (p.waitFor() == 0) {
+                return true;
+            }
+        } catch (Exception e) {
+            // sg not available or group doesn't exist
+        }
+        return false;
+    }
+
     public record ExecResult(int exitCode, String stdout, String stderr) {
         public boolean success() {
             return exitCode == 0;
@@ -29,14 +71,26 @@ public class IncusClient {
         }
     }
 
+    private List<String> buildCommand(List<String> args) {
+        var command = new ArrayList<String>();
+        if (needsSg()) {
+            command.add("sg");
+            command.add("incus-admin");
+            command.add("-c");
+            command.add("incus " + String.join(" ", args));
+        } else {
+            command.add("incus");
+            command.addAll(args);
+        }
+        return command;
+    }
+
     public ExecResult exec(String... args) {
         return exec(List.of(args));
     }
 
     public ExecResult exec(List<String> args) {
-        var command = new ArrayList<String>();
-        command.add("incus");
-        command.addAll(args);
+        var command = buildCommand(args);
         try {
             var pb = new ProcessBuilder(command);
             pb.environment().putAll(System.getenv());
@@ -59,9 +113,7 @@ public class IncusClient {
     }
 
     public int execInteractive(List<String> args) {
-        var command = new ArrayList<String>();
-        command.add("incus");
-        command.addAll(args);
+        var command = buildCommand(args);
         try {
             var pb = new ProcessBuilder(command);
             pb.inheritIO();
@@ -117,15 +169,8 @@ public class IncusClient {
      * Open an interactive shell in a container, inheriting stdio.
      */
     public int interactiveShell(String container, String user) {
-        try {
-            var pb = new ProcessBuilder(
-                    "incus", "exec", container, "--", "su", "-", user
-            );
-            pb.inheritIO();
-            return pb.start().waitFor();
-        } catch (IOException | InterruptedException e) {
-            throw new IncusException("Failed to open shell in " + container, e);
-        }
+        var args = List.of("exec", container, "--", "su", "-", user);
+        return execInteractive(args);
     }
 
     /**
