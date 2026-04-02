@@ -30,8 +30,12 @@ public final class ResourceLimits {
         return limitMB + "MB";
     }
 
+    /**
+     * Default disk limit for containers. This is a ceiling, not an allocation —
+     * with COW storage (btrfs/zfs) actual usage is thin-provisioned.
+     */
     public static String defaultDiskLimit() {
-        return "20GB";
+        return "100GB";
     }
 
     private static long totalMemoryBytes() {

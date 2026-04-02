@@ -16,11 +16,10 @@ import picocli.CommandLine.Command;
                 InitCommand.class,
                 BuildCommand.class,
                 ProjectCommand.class,
-                CreateCommand.class,
+                BranchCommand.class,
                 ShellCommand.class,
                 ListCommand.class,
                 DestroyCommand.class,
-                BranchCommand.class,
                 UpdateAllCommand.class
         }
 )

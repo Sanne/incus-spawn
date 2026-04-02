@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.ResourceLimits;
 import dev.tamboui.backend.jline3.JLineBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -37,13 +38,11 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Command(
         name = "list",
-        description = "List all incus-spawn environments, grouped by project",
+        description = "List all incus-spawn environments",
         mixinStandardHelpOptions = true
 )
 public class ListCommand implements Runnable {
@@ -54,33 +53,37 @@ public class ListCommand implements Runnable {
     @Inject
     IncusClient incus;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CREATE_CLONE, RENAME, BRANCH }
+    @Inject
+    picocli.CommandLine.IFactory factory;
+
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, BRANCH, RENAME, BUILD_IMAGE }
     private Mode mode = Mode.BROWSE;
     private String pendingDeleteName;
-    private String pendingDeleteType;
-    private TextInputState cloneNameInput;
-    private String cloneSourceName;
-    private boolean cloneEnableWayland;
-    private boolean cloneEnableAirgap;
-    private boolean cloneSourceIsVm;
+    // Branch modal state (unified: replaces old clone + branch)
+    private String branchSourceName;
+    private TextInputState branchNameInput;
+    private boolean branchEnableGui;
+    private boolean branchEnableAirgap;
+    private boolean branchEnableInbox;
+    private TextInputState branchInboxInput;
+    private boolean branchSourceIsVm;
     private TextInputState vmCpuInput;
     private TextInputState vmMemoryInput;
     private TextInputState vmDiskInput;
-    private int cloneFieldIndex; // 0=name, 1=cpu, 2=memory, 3=disk
+    private int branchFieldIndex; // 0=name, 1=cpu, 2=memory, 3=disk
+    // Rename modal state
     private TextInputState renameInput;
     private String renameSourceName;
-    private TextInputState branchInput;
-    private String branchSourceName;
     private String statusMessage;
-    private String activeButton; // key label of the button currently executing (for highlight feedback)
+    private String activeButton;
 
-    private enum PendingAction { NONE, SHELL, CREATE_CLONE }
+    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_GOLDEN }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
 
     private List<InstanceInfo> entries;
     private List<Row> tableRows;
-    private List<InstanceInfo> rowToEntry; // null for group header rows
+    private List<InstanceInfo> rowToEntry;
 
     @Override
     public void run() {
@@ -88,7 +91,7 @@ public class ListCommand implements Runnable {
         if (plain) {
             if (entries.isEmpty()) {
                 System.out.println("No incus-spawn environments found.");
-                System.out.println("Run 'isx build golden-base' to create your first golden image.");
+                System.out.println("Run 'isx build golden-java' to create your first image.");
             } else {
                 printPlain(entries);
             }
@@ -125,25 +128,33 @@ public class ListCommand implements Runnable {
 
             switch (pendingAction) {
                 case SHELL -> shellInto(pendingActionTarget);
-                case CREATE_CLONE -> {
+                case BRANCH -> {
                     try {
-                        createClone(cloneSourceName, pendingActionTarget, cloneEnableWayland, cloneEnableAirgap, cloneSourceIsVm);
+                        createBranch(branchSourceName, pendingActionTarget,
+                                branchEnableGui, branchEnableAirgap,
+                                branchEnableInbox ? branchInboxInput.text().strip() : null,
+                                branchSourceIsVm);
                     } catch (Exception e) {
-                        System.err.println("Clone failed: " + e.getMessage());
+                        System.err.println("Branch failed: " + e.getMessage());
                         System.err.println("Press Enter to return to the list...");
                         try { System.in.read(); } catch (Exception ignored) {}
                     }
+                }
+                case BUILD_GOLDEN -> {
+                    try {
+                        new picocli.CommandLine(BuildCommand.class, factory)
+                                .execute(pendingActionTarget);
+                    } catch (Exception e) {
+                        System.err.println("Build failed: " + e.getMessage());
+                    }
+                    System.err.println("Press Enter to return to the list...");
+                    try { System.in.read(); } catch (Exception ignored) {}
                 }
                 case NONE -> { return; }
             }
         }
     }
 
-    /**
-     * Creates a JLine terminal using the exec provider directly.
-     * TerminalBuilder's provider discovery is broken in native image,
-     * but the exec provider itself works fine when instantiated directly.
-     */
     private static Terminal createExecTerminal() throws IOException {
         java.util.logging.Logger.getLogger("org.jline").setLevel(java.util.logging.Level.SEVERE);
         var provider = new ExecTerminalProvider();
@@ -152,15 +163,9 @@ public class ListCommand implements Runnable {
                 false, SystemStream.Output);
     }
 
-    /**
-     * Creates a JLineBackend wired to the given terminal.
-     * JLineBackend's constructor hardcodes .jansi(true) which fails in native image,
-     * so we let it create a throwaway terminal, then swap in ours via reflection.
-     */
     private static JLineBackend createBackend(Terminal terminal) throws Exception {
         var backend = new JLineBackend();
         var clazz = JLineBackend.class;
-        // Close the constructor's terminal and replace with ours
         getField(clazz, "terminal").set(backend, terminal);
         getField(clazz, "writer").set(backend, terminal.writer());
         getField(clazz, "reader").set(backend, terminal.reader());
@@ -181,15 +186,14 @@ public class ListCommand implements Runnable {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
-            case CREATE_CLONE -> handleCreateCloneEvent(key, tui, tableState);
-            case RENAME -> handleRenameEvent(key, tui, tableState);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
+            case RENAME -> handleRenameEvent(key, tui, tableState);
+            case BUILD_IMAGE -> handleBuildImageEvent(key, tui, tableState);
         };
     }
 
     private boolean handleBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        if (key.isChar('q') || key.isCtrlC()
-                || key.isKey(KeyCode.ESCAPE)
+        if (key.isKey(KeyCode.F10) || key.isCtrlC()
                 || (key.hasCtrl() && key.isCharIgnoreCase('q'))) {
             tui.quit();
             return true;
@@ -201,45 +205,54 @@ public class ListCommand implements Runnable {
         if (key.isKey(KeyCode.HOME))                     { selectFirstDataRow(tableState); return true; }
         if (key.isKey(KeyCode.END))                      { selectLastDataRow(tableState); return true; }
 
+        if (key.isKey(KeyCode.F2)) {
+            mode = Mode.BUILD_IMAGE;
+            return true;
+        }
+
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
 
-        if (key.isChar('d') || key.isKey(KeyCode.DELETE)) {
+        if (key.isKey(KeyCode.F8)) {
             pendingDeleteName = selected.name;
-            pendingDeleteType = selected.type;
             mode = Mode.CONFIRM_DELETE;
             return true;
         }
-        if (key.isKey(KeyCode.ENTER)) {
+        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F3)) {
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = selected.name;
             tui.quit();
             return true;
         }
-        if (key.isChar('c') && isCloneable(selected)) {
-            cloneSourceName = selected.name;
-            cloneNameInput = new TextInputState(suggestCloneName(selected.name));
-            cloneEnableWayland = false;
-            cloneEnableAirgap = false;
-            cloneSourceIsVm = selected.runtime.toUpperCase().contains("VIRTUAL");
-            vmCpuInput = new TextInputState(selected.limitsCpu.isEmpty() ? "4" : selected.limitsCpu);
-            vmMemoryInput = new TextInputState(selected.limitsMemory.isEmpty() ? "6GB" : selected.limitsMemory);
-            vmDiskInput = new TextInputState(selected.rootSize.isEmpty() ? "10GB" : selected.rootSize);
-            cloneFieldIndex = 0;
-            mode = Mode.CREATE_CLONE;
+        if (key.isKey(KeyCode.F4)) {
+            branchSourceName = selected.name;
+            branchNameInput = new TextInputState(suggestBranchName(selected.name));
+            branchEnableGui = false;
+            branchEnableAirgap = false;
+            branchEnableInbox = false;
+            branchInboxInput = new TextInputState("");
+            branchSourceIsVm = selected.runtime.toUpperCase().contains("VIRTUAL");
+            var adaptiveCpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+            var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
+            var adaptiveDisk = ResourceLimits.defaultDiskLimit();
+            vmCpuInput = new TextInputState(selected.limitsCpu.isEmpty() ? adaptiveCpu : selected.limitsCpu);
+            vmMemoryInput = new TextInputState(selected.limitsMemory.isEmpty() ? adaptiveMemory : selected.limitsMemory);
+            vmDiskInput = new TextInputState(selected.rootSize.isEmpty() ? adaptiveDisk : selected.rootSize);
+            branchFieldIndex = 0;
+            mode = Mode.BRANCH;
             return true;
         }
-        if (key.isChar('s') && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "s", "Stopped", "Failed to stop",
+        if (key.isKey(KeyCode.F6) && isRunning(selected)) {
+            execWithFeedback(tui, tableState, "F6", "Stopped", "Failed to stop",
                     selected.name, () -> incus.stop(selected.name));
             return true;
         }
-        if (key.isChar('r') && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "r", "Restarted", "Failed to restart",
+        if (key.isKey(KeyCode.F7) && isRunning(selected)) {
+            execWithFeedback(tui, tableState, "F7", "Restarted", "Failed to restart",
                     selected.name, () -> incus.restart(selected.name));
             return true;
         }
-        if (key.isChar('n')) {
+        if (key.isKey(KeyCode.F5)) {
             renameSourceName = selected.name;
             if (isRunning(selected)) {
                 mode = Mode.CONFIRM_STOP_FOR_RENAME;
@@ -249,17 +262,96 @@ public class ListCommand implements Runnable {
             }
             return true;
         }
-        if (key.isChar('b') && isCloneable(selected)) {
-            branchSourceName = selected.name;
-            branchInput = new TextInputState(selected.name + "-branch");
-            mode = Mode.BRANCH;
-            return true;
-        }
         if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
             refreshData(tableState);
             return true;
         }
         return false;
+    }
+
+    private boolean handleBranchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            var name = branchNameInput.text().strip();
+            if (name.isEmpty()) return false;
+            var validation = validateInstanceName(name);
+            if (validation != null) {
+                statusMessage = validation;
+                mode = Mode.BROWSE;
+                return true;
+            }
+            pendingAction = PendingAction.BRANCH;
+            pendingActionTarget = name;
+            tui.quit();
+            return true;
+        }
+        if (key.hasAlt() && key.isCharIgnoreCase('g')) {
+            branchEnableGui = !branchEnableGui;
+            return true;
+        }
+        if (key.hasAlt() && key.isCharIgnoreCase('a')) {
+            branchEnableAirgap = !branchEnableAirgap;
+            return true;
+        }
+        if (key.hasAlt() && key.isCharIgnoreCase('i')) {
+            branchEnableInbox = !branchEnableInbox;
+            if (!branchEnableInbox && branchFieldIndex == inboxFieldIndex()) {
+                branchFieldIndex = 0;
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.TAB)) {
+            branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
+            return true;
+        }
+
+        var activeInput = activeBranchInput();
+        if (key.isKey(KeyCode.BACKSPACE)) { activeInput.deleteBackward(); return true; }
+        if (key.isKey(KeyCode.DELETE))    { activeInput.deleteForward(); return true; }
+        if (key.isKey(KeyCode.LEFT))      { activeInput.moveCursorLeft(); return true; }
+        if (key.isKey(KeyCode.RIGHT))     { activeInput.moveCursorRight(); return true; }
+        if (key.isKey(KeyCode.HOME))      { activeInput.moveCursorToStart(); return true; }
+        if (key.isKey(KeyCode.END))       { activeInput.moveCursorToEnd(); return true; }
+        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+            char ch = key.character();
+            if (branchFieldIndex == 0) {
+                // Name field: letters, digits, hyphens
+                if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
+            } else if (branchFieldIndex == inboxFieldIndex()) {
+                // Inbox path: allow path characters
+                if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                    activeInput.insert(ch);
+                }
+            } else {
+                // VM resource fields: alphanumeric (e.g. "6GB")
+                if (Character.isLetterOrDigit(ch)) activeInput.insert(ch);
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private int inboxFieldIndex() {
+        return branchSourceIsVm ? 4 : 1;
+    }
+
+    private int maxBranchField() {
+        int max = branchSourceIsVm ? 3 : 0;
+        if (branchEnableInbox) max = branchSourceIsVm ? 4 : 1;
+        return max;
+    }
+
+    private TextInputState activeBranchInput() {
+        if (branchFieldIndex == inboxFieldIndex() && branchEnableInbox) return branchInboxInput;
+        return switch (branchFieldIndex) {
+            case 1 -> vmCpuInput;
+            case 2 -> vmMemoryInput;
+            case 3 -> vmDiskInput;
+            default -> branchNameInput;
+        };
     }
 
     private boolean handleRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -305,49 +397,15 @@ public class ListCommand implements Runnable {
         return true;
     }
 
-    private boolean handleBranchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+    private boolean handleBuildImageEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
             mode = Mode.BROWSE;
             return true;
         }
-        if (key.isKey(KeyCode.ENTER)) {
-            var newName = branchInput.text().strip();
-            if (newName.isEmpty() || newName.equals(branchSourceName)) {
-                mode = Mode.BROWSE;
-                return true;
-            }
-            var validation = validateInstanceName(newName);
-            if (validation != null) {
-                statusMessage = validation;
-                mode = Mode.BROWSE;
-                return true;
-            }
-            try {
-                incus.copy(branchSourceName, newName);
-                var profile = getConfigOrDefault(branchSourceName, Metadata.PROFILE, "minimal");
-                incus.configSet(newName, Metadata.TYPE, Metadata.TYPE_BASE);
-                incus.configSet(newName, Metadata.PROFILE, profile);
-                incus.configSet(newName, Metadata.PARENT, branchSourceName);
-                incus.configSet(newName, Metadata.CREATED, Metadata.today());
-                statusMessage = "Branched '" + newName + "' from '" + branchSourceName + "'";
-            } catch (Exception e) {
-                statusMessage = "Failed to branch: " + e.getMessage();
-            }
-            refreshData(tableState);
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isKey(KeyCode.BACKSPACE)) { branchInput.deleteBackward(); return true; }
-        if (key.isKey(KeyCode.DELETE))    { branchInput.deleteForward(); return true; }
-        if (key.isKey(KeyCode.LEFT))      { branchInput.moveCursorLeft(); return true; }
-        if (key.isKey(KeyCode.RIGHT))     { branchInput.moveCursorRight(); return true; }
-        if (key.isKey(KeyCode.HOME))      { branchInput.moveCursorToStart(); return true; }
-        if (key.isKey(KeyCode.END))       { branchInput.moveCursorToEnd(); return true; }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            char ch = key.character();
-            if (Character.isLetterOrDigit(ch) || ch == '-') {
-                branchInput.insert(ch);
-            }
+        if (key.isChar('1') || key.isChar('2')) {
+            pendingAction = PendingAction.BUILD_GOLDEN;
+            pendingActionTarget = key.isChar('1') ? "golden-java" : "golden-minimal";
+            tui.quit();
             return true;
         }
         return true;
@@ -371,7 +429,7 @@ public class ListCommand implements Runnable {
 
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
-            activeButton = "n";
+            activeButton = "F5";
             tui.draw(frame -> render(frame, tableState));
             try {
                 incus.stop(renameSourceName);
@@ -390,93 +448,59 @@ public class ListCommand implements Runnable {
         return true;
     }
 
-    private boolean handleCreateCloneEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            var name = cloneNameInput.text().strip();
-            if (name.isEmpty()) return false;
-            var validation = validateInstanceName(name);
-            if (validation != null) {
-                statusMessage = validation;
-                mode = Mode.BROWSE;
-                return true;
-            }
-            pendingAction = PendingAction.CREATE_CLONE;
-            pendingActionTarget = name;
-            tui.quit();
-            return true;
-        }
-        if (key.hasAlt() && key.isCharIgnoreCase('w')) {
-            cloneEnableWayland = !cloneEnableWayland;
-            return true;
-        }
-        if (key.hasAlt() && key.isCharIgnoreCase('a')) {
-            cloneEnableAirgap = !cloneEnableAirgap;
-            return true;
-        }
-        if (key.isKey(KeyCode.TAB)) {
-            if (cloneSourceIsVm) {
-                cloneFieldIndex = (cloneFieldIndex + 1) % 4;
-            }
-            return true;
-        }
-
-        // Route editing keys to the active field
-        var activeInput = activeCloneInput();
-        if (key.isKey(KeyCode.BACKSPACE)) { activeInput.deleteBackward(); return true; }
-        if (key.isKey(KeyCode.DELETE))    { activeInput.deleteForward(); return true; }
-        if (key.isKey(KeyCode.LEFT))      { activeInput.moveCursorLeft(); return true; }
-        if (key.isKey(KeyCode.RIGHT))     { activeInput.moveCursorRight(); return true; }
-        if (key.isKey(KeyCode.HOME))      { activeInput.moveCursorToStart(); return true; }
-        if (key.isKey(KeyCode.END))       { activeInput.moveCursorToEnd(); return true; }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            char ch = key.character();
-            if (cloneFieldIndex == 0) {
-                if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
-            } else {
-                if (Character.isLetterOrDigit(ch)) activeInput.insert(ch);
-            }
-            return true;
-        }
-        return true;
-    }
-
-    private TextInputState activeCloneInput() {
-        return switch (cloneFieldIndex) {
-            case 1 -> vmCpuInput;
-            case 2 -> vmMemoryInput;
-            case 3 -> vmDiskInput;
-            default -> cloneNameInput;
-        };
-    }
-
     // --- Rendering ---
+
+    private boolean hasAnyInstances() {
+        return !entries.isEmpty();
+    }
 
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
         int footerHeight = hasStatus ? 2 : 1;
+        boolean showBanner = !hasAnyInstances();
+        int bannerHeight = showBanner ? 5 : 0;
         var chunks = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(footerHeight))
+                .constraints(Constraint.length(bannerHeight), Constraint.fill(), Constraint.length(footerHeight))
                 .split(area);
 
-        renderTable(frame, chunks.get(0), tableState);
-        renderToolbar(frame, chunks.get(1), tableState, hasStatus);
+        if (showBanner) {
+            renderBuildBanner(frame, chunks.get(0));
+        }
+        renderTable(frame, chunks.get(1), tableState);
+        renderToolbar(frame, chunks.get(2), tableState, hasStatus);
 
-        // Render centered modal overlay for dialog modes
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
         }
+    }
+
+    private static final Color BANNER_BG = Color.rgb(30, 30, 46);
+    private static final Color BANNER_FG = Color.rgb(205, 214, 244);
+    private static final Color BANNER_BORDER = Color.YELLOW;
+
+    private void renderBuildBanner(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" Getting Started ")
+                .borderStyle(Style.EMPTY.fg(BANNER_BORDER))
+                .style(Style.EMPTY.bg(BANNER_BG))
+                .build();
+        frame.renderWidget(block, area);
+        var inner = block.inner(area);
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1), Constraint.fill())
+                .split(inner);
+        frame.renderWidget(Paragraph.from(Line.styled(
+                " No images found. Press F2 to build one.",
+                Style.EMPTY.fg(BANNER_FG).bg(BANNER_BG))), rows.get(0));
     }
 
     private void renderTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, TableState tableState) {
         if (entries.isEmpty()) {
             var block = Block.builder()
                     .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" incus-spawn environments ")
+                    .title(" incus-spawn ")
                     .borderStyle(Style.EMPTY.fg(Color.CYAN)).build();
             frame.renderWidget(block, area);
             var inner = block.inner(area);
@@ -485,23 +509,23 @@ public class ListCommand implements Runnable {
                         .constraints(Constraint.length(inner.height() / 2), Constraint.length(1))
                         .split(inner);
                 frame.renderWidget(Paragraph.from(
-                        Line.styled("  No environments found. Run: isx build golden-base",
+                        Line.styled("  No environments found. Press F2 to build an image.",
                                 Style.EMPTY.fg(Color.GRAY))), hint.get(1));
             }
             return;
         }
         var table = Table.builder()
-                .header(Row.from("NAME", "STATUS", "TYPE", "DERIVED FROM", "RUNTIME", "AGE")
+                .header(Row.from("NAME", "STATUS", "PARENT", "RUNTIME", "AGE")
                         .style(Style.EMPTY.bold().fg(Color.CYAN)))
                 .rows(tableRows)
                 .widths(Constraint.fill(), Constraint.length(12),
-                        Constraint.length(12), Constraint.length(20),
-                        Constraint.length(12), Constraint.length(10))
+                        Constraint.length(20), Constraint.length(12),
+                        Constraint.length(10))
                 .highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE))
                 .highlightSymbol("\u25b8 ")
                 .block(Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" incus-spawn environments ")
+                        .title(" incus-spawn ")
                         .borderStyle(Style.EMPTY.fg(Color.CYAN)).build())
                 .build();
         frame.renderStatefulWidget(table, area, tableState);
@@ -513,18 +537,17 @@ public class ListCommand implements Runnable {
 
         var selected = selectedEntry(tableState);
         boolean hasSelection = selected != null;
-        boolean cloneable = hasSelection && isCloneable(selected);
         boolean running = hasSelection && isRunning(selected);
 
         var helpSpans = new ArrayList<Span>();
-        addKey(helpSpans, "q", "Quit", false);
-        addKey(helpSpans, "Enter", "Shell", !hasSelection);
-        addKey(helpSpans, "d", "Destroy", !hasSelection);
-        addKey(helpSpans, "n", "Rename", !hasSelection);
-        addKey(helpSpans, "c", "Clone", !cloneable);
-        addKey(helpSpans, "b", "Branch", !cloneable);
-        addKey(helpSpans, "s", "Stop", !running);
-        addKey(helpSpans, "r", "Restart", !running);
+        addKey(helpSpans, "F2", "Build...", false);
+        addKey(helpSpans, "F3", "Shell", !hasSelection);
+        addKey(helpSpans, "F4", "Branch...", !hasSelection);
+        addKey(helpSpans, "F5", "Rename...", !hasSelection);
+        addKey(helpSpans, "F6", "Stop", !running);
+        addKey(helpSpans, "F7", "Restart", !running);
+        addKey(helpSpans, "F8", "Destroy...", !hasSelection);
+        addKey(helpSpans, "F10", "Quit", false);
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1);
@@ -551,11 +574,6 @@ public class ListCommand implements Runnable {
                               TableState tableState) {
         switch (mode) {
             case CONFIRM_DELETE -> {
-                boolean isGolden = Metadata.TYPE_BASE.equals(pendingDeleteType)
-                        || Metadata.TYPE_PROJECT.equals(pendingDeleteType);
-                var message = isGolden
-                        ? "Existing clones are not affected."
-                        : "This action cannot be undone.";
                 var modalArea = centerRect(screen, 50, 7);
                 var block = Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
@@ -569,7 +587,8 @@ public class ListCommand implements Runnable {
                         .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
                         .split(inner);
                 frame.renderWidget(Paragraph.from(Line.styled(
-                        message, Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
+                        "This action cannot be undone.",
+                        Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
                 var btnSpans = new ArrayList<Span>();
                 addModalKey(btnSpans, "y", "Confirm");
                 addModalKey(btnSpans, "any key", "Cancel");
@@ -596,11 +615,10 @@ public class ListCommand implements Runnable {
                 addModalKey(btnSpans, "any key", "Cancel");
                 frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
             }
-            case CREATE_CLONE -> renderCloneModal(frame, screen);
+            case BRANCH -> renderBranchModal(frame, screen);
             case RENAME -> renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
-            case BRANCH -> renderInputModal(frame, screen,
-                    "Branch '" + branchSourceName + "'", "Name:", branchSourceName + "-branch", branchInput);
+            case BUILD_IMAGE -> renderBuildImageModal(frame, screen);
             default -> {}
         }
     }
@@ -633,112 +651,146 @@ public class ListCommand implements Runnable {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(3));
     }
 
-    private void renderCloneModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        int height = cloneSourceIsVm ? 12 : 10;
+    private void renderBuildImageModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var modalArea = centerRect(screen, 50, 8);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" Build Image ")
+                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
+                .style(Style.EMPTY.bg(MODAL_BG))
+                .build();
+        frame.renderWidget(block, modalArea);
+        var inner = block.inner(modalArea);
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.length(1),
+                        Constraint.length(1), Constraint.length(1), Constraint.fill())
+                .split(inner);
+        frame.renderWidget(Paragraph.from(Line.styled(
+                " Select a profile to build:",
+                Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(0));
+        var opt1 = new ArrayList<Span>();
+        addModalKey(opt1, "1", "golden-java      (JDK + Maven + Claude Code)");
+        frame.renderWidget(Paragraph.from(Line.from(opt1)), rows.get(1));
+        var opt2 = new ArrayList<Span>();
+        addModalKey(opt2, "2", "golden-minimal   (Claude Code only)");
+        frame.renderWidget(Paragraph.from(Line.from(opt2)), rows.get(2));
+        var hintSpans = new ArrayList<Span>();
+        addModalKey(hintSpans, "Esc", "Cancel");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(4));
+    }
+
+    private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        // Calculate dynamic height based on what's shown
+        int height = 8; // name + toggles + hints
+        if (branchSourceIsVm) height += 2; // VM resource row + spacer
+        if (branchEnableInbox) height += 1; // inbox path field
         var modalArea = centerRect(screen, 54, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Clone " + (cloneSourceIsVm ? "VM" : "container") + " '" + cloneSourceName + "' ")
+                .title(" Branch from '" + branchSourceName + "' ")
                 .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
                 .style(Style.EMPTY.bg(MODAL_BG))
                 .build();
         frame.renderWidget(block, modalArea);
         var inner = block.inner(modalArea);
 
-        if (cloneSourceIsVm) {
-            var rows = Layout.vertical()
-                    .constraints(
-                            Constraint.length(1), // 0: name label
-                            Constraint.length(1), // 1: name input
-                            Constraint.length(1), // 2: spacer
-                            Constraint.length(1), // 3: vm resources
-                            Constraint.length(1), // 4: spacer
-                            Constraint.length(1), // 5: wayland toggle
-                            Constraint.length(1), // 6: airgap toggle
-                            Constraint.length(1), // 7: spacer
-                            Constraint.fill())     // 8: hints
-                    .split(inner);
-
-            renderCloneNameField(frame, rows.get(0), rows.get(1));
-            renderVmResourceFields(frame, rows.get(3));
-            renderToggle(frame, rows.get(5), "Alt-w", "Wayland passthrough", cloneEnableWayland);
-            renderToggle(frame, rows.get(6), "Alt-a", "Network airgap", cloneEnableAirgap);
-
-            var hintSpans = new ArrayList<Span>();
-            addModalKey(hintSpans, "Enter", "Confirm");
-            addModalKey(hintSpans, "Esc", "Cancel");
-            addModalKey(hintSpans, "Tab", "Next field");
-            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(8));
-        } else {
-            var rows = Layout.vertical()
-                    .constraints(
-                            Constraint.length(1), // 0: name label
-                            Constraint.length(1), // 1: name input
-                            Constraint.length(1), // 2: spacer
-                            Constraint.length(1), // 3: wayland toggle
-                            Constraint.length(1), // 4: airgap toggle
-                            Constraint.length(1), // 5: spacer
-                            Constraint.fill())     // 6: hints
-                    .split(inner);
-
-            renderCloneNameField(frame, rows.get(0), rows.get(1));
-            renderToggle(frame, rows.get(3), "Alt-w", "Wayland passthrough", cloneEnableWayland);
-            renderToggle(frame, rows.get(4), "Alt-a", "Network airgap", cloneEnableAirgap);
-
-            var hintSpans = new ArrayList<Span>();
-            addModalKey(hintSpans, "Enter", "Confirm");
-            addModalKey(hintSpans, "Esc", "Cancel");
-            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(6));
+        var constraints = new ArrayList<Constraint>();
+        constraints.add(Constraint.length(1)); // name label
+        constraints.add(Constraint.length(1)); // name input
+        if (branchSourceIsVm) {
+            constraints.add(Constraint.length(1)); // spacer
+            constraints.add(Constraint.length(1)); // vm resources
         }
-    }
+        constraints.add(Constraint.length(1)); // spacer
+        constraints.add(Constraint.length(1)); // gui toggle
+        constraints.add(Constraint.length(1)); // airgap toggle
+        constraints.add(Constraint.length(1)); // inbox toggle
+        if (branchEnableInbox) {
+            constraints.add(Constraint.length(1)); // inbox path
+        }
+        constraints.add(Constraint.fill()); // hints
 
-    private void renderCloneNameField(dev.tamboui.terminal.Frame frame,
-                                       dev.tamboui.layout.Rect labelArea, dev.tamboui.layout.Rect inputArea) {
+        var rows = Layout.vertical()
+                .constraints(constraints.toArray(new Constraint[0]))
+                .split(inner);
+
+        int row = 0;
+        // Name field
         frame.renderWidget(Paragraph.from(Line.styled(
-                "Name:", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), labelArea);
-        if (cloneFieldIndex == 0) {
+                "Name:", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(row++));
+        if (branchFieldIndex == 0) {
             TextInput.builder()
-                    .placeholder("clone-name")
+                    .placeholder("branch-name")
                     .style(Style.EMPTY.fg(Color.WHITE).bg(Color.rgb(49, 50, 68)))
                     .build()
-                    .renderWithCursor(inputArea, frame.buffer(), cloneNameInput, frame);
+                    .renderWithCursor(rows.get(row++), frame.buffer(), branchNameInput, frame);
         } else {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    cloneNameInput.text(), Style.EMPTY.fg(Color.GRAY).bg(Color.rgb(49, 50, 68)))),
-                    inputArea);
+                    branchNameInput.text(), Style.EMPTY.fg(Color.GRAY).bg(Color.rgb(49, 50, 68)))),
+                    rows.get(row++));
         }
+
+        // VM resources
+        if (branchSourceIsVm) {
+            row++; // spacer
+            renderVmResourceFields(frame, rows.get(row++));
+        }
+
+        row++; // spacer
+        renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
+        renderToggle(frame, rows.get(row++), "Alt-a", "Network airgap", branchEnableAirgap);
+        renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
+
+        if (branchEnableInbox) {
+            var inboxRow = rows.get(row++);
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    "  Path:", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), inboxRow);
+            var pathArea = new dev.tamboui.layout.Rect(
+                    inboxRow.x() + 8, inboxRow.y(), inboxRow.width() - 8, 1);
+            if (branchFieldIndex == inboxFieldIndex()) {
+                TextInput.builder()
+                        .placeholder("/path/to/dir")
+                        .style(Style.EMPTY.fg(Color.WHITE).bg(Color.rgb(49, 50, 68)))
+                        .build()
+                        .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
+            } else {
+                var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
+                var fg = branchInboxInput.text().isEmpty() ? Color.rgb(80, 80, 100) : Color.GRAY;
+                frame.renderWidget(Paragraph.from(Line.styled(
+                        display, Style.EMPTY.fg(fg).bg(Color.rgb(49, 50, 68)))), pathArea);
+            }
+        }
+
+        var hintSpans = new ArrayList<Span>();
+        addModalKey(hintSpans, "Enter", "Confirm");
+        addModalKey(hintSpans, "Esc", "Cancel");
+        if (branchSourceIsVm || branchEnableInbox) {
+            addModalKey(hintSpans, "Tab", "Next field");
+        }
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 
     private void renderVmResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var disabled = false; // always enabled when shown (only rendered for VM sources)
-        var disabledFg = Color.rgb(80, 80, 100);
-        var labelStyle = Style.EMPTY.fg(disabled ? disabledFg : MODAL_FG).bg(MODAL_BG);
+        var labelStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
         var inputBg = Color.rgb(49, 50, 68);
         var inactiveBg = Color.rgb(40, 40, 55);
+        var disabledFg = Color.rgb(80, 80, 100);
 
         var spans = new ArrayList<Span>();
         spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
-
-        // CPU field
         spans.add(Span.styled("CPU ", labelStyle));
-        renderInlineField(spans, vmCpuInput.text(), disabled, cloneFieldIndex == 1, inputBg, inactiveBg, disabledFg);
+        renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1, inputBg, inactiveBg, disabledFg);
         spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
-
-        // Memory field
         spans.add(Span.styled("RAM ", labelStyle));
-        renderInlineField(spans, vmMemoryInput.text(), disabled, cloneFieldIndex == 2, inputBg, inactiveBg, disabledFg);
+        renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2, inputBg, inactiveBg, disabledFg);
         spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
-
-        // Disk field
         spans.add(Span.styled("Disk ", labelStyle));
-        renderInlineField(spans, vmDiskInput.text(), disabled, cloneFieldIndex == 3, inputBg, inactiveBg, disabledFg);
-
+        renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3, inputBg, inactiveBg, disabledFg);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
     private static void renderInlineField(List<Span> spans, String value, boolean disabled,
                                            boolean active, Color inputBg, Color inactiveBg, Color disabledFg) {
-        // Pad value to minimum width for visual consistency
         var display = String.format("%-6s", value);
         if (disabled) {
             spans.add(Span.styled(display, Style.EMPTY.fg(disabledFg).bg(inactiveBg)));
@@ -751,7 +803,7 @@ public class ListCommand implements Runnable {
 
     private void renderToggle(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                String shortcut, String label, boolean enabled) {
-        var check = enabled ? "\u25c9" : "\u25cb";  // ◉ / ○
+        var check = enabled ? "\u25c9" : "\u25cb";
         var checkColor = enabled ? Color.GREEN : Color.GRAY;
         frame.renderWidget(Paragraph.from(Line.from(List.of(
                 Span.styled(" " + shortcut + " ", Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG)),
@@ -772,12 +824,9 @@ public class ListCommand implements Runnable {
         spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG)));
     }
 
-    private String suggestCloneName(String sourceName) {
-        // Strip "golden-" prefix for a cleaner base name
+    private String suggestBranchName(String sourceName) {
         var base = sourceName.startsWith("golden-") ? sourceName.substring(7) : sourceName;
-        // Collect existing instance names
         var existingNames = entries.stream().map(e -> e.name).collect(java.util.stream.Collectors.toSet());
-        // Find next available number
         for (int i = 1; ; i++) {
             var candidate = base + "-" + i;
             if (!existingNames.contains(candidate)) return candidate;
@@ -815,10 +864,6 @@ public class ListCommand implements Runnable {
     }
 
     // --- Helpers ---
-
-    private static boolean isCloneable(InstanceInfo entry) {
-        return entry.type.equals(Metadata.TYPE_BASE) || entry.type.equals(Metadata.TYPE_PROJECT);
-    }
 
     private static boolean isRunning(InstanceInfo entry) {
         return "RUNNING".equalsIgnoreCase(entry.status);
@@ -894,54 +939,52 @@ public class ListCommand implements Runnable {
     // --- Data ---
 
     private void buildRowData() {
-        var grouped = groupEntries(entries);
         tableRows = new ArrayList<>();
         rowToEntry = new ArrayList<>();
 
-        for (var group : grouped.entrySet()) {
-            tableRows.add(Row.from(group.getKey(), "", "", "", "", "")
-                    .style(Style.EMPTY.bold().fg(Color.YELLOW)));
-            rowToEntry.add(null);
+        // Sort entries: stopped first (templates), then running, alphabetically within each group
+        var sorted = new ArrayList<>(entries);
+        sorted.sort((a, b) -> {
+            var aRunning = isRunning(a);
+            var bRunning = isRunning(b);
+            if (aRunning != bRunning) return aRunning ? 1 : -1;
+            return a.name.compareToIgnoreCase(b.name);
+        });
 
-            for (var entry : group.getValue()) {
-                var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-                var derivedFrom = derivedFrom(entry);
-                var statusStyle = switch (entry.status.toUpperCase()) {
-                    case "RUNNING" -> Style.EMPTY.fg(Color.GREEN);
-                    case "STOPPED" -> Style.EMPTY.fg(Color.GRAY);
-                    default -> Style.EMPTY;
-                };
-                tableRows.add(Row.from("  " + entry.name, entry.status, entry.type,
-                        derivedFrom, entry.runtime, age).style(statusStyle));
-                rowToEntry.add(entry);
-            }
+        for (var entry : sorted) {
+            var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
+            var parent = entry.parent.isEmpty() ? "-" : entry.parent;
+            var statusStyle = switch (entry.status.toUpperCase()) {
+                case "RUNNING" -> Style.EMPTY.fg(Color.GREEN);
+                case "STOPPED" -> Style.EMPTY.fg(Color.GRAY);
+                default -> Style.EMPTY;
+            };
+            tableRows.add(Row.from(entry.name, entry.status, parent,
+                    entry.runtime, age).style(statusStyle));
+            rowToEntry.add(entry);
         }
     }
 
-    private static String derivedFrom(InstanceInfo entry) {
-        if (!entry.parent.isEmpty()) return entry.parent;
-        if (entry.type.equals(Metadata.TYPE_CLONE) && !"-".equals(entry.project)) return entry.project;
-        return "-";
-    }
-
-    private void createClone(String source, String name, boolean wayland, boolean airgap, boolean vm) {
+    private void createBranch(String source, String name, boolean gui, boolean airgap,
+                               String inboxPath, boolean vm) {
         if (incus.exists(name)) {
             System.err.println("Error: an instance named '" + name + "' already exists.");
             return;
         }
 
-        System.out.println("Creating " + (vm ? "VM" : "container") + " clone '" + name + "' from '" + source + "'...");
+        System.out.println("Branching '" + name + "' from '" + source + "'...");
         incus.copy(source, name);
 
+        // Apply resource limits
         String cpuStr, memory, disk;
         if (vm) {
             cpuStr = vmCpuInput.text().strip();
             memory = vmMemoryInput.text().strip();
             disk = vmDiskInput.text().strip();
         } else {
-            cpuStr = String.valueOf(dev.incusspawn.incus.ResourceLimits.adaptiveCpuLimit());
-            memory = dev.incusspawn.incus.ResourceLimits.adaptiveMemoryLimit();
-            disk = dev.incusspawn.incus.ResourceLimits.defaultDiskLimit();
+            cpuStr = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+            memory = ResourceLimits.adaptiveMemoryLimit();
+            disk = ResourceLimits.defaultDiskLimit();
         }
         System.out.println("Applying resource limits: " + cpuStr + " CPUs, " + memory + " memory, " + disk + " disk");
         incus.configSet(name, "limits.cpu", cpuStr);
@@ -955,8 +998,21 @@ public class ListCommand implements Runnable {
         incus.start(name);
         waitForReady(name);
 
-        if (wayland) {
-            configureWayland(name);
+        if (gui) {
+            configureGui(name);
+        }
+
+        if (inboxPath != null && !inboxPath.isEmpty()) {
+            var path = java.nio.file.Path.of(inboxPath);
+            if (java.nio.file.Files.isDirectory(path)) {
+                System.out.println("Mounting inbox: " + path.toAbsolutePath() + " -> /home/agentuser/inbox (read-only)");
+                incus.deviceAdd(name, "inbox", "disk",
+                        "source=" + path.toAbsolutePath(),
+                        "path=/home/agentuser/inbox",
+                        "readonly=true");
+            } else {
+                System.err.println("Warning: inbox path '" + inboxPath + "' is not a directory, skipping.");
+            }
         }
 
         var config = dev.incusspawn.config.SpawnConfig.load();
@@ -971,25 +1027,23 @@ public class ListCommand implements Runnable {
             }
         }
 
-        // Fix home dir ownership after all device mounts (gcloud, wayland, etc. may create dirs as root)
+        // Fix home dir ownership after all device mounts
         incus.shellExec(name, "chown", "-R", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
 
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
-        incus.configSet(name, Metadata.PROJECT, source);
         incus.configSet(name, Metadata.PARENT, source);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 
-        System.out.println("Clone '" + name + "' is ready.");
+        System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
         System.out.println();
     }
 
-    private void configureWayland(String name) {
+    private void configureGui(String name) {
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
         if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Warning: WAYLAND_DISPLAY or XDG_RUNTIME_DIR not set, skipping Wayland passthrough.");
+            System.err.println("Warning: WAYLAND_DISPLAY or XDG_RUNTIME_DIR not set, skipping GUI passthrough.");
             return;
         }
         var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
@@ -998,19 +1052,14 @@ public class ListCommand implements Runnable {
             return;
         }
 
-        System.out.println("Enabling Wayland passthrough...");
+        System.out.println("Enabling GUI passthrough...");
         var uid = String.valueOf(getUid());
 
-        // GPU device for hardware-accelerated rendering
         incus.deviceAdd(name, "gpu", "gpu");
-
-        // Bind-mount the host's XDG runtime dir into the container.
-        // This exposes the Wayland socket (and PipeWire/PulseAudio) directly.
         incus.deviceAdd(name, "xdg-runtime", "disk",
                 "source=" + xdgRuntimeDir,
                 "path=/run/user/" + uid);
 
-        // Write env vars to /etc/profile.d/ so they survive 'su -' login shells
         incus.shellExec(name, "sh", "-c",
                 "cat > /etc/profile.d/wayland.sh << 'ENVEOF'\n" +
                 "export WAYLAND_DISPLAY=" + waylandDisplay + "\n" +
@@ -1026,10 +1075,8 @@ public class ListCommand implements Runnable {
 
     private void configureAirgap(String name) {
         System.out.println("Enabling network airgap...");
-        // Detach the instance from the network bridge
         var result = incus.exec("network", "detach", "incusbr0", name);
         if (!result.success()) {
-            // Fallback: try removing the eth0 device directly
             incus.exec("config", "device", "override", name, "eth0");
             incus.exec("config", "device", "remove", name, "eth0");
         }
@@ -1075,8 +1122,12 @@ public class ListCommand implements Runnable {
             var entryList = new ArrayList<InstanceInfo>();
             for (var node : nodes) {
                 var config = node.path("config");
+                // Include any instance that has incus-spawn metadata
+                var parent = configVal(config, Metadata.PARENT, "");
+                var created = configVal(config, Metadata.CREATED, "");
                 var type = configVal(config, Metadata.TYPE, "");
-                if (type.isEmpty()) continue;
+                // Only show instances managed by incus-spawn (have any metadata)
+                if (type.isEmpty() && parent.isEmpty() && created.isEmpty()) continue;
 
                 var expandedDevices = node.path("expanded_devices");
                 var rootSize = expandedDevices.path("root").path("size").asText("");
@@ -1084,12 +1135,11 @@ public class ListCommand implements Runnable {
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),
                         node.path("status").asText(),
-                        type,
                         configVal(config, Metadata.PROJECT, "-"),
                         configVal(config, Metadata.PROFILE, "-"),
-                        configVal(config, Metadata.CREATED, ""),
+                        created,
                         node.path("type").asText(),
-                        configVal(config, Metadata.PARENT, ""),
+                        parent,
                         configVal(config, "limits.cpu", ""),
                         configVal(config, "limits.memory", ""),
                         rootSize));
@@ -1105,49 +1155,22 @@ public class ListCommand implements Runnable {
         return val.isEmpty() ? defaultValue : val;
     }
 
-    private Map<String, List<InstanceInfo>> groupEntries(List<InstanceInfo> items) {
-        Map<String, List<InstanceInfo>> grouped = new LinkedHashMap<>();
-        for (var entry : items)
-            if (entry.type.equals(Metadata.TYPE_BASE))
-                grouped.computeIfAbsent("Base Images", k -> new ArrayList<>()).add(entry);
-        for (var entry : items)
-            if (entry.type.equals(Metadata.TYPE_PROJECT))
-                grouped.computeIfAbsent("Project: " + entry.name, k -> new ArrayList<>()).add(entry);
-        for (var entry : items)
-            if (entry.type.equals(Metadata.TYPE_CLONE))
-                grouped.computeIfAbsent("Project: " + entry.project, k -> new ArrayList<>()).add(entry);
-        return grouped;
-    }
-
     private void printPlain(List<InstanceInfo> items) {
-        var grouped = groupEntries(items);
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name.length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-10s  %-20s  %-10s  %s%n";
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-20s  %-10s  %s%n";
 
-        for (var group : grouped.entrySet()) {
-            System.out.println("\n" + group.getKey());
-            System.out.printf(fmt, "NAME", "STATUS", "TYPE", "DERIVED FROM", "RUNTIME", "AGE");
-            System.out.printf(fmt, "-".repeat(nameWidth), "----------", "----------",
-                    "--------------------", "----------", "---");
-            for (var entry : group.getValue()) {
-                var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
-                System.out.printf(fmt, entry.name, entry.status, entry.type,
-                        derivedFrom(entry), entry.runtime, age);
-            }
+        System.out.printf(fmt, "NAME", "STATUS", "PARENT", "RUNTIME", "AGE");
+        System.out.printf(fmt, "-".repeat(nameWidth), "----------",
+                "--------------------", "----------", "---");
+        for (var entry : items) {
+            var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
+            var parent = entry.parent.isEmpty() ? "-" : entry.parent;
+            System.out.printf(fmt, entry.name, entry.status, parent, entry.runtime, age);
         }
         System.out.println();
     }
 
-    private String getConfigOrDefault(String name, String key, String defaultValue) {
-        try {
-            var value = incus.configGet(name, key);
-            return value.isEmpty() ? defaultValue : value;
-        } catch (Exception e) {
-            return defaultValue;
-        }
-    }
-
-    private record InstanceInfo(String name, String status, String type,
+    private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize) {}

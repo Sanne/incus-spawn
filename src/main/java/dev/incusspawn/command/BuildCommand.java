@@ -8,14 +8,17 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @Command(
         name = "build",
-        description = "Build or rebuild a base golden image (e.g. golden-base, golden-java)",
+        description = "Build or rebuild a base golden image (e.g. golden-minimal, golden-java)",
         mixinStandardHelpOptions = true
 )
 public class BuildCommand implements Runnable {
 
-    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-base, golden-java)")
+    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-minimal, golden-java)")
     String name;
 
     @Option(names = "--profile", description = "Profile to use: minimal, java (default: auto-detected from name)")
@@ -30,16 +33,53 @@ public class BuildCommand implements Runnable {
     @Inject
     IncusClient incus;
 
+    /**
+     * Known image definitions. Each entry maps a profile name to its definition:
+     * the parent profile (null = build from scratch using the OS image) and
+     * the setup steps to run on top of the parent.
+     *
+     * Future: these will be discovered from definition files in the working directory.
+     */
+    private static final Map<String, ImageDef> IMAGE_DEFS = new LinkedHashMap<>();
+
+    static {
+        IMAGE_DEFS.put("minimal", new ImageDef(null, "golden-minimal"));
+        IMAGE_DEFS.put("java", new ImageDef("minimal", "golden-java"));
+    }
+
+    private record ImageDef(String parentProfile, String defaultName) {}
+
     @Override
     public void run() {
         if (profile == null) {
             profile = detectProfile(name);
         }
 
-        System.out.println("Building base golden image: " + name + " (profile: " + profile + ")");
+        build(name, profile);
+    }
 
-        if (incus.exists(name)) {
-            System.out.println("Image '" + name + "' already exists.");
+    /**
+     * Build an image. If the image's profile has a parent, ensure the parent
+     * is built first (recursively).
+     */
+    private void build(String targetName, String targetProfile) {
+        var def = IMAGE_DEFS.get(targetProfile);
+
+        // If this profile has a parent, ensure it exists
+        if (def != null && def.parentProfile() != null) {
+            var parentDef = IMAGE_DEFS.get(def.parentProfile());
+            var parentName = parentDef != null ? parentDef.defaultName() : "golden-" + def.parentProfile();
+            if (!incus.exists(parentName)) {
+                System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
+                build(parentName, def.parentProfile());
+                System.out.println();
+            }
+        }
+
+        System.out.println("Building image: " + targetName + " (profile: " + targetProfile + ")");
+
+        if (incus.exists(targetName)) {
+            System.out.println("Image '" + targetName + "' already exists.");
             System.out.println("Rebuilding will destroy the existing image and any changes made to it.");
             var console = System.console();
             if (console != null) {
@@ -50,20 +90,61 @@ public class BuildCommand implements Runnable {
                     return;
                 }
             }
-            incus.delete(name, true);
+            incus.delete(targetName, true);
         }
 
+        if (def != null && def.parentProfile() != null) {
+            buildFromParent(targetName, targetProfile, def);
+        } else {
+            buildFromScratch(targetName, targetProfile);
+        }
+    }
+
+    /**
+     * Build an image by copying its parent and applying profile-specific layers.
+     */
+    private void buildFromParent(String targetName, String targetProfile, ImageDef def) {
+        var parentDef = IMAGE_DEFS.get(def.parentProfile());
+        var parentName = parentDef != null ? parentDef.defaultName() : "golden-" + def.parentProfile();
+
+        System.out.println("Deriving from parent image '" + parentName + "'...");
+        incus.copy(parentName, targetName);
+        incus.start(targetName);
+        waitForReady(targetName);
+
+        // Apply profile-specific setup on top of parent
+        switch (targetProfile) {
+            case "java" -> installJavaToolkit(targetName);
+            default -> System.out.println("No additional setup for profile: " + targetProfile);
+        }
+
+        // Tag with metadata
+        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
+        incus.configSet(targetName, Metadata.PROFILE, targetProfile);
+        incus.configSet(targetName, Metadata.PARENT, parentName);
+        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
+
+        System.out.println("Stopping image...");
+        incus.stop(targetName);
+
+        System.out.println("Image " + targetName + " built successfully.");
+    }
+
+    /**
+     * Build an image from scratch using the base OS image.
+     * This is the full setup path: DNS, user, tools, auth, Claude Code.
+     */
+    private void buildFromScratch(String targetName, String targetProfile) {
         // Launch base image
         System.out.println("Launching " + image + "...");
-        incus.launch(image, name, vm);
+        incus.launch(image, targetName, vm);
 
-        // Wait for container to be ready
-        waitForReady(name);
+        waitForReady(targetName);
 
         // Set ID mapping for UID 1000 (needed for Wayland passthrough option)
-        incus.configSet(name, "raw.idmap", "both 1000 1000");
-        incus.restart(name);
-        waitForReady(name);
+        incus.configSet(targetName, "raw.idmap", "both 1000 1000");
+        incus.restart(targetName);
+        waitForReady(targetName);
 
         // systemd-resolved (127.0.0.53) doesn't work reliably inside containers.
         // Disable it and point DNS directly at the Incus bridge gateway (dnsmasq).
@@ -73,8 +154,7 @@ public class BuildCommand implements Runnable {
         if (gatewayIp.contains("/")) {
             gatewayIp = gatewayIp.substring(0, gatewayIp.indexOf('/'));
         }
-        // Unlink NSS from systemd-resolved and write a static resolv.conf
-        incus.shellExec(name, "sh", "-c",
+        incus.shellExec(targetName, "sh", "-c",
                 "systemctl disable --now systemd-resolved 2>/dev/null; " +
                 "systemctl mask systemd-resolved 2>/dev/null; " +
                 "rm -f /etc/resolv.conf; " +
@@ -83,7 +163,7 @@ public class BuildCommand implements Runnable {
         // Verify DNS works before proceeding
         System.out.println("Verifying DNS resolution...");
         for (int attempt = 0; attempt < 10; attempt++) {
-            var dnsCheck = incus.shellExec(name, "sh", "-c",
+            var dnsCheck = incus.shellExec(targetName, "sh", "-c",
                     "curl -4 -s -o /dev/null -w '%{http_code}' https://mirrors.fedoraproject.org");
             if (dnsCheck.success() && dnsCheck.stdout().strip().contains("302")) {
                 System.out.println("  DNS working.");
@@ -91,7 +171,7 @@ public class BuildCommand implements Runnable {
             }
             if (attempt == 9) {
                 System.err.println("  DNS resolution is not working. Check your network setup.");
-                System.err.println("  The container '" + name + "' has been left running for inspection.");
+                System.err.println("  The container '" + targetName + "' has been left running for inspection.");
                 System.exit(1);
             }
             try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
@@ -100,56 +180,56 @@ public class BuildCommand implements Runnable {
 
         // Create agentuser with passwordless sudo (container is the security boundary)
         System.out.println("Creating agentuser...");
-        incus.shellExec(name, "useradd", "-m", "-u", "1000", "agentuser");
-        incus.shellExec(name, "mkdir", "-p", "/home/agentuser/inbox");
-        incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/inbox");
-        incus.shellExec(name, "sh", "-c",
+        incus.shellExec(targetName, "useradd", "-m", "-u", "1000", "agentuser");
+        incus.shellExec(targetName, "mkdir", "-p", "/home/agentuser/inbox");
+        incus.shellExec(targetName, "chown", "agentuser:agentuser", "/home/agentuser/inbox");
+        incus.shellExec(targetName, "sh", "-c",
                 "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser");
 
         // Enable nested containers (for podman/docker inside the container)
-        incus.configSet(name, "security.nesting", "true");
+        incus.configSet(targetName, "security.nesting", "true");
 
         // Install common tools
         System.out.println("Installing common tools (git, gh CLI, podman)...");
-        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y", "git", "which", "procps-ng", "findutils", "podman"),
+        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y", "git", "which", "procps-ng", "findutils", "podman"),
                 "Failed to install common tools");
-        installGitHubCli();
-        installClaudeCode();
+        installGitHubCli(targetName);
+        installClaudeCode(targetName);
 
-        // Profile-specific setup
-        switch (profile) {
-            case "java" -> installJavaToolkit();
+        // Profile-specific setup (for profiles that build from scratch)
+        switch (targetProfile) {
+            case "java" -> installJavaToolkit(targetName);
             case "minimal" -> System.out.println("Minimal profile - no additional tools.");
-            default -> System.out.println("Unknown profile: " + profile + " - treating as minimal.");
+            default -> System.out.println("Unknown profile: " + targetProfile + " - treating as minimal.");
         }
 
         // Set up auth forwarding
-        setupAuthForwarding();
+        setupAuthForwarding(targetName);
 
         // Configure Claude Code settings for agent use
-        setupClaudeConfig();
+        setupClaudeConfig(targetName);
 
         // Tag with metadata
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_BASE);
-        incus.configSet(name, Metadata.PROFILE, profile);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
+        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
+        incus.configSet(targetName, Metadata.PROFILE, targetProfile);
+        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
 
         // Stop the golden image (it's a template, not a running instance)
-        System.out.println("Stopping golden image...");
-        incus.stop(name);
+        System.out.println("Stopping image...");
+        incus.stop(targetName);
 
-        System.out.println("Golden image " + name + " built successfully.");
+        System.out.println("Image " + targetName + " built successfully.");
     }
 
-    private void installJavaToolkit() {
+    private void installJavaToolkit(String container) {
         System.out.println("Installing Java development toolkit...");
-        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y",
+        requireSuccess(incus.shellExecInteractive(container, "dnf", "install", "-y",
                 "java-latest-openjdk", "java-latest-openjdk-devel"),
                 "Failed to install Java toolkit");
 
         // Install latest Maven from Apache (auto-detect latest version)
         System.out.println("Installing latest Maven from Apache...");
-        requireSuccess(incus.shellExecInteractive(name, "sh", "-c",
+        requireSuccess(incus.shellExecInteractive(container, "sh", "-c",
                 "MAVEN_VERSION=$(curl -s https://dlcdn.apache.org/maven/maven-3/ " +
                 "| grep -oP '3\\.\\d+\\.\\d+' | sort -V | tail -1) && " +
                 "echo \"Downloading Maven $MAVEN_VERSION...\" && " +
@@ -159,7 +239,7 @@ public class BuildCommand implements Runnable {
                 "Failed to install Maven");
 
         // Verify
-        var result = incus.shellExec(name, "mvn", "--version");
+        var result = incus.shellExec(container, "mvn", "--version");
         if (result.success()) {
             System.out.println("  Maven installed: " + result.stdout().lines().findFirst().orElse(""));
         } else {
@@ -167,52 +247,48 @@ public class BuildCommand implements Runnable {
         }
     }
 
-    private void installGitHubCli() {
+    private void installGitHubCli(String container) {
         System.out.println("Installing GitHub CLI...");
-        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y", "gh"),
+        requireSuccess(incus.shellExecInteractive(container, "dnf", "install", "-y", "gh"),
                 "Failed to install GitHub CLI");
     }
 
-    private void installClaudeCode() {
+    private void installClaudeCode(String container) {
         System.out.println("Installing Claude Code...");
-        // Install Node.js (required for Claude Code)
-        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y", "nodejs", "npm"),
+        requireSuccess(incus.shellExecInteractive(container, "dnf", "install", "-y", "nodejs", "npm"),
                 "Failed to install Node.js");
         System.out.println("Installing Claude Code via npm...");
-        requireSuccess(incus.shellExecInteractive(name, "npm", "install", "-g", "@anthropic-ai/claude-code"),
+        requireSuccess(incus.shellExecInteractive(container, "npm", "install", "-g", "@anthropic-ai/claude-code"),
                 "Failed to install Claude Code");
     }
 
-    private void setupAuthForwarding() {
+    private void setupAuthForwarding(String container) {
         var config = SpawnConfig.load();
 
-        // Set up Claude env vars in agentuser's profile
         if (config.getClaude().isUseVertex()) {
-            appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
+            appendToProfile(container, "export CLAUDE_CODE_USE_VERTEX=1");
             if (!config.getClaude().getCloudMlRegion().isBlank()) {
-                appendToProfile("export CLOUD_ML_REGION=" + config.getClaude().getCloudMlRegion());
+                appendToProfile(container, "export CLOUD_ML_REGION=" + config.getClaude().getCloudMlRegion());
             }
             if (!config.getClaude().getVertexProjectId().isBlank()) {
-                appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + config.getClaude().getVertexProjectId());
+                appendToProfile(container, "export ANTHROPIC_VERTEX_PROJECT_ID=" + config.getClaude().getVertexProjectId());
             }
         } else if (config.getClaude().getApiKey() != null && !config.getClaude().getApiKey().isBlank()) {
-            appendToProfile("export ANTHROPIC_API_KEY=" + config.getClaude().getApiKey());
+            appendToProfile(container, "export ANTHROPIC_API_KEY=" + config.getClaude().getApiKey());
         }
 
-        // Set up GitHub token
         if (config.getGithub().getToken() != null && !config.getGithub().getToken().isBlank()) {
-            appendToProfile("export GH_TOKEN=" + config.getGithub().getToken());
+            appendToProfile(container, "export GH_TOKEN=" + config.getGithub().getToken());
         }
     }
 
-    private void setupClaudeConfig() {
+    private void setupClaudeConfig(String container) {
         System.out.println("Configuring Claude Code for agent use...");
-        // The container is the security boundary, so Claude Code can run fully permissive.
-        // Settings are placed in user-level config so they apply to all projects.
         var settingsJson = """
                 {
                   "permissions": {
                     "defaultMode": "bypassPermissions",
+                    "skipDangerousModePermissionPrompt": true,
                     "allow": [
                       "Bash(*)",
                       "Read(**)",
@@ -227,15 +303,29 @@ public class BuildCommand implements Runnable {
                   }
                 }
                 """;
-        incus.shellExec(name, "sh", "-c",
+        var claudeJson = """
+                {
+                  "hasCompletedOnboarding": true,
+                  "hasSeenTasksHint": true,
+                  "numStartups": 1,
+                  "autoUpdates": false
+                }
+                """;
+        incus.shellExec(container, "sh", "-c",
                 "mkdir -p /home/agentuser/.claude && " +
                 "cat > /home/agentuser/.claude/settings.json << 'SETTINGS'\n" +
                 settingsJson.strip() + "\nSETTINGS");
-        incus.shellExec(name, "chown", "-R", "agentuser:agentuser", "/home/agentuser/.claude");
+        incus.shellExec(container, "sh", "-c",
+                "cat > /home/agentuser/.claude.json << 'CLAUDEJSON'\n" +
+                claudeJson.strip() + "\nCLAUDEJSON");
+        incus.shellExec(container, "chown", "-R", "agentuser:agentuser", "/home/agentuser/.claude");
+        incus.shellExec(container, "chown", "agentuser:agentuser", "/home/agentuser/.claude.json");
+
+        appendToProfile(container, "export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1");
     }
 
-    private void appendToProfile(String line) {
-        incus.shellExec(name, "sh", "-c",
+    private void appendToProfile(String container, String line) {
+        incus.shellExec(container, "sh", "-c",
                 "echo '" + line + "' >> /home/agentuser/.bashrc");
     }
 
