@@ -20,6 +20,7 @@ import picocli.CommandLine.Command;
                 ShellCommand.class,
                 ListCommand.class,
                 DestroyCommand.class,
+                BranchCommand.class,
                 UpdateAllCommand.class
         }
 )

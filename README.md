@@ -1,58 +1,94 @@
 # incus-spawn
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+A CLI tool for managing isolated [Incus](https://linuxcontainers.org/incus/) development environments, designed for safely running untrusted AI agents and external reproducers in OSS projects.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/) (a ratatui-inspired Java TUI framework).
 
-## Running the application in dev mode
+## Quick Start
 
-You can run your application in dev mode that enables live coding using:
+```shell
+# Build and install
+./install.sh          # installs as 'isx' to ~/.local/bin
 
-```shell script
-./mvnw quarkus:dev
+# One-time host setup
+isx init
+
+# Build a base golden image
+isx build golden-java
+
+# Launch the interactive TUI
+isx
 ```
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+## Features
 
-## Packaging and running the application
+- **Golden image layering**: base images, project images, and ephemeral clones (like Docker image inheritance)
+- **Copy-on-write clones**: efficient disk usage with btrfs/zfs/lvm storage backends
+- **Interactive TUI**: Midnight Commander-style interface for managing environments
+- **Container and VM support**: lightweight system containers by default, KVM VMs (`--vm`) for stronger isolation
+- **Wayland passthrough**: run GUI apps inside containers with GPU acceleration
+- **Network airgapping**: isolate containers from the network for analyzing untrusted code
+- **Adaptive resource limits**: CPU, memory, and disk limits auto-detected from host resources
+- **Claude Code integration**: pre-configured AI agent auth (Vertex AI or API key)
+- **GitHub integration**: fine-grained PAT setup for safe agent access
 
-The application can be packaged using:
+## Commands
 
-```shell script
+| Command | Description |
+|---------|-------------|
+| `isx init` | One-time host setup (Incus, auth, storage) |
+| `isx build <name>` | Build a base golden image (`--vm` for KVM) |
+| `isx project create <name>` | Create a project golden image from `incus-spawn.yaml` |
+| `isx project update <name>` | Update a project golden image |
+| `isx update-all` | Update all golden images |
+| `isx create <name>` | Spawn a clone from a golden image |
+| `isx shell <name>` | Open a shell in an existing clone |
+| `isx list` | Interactive TUI (also the default when running `isx`) |
+| `isx destroy <name>` | Destroy a clone |
+| `isx branch <src> <dst>` | Create an independent branch from a base image |
+
+## TUI Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `Enter` | Shell into selected instance |
+| `c` | Clone selected image |
+| `b` | Branch selected base image |
+| `d` | Destroy selected instance |
+| `n` | Rename selected instance |
+| `s` | Stop selected instance |
+| `r` | Restart selected instance |
+| `Up/Down`, `j/k` | Navigate |
+
+## Building
+
+```shell
+# JVM build
 ./mvnw package
-```
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
-
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
-
-If you want to build an _über-jar_, execute the following command:
-
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
-```
-
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
-
-## Creating a native executable
-
-You can create a native executable using:
-
-```shell script
+# Native build (requires GraalVM)
 ./mvnw package -Dnative
+
+# Install (JVM or native)
+./install.sh            # JVM
+./install.sh --native   # native
 ```
 
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using:
+## Project Configuration
 
-```shell script
-./mvnw package -Dnative -Dquarkus.native.container-build=true
+Place `incus-spawn.yaml` in your project repo root:
+
+```yaml
+name: golden-myproject
+parent: golden-java
+repos:
+  - https://github.com/org/service-a.git
+  - https://github.com/org/service-b.git
+pre_build: "cd service-a && mvn dependency:go-offline"
 ```
 
-You can then execute your native executable with: `./target/incus-spawn-1.0.0-SNAPSHOT-runner`
+## Configuration
 
-If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
-
-## Related Guides
-
-- Picocli ([guide](https://quarkus.io/guides/picocli)): Develop command line applications with Picocli
+- `~/.config/incus-spawn/` — auth credentials and global settings
+- `incus-spawn.yaml` — per-project configuration (version-controlled)

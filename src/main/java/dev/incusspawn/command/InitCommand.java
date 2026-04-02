@@ -30,7 +30,7 @@ public class InitCommand implements Runnable {
         setupGitHubAuth();
 
         System.out.println("\n=== Init complete! ===");
-        System.out.println("Next: run 'incus-spawn build golden-minimal' or 'incus-spawn build golden-java' to create a base image.");
+        System.out.println("Next: run 'incus-spawn build golden-base' or 'incus-spawn build golden-java' to create a base image.");
     }
 
     private void checkIncusInstalled() {
@@ -228,6 +228,35 @@ public class InitCommand implements Runnable {
             } else {
                 System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");
             }
+        }
+
+        checkStorageDriver();
+    }
+
+    private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
+
+    private void checkStorageDriver() {
+        var result = incus.exec("storage", "list", "--format=csv", "--columns=nd");
+        if (!result.success()) return;
+        var lines = result.stdout().strip().lines().toList();
+        if (lines.isEmpty()) return;
+
+        boolean anyCow = false;
+        for (var line : lines) {
+            var parts = line.split(",", 2);
+            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
+                anyCow = true;
+                break;
+            }
+        }
+
+        if (!anyCow) {
+            System.out.println();
+            System.err.println("  Warning: no copy-on-write storage pool detected.");
+            System.err.println("  Clones and branches will be full copies, using more disk space.");
+            System.err.println("  For efficient storage, consider creating a btrfs or ZFS pool:");
+            System.err.println("    incus storage create default btrfs");
+            System.err.println("  See: https://linuxcontainers.org/incus/docs/main/reference/storage_btrfs/");
         }
     }
 

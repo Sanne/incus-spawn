@@ -1,0 +1,8 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": "org/jline/utils/.*"},
+      {"pattern": "org/jline/terminal/.*"}
+    ]
+  }
+}

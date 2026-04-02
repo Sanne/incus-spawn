@@ -77,7 +77,16 @@ public class IncusClient {
             command.add("sg");
             command.add("incus-admin");
             command.add("-c");
-            command.add("incus " + String.join(" ", args));
+            var sb = new StringBuilder("incus");
+            for (var arg : args) {
+                sb.append(' ');
+                if (arg.contains(" ") || arg.contains("'") || arg.contains("\"")) {
+                    sb.append("'").append(arg.replace("'", "'\\''")).append("'");
+                } else {
+                    sb.append(arg);
+                }
+            }
+            command.add(sb.toString());
         } else {
             command.add("incus");
             command.addAll(args);
@@ -193,8 +202,13 @@ public class IncusClient {
     /**
      * Copy (clone) an existing container/VM.
      */
-    public void copy(String source, String target) {
-        exec("copy", source, target).assertSuccess("Failed to copy " + source + " to " + target);
+    public void copy(String source, String target, String... extraArgs) {
+        var args = new ArrayList<String>();
+        args.add("copy");
+        args.add(source);
+        args.add(target);
+        args.addAll(List.of(extraArgs));
+        exec(args).assertSuccess("Failed to copy " + source + " to " + target);
     }
 
     /**
@@ -229,6 +243,10 @@ public class IncusClient {
             args.add("--force");
         }
         exec(args).assertSuccess("Failed to delete " + name);
+    }
+
+    public void rename(String oldName, String newName) {
+        exec("rename", oldName, newName).assertSuccess("Failed to rename " + oldName + " to " + newName);
     }
 
     /**
@@ -283,6 +301,16 @@ public class IncusClient {
                     );
                 })
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * List all instances with full details as JSON.
+     * Returns the raw JSON string from 'incus list --format=json'.
+     */
+    public String listJson() {
+        return exec("list", "--format=json")
+                .assertSuccess("Failed to list instances")
+                .stdout();
     }
 
     /**

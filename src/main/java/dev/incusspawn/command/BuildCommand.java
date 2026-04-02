@@ -10,12 +10,12 @@ import picocli.CommandLine.Parameters;
 
 @Command(
         name = "build",
-        description = "Build or rebuild a base golden image (e.g. golden-minimal, golden-java)",
+        description = "Build or rebuild a base golden image (e.g. golden-base, golden-java)",
         mixinStandardHelpOptions = true
 )
 public class BuildCommand implements Runnable {
 
-    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-minimal, golden-java)")
+    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-base, golden-java)")
     String name;
 
     @Option(names = "--profile", description = "Profile to use: minimal, java (default: auto-detected from name)")
@@ -98,15 +98,20 @@ public class BuildCommand implements Runnable {
             System.out.println("  Waiting for DNS... (attempt " + (attempt + 2) + "/10)");
         }
 
-        // Create agentuser
+        // Create agentuser with passwordless sudo (container is the security boundary)
         System.out.println("Creating agentuser...");
         incus.shellExec(name, "useradd", "-m", "-u", "1000", "agentuser");
         incus.shellExec(name, "mkdir", "-p", "/home/agentuser/inbox");
         incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/inbox");
+        incus.shellExec(name, "sh", "-c",
+                "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser");
+
+        // Enable nested containers (for podman/docker inside the container)
+        incus.configSet(name, "security.nesting", "true");
 
         // Install common tools
-        System.out.println("Installing common tools (git, gh CLI)...");
-        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y", "git", "which", "procps-ng", "findutils"),
+        System.out.println("Installing common tools (git, gh CLI, podman)...");
+        requireSuccess(incus.shellExecInteractive(name, "dnf", "install", "-y", "git", "which", "procps-ng", "findutils", "podman"),
                 "Failed to install common tools");
         installGitHubCli();
         installClaudeCode();

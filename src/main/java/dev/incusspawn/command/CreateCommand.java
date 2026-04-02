@@ -108,6 +108,7 @@ public class CreateCommand implements Runnable {
         // Tag with metadata
         incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
         incus.configSet(name, Metadata.PROJECT, source);
+        incus.configSet(name, Metadata.PARENT, source);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 
         System.out.println("Clone '" + name + "' is ready.\n");
