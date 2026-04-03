@@ -540,13 +540,13 @@ public class ListCommand implements Runnable {
         boolean running = hasSelection && isRunning(selected);
 
         var helpSpans = new ArrayList<Span>();
-        addKey(helpSpans, "F2", "Build...", false);
+        addKey(helpSpans, "F2", "Build\u2026", false);
         addKey(helpSpans, "F3", "Shell", !hasSelection);
-        addKey(helpSpans, "F4", "Branch...", !hasSelection);
-        addKey(helpSpans, "F5", "Rename...", !hasSelection);
+        addKey(helpSpans, "F4", "Branch\u2026", !hasSelection);
+        addKey(helpSpans, "F5", "Rename\u2026", !hasSelection);
         addKey(helpSpans, "F6", "Stop", !running);
         addKey(helpSpans, "F7", "Restart", !running);
-        addKey(helpSpans, "F8", "Destroy...", !hasSelection);
+        addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
         addKey(helpSpans, "F10", "Quit", false);
 
         if (hasStatus) {
@@ -842,13 +842,13 @@ public class ListCommand implements Runnable {
 
     private void addKey(List<Span> spans, String key, String label, boolean disabled) {
         if (key.equals(activeButton)) {
-            spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(BAR_LABEL_FG).bg(BAR_ACTIVE_BG)));
+            spans.add(Span.styled(" " + key + " ", Style.EMPTY.bold().fg(BAR_LABEL_FG).bg(BAR_ACTIVE_BG)));
             spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_ACTIVE_BG)));
         } else if (disabled) {
-            spans.add(Span.styled(" " + key, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
+            spans.add(Span.styled(" " + key + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
             spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
         } else {
-            spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
+            spans.add(Span.styled(" " + key + " ", Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
             spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
     }
