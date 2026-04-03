@@ -287,6 +287,7 @@ public class BuildCommand implements Runnable {
         // installer doesn't warn about it and claude is immediately available.
         incus.shellExec(container, "sh", "-c",
                 "mkdir -p /home/agentuser/.local/bin && " +
+                "chown -R agentuser:agentuser /home/agentuser/.local && " +
                 "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
                 "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /home/agentuser/.bashrc");
         // Install as agentuser so it lands in /home/agentuser/.local/bin
