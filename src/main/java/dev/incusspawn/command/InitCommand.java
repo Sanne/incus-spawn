@@ -95,6 +95,17 @@ public class InitCommand implements Runnable {
 
     private void configureFirewall() {
         System.out.println("[4/6] Configuring firewall for Incus bridge...");
+
+        // Check if firewalld is available
+        var fwCheck = runHost("which", "firewall-cmd");
+        if (fwCheck != 0) {
+            System.err.println("  Warning: firewall-cmd not found. Skipping firewall configuration.");
+            System.err.println("  Containers may not have network/DNS access.");
+            return;
+        }
+
+        // Add incusbr0 to the trusted zone and enable masquerading so container
+        // traffic is NAT'd to the internet. Both are --permanent so they survive reboots.
         System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
         var addResult = runHost("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
         if (addResult != 0) {
@@ -102,9 +113,14 @@ public class InitCommand implements Runnable {
             System.err.println("  Containers may not have network/DNS access.");
             System.err.println("  You can fix this manually:");
             System.err.println("    sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent");
+            System.err.println("    sudo firewall-cmd --zone=trusted --add-masquerade --permanent");
             System.err.println("    sudo firewall-cmd --reload");
             return;
         }
+
+        System.out.println("  Enabling masquerading (NAT) for container internet access...");
+        runHost("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+
         var reloadResult = runHost("sudo", "firewall-cmd", "--reload");
         if (reloadResult != 0) {
             System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
@@ -113,64 +129,36 @@ public class InitCommand implements Runnable {
 
         // Verify
         try {
-            var pb = new ProcessBuilder("sudo", "firewall-cmd", "--zone=trusted", "--list-interfaces");
+            var pb = new ProcessBuilder("sudo", "firewall-cmd", "--zone=trusted", "--list-all");
             pb.redirectErrorStream(true);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes()).strip();
             process.waitFor();
-            if (output.contains("incusbr0")) {
-                System.out.println("  Firewall configured: incusbr0 is in the trusted zone.");
+            boolean hasInterface = output.contains("incusbr0");
+            boolean hasMasquerade = output.contains("masquerade: yes");
+            if (hasInterface && hasMasquerade) {
+                System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading.");
             } else {
-                System.err.println("  Warning: incusbr0 does not appear in the trusted zone.");
-                System.err.println("  Current trusted interfaces: " + output);
+                if (!hasInterface) System.err.println("  Warning: incusbr0 not in trusted zone.");
+                if (!hasMasquerade) System.err.println("  Warning: masquerading not enabled.");
                 System.err.println("  Containers may not have network/DNS access.");
             }
         } catch (Exception e) {
             System.err.println("  Warning: could not verify firewall config: " + e.getMessage());
         }
 
-        // Docker sets the FORWARD chain policy to DROP, which blocks Incus container traffic.
-        // Add explicit FORWARD rules for the Incus bridge to coexist with Docker.
-        configureDockerCoexistence();
-    }
-
-    private void configureDockerCoexistence() {
-        // Check if Docker's FORWARD DROP policy is in effect
-        try {
-            var pb = new ProcessBuilder("sudo", "iptables", "-L", "FORWARD", "-n");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            process.waitFor();
-            if (!output.contains("policy DROP")) {
-                return; // No Docker interference, nothing to do
-            }
-        } catch (Exception e) {
-            return; // Can't check, skip
-        }
-
-        System.out.println("  Detected Docker FORWARD DROP policy — adding Incus bridge rules...");
-
-        // Allow outbound traffic from the Incus bridge
-        runHost("sudo", "iptables", "-I", "FORWARD", "-i", "incusbr0", "-j", "ACCEPT");
-        // Allow return traffic back to the Incus bridge
-        runHost("sudo", "iptables", "-I", "FORWARD", "-o", "incusbr0",
-                "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
-
-        // Make the rules persistent across reboots
-        System.out.println("  Making iptables rules persistent...");
-        var saved = runHost("sudo", "sh", "-c",
-                "iptables-save > /etc/sysconfig/iptables 2>/dev/null || iptables-save > /etc/iptables/rules.v4 2>/dev/null");
-        if (saved != 0) {
-            System.out.println("  Warning: could not persist iptables rules. They will be lost on reboot.");
-            System.out.println("  To fix, install iptables-services and run:");
-            System.out.println("    sudo dnf install iptables-services");
-            System.out.println("    sudo systemctl enable iptables");
-            System.out.println("    sudo iptables-save | sudo tee /etc/sysconfig/iptables");
-        }
-
-        // Verify connectivity
-        System.out.println("  Docker coexistence rules applied.");
+        // Ensure FORWARD rules for the Incus bridge are in place. Docker (if installed)
+        // sets the FORWARD chain policy to DROP, which blocks Incus container traffic.
+        // These direct rules are harmless without Docker and ready if Docker starts later.
+        System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
+        runHost("sudo", "firewall-cmd", "--permanent", "--direct",
+                "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                "-i", "incusbr0", "-j", "ACCEPT");
+        runHost("sudo", "firewall-cmd", "--permanent", "--direct",
+                "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
+        runHost("sudo", "firewall-cmd", "--reload");
+        System.out.println("  Firewall rules applied (persistent via firewalld).");
     }
 
     private void configureSubuidSubgid() {

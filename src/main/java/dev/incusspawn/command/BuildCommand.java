@@ -141,10 +141,30 @@ public class BuildCommand implements Runnable {
 
         waitForReady(targetName);
 
-        // Set ID mapping for UID 1000 (needed for Wayland passthrough option)
+        // Set ID mapping for UID 1000 (needed for Wayland passthrough) and enable
+        // nested containers with syscall interception for container runtimes.
+        // Don't drop any capabilities since the container is the security boundary;
+        // this ensures tools like ping, traceroute, tcpdump, strace, etc. work.
         incus.configSet(targetName, "raw.idmap", "both 1000 1000");
+        incus.configSet(targetName, "security.nesting", "true");
+        incus.configSet(targetName, "security.syscalls.intercept.mknod", "true");
+        incus.configSet(targetName, "security.syscalls.intercept.setxattr", "true");
+        incus.configSet(targetName, "raw.lxc", "lxc.cap.drop =");
         incus.restart(targetName);
         waitForReady(targetName);
+
+        // Relax kernel restrictions that default to paranoid values inside containers.
+        // On bare metal these are often already relaxed by the distro; in a container
+        // they reset to kernel defaults. Since the container is the security boundary,
+        // restore bare-metal-like behaviour for common developer tools.
+        incus.shellExec(targetName, "sh", "-c",
+                "printf '%s\\n' " +
+                "'net.ipv4.ping_group_range = 0 2147483647' " +
+                "'kernel.dmesg_restrict = 0' " +
+                "'kernel.perf_event_paranoid = 1' " +
+                "'kernel.yama.ptrace_scope = 0' " +
+                "> /etc/sysctl.d/99-dev-container.conf && " +
+                "sysctl -p /etc/sysctl.d/99-dev-container.conf");
 
         // systemd-resolved (127.0.0.53) doesn't work reliably inside containers.
         // Disable it and point DNS directly at the Incus bridge gateway (dnsmasq).
@@ -186,13 +206,21 @@ public class BuildCommand implements Runnable {
         incus.shellExec(targetName, "sh", "-c",
                 "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser");
 
-        // Enable nested containers (for podman/docker inside the container)
-        incus.configSet(targetName, "security.nesting", "true");
-
         // Install common tools
         System.out.println("Installing common tools (git, gh CLI, podman)...");
-        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y", "git", "which", "procps-ng", "findutils", "podman"),
+        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y",
+                "git", "curl", "which", "procps-ng", "findutils", "podman"),
                 "Failed to install common tools");
+
+        // Rootless podman requires nested user namespaces, which need more host
+        // subordinate UIDs than typical Incus installations provide (65536 is not
+        // enough for both the container's own namespace and podman's nested one).
+        // Since the container IS the security boundary, we run podman rootful via
+        // a wrapper script. This is transparent to all callers including Testcontainers.
+        incus.shellExec(targetName, "sh", "-c",
+                "printf '#!/bin/sh\\nexec sudo /usr/bin/podman \"$@\"\\n' > /usr/local/bin/podman && " +
+                "chmod +x /usr/local/bin/podman && " +
+                "ln -sf /usr/local/bin/podman /usr/local/bin/docker");
         installGitHubCli(targetName);
         installClaudeCode(targetName);
 
@@ -255,10 +283,15 @@ public class BuildCommand implements Runnable {
 
     private void installClaudeCode(String container) {
         System.out.println("Installing Claude Code...");
-        requireSuccess(incus.shellExecInteractive(container, "dnf", "install", "-y", "nodejs", "npm"),
-                "Failed to install Node.js");
-        System.out.println("Installing Claude Code via npm...");
-        requireSuccess(incus.shellExecInteractive(container, "npm", "install", "-g", "@anthropic-ai/claude-code"),
+        // Ensure ~/.local/bin is on agentuser's PATH before installing, so the
+        // installer doesn't warn about it and claude is immediately available.
+        incus.shellExec(container, "sh", "-c",
+                "mkdir -p /home/agentuser/.local/bin && " +
+                "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
+                "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /home/agentuser/.bashrc");
+        // Install as agentuser so it lands in /home/agentuser/.local/bin
+        requireSuccess(incus.shellExecInteractive(container, "su", "-l", "agentuser", "-c",
+                "curl -fsSL https://claude.ai/install.sh | sh"),
                 "Failed to install Claude Code");
     }
 
