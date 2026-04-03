@@ -107,6 +107,9 @@ public class BuildCommand implements Runnable {
         installPackages(container, imageDef);
         installTools(container, imageDef);
 
+        // Clean up caches to minimize image size (important for CoW clones)
+        cleanCaches(targetName);
+
         // Tag with metadata
         incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(targetName, Metadata.PROFILE, targetName);
@@ -199,9 +202,7 @@ public class BuildCommand implements Runnable {
         installTools(container, imageDef);
 
         // Clean up caches to minimize image size (important for CoW clones)
-        System.out.println("Cleaning up caches...");
-        incus.shellExec(targetName, "sh", "-c",
-                "dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*");
+        cleanCaches(targetName);
 
         // Tag with metadata
         incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
@@ -243,6 +244,12 @@ public class BuildCommand implements Runnable {
             if (tool.name().equals(name)) return tool;
         }
         return null;
+    }
+
+    private void cleanCaches(String container) {
+        System.out.println("Cleaning up caches...");
+        incus.shellExec(container, "sh", "-c",
+                "dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*");
     }
 
     private void waitForNetwork(String container) {

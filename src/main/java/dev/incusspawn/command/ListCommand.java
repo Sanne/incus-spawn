@@ -679,7 +679,13 @@ public class ListCommand implements Runnable {
             buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadBuiltins().values());
         }
         int height = buildImageDefs.size() + 5; // header + options + spacer + hints + border
-        var modalArea = centerRect(screen, 50, height);
+        // " ▸ N label  (description)" — compute width from longest entry, capped at 70
+        int maxLabel = buildImageDefs.stream()
+                .mapToInt(d -> d.getName().length()
+                        + (d.getDescription().isEmpty() ? 0 : d.getDescription().length() + 4))
+                .max().orElse(30);
+        int width = Math.min(Math.max(maxLabel + 10, 40), 70);
+        var modalArea = centerRect(screen, width, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(" Build Image ")
