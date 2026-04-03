@@ -3,8 +3,30 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>dev.incusspawn</groupId>
     <artifactId>incus-spawn</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>0.0.1-SNAPSHOT</version>
     <name>incus-spawn</name>
+    <description>CLI tool for managing isolated Incus development environments</description>
+    <url>https://github.com/Sanne/incus-spawn</url>
+
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Sanne Grinovero</name>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/Sanne/incus-spawn.git</connection>
+        <developerConnection>scm:git:git@github.com:Sanne/incus-spawn.git</developerConnection>
+        <url>https://github.com/Sanne/incus-spawn</url>
+    </scm>
 
     <properties>
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
@@ -127,6 +149,12 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>release</id>
+            <properties>
+                <quarkus.package.jar.type>uber-jar</quarkus.package.jar.type>
+            </properties>
+        </profile>
         <profile>
             <id>native</id>
             <activation>

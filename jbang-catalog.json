@@ -3,7 +3,7 @@
   "templates": {},
   "aliases": {
     "incus-spawn": {
-      "script-ref": "target/quarkus-app/quarkus-run.jar",
+      "script-ref": "https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar",
       "description": "Manage isolated Incus development environments"
     }
   }

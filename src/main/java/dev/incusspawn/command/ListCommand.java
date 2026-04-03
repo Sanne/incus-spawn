@@ -84,6 +84,8 @@ public class ListCommand implements Runnable {
     private List<InstanceInfo> entries;
     private List<Row> tableRows;
     private List<InstanceInfo> rowToEntry;
+    private List<dev.incusspawn.config.ImageDef> buildImageDefs;
+    private int buildImageSelected;
 
     @Override
     public void run() {
@@ -194,7 +196,7 @@ public class ListCommand implements Runnable {
 
     private boolean handleBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isKey(KeyCode.F10) || key.isCtrlC()
-                || (key.hasCtrl() && key.isCharIgnoreCase('q'))) {
+                || key.isChar('q') || (key.hasCtrl() && key.isCharIgnoreCase('q'))) {
             tui.quit();
             return true;
         }
@@ -206,6 +208,7 @@ public class ListCommand implements Runnable {
         if (key.isKey(KeyCode.END))                      { selectLastDataRow(tableState); return true; }
 
         if (key.isKey(KeyCode.F2)) {
+            buildImageSelected = 0;
             mode = Mode.BUILD_IMAGE;
             return true;
         }
@@ -402,11 +405,31 @@ public class ListCommand implements Runnable {
             mode = Mode.BROWSE;
             return true;
         }
-        if (key.isChar('1') || key.isChar('2')) {
+        if (buildImageDefs == null) {
+            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadBuiltins().values());
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            buildImageSelected = Math.min(buildImageSelected + 1, buildImageDefs.size() - 1);
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            buildImageSelected = Math.max(buildImageSelected - 1, 0);
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
             pendingAction = PendingAction.BUILD_GOLDEN;
-            pendingActionTarget = key.isChar('1') ? "golden-java" : "golden-minimal";
+            pendingActionTarget = buildImageDefs.get(buildImageSelected).getName();
             tui.quit();
             return true;
+        }
+        if (key.code() == KeyCode.CHAR) {
+            int idx = key.character() - '1';
+            if (idx >= 0 && idx < buildImageDefs.size()) {
+                pendingAction = PendingAction.BUILD_GOLDEN;
+                pendingActionTarget = buildImageDefs.get(idx).getName();
+                tui.quit();
+                return true;
+            }
         }
         return true;
     }
@@ -652,7 +675,11 @@ public class ListCommand implements Runnable {
     }
 
     private void renderBuildImageModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var modalArea = centerRect(screen, 50, 8);
+        if (buildImageDefs == null) {
+            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadBuiltins().values());
+        }
+        int height = buildImageDefs.size() + 5; // header + options + spacer + hints + border
+        var modalArea = centerRect(screen, 50, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(" Build Image ")
@@ -661,22 +688,40 @@ public class ListCommand implements Runnable {
                 .build();
         frame.renderWidget(block, modalArea);
         var inner = block.inner(modalArea);
+
+        var constraints = new ArrayList<Constraint>();
+        constraints.add(Constraint.length(1)); // header
+        for (int i = 0; i < buildImageDefs.size(); i++) {
+            constraints.add(Constraint.length(1));
+        }
+        constraints.add(Constraint.fill()); // hints
         var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1),
-                        Constraint.length(1), Constraint.length(1), Constraint.fill())
+                .constraints(constraints.toArray(new Constraint[0]))
                 .split(inner);
+
         frame.renderWidget(Paragraph.from(Line.styled(
-                " Select a profile to build:",
+                " Select an image to build:",
                 Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(0));
-        var opt1 = new ArrayList<Span>();
-        addModalKey(opt1, "1", "golden-java      (JDK + Maven + Claude Code)");
-        frame.renderWidget(Paragraph.from(Line.from(opt1)), rows.get(1));
-        var opt2 = new ArrayList<Span>();
-        addModalKey(opt2, "2", "golden-minimal   (Claude Code only)");
-        frame.renderWidget(Paragraph.from(Line.from(opt2)), rows.get(2));
+        for (int i = 0; i < buildImageDefs.size(); i++) {
+            var def = buildImageDefs.get(i);
+            var label = def.getName();
+            if (def.getDescription() != null && !def.getDescription().isEmpty()) {
+                label += "  (" + def.getDescription() + ")";
+            }
+            var selected = (i == buildImageSelected);
+            var prefix = selected ? " \u25b8 " : "   ";
+            var style = selected
+                    ? Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG)
+                    : Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
+            frame.renderWidget(Paragraph.from(Line.from(List.of(
+                    Span.styled(prefix + (i + 1) + " ", Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG)),
+                    Span.styled(label, style)))), rows.get(i + 1));
+        }
         var hintSpans = new ArrayList<Span>();
+        addModalKey(hintSpans, "\u2191\u2193", "Select");
+        addModalKey(hintSpans, "Enter", "Confirm");
         addModalKey(hintSpans, "Esc", "Cancel");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(4));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
     }
 
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {

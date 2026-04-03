@@ -1,0 +1,7 @@
+name: golden-dev
+description: Podman, GitHub CLI, Claude Code
+parent: golden-minimal
+tools:
+  - podman
+  - gh
+  - claude

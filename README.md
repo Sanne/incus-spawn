@@ -61,7 +61,17 @@ isx
 | `r` | Restart selected instance |
 | `Up/Down`, `j/k` | Navigate |
 
-## Building
+## Installation
+
+```shell
+# Install via JBang (recommended)
+jbang app install incus-spawn@Sanne/incus-spawn
+
+# Or install directly from the latest release
+jbang app install --name incus-spawn https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar
+```
+
+## Building from source
 
 ```shell
 # JVM build
@@ -70,10 +80,26 @@ isx
 # Native build (requires GraalVM)
 ./mvnw package -Dnative
 
-# Install (JVM or native)
+# Install locally (JVM or native)
 ./install.sh            # JVM
 ./install.sh --native   # native
 ```
+
+## Releasing
+
+Releases are automated via GitHub Actions. To create a new release:
+
+```shell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+This will:
+1. Set the project version from the tag (e.g. `v0.1.0` becomes `0.1.0`)
+2. Build a self-contained uber-jar
+3. Create a GitHub Release with auto-generated release notes and the jar attached
+
+Users can then install or update via `jbang app install incus-spawn@Sanne/incus-spawn`.
 
 ## Project Configuration
 

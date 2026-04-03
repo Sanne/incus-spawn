@@ -1,0 +1,3 @@
+name: golden-minimal
+description: Base OS only
+image: images:fedora/43

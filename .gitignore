@@ -43,3 +43,8 @@ nb-configuration.xml
 /.quarkus/cli/plugins/
 # TLS Certificates
 .certs/
+
+# Build artifacts
+stderr.txt
+stdout.txt
+META-INF/

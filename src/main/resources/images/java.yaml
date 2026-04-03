@@ -1,0 +1,9 @@
+name: golden-java
+description: JDK + Maven + Claude Code
+parent: golden-dev
+packages:
+  - java-25-openjdk-devel
+  - java-25-openjdk-javadoc
+  - java-25-openjdk-src
+tools:
+  - maven-3
