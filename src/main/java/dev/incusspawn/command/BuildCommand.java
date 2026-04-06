@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
@@ -28,6 +29,9 @@ public class BuildCommand implements Runnable {
 
     @Inject
     IncusClient incus;
+
+    @Inject
+    ToolDefLoader toolDefLoader;
 
     @Inject
     Instance<ToolSetup> toolSetups;
@@ -240,6 +244,10 @@ public class BuildCommand implements Runnable {
     }
 
     private ToolSetup findTool(String name) {
+        // YAML tools (user-defined, then built-in) take priority
+        var yamlTool = toolDefLoader.find(name);
+        if (yamlTool != null) return yamlTool;
+        // Fall back to Java CDI implementations
         for (var tool : toolSetups) {
             if (tool.name().equals(name)) return tool;
         }
