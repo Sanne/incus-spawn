@@ -2,7 +2,7 @@
 
 Isolated Linux environments that behave like bare-metal machines, not stripped-down application containers.
 
-Unlike Docker/Podman containers, which package a single application with a minimal filesystem, incus-spawn creates full **system containers** powered by [Incus](https://linuxcontainers.org/incus/). Each environment runs its own init system, has real networking with working `ping`, `traceroute`, and `strace`, can run nested containers (Podman/Docker inside), and supports GUI applications via Wayland passthrough. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
+Unlike Docker/Podman containers, which package a single application with a minimal filesystem, incus-spawn creates full **system containers** powered by [Incus](https://linuxcontainers.org/incus/). Each environment runs its own init system, has real networking with working `ping`, `traceroute`, and `strace`, can run nested containers (Podman/Docker inside), and supports GUI and audio passthrough via Wayland. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
 
 **Primary use cases:**
 - Running untrusted AI agents (Claude Code, etc.) in isolated environments with pre-configured auth
@@ -27,17 +27,24 @@ isx build golden-java
 isx
 ```
 
-## Golden Image Hierarchy
+## Branching
 
-Images are defined in YAML and layered via copy-on-write:
+Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications.
 
 ```
-golden-minimal   (Base OS only)
-  └── golden-dev   (Podman, GitHub CLI, Claude Code)
-        └── golden-java  (JDK + Maven)
+golden-java  (stopped template, ~2GB)
+  ├── fix-nasty-bug    (running, uses ~50MB extra)
+  ├── review-pr-423    (running, uses ~30MB extra)
+  └── experiment       (stopped, uses ~10MB extra)
 ```
 
-Each image definition specifies packages and tools:
+You can install packages, break things, and destroy a branch when done. The golden image and other branches are completely unaffected.
+
+Branches can optionally enable GUI/audio passthrough (Wayland), network airgapping for analyzing untrusted code, or an inbox mount to share files read-only from the host.
+
+## Golden Images
+
+Golden images are reusable templates defined in YAML. They can inherit from each other -- building an image automatically builds any missing parents:
 
 ```yaml
 # images/java.yaml
@@ -79,11 +86,12 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 
 ## Features
 
+- **Instant branching**: copy-on-write clones that share storage with the parent image
 - **System containers**: full init, real networking, bare-metal-like developer experience
 - **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel
-- **Copy-on-write clones**: efficient disk usage with btrfs/zfs/lvm backends
 - **Interactive TUI**: Midnight Commander-style interface for managing environments
-- **Wayland passthrough**: GUI apps with GPU acceleration
+- **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
+- **Inbox mount**: share a host directory read-only into the container
 - **Network airgapping**: isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
 - **Claude Code integration**: pre-configured AI agent auth (Vertex AI or API key)

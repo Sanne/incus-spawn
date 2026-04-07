@@ -2,11 +2,26 @@
 
 A CLI tool for managing isolated Incus-based development environments. System containers that behave like bare-metal Linux machines, designed for safely running untrusted AI agents and external reproducers in OSS projects.
 
+## Why not Docker?
+
+Docker and Podman are **application containers**: they isolate a single process with a minimal filesystem, no init system, and restricted networking. This is ideal for deploying microservices but poor for development environments where you need:
+
+- A real init system (systemd) for services like podman socket, sshd, or dbus
+- Full networking: `ping`, `traceroute`, `tcpdump`, DNS resolution that works like a real machine
+- Nested containers: running Podman/Docker inside the environment (Testcontainers, CI pipelines)
+- Debugging tools: `strace`, `perf`, `gdb` — all require capabilities or sysctls that Docker strips
+- GUI applications via Wayland passthrough with GPU acceleration, and audio via PipeWire
+
+Incus **system containers** run a full Linux userspace with their own init, networking stack, and process tree. They share the host kernel (like Docker) but present as a complete machine rather than a process jail. For stronger isolation, Incus also supports KVM virtual machines with a separate kernel, at the cost of a modest performance overhead.
+
+The tradeoff: system containers are heavier than application containers (~200MB base vs ~5MB Alpine). This is acceptable for development environments that persist for hours or days, and copy-on-write storage means clones are cheap regardless of base image size.
+
 ## Goals
 
 - **Secure by default**: isolated environments that prevent untrusted code from accessing host credentials or resources
-- **Bare-metal experience**: containers with full init, real networking, working developer tools (ping, strace, nested containers)
+- **Bare-metal experience**: containers with full init, real networking, working developer tools — developers shouldn't notice they're inside a container
 - **Extensible without Java**: image definitions and tool installations defined in YAML; Java only needed for tools requiring programmatic logic
+- **Ephemeral and cheap**: copy-on-write clones mean spinning up a new environment costs seconds and minimal disk space
 - **Familiar**: CLI patterns inspired by git workflows (branch-name-style naming, auto-detection from cwd)
 
 ## Tech Stack
@@ -103,11 +118,13 @@ Execution order: packages → run → run_as_user → files → env → verify.
 
 ### Branching
 
-Base images can be branched to create independent copies. The branch modal supports:
+Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparently at the block level, so branches are instant to create and only consume disk space for their own modifications.
+
+The TUI branch modal supports:
 - Custom name
-- GUI passthrough (Wayland + GPU)
+- GUI and audio passthrough (Wayland + PipeWire + GPU)
 - Network airgapping
-- Inbox mount (read-only host directory)
+- Inbox mount (read-only host directory for sharing files into the container)
 - VM resource limits (CPU, memory, disk)
 
 ### Resource Limits (Adaptive)
@@ -132,12 +149,12 @@ Overridable via TUI branch modal (for VMs, all three fields are shown).
 
 **DNS**: systemd-resolved disabled, `/etc/resolv.conf` points at Incus bridge gateway (`incusbr0`), immutable via `chattr +i`.
 
-### Wayland Passthrough
+### GUI and Audio Passthrough
 
-Enables GUI applications inside containers:
+Enables GUI applications and audio inside containers:
 - GPU device passed through for hardware-accelerated rendering
-- Host `XDG_RUNTIME_DIR` bind-mounted for Wayland socket access
-- Environment variables written to `/etc/profile.d/wayland.sh`
+- Host `XDG_RUNTIME_DIR` bind-mounted, exposing the Wayland socket and PipeWire/PulseAudio socket
+- Environment variables written to `/etc/profile.d/wayland.sh` (`WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, toolkit backends)
 
 ### Network Airgapping
 
@@ -186,17 +203,41 @@ Clone efficiency depends on the Incus storage backend:
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `GoldenImageBuildIT` — builds actual images, verifies metadata and agentuser
 
+## Technical Tradeoffs
+
+### System containers vs application containers
+System containers run a full init system and present as a complete machine. This means higher base image size (~200MB vs ~5MB Alpine) and longer first-build time (system upgrade, user creation, tool installation). However, clones are instant and near-zero cost with CoW storage, which is the common operation — you build once, branch many times.
+
+### No capability dropping (`lxc.cap.drop =`)
+Standard Incus containers drop many Linux capabilities for defense-in-depth. We don't, because the container *is* the security boundary and developers expect `ping`, `strace`, `perf`, raw sockets, and `dmesg` to work. The risk is that a container escape exploit has more host capabilities to abuse. For untrusted code where this matters, use `--vm` for KVM isolation with a separate kernel.
+
+### YAML tools vs a full plugin system (Packer, Ansible, etc.)
+We evaluated Packer (null builder + shell provisioner) and Ansible but rejected both. Packer's null builder is just indirection over what Java already does, and Ansible adds a Python dependency and playbook complexity for what amounts to "install some packages and run some scripts." YAML tool definitions give 90% of the flexibility with zero dependencies. Java `ToolSetup` implementations remain available as an escape hatch for tools that need programmatic logic (reading host config, conditional branching).
+
+### Hardcoded built-in tool list vs classpath scanning
+Built-in YAML tools are loaded from a hardcoded list of filenames rather than scanning the classpath. This is a deliberate choice: Quarkus native image compilation makes classpath directory listing unreliable, and the list only changes when a developer adds a built-in tool (at which point they also update the loader). User-defined tools in `.incus-spawn/tools/` are discovered via filesystem scanning.
+
+### DNS: static resolv.conf vs systemd-resolved
+systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration. We disable it, point `/etc/resolv.conf` directly at the Incus bridge gateway (which runs dnsmasq), and make the file immutable with `chattr +i`. This is less flexible than systemd-resolved (no per-link DNS, no DNSSEC validation) but works reliably across container restarts and network changes.
+
+### Credential forwarding vs auth proxy
+Credentials (API keys, tokens) are currently injected as environment variables inside the container. This means the container has direct access to the credentials, which is a known limitation. The planned upgrade is a host-side HTTP proxy that injects auth headers, so the container never sees the raw credentials. The current approach is simpler to implement and sufficient for the semi-trusted agent use case.
+
+### Fedora-specific
+The base image and package management are Fedora-specific (`dnf`, `images:fedora/43`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
+
 ## Security Considerations
 
 ### Container vs VM Trade-off
-- **Containers** (default): share host kernel. A kernel exploit could escape. Suitable for semi-trusted code.
-- **VMs** (`--vm` flag): hardware-level isolation via KVM. Recommended for actively malicious code. Modest performance overhead.
+- **Containers** (default): share host kernel. A kernel exploit could escape. Suitable for semi-trusted code (AI agents with scoped permissions, community bug reproducers).
+- **VMs** (`--vm` flag): hardware-level isolation via KVM. Recommended for actively malicious code. Separate kernel eliminates kernel exploit as an escape vector. ~10% performance overhead.
 
 ### Credential Isolation
-- Credentials forwarded as environment variables (v1)
+- Credentials forwarded as environment variables (v1) — container can read them
 - Upgrade path: host-side proxy that injects credentials, container never sees them
+- Gcloud credentials mounted read-only (not copied) when using Vertex AI
 
 ### Filesystem Isolation
 - Inbox mount is strictly read-only
 - No host filesystem access beyond the inbox and auth credential mounts
-- Clone filesystems are independent CoW copies
+- Clone filesystems are independent CoW copies — changes in one clone don't affect others or the golden image
