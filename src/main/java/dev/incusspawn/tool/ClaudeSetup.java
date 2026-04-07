@@ -73,6 +73,10 @@ public class ClaudeSetup implements ToolSetup {
     private void configureAuth(Container c) {
         var config = SpawnConfig.load();
 
+        if (!config.getClaude().isUseVertex() && config.getClaude().getApiKey().isBlank()) {
+            System.err.println("  Warning: no Claude credentials configured. Run 'isx init' to set up authentication.");
+        }
+
         if (config.getClaude().isUseVertex()) {
             c.appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
             if (!config.getClaude().getCloudMlRegion().isBlank()) {
