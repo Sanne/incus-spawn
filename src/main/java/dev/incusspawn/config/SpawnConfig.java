@@ -24,9 +24,9 @@ public class SpawnConfig {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
         private boolean useVertex;
-        private String cloudMlRegion;
-        private String vertexProjectId;
-        private String apiKey;
+        private String cloudMlRegion = "";
+        private String vertexProjectId = "";
+        private String apiKey = "";
 
         public boolean isUseVertex() { return useVertex; }
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
@@ -40,7 +40,7 @@ public class SpawnConfig {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class GitHubConfig {
-        private String token;
+        private String token = "";
 
         public String getToken() { return token; }
         public void setToken(String token) { this.token = token; }

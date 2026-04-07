@@ -18,7 +18,7 @@ public class GhSetup implements ToolSetup {
         c.dnfInstall("Failed to install GitHub CLI", "gh");
 
         var config = SpawnConfig.load();
-        if (config.getGithub().getToken() != null && !config.getGithub().getToken().isBlank()) {
+        if (!config.getGithub().getToken().isBlank()) {
             c.appendToProfile("export GH_TOKEN=" + config.getGithub().getToken());
         }
     }

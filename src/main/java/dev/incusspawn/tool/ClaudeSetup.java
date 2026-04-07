@@ -81,7 +81,7 @@ public class ClaudeSetup implements ToolSetup {
             if (!config.getClaude().getVertexProjectId().isBlank()) {
                 c.appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + config.getClaude().getVertexProjectId());
             }
-        } else if (config.getClaude().getApiKey() != null && !config.getClaude().getApiKey().isBlank()) {
+        } else if (!config.getClaude().getApiKey().isBlank()) {
             c.appendToProfile("export ANTHROPIC_API_KEY=" + config.getClaude().getApiKey());
         }
     }
