@@ -1,64 +1,106 @@
 # incus-spawn
 
-A CLI tool for managing isolated [Incus](https://linuxcontainers.org/incus/) development environments, designed for safely running untrusted AI agents and external reproducers in OSS projects.
+Isolated Linux environments that behave like bare-metal machines, not stripped-down application containers.
 
-Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/) (a ratatui-inspired Java TUI framework).
+Unlike Docker/Podman containers, which package a single application with a minimal filesystem, incus-spawn creates full **system containers** powered by [Incus](https://linuxcontainers.org/incus/). Each environment runs its own init system, has real networking with working `ping`, `traceroute`, and `strace`, can run nested containers (Podman/Docker inside), and supports GUI applications via Wayland passthrough. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
+
+**Primary use cases:**
+- Running untrusted AI agents (Claude Code, etc.) in isolated environments with pre-configured auth
+- Reproducing bug reports from external contributors without risking your host
+- Creating reproducible development environments with pre-cloned repos and cached dependencies
+
+Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ## Quick Start
 
 ```shell
-# Build and install
-./install.sh          # installs as 'isx' to ~/.local/bin
+# Install via JBang
+jbang app install incus-spawn@Sanne/incus-spawn
 
-# One-time host setup
+# One-time host setup (Incus, firewall, auth)
 isx init
 
-# Build a base golden image
+# Build a golden image (builds parent images automatically)
 isx build golden-java
 
 # Launch the interactive TUI
 isx
 ```
 
+## Golden Image Hierarchy
+
+Images are defined in YAML and layered via copy-on-write:
+
+```
+golden-minimal   (Base OS only)
+  └── golden-dev   (Podman, GitHub CLI, Claude Code)
+        └── golden-java  (JDK + Maven)
+```
+
+Each image definition specifies packages and tools:
+
+```yaml
+# images/java.yaml
+name: golden-java
+description: JDK + Maven + Claude Code
+parent: golden-dev
+packages:
+  - java-25-openjdk-devel
+  - java-25-openjdk-javadoc
+  - java-25-openjdk-src
+tools:
+  - maven-3
+```
+
+## Custom Tools
+
+Tools can be defined as YAML files without writing Java:
+
+```yaml
+# .incus-spawn/tools/node.yaml
+name: node
+description: Node.js LTS
+run:
+  - |
+    curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
+    dnf install -y nodejs
+verify: node --version
+```
+
+Tool schema fields (all optional except `name`):
+- `packages` -- dnf packages to install
+- `run` -- shell commands as root
+- `run_as_user` -- shell commands as agentuser
+- `files` -- files to write (with optional `owner`)
+- `env` -- lines appended to agentuser's `.bashrc`
+- `verify` -- verification command (logged, non-fatal)
+
+Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java plugins.
+
 ## Features
 
-- **Golden image layering**: base images, project images, and ephemeral clones (like Docker image inheritance)
-- **Copy-on-write clones**: efficient disk usage with btrfs/zfs/lvm storage backends
+- **System containers**: full init, real networking, bare-metal-like developer experience
+- **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel
+- **Copy-on-write clones**: efficient disk usage with btrfs/zfs/lvm backends
 - **Interactive TUI**: Midnight Commander-style interface for managing environments
-- **Container and VM support**: lightweight system containers by default, KVM VMs (`--vm`) for stronger isolation
-- **Wayland passthrough**: run GUI apps inside containers with GPU acceleration
-- **Network airgapping**: isolate containers from the network for analyzing untrusted code
-- **Adaptive resource limits**: CPU, memory, and disk limits auto-detected from host resources
+- **Wayland passthrough**: GUI apps with GPU acceleration
+- **Network airgapping**: isolate environments from the network
+- **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
 - **Claude Code integration**: pre-configured AI agent auth (Vertex AI or API key)
 - **GitHub integration**: fine-grained PAT setup for safe agent access
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `isx init` | One-time host setup (Incus, auth, storage) |
-| `isx build <name>` | Build a base golden image (`--vm` for KVM) |
-| `isx project create <name>` | Create a project golden image from `incus-spawn.yaml` |
-| `isx project update <name>` | Update a project golden image |
-| `isx update-all` | Update all golden images |
-| `isx create <name>` | Spawn a clone from a golden image |
-| `isx shell <name>` | Open a shell in an existing clone |
-| `isx list` | Interactive TUI (also the default when running `isx`) |
-| `isx destroy <name>` | Destroy a clone |
-| `isx branch <src> <dst>` | Create an independent branch from a base image |
 
 ## TUI Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit |
-| `Enter` | Shell into selected instance |
-| `c` | Clone selected image |
-| `b` | Branch selected base image |
-| `d` | Destroy selected instance |
-| `n` | Rename selected instance |
-| `s` | Stop selected instance |
-| `r` | Restart selected instance |
+| `F2` | Build a golden image |
+| `F3` / `Enter` | Shell into selected instance |
+| `F4` | Branch from selected image |
+| `F5` | Rename selected instance |
+| `F6` | Stop selected instance |
+| `F7` | Restart selected instance |
+| `F8` | Destroy selected instance |
+| `F10` / `q` | Quit |
 | `Up/Down`, `j/k` | Navigate |
 
 ## Installation
@@ -74,15 +116,16 @@ jbang app install --name incus-spawn https://github.com/Sanne/incus-spawn/releas
 ## Building from source
 
 ```shell
-# JVM build
-./mvnw package
+# Build
+mvn package
 
-# Native build (requires GraalVM)
-./mvnw package -Dnative
+# Run tests
+mvn test                        # unit tests (no Incus needed)
+mvn verify -DskipITs=false      # integration tests (requires Incus)
 
-# Install locally (JVM or native)
+# Install locally
 ./install.sh            # JVM
-./install.sh --native   # native
+./install.sh --native   # native (requires GraalVM)
 ```
 
 ## Releasing
@@ -101,20 +144,7 @@ This will:
 
 Users can then install or update via `jbang app install incus-spawn@Sanne/incus-spawn`.
 
-## Project Configuration
-
-Place `incus-spawn.yaml` in your project repo root:
-
-```yaml
-name: golden-myproject
-parent: golden-java
-repos:
-  - https://github.com/org/service-a.git
-  - https://github.com/org/service-b.git
-pre_build: "cd service-a && mvn dependency:go-offline"
-```
-
 ## Configuration
 
-- `~/.config/incus-spawn/` — auth credentials and global settings
-- `incus-spawn.yaml` — per-project configuration (version-controlled)
+- `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings
+- `.incus-spawn/tools/*.yaml` -- project-local tool definitions
