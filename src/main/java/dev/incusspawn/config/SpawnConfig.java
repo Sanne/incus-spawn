@@ -55,6 +55,44 @@ public class SpawnConfig {
         return CONFIG_DIR;
     }
 
+    /**
+     * Check whether the given image (or any unbuilt ancestor) requires auth credentials
+     * that have not been configured. Returns a non-empty error message if credentials
+     * are missing, or empty string if everything is configured.
+     *
+     * @param imageDef the image to check
+     * @param allDefs  all known image definitions (for parent resolution)
+     * @param existsCheck  predicate to test whether an image already exists (skip parent check if built)
+     */
+    public static String checkCredentials(ImageDef imageDef, java.util.Map<String, ImageDef> allDefs,
+                                           java.util.function.Predicate<String> existsCheck) {
+        var config = load();
+        var missing = new java.util.ArrayList<String>();
+
+        // Collect tools from this image and any unbuilt ancestors
+        var tools = new java.util.HashSet<String>();
+        var current = imageDef;
+        while (current != null) {
+            tools.addAll(current.getTools());
+            if (current.isRoot() || existsCheck.test(current.getParent())) break;
+            current = allDefs.get(current.getParent());
+        }
+
+        if (tools.contains("claude")) {
+            if (!config.getClaude().isUseVertex() && config.getClaude().getApiKey().isBlank()) {
+                missing.add("Claude API key (or Vertex AI)");
+            }
+        }
+        if (tools.contains("gh")) {
+            if (config.getGithub().getToken().isBlank()) {
+                missing.add("GitHub token");
+            }
+        }
+
+        if (missing.isEmpty()) return "";
+        return "Missing credentials: " + String.join(", ", missing) + ". Run 'isx init' to configure.";
+    }
+
     public static SpawnConfig load() {
         if (!Files.exists(CONFIG_FILE)) {
             return new SpawnConfig();

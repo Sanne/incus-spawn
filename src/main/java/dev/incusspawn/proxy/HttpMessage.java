@@ -1,0 +1,299 @@
+package dev.incusspawn.proxy;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Minimal HTTP/1.1 request parser and serializer for the MITM proxy.
+ * <p>
+ * Handles reading request lines and headers, injecting/replacing headers,
+ * and relaying request/response bodies with proper Content-Length and
+ * chunked transfer encoding support. SSE streaming responses are relayed
+ * with immediate flushing.
+ */
+public class HttpMessage {
+
+    private String requestLine;
+    private final Map<String, List<String>> headers = new LinkedHashMap<>();
+
+    private HttpMessage() {}
+
+    /**
+     * Read an HTTP/1.1 request line and headers from the stream.
+     * Does NOT read the body — call {@link #relayRequestBody} for that.
+     *
+     * @return the parsed message, or null if the stream is closed
+     */
+    public static HttpMessage readRequest(InputStream in) throws IOException {
+        var msg = new HttpMessage();
+        msg.requestLine = readLine(in);
+        if (msg.requestLine == null || msg.requestLine.isEmpty()) {
+            return null;
+        }
+
+        String line;
+        while ((line = readLine(in)) != null && !line.isEmpty()) {
+            var colon = line.indexOf(':');
+            if (colon < 0) continue;
+            var name = line.substring(0, colon).trim();
+            var value = line.substring(colon + 1).trim();
+            msg.headers.computeIfAbsent(name, k -> new ArrayList<>()).add(value);
+        }
+
+        return msg;
+    }
+
+    public String requestLine() {
+        return requestLine;
+    }
+
+    /**
+     * Get the first value for a header (case-insensitive lookup).
+     */
+    public String header(String name) {
+        for (var entry : headers.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(name)) {
+                var values = entry.getValue();
+                return values.isEmpty() ? null : values.get(0);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Set a header, replacing any existing values (case-insensitive match).
+     */
+    public void setHeader(String name, String value) {
+        // Remove any existing header with the same name (case-insensitive)
+        headers.entrySet().removeIf(e -> e.getKey().equalsIgnoreCase(name));
+        var list = new ArrayList<String>();
+        list.add(value);
+        headers.put(name, list);
+    }
+
+    /**
+     * Remove a header (case-insensitive match).
+     */
+    public void removeHeader(String name) {
+        headers.entrySet().removeIf(e -> e.getKey().equalsIgnoreCase(name));
+    }
+
+    /**
+     * Extract the HTTP method from the request line (e.g. "GET", "POST").
+     */
+    public String method() {
+        if (requestLine == null) return null;
+        var space = requestLine.indexOf(' ');
+        return space > 0 ? requestLine.substring(0, space) : requestLine;
+    }
+
+    /**
+     * Extract the Host header value, stripping any port suffix.
+     */
+    public String host() {
+        var h = header("Host");
+        if (h == null) return null;
+        // Strip port (e.g. "api.github.com:443" -> "api.github.com")
+        var colon = h.indexOf(':');
+        return colon > 0 ? h.substring(0, colon) : h;
+    }
+
+    /**
+     * Write the request line and headers to the output stream.
+     * Does NOT write the body.
+     */
+    public void writeTo(OutputStream out) throws IOException {
+        write(out, requestLine + "\r\n");
+        for (var entry : headers.entrySet()) {
+            for (var value : entry.getValue()) {
+                write(out, entry.getKey() + ": " + value + "\r\n");
+            }
+        }
+        write(out, "\r\n");
+        out.flush();
+    }
+
+    /**
+     * Relay the request body from client to upstream based on Content-Length
+     * or chunked transfer encoding.
+     */
+    public void relayRequestBody(InputStream clientIn, OutputStream upstreamOut) throws IOException {
+        var contentLength = header("Content-Length");
+        var transferEncoding = header("Transfer-Encoding");
+
+        if (contentLength != null) {
+            relayFixedLength(clientIn, upstreamOut, Long.parseLong(contentLength.trim()));
+        } else if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
+            relayChunked(clientIn, upstreamOut);
+        }
+        // No body (GET, HEAD, etc.) — nothing to relay
+    }
+
+    /**
+     * Read the full request body into a byte array based on Content-Length.
+     * Used when the proxy needs to inspect the body (e.g. to extract the model
+     * name for Vertex AI translation).
+     *
+     * @return the body bytes, or empty array if no body
+     */
+    public byte[] readRequestBody(InputStream clientIn) throws IOException {
+        var contentLength = header("Content-Length");
+        if (contentLength == null) return new byte[0];
+
+        int length = Integer.parseInt(contentLength.trim());
+        var body = new byte[length];
+        int offset = 0;
+        while (offset < length) {
+            int n = clientIn.read(body, offset, length - offset);
+            if (n == -1) break;
+            offset += n;
+        }
+        return body;
+    }
+
+    /**
+     * Replace the request line path component.
+     * E.g. "POST /v1/messages HTTP/1.1" -> "POST /new/path HTTP/1.1"
+     */
+    public void setPath(String newPath) {
+        if (requestLine == null) return;
+        var firstSpace = requestLine.indexOf(' ');
+        var lastSpace = requestLine.lastIndexOf(' ');
+        if (firstSpace > 0 && lastSpace > firstSpace) {
+            requestLine = requestLine.substring(0, firstSpace + 1) + newPath +
+                    requestLine.substring(lastSpace);
+        }
+    }
+
+    /**
+     * Read the full HTTP response (status line + headers + body) from upstream
+     * and relay it to the client, preserving streaming behavior.
+     */
+    public static void relayResponse(InputStream upstreamIn, OutputStream clientOut) throws IOException {
+        // Read and forward status line
+        var statusLine = readLine(upstreamIn);
+        if (statusLine == null) return;
+        write(clientOut, statusLine + "\r\n");
+
+        // Read and forward headers, capturing Content-Length and Transfer-Encoding
+        String contentLength = null;
+        String transferEncoding = null;
+        String line;
+        while ((line = readLine(upstreamIn)) != null) {
+            write(clientOut, line + "\r\n");
+            if (line.isEmpty()) break;
+
+            var colon = line.indexOf(':');
+            if (colon > 0) {
+                var name = line.substring(0, colon).trim();
+                var value = line.substring(colon + 1).trim();
+                if (name.equalsIgnoreCase("Content-Length")) {
+                    contentLength = value;
+                } else if (name.equalsIgnoreCase("Transfer-Encoding")) {
+                    transferEncoding = value;
+                }
+            }
+        }
+        clientOut.flush();
+
+        // Relay body
+        if (contentLength != null) {
+            relayFixedLength(upstreamIn, clientOut, Long.parseLong(contentLength.trim()));
+        } else if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
+            relayChunked(upstreamIn, clientOut);
+        } else {
+            // No Content-Length and not chunked — relay until EOF (connection close).
+            // This handles SSE and other streaming responses.
+            relayUntilEof(upstreamIn, clientOut);
+        }
+    }
+
+    // --- Relay helpers ---
+
+    private static void relayFixedLength(InputStream in, OutputStream out, long length) throws IOException {
+        var buffer = new byte[8192];
+        long remaining = length;
+        while (remaining > 0) {
+            int toRead = (int) Math.min(buffer.length, remaining);
+            int n = in.read(buffer, 0, toRead);
+            if (n == -1) break;
+            out.write(buffer, 0, n);
+            out.flush();
+            remaining -= n;
+        }
+    }
+
+    private static void relayChunked(InputStream in, OutputStream out) throws IOException {
+        // Relay raw chunked encoding: read and forward chunk headers + data
+        while (true) {
+            var chunkHeader = readLine(in);
+            if (chunkHeader == null) break;
+            write(out, chunkHeader + "\r\n");
+            out.flush();
+
+            int chunkSize;
+            try {
+                chunkSize = Integer.parseInt(chunkHeader.trim().split(";")[0], 16);
+            } catch (NumberFormatException e) {
+                break;
+            }
+
+            if (chunkSize == 0) {
+                // Terminal chunk — read and forward trailing CRLF
+                var trailer = readLine(in);
+                if (trailer != null) {
+                    write(out, trailer + "\r\n");
+                }
+                out.flush();
+                break;
+            }
+
+            // Relay chunk data
+            relayFixedLength(in, out, chunkSize);
+            // Read trailing CRLF after chunk data
+            var crlf = readLine(in);
+            if (crlf != null) {
+                write(out, crlf + "\r\n");
+            }
+            out.flush();
+        }
+    }
+
+    static void relayUntilEof(InputStream in, OutputStream out) throws IOException {
+        var buffer = new byte[8192];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out.write(buffer, 0, n);
+            out.flush();
+        }
+    }
+
+    // --- Low-level I/O ---
+
+    private static String readLine(InputStream in) throws IOException {
+        var sb = new StringBuilder();
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\r') {
+                int next = in.read();
+                if (next == '\n') break;
+                sb.append((char) c);
+                if (next != -1) sb.append((char) next);
+            } else if (c == '\n') {
+                break;
+            } else {
+                sb.append((char) c);
+            }
+        }
+        return sb.isEmpty() && c == -1 ? null : sb.toString();
+    }
+
+    private static void write(OutputStream out, String s) throws IOException {
+        out.write(s.getBytes());
+    }
+}

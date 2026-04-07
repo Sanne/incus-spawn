@@ -1,9 +1,11 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.proxy.MitmProxy;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -27,8 +29,11 @@ public class BranchCommand implements Runnable {
     @Option(names = "--gui", description = "Enable GUI passthrough (Wayland + GPU + audio)")
     boolean gui;
 
-    @Option(names = "--airgap", description = "Disable network access")
+    @Option(names = "--airgap", description = "Disable network access (complete isolation)")
     boolean airgap;
+
+    @Option(names = "--proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)")
+    boolean proxyOnly;
 
     @Option(names = "--inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
@@ -71,9 +76,8 @@ public class BranchCommand implements Runnable {
         incus.configSet(name, "limits.memory", memory);
         incus.exec("config", "device", "set", name, "root", "size=" + disk);
 
-        if (airgap) {
-            configureAirgap();
-        }
+        var networkMode = resolveNetworkMode();
+        configureNetwork(networkMode);
 
         // Tag with metadata
         incus.configSet(name, Metadata.PARENT, resolvedSource);
@@ -86,6 +90,13 @@ public class BranchCommand implements Runnable {
 
         incus.start(name);
         waitForReady(name);
+
+        // Auth is handled transparently by the host MITM proxy — no container-side
+        // configuration needed. DNS overrides and CA cert are baked into golden images.
+
+        if (networkMode == NetworkMode.PROXY_ONLY) {
+            applyProxyOnlyFirewall(name);
+        }
 
         if (gui) {
             configureGui();
@@ -100,19 +111,6 @@ public class BranchCommand implements Runnable {
                         "readonly=true");
             } else {
                 System.err.println("Warning: inbox path '" + inbox + "' is not a directory, skipping.");
-            }
-        }
-
-        // Mount gcloud credentials for Vertex AI auth
-        var config = dev.incusspawn.config.SpawnConfig.load();
-        if (config.getClaude().isUseVertex()) {
-            var gcloudDir = java.nio.file.Path.of(System.getProperty("user.home"), ".config", "gcloud");
-            if (java.nio.file.Files.isDirectory(gcloudDir)) {
-                System.out.println("Mounting gcloud credentials (read-only) for Vertex AI auth...");
-                incus.deviceAdd(name, "gcloud", "disk",
-                        "source=" + gcloudDir.toAbsolutePath(),
-                        "path=/home/agentuser/.config/gcloud",
-                        "readonly=true");
             }
         }
 
@@ -181,6 +179,24 @@ public class BranchCommand implements Runnable {
                 "chmod 644 /etc/profile.d/wayland.sh");
     }
 
+    private NetworkMode resolveNetworkMode() {
+        if (airgap && proxyOnly) {
+            System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
+            System.exit(1);
+        }
+        if (airgap) return NetworkMode.AIRGAP;
+        if (proxyOnly) return NetworkMode.PROXY_ONLY;
+        return NetworkMode.FULL;
+    }
+
+    private void configureNetwork(NetworkMode mode) {
+        switch (mode) {
+            case FULL -> {} // Default: keep on incusbr0, no restrictions
+            case PROXY_ONLY -> configureProxyOnly();
+            case AIRGAP -> configureAirgap();
+        }
+    }
+
     private void configureAirgap() {
         System.out.println("Enabling network airgap...");
         var result = incus.exec("network", "detach", "incusbr0", name);
@@ -188,6 +204,55 @@ public class BranchCommand implements Runnable {
             incus.exec("config", "device", "override", name, "eth0");
             incus.exec("config", "device", "remove", name, "eth0");
         }
+    }
+
+    private void configureProxyOnly() {
+        System.out.println("Configuring proxy-only network...");
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+
+        incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
+        incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
+    }
+
+    /**
+     * Apply iptables rules inside the container to restrict outbound traffic to only
+     * the host MITM proxy and DNS. Called after the container is started.
+     */
+    static void applyProxyOnlyFirewall(IncusClient incus, String name) {
+        var gatewayIp = incus.configGet(name, Metadata.PROXY_GATEWAY);
+        if (gatewayIp.isEmpty()) {
+            System.err.println("Warning: no proxy gateway configured, skipping firewall rules.");
+            return;
+        }
+
+        var mitmPort = MitmProxy.DEFAULT_MITM_PORT;
+        var healthPort = MitmProxy.DEFAULT_HEALTH_PORT;
+
+        System.out.println("Applying proxy-only firewall rules...");
+
+        // Allow loopback
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT");
+        // Allow established/related connections
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-m", "conntrack",
+                "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT");
+        // Allow MITM TLS proxy (port 443)
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "tcp", "--dport", String.valueOf(mitmPort), "-j", "ACCEPT");
+        // Allow health check endpoint
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "tcp", "--dport", String.valueOf(healthPort), "-j", "ACCEPT");
+        // Allow DNS to gateway
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "udp", "--dport", "53", "-j", "ACCEPT");
+        // Drop everything else
+        incus.shellExec(name, "iptables", "-P", "OUTPUT", "DROP");
+
+        System.out.println("  Outbound traffic restricted to " + gatewayIp +
+                " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
+    }
+
+    private void applyProxyOnlyFirewall(String name) {
+        applyProxyOnlyFirewall(incus, name);
     }
 
     private static String getUid() {

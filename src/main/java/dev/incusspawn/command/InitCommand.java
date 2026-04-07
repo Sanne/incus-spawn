@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.proxy.CertificateAuthority;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 
@@ -26,15 +27,19 @@ public class InitCommand implements Runnable {
         configureSubuidSubgid();
         initializeIncus();
         configureFirewall();
+        configureMitmProxy();
         setupClaudeAuth();
         setupGitHubAuth();
 
         System.out.println("\n=== Init complete! ===");
-        System.out.println("Next: run 'incus-spawn build golden-base' or 'incus-spawn build golden-java' to create a base image.");
+        System.out.println("Next steps:");
+        System.out.println("  1. Build a golden image:  isx build golden-java");
+        System.out.println("  2. Start the auth proxy:  isx proxy");
+        System.out.println("  3. Launch the TUI:        isx");
     }
 
     private void checkIncusInstalled() {
-        System.out.println("[1/6] Checking Incus installation...");
+        System.out.println("[1/7] Checking Incus installation...");
         var result = runHost("which", "incus");
         if (result != 0) {
             System.out.println("  Incus is not installed on this system.");
@@ -94,7 +99,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureFirewall() {
-        System.out.println("[4/6] Configuring firewall for Incus bridge...");
+        System.out.println("[4/7] Configuring firewall for Incus bridge...");
 
         // Check if firewalld is available
         var fwCheck = runHost("which", "firewall-cmd");
@@ -161,8 +166,30 @@ public class InitCommand implements Runnable {
         System.out.println("  Firewall rules applied (persistent via firewalld).");
     }
 
+    private void configureMitmProxy() {
+        System.out.println("[5/7] Configuring MITM authentication proxy...");
+
+        // Allow non-root processes to bind to port 443 (needed by isx proxy).
+        // This is a harmless sysctl on a developer workstation.
+        System.out.println("  Configuring sysctl to allow binding to port 443...");
+        var sysctlResult = runHost("sudo", "sh", "-c",
+                "echo 'net.ipv4.ip_unprivileged_port_start=443' > /etc/sysctl.d/99-incus-spawn.conf && " +
+                "sysctl -p /etc/sysctl.d/99-incus-spawn.conf");
+        if (sysctlResult != 0) {
+            System.err.println("  Warning: failed to configure sysctl. You may need to run 'isx proxy' with elevated privileges.");
+        }
+
+        // Generate CA certificate if it doesn't exist
+        if (CertificateAuthority.exists()) {
+            System.out.println("  MITM CA certificate already exists.");
+        } else {
+            CertificateAuthority.loadOrCreate();
+        }
+        System.out.println("  MITM proxy configured.");
+    }
+
     private void configureSubuidSubgid() {
-        System.out.println("[2/6] Configuring subuid/subgid mappings...");
+        System.out.println("[2/7] Configuring subuid/subgid mappings...");
         boolean changed = false;
         try {
             var subuid = java.nio.file.Files.readString(java.nio.file.Path.of("/etc/subuid"));
@@ -185,7 +212,7 @@ public class InitCommand implements Runnable {
     }
 
     private void initializeIncus() {
-        System.out.println("[3/6] Initializing Incus (storage pool, network bridge)...");
+        System.out.println("[3/7] Initializing Incus (storage pool, network bridge)...");
 
         // Check if we can talk to the Incus daemon
         var canConnect = incus.exec("version");
@@ -249,7 +276,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupClaudeAuth() {
-        System.out.println("[5/6] Configuring Claude Code authentication...");
+        System.out.println("[6/7] Configuring Claude Code authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -299,7 +326,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupGitHubAuth() {
-        System.out.println("[6/6] Configuring GitHub authentication...");
+        System.out.println("[7/7] Configuring GitHub authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {

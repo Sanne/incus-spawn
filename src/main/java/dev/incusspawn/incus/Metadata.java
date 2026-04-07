@@ -15,6 +15,8 @@ public final class Metadata {
     public static final String CREATED = PREFIX + "created";
     public static final String PARENT = PREFIX + "parent";
     public static final String PROFILE = PREFIX + "profile";
+    public static final String NETWORK_MODE = PREFIX + "network-mode";
+    public static final String PROXY_GATEWAY = PREFIX + "proxy-gateway";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";

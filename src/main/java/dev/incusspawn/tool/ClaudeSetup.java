@@ -1,6 +1,5 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import jakarta.enterprise.context.Dependent;
 
@@ -16,7 +15,9 @@ public class ClaudeSetup implements ToolSetup {
     public void install(Container c) {
         installBinary(c);
         configureSettings(c);
-        configureAuth(c);
+        // Auth is handled transparently by the host MITM proxy — no container-side
+        // configuration needed. The proxy intercepts TLS to api.anthropic.com and
+        // injects the API key server-side. Credentials never enter containers.
     }
 
     private void installBinary(Container c) {
@@ -68,25 +69,5 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
 
         c.appendToProfile("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1");
-    }
-
-    private void configureAuth(Container c) {
-        var config = SpawnConfig.load();
-
-        if (!config.getClaude().isUseVertex() && config.getClaude().getApiKey().isBlank()) {
-            System.err.println("  Warning: no Claude credentials configured. Run 'isx init' to set up authentication.");
-        }
-
-        if (config.getClaude().isUseVertex()) {
-            c.appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
-            if (!config.getClaude().getCloudMlRegion().isBlank()) {
-                c.appendToProfile("export CLOUD_ML_REGION=" + config.getClaude().getCloudMlRegion());
-            }
-            if (!config.getClaude().getVertexProjectId().isBlank()) {
-                c.appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + config.getClaude().getVertexProjectId());
-            }
-        } else if (!config.getClaude().getApiKey().isBlank()) {
-            c.appendToProfile("export ANTHROPIC_API_KEY=" + config.getClaude().getApiKey());
-        }
     }
 }

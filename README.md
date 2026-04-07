@@ -40,7 +40,36 @@ golden-java  (stopped template, ~2GB)
 
 You can install packages, break things, and destroy a branch when done. The golden image and other branches are completely unaffected.
 
-Branches can optionally enable GUI/audio passthrough (Wayland), network airgapping for analyzing untrusted code, or an inbox mount to share files read-only from the host.
+Branches can optionally enable GUI/audio passthrough (Wayland), restricted networking, or an inbox mount to share files read-only from the host.
+
+### Credential Isolation
+
+**API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
+
+- Golden images include DNS overrides (`/etc/hosts`) that resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
+- Golden images include a custom CA certificate so containers trust the proxy's TLS certificates
+- The proxy terminates TLS, injects authentication headers (`x-api-key` for Anthropic, `Authorization: Bearer` for GitHub), and forwards to the real upstream over TLS
+- Tools (`curl`, `git`, `gh`, `claude`) work completely unmodified inside containers — no environment variables, no credential helpers, no shell wrappers
+- **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard Anthropic API requests to Vertex format and injects GCP Bearer tokens — containers run Claude Code in standard mode with zero GCP configuration
+- There is no mechanism for code inside a container to read, extract, or exfiltrate credentials
+
+The proxy must be running for non-airgapped containers: `isx proxy` (run in a separate terminal or as a background service).
+
+### Network Modes
+
+Each branch runs in one of three network modes:
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| **Full internet** | *(default)* | Unrestricted network access via NAT, auth via MITM proxy |
+| **Proxy only** | `--proxy-only` | Outbound traffic restricted to MITM proxy only (iptables) |
+| **Airgapped** | `--airgap` | Network device removed, complete isolation |
+
+In all non-airgapped modes, credentials are injected transparently by the MITM proxy. The network modes only control what *other* traffic the container can access:
+
+- **Full internet**: containers can reach any destination; traffic to intercepted domains (Anthropic, GitHub) is transparently routed through the MITM proxy for auth injection
+- **Proxy only**: iptables OUTPUT rules restrict all outbound traffic to the MITM proxy port (443) and DNS — the container cannot reach any external endpoint directly
+- **Airgapped**: no network device, no traffic at all
 
 ## Golden Images
 
@@ -92,10 +121,12 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 - **Interactive TUI**: Midnight Commander-style interface for managing environments
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Inbox mount**: share a host directory read-only into the container
-- **Network airgapping**: isolate environments from the network
+- **MITM TLS proxy**: transparent auth injection — credentials never enter containers in any form
+- **Proxy-only networking**: iptables restricts egress to the MITM proxy only
+- **Network airgapping**: fully isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
-- **Claude Code integration**: pre-configured AI agent auth (Vertex AI or API key)
-- **GitHub integration**: fine-grained PAT setup for safe agent access
+- **Claude Code integration**: auth via MITM proxy — API key never enters containers
+- **GitHub integration**: auth via MITM proxy — token never enters containers
 
 ## TUI Keyboard Shortcuts
 
@@ -110,6 +141,17 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 | `F8` | Destroy selected instance |
 | `F10` / `q` | Quit |
 | `Up/Down`, `j/k` | Navigate |
+
+**Branch modal** (`F4`):
+
+| Key | Action |
+|-----|--------|
+| `Alt-g` | Toggle GUI passthrough |
+| `Alt-n` | Cycle network mode (Full / Proxy only / Airgapped) |
+| `Alt-i` | Toggle inbox mount |
+| `Tab` | Next field |
+| `Enter` | Confirm |
+| `Esc` | Cancel |
 
 ## Installation
 

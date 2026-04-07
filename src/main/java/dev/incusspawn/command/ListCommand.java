@@ -1,8 +1,10 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.proxy.MitmProxy;
 import dev.tamboui.backend.jline3.JLineBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -63,7 +65,7 @@ public class ListCommand implements Runnable {
     private String branchSourceName;
     private TextInputState branchNameInput;
     private boolean branchEnableGui;
-    private boolean branchEnableAirgap;
+    private NetworkMode branchNetworkMode;
     private boolean branchEnableInbox;
     private TextInputState branchInboxInput;
     private boolean branchSourceIsVm;
@@ -133,7 +135,7 @@ public class ListCommand implements Runnable {
                 case BRANCH -> {
                     try {
                         createBranch(branchSourceName, pendingActionTarget,
-                                branchEnableGui, branchEnableAirgap,
+                                branchEnableGui, branchNetworkMode,
                                 branchEnableInbox ? branchInboxInput.text().strip() : null,
                                 branchSourceIsVm);
                     } catch (Exception e) {
@@ -231,7 +233,7 @@ public class ListCommand implements Runnable {
             branchSourceName = selected.name;
             branchNameInput = new TextInputState(suggestBranchName(selected.name));
             branchEnableGui = false;
-            branchEnableAirgap = false;
+            branchNetworkMode = NetworkMode.FULL;
             branchEnableInbox = false;
             branchInboxInput = new TextInputState("");
             branchSourceIsVm = selected.runtime.toUpperCase().contains("VIRTUAL");
@@ -295,8 +297,8 @@ public class ListCommand implements Runnable {
             branchEnableGui = !branchEnableGui;
             return true;
         }
-        if (key.hasAlt() && key.isCharIgnoreCase('a')) {
-            branchEnableAirgap = !branchEnableAirgap;
+        if (key.hasAlt() && key.isCharIgnoreCase('n')) {
+            branchNetworkMode = branchNetworkMode.next();
             return true;
         }
         if (key.hasAlt() && key.isCharIgnoreCase('i')) {
@@ -417,20 +419,31 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            pendingAction = PendingAction.BUILD_GOLDEN;
-            pendingActionTarget = buildImageDefs.get(buildImageSelected).getName();
-            tui.quit();
+            if (trySelectBuildImage(buildImageSelected, tui)) return true;
             return true;
         }
         if (key.code() == KeyCode.CHAR) {
             int idx = key.character() - '1';
             if (idx >= 0 && idx < buildImageDefs.size()) {
-                pendingAction = PendingAction.BUILD_GOLDEN;
-                pendingActionTarget = buildImageDefs.get(idx).getName();
-                tui.quit();
-                return true;
+                if (trySelectBuildImage(idx, tui)) return true;
             }
         }
+        return true;
+    }
+
+    private boolean trySelectBuildImage(int idx, TuiRunner tui) {
+        var allDefs = new java.util.LinkedHashMap<String, dev.incusspawn.config.ImageDef>();
+        for (var d : buildImageDefs) allDefs.put(d.getName(), d);
+        var selected = buildImageDefs.get(idx);
+        var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(selected, allDefs, incus::exists);
+        if (!credError.isEmpty()) {
+            statusMessage = credError;
+            mode = Mode.BROWSE;
+            return true;
+        }
+        pendingAction = PendingAction.BUILD_GOLDEN;
+        pendingActionTarget = selected.getName();
+        tui.quit();
         return true;
     }
 
@@ -754,7 +767,7 @@ public class ListCommand implements Runnable {
         }
         constraints.add(Constraint.length(1)); // spacer
         constraints.add(Constraint.length(1)); // gui toggle
-        constraints.add(Constraint.length(1)); // airgap toggle
+        constraints.add(Constraint.length(1)); // network mode radio
         constraints.add(Constraint.length(1)); // inbox toggle
         if (branchEnableInbox) {
             constraints.add(Constraint.length(1)); // inbox path
@@ -789,7 +802,7 @@ public class ListCommand implements Runnable {
 
         row++; // spacer
         renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
-        renderToggle(frame, rows.get(row++), "Alt-a", "Network airgap", branchEnableAirgap);
+        renderNetworkModeRadio(frame, rows.get(row++), "Alt-n", branchNetworkMode);
         renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
 
         if (branchEnableInbox) {
@@ -860,6 +873,24 @@ public class ListCommand implements Runnable {
                 Span.styled(" " + shortcut + " ", Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG)),
                 Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(MODAL_BG)),
                 Span.styled(label, Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))))), area);
+    }
+
+    private void renderNetworkModeRadio(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
+                                        String shortcut, NetworkMode selected) {
+        var spans = new ArrayList<Span>();
+        spans.add(Span.styled(" " + shortcut + " ", Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG)));
+        for (NetworkMode mode : NetworkMode.values()) {
+            boolean isSelected = (mode == selected);
+            var symbol = isSelected ? "\u25c9" : "\u25cb"; // ◉ vs ○
+            var color = isSelected ? Color.GREEN : Color.GRAY;
+            spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(MODAL_BG)));
+            var labelStyle = isSelected
+                    ? Style.EMPTY.bold().fg(MODAL_FG).bg(MODAL_BG)
+                    : Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
+            spans.add(Span.styled(mode.label(), labelStyle));
+            spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
     private static dev.tamboui.layout.Rect centerRect(dev.tamboui.layout.Rect screen, int width, int height) {
@@ -1016,7 +1047,7 @@ public class ListCommand implements Runnable {
         }
     }
 
-    private void createBranch(String source, String name, boolean gui, boolean airgap,
+    private void createBranch(String source, String name, boolean gui, NetworkMode networkMode,
                                String inboxPath, boolean vm) {
         if (incus.exists(name)) {
             System.err.println("Error: an instance named '" + name + "' already exists.");
@@ -1042,12 +1073,21 @@ public class ListCommand implements Runnable {
         incus.configSet(name, "limits.memory", memory);
         incus.exec("config", "device", "set", name, "root", "size=" + disk);
 
-        if (airgap) {
-            configureAirgap(name);
+        switch (networkMode) {
+            case PROXY_ONLY -> configureProxyOnly(name);
+            case AIRGAP -> configureAirgap(name);
+            case FULL -> {}
         }
 
         incus.start(name);
         waitForReady(name);
+
+        // Auth is handled transparently by the host MITM proxy — no container-side
+        // configuration needed. DNS overrides and CA cert are baked into golden images.
+
+        if (networkMode == NetworkMode.PROXY_ONLY) {
+            BranchCommand.applyProxyOnlyFirewall(incus, name);
+        }
 
         if (gui) {
             configureGui(name);
@@ -1063,18 +1103,6 @@ public class ListCommand implements Runnable {
                         "readonly=true");
             } else {
                 System.err.println("Warning: inbox path '" + inboxPath + "' is not a directory, skipping.");
-            }
-        }
-
-        var config = dev.incusspawn.config.SpawnConfig.load();
-        if (config.getClaude().isUseVertex()) {
-            var gcloudDir = java.nio.file.Path.of(System.getProperty("user.home"), ".config", "gcloud");
-            if (java.nio.file.Files.isDirectory(gcloudDir)) {
-                System.out.println("Mounting gcloud credentials (read-only) for Vertex AI auth...");
-                incus.deviceAdd(name, "gcloud", "disk",
-                        "source=" + gcloudDir.toAbsolutePath(),
-                        "path=/home/agentuser/.config/gcloud",
-                        "readonly=true");
             }
         }
 
@@ -1122,6 +1150,13 @@ public class ListCommand implements Runnable {
                 "export ELECTRON_OZONE_PLATFORM_HINT=wayland\n" +
                 "ENVEOF\n" +
                 "chmod 644 /etc/profile.d/wayland.sh");
+    }
+
+    private void configureProxyOnly(String name) {
+        System.out.println("Configuring proxy-only network...");
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
+        incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
     }
 
     private void configureAirgap(String name) {

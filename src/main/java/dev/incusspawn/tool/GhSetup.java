@@ -1,6 +1,5 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import jakarta.enterprise.context.Dependent;
 
@@ -16,13 +15,8 @@ public class GhSetup implements ToolSetup {
     public void install(Container c) {
         System.out.println("Installing GitHub CLI...");
         c.dnfInstall("Failed to install GitHub CLI", "gh");
-
-        var config = SpawnConfig.load();
-        if (config.getGithub().getToken().isBlank()) {
-            System.err.println("  Warning: no GitHub token configured. Run 'isx init' to set up authentication.");
-        }
-        if (!config.getGithub().getToken().isBlank()) {
-            c.appendToProfile("export GH_TOKEN=" + config.getGithub().getToken());
-        }
+        // Auth is handled transparently by the host MITM proxy — no container-side
+        // configuration needed. The proxy intercepts TLS to github.com and injects
+        // the Authorization header server-side. Credentials never enter containers.
     }
 }

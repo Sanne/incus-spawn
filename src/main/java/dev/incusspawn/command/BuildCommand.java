@@ -1,9 +1,12 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import jakarta.enterprise.inject.Instance;
@@ -13,6 +16,7 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Command(
         name = "build",
@@ -54,6 +58,13 @@ public class BuildCommand implements Runnable {
      */
     private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
         var targetName = imageDef.getName();
+
+        // Check that required credentials are configured before starting a potentially long build
+        var credentialError = SpawnConfig.checkCredentials(imageDef, defs, incus::exists);
+        if (!credentialError.isEmpty()) {
+            System.err.println("Error: " + credentialError);
+            System.exit(1);
+        }
 
         // If this image has a parent, ensure it exists
         if (!imageDef.isRoot()) {
@@ -168,17 +179,34 @@ public class BuildCommand implements Runnable {
         // systemd-resolved (127.0.0.53) doesn't work reliably inside containers.
         // Disable it and point DNS directly at the Incus bridge gateway (dnsmasq).
         System.out.println("Configuring DNS...");
-        var gatewayIp = incus.exec("network", "get", "incusbr0", "ipv4.address")
+        var gatewayRaw = incus.exec("network", "get", "incusbr0", "ipv4.address")
                 .assertSuccess("Failed to get bridge IP").stdout().strip();
-        if (gatewayIp.contains("/")) {
-            gatewayIp = gatewayIp.substring(0, gatewayIp.indexOf('/'));
-        }
+        var gatewayIp = gatewayRaw.contains("/")
+                ? gatewayRaw.substring(0, gatewayRaw.indexOf('/'))
+                : gatewayRaw;
         incus.shellExec(targetName, "sh", "-c",
                 "systemctl disable --now systemd-resolved 2>/dev/null; " +
                 "systemctl mask systemd-resolved 2>/dev/null; " +
                 "rm -f /etc/resolv.conf; " +
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf; " +
                 "chattr +i /etc/resolv.conf");
+
+        // Install MITM CA certificate so containers trust the proxy's TLS certs.
+        // DNS overrides route intercepted domains to the gateway where the MITM proxy runs.
+        System.out.println("Installing MITM proxy CA certificate and DNS overrides...");
+        var ca = CertificateAuthority.loadOrCreate();
+        incus.shellExec(targetName, "sh", "-c",
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
+                ca.caCertPem() +
+                "CERTEOF");
+        incus.shellExec(targetName, "update-ca-trust");
+        var hostsEntries = MitmProxy.interceptedDomains().stream()
+                .sorted()
+                .map(d -> gatewayIp + " " + d)
+                .collect(Collectors.joining("\n"));
+        incus.shellExec(targetName, "sh", "-c",
+                "echo '" + hostsEntries + "' >> /etc/hosts");
+
         waitForNetwork(targetName);
 
         // Update all packages to latest security patches
