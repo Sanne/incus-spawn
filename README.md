@@ -154,6 +154,14 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 | `Enter` | Confirm |
 | `Esc` | Cancel |
 
+## Small Luxuries
+
+Details that save time and avoid frustration:
+
+- **Shared DNF cache**: building a chain of golden images (e.g. `golden-java` which derives from `golden-dev` which derives from `golden-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping golden images clean.
+- **Auto-init**: running any command (`isx`, `isx build`, `isx proxy`) without prior setup automatically launches `isx init`.
+- **CoW pool auto-creation**: `isx init` creates a btrfs storage pool if no copy-on-write pool exists, so branches are instant from the start.
+
 ## Installation
 
 ```shell

@@ -15,6 +15,9 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 
@@ -42,6 +45,11 @@ public class BuildCommand implements Runnable {
 
     @Inject
     picocli.CommandLine.IFactory factory;
+
+    // Host-side DNF cache shared across builds to avoid redundant metadata downloads
+    private static final Path DNF_CACHE_DIR = Path.of(System.getProperty("user.home"),
+            ".cache", "incus-spawn", "dnf");
+    private static final String DNF_CACHE_DEVICE = "dnf-cache";
 
     @Override
     public void run() {
@@ -122,9 +130,11 @@ public class BuildCommand implements Runnable {
         waitForReady(targetName);
         waitForNetwork(targetName);
 
+        mountDnfCache(targetName);
         var container = new Container(incus, targetName);
         installPackages(container, imageDef);
         installTools(container, imageDef);
+        unmountDnfCache(targetName);
 
         // Clean up caches to minimize image size (important for CoW clones)
         cleanCaches(targetName);
@@ -205,6 +215,9 @@ public class BuildCommand implements Runnable {
 
         waitForNetwork(targetName);
 
+        // Mount host-side DNF cache so metadata and packages are shared across builds
+        mountDnfCache(targetName);
+
         // Update all packages to latest security patches
         System.out.println("Updating system packages...");
         requireSuccess(incus.shellExecInteractive(targetName, "dnf", "-y", "upgrade", "--refresh"),
@@ -238,6 +251,9 @@ public class BuildCommand implements Runnable {
         var container = new Container(incus, targetName);
         installPackages(container, imageDef);
         installTools(container, imageDef);
+
+        // Unmount host-side DNF cache before cleanup — keeps images clean
+        unmountDnfCache(targetName);
 
         // Clean up caches to minimize image size (important for CoW clones)
         cleanCaches(targetName);
@@ -329,6 +345,28 @@ public class BuildCommand implements Runnable {
             System.err.println("To clean up: incus-spawn destroy " + name + " --force");
             System.exit(1);
         }
+    }
+
+    /**
+     * Mount a host-side DNF cache directory into the container. This shares
+     * metadata and downloaded packages across builds, avoiding redundant
+     * downloads when building a parent→child image chain.
+     */
+    private void mountDnfCache(String container) {
+        try {
+            Files.createDirectories(DNF_CACHE_DIR);
+        } catch (IOException e) {
+            System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
+            return;
+        }
+        incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
+                "source=" + DNF_CACHE_DIR,
+                "path=/var/cache/dnf",
+                "shift=true");
+    }
+
+    private void unmountDnfCache(String container) {
+        incus.deviceRemove(container, DNF_CACHE_DEVICE);
     }
 
 }

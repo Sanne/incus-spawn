@@ -302,6 +302,14 @@ public class IncusClient {
     }
 
     /**
+     * Remove a device from a container/VM.
+     */
+    public void deviceRemove(String container, String deviceName) {
+        exec("config", "device", "remove", container, deviceName)
+                .assertSuccess("Failed to remove device " + deviceName + " from " + container);
+    }
+
+    /**
      * Get a specific config value.
      */
     public String configGet(String name, String key) {

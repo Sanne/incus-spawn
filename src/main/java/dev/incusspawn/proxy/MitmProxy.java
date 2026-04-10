@@ -367,7 +367,18 @@ public class MitmProxy {
      */
     private byte[] translateToVertex(HttpMessage request, byte[] bodyBytes, String upstreamHost) {
         try {
-            var root = (ObjectNode) JSON.readTree(bodyBytes);
+            var tree = bodyBytes.length > 0 ? JSON.readTree(bodyBytes) : null;
+
+            // Non-JSON or non-object body (e.g. GET /v1/models): just rewrite auth and forward
+            if (tree == null || !tree.isObject()) {
+                request.setHeader("Host", upstreamHost);
+                request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
+                request.removeHeader("x-api-key");
+                request.removeHeader("anthropic-beta");
+                return bodyBytes;
+            }
+
+            var root = (ObjectNode) tree;
 
             // Extract model (goes into URL, not body)
             var model = root.has("model") ? root.get("model").asText() : "claude-sonnet-4-6";
