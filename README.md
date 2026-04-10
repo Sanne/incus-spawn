@@ -20,8 +20,8 @@ jbang app install incus-spawn@Sanne/incus-spawn
 # One-time host setup (Incus, firewall, auth)
 isx init
 
-# Build a golden image (builds parent images automatically)
-isx build golden-java
+# Build a template (builds parent images automatically)
+isx build tpl-java
 
 # Launch the interactive TUI
 isx
@@ -29,16 +29,16 @@ isx
 
 ## Branching
 
-Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications. `isx init` automatically creates a btrfs storage pool if needed.
+Like `git branch`, branching creates an instant copy-on-write clone of any template. Each branch has its own independent filesystem -- changes in one branch cannot affect the template or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications. `isx init` automatically creates a btrfs storage pool if needed.
 
 ```
-golden-java  (stopped template, ~2GB)
+tpl-java  (stopped template, ~2GB)
   ├── fix-nasty-bug    (running, uses ~50MB extra)
   ├── review-pr-423    (running, uses ~30MB extra)
   └── experiment       (stopped, uses ~10MB extra)
 ```
 
-You can install packages, break things, and destroy a branch when done. The golden image and other branches are completely unaffected.
+You can install packages, break things, and destroy a branch when done. The template and other branches are completely unaffected.
 
 Branches can optionally enable GUI/audio passthrough (Wayland), restricted networking, or an inbox mount to share files read-only from the host.
 
@@ -47,7 +47,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 **API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
 
 - The proxy configures bridge-level DNS overrides (via dnsmasq on `incusbr0`) so containers resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
-- Golden images include a custom CA certificate so containers trust the proxy's TLS certificates
+- Template images include a custom CA certificate so containers trust the proxy's TLS certificates
 - The proxy terminates TLS, injects authentication headers, and forwards to the real upstream over TLS
 - Tools (`curl`, `git`, `gh`, `claude`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
 - **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard API requests to Vertex AI `rawPredict` format — containers run Claude Code in standard mode with zero knowledge of Vertex, no GCP credentials
@@ -72,15 +72,15 @@ In all non-airgapped modes, credentials are injected transparently by the MITM p
 - **Proxy only**: iptables OUTPUT rules restrict all outbound traffic to the MITM proxy port (443) and DNS — the container cannot reach any external endpoint directly
 - **Airgapped**: no network device, no traffic at all
 
-## Golden Images
+## Template Images
 
-Golden images are reusable templates defined in YAML. They can inherit from each other -- building an image automatically builds any missing parents:
+Template images are reusable base environments defined in YAML. They can inherit from each other -- building an image automatically builds any missing parents:
 
 ```yaml
 # images/java.yaml
-name: golden-java
+name: tpl-java
 description: JDK + Maven + Claude Code
-parent: golden-dev
+parent: tpl-dev
 packages:
   - java-25-openjdk-devel
   - java-25-openjdk-javadoc
@@ -89,7 +89,7 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`golden-minimal`, `golden-dev`, `golden-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` -- user definitions with the same name override built-ins.
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). Later sources override earlier ones: built-in → user → project-local.
 
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/43`)
@@ -100,7 +100,7 @@ Image schema fields (all optional except `name`):
 
 ```shell
 # Build a specific image (builds missing parents automatically)
-isx build golden-java
+isx build tpl-java
 
 # Rebuild all defined images from scratch
 isx build --all
@@ -129,7 +129,7 @@ Tool schema fields (all optional except `name`):
 - `env` -- lines appended to agentuser's `.bashrc`
 - `verify` -- verification command (logged, non-fatal)
 
-Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java plugins.
+Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → `.incus-spawn/tools/` (project-local) → Java plugins.
 
 ## Features
 
@@ -150,7 +150,7 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 
 | Key | Action |
 |-----|--------|
-| `F2` | Build a golden image |
+| `F2` | Build a template |
 | `F3` / `Enter` | Shell into selected instance |
 | `F4` | Branch from selected image |
 | `F5` | Rename selected instance |
@@ -175,7 +175,7 @@ Resolution order: `.incus-spawn/tools/` (project-local) > built-in YAML > Java p
 
 Details that save time and avoid frustration:
 
-- **Shared DNF cache**: building a chain of golden images (e.g. `golden-java` which derives from `golden-dev` which derives from `golden-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping golden images clean.
+- **Shared DNF cache**: building a chain of templates (e.g. `tpl-java` which derives from `tpl-dev` which derives from `tpl-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping templates clean.
 - **Auto-init**: running any command (`isx`, `isx build`, `isx proxy`) without prior setup automatically launches `isx init`.
 - **CoW pool auto-creation**: `isx init` creates a btrfs storage pool if no copy-on-write pool exists, so branches are instant from the start.
 
@@ -223,5 +223,7 @@ Users can then install or update via `jbang app install incus-spawn@Sanne/incus-
 ## Configuration
 
 - `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings
-- `~/.config/incus-spawn/images/*.yaml` -- user-defined golden image definitions
+- `~/.config/incus-spawn/images/*.yaml` -- user-level template definitions
+- `~/.config/incus-spawn/tools/*.yaml` -- user-level tool definitions
+- `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions

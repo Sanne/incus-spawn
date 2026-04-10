@@ -23,20 +23,23 @@ import java.util.Map;
 
 @Command(
         name = "build",
-        description = "Build or rebuild a base golden image (e.g. golden-minimal, golden-java)",
+        description = "Build or rebuild a template image (e.g. tpl-minimal, tpl-java)",
         mixinStandardHelpOptions = true
 )
 public class BuildCommand implements Runnable {
 
-    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-minimal, golden-java)",
+    @Parameters(index = "0", description = "Name of the template (e.g. tpl-minimal, tpl-java)",
             arity = "0..1")
     String name;
 
-    @Option(names = "--all", description = "Rebuild all defined golden images")
+    @Option(names = "--all", description = "Rebuild all defined templates")
     boolean all;
 
     @Option(names = "--vm", description = "Build as a VM instead of a container")
     boolean vm;
+
+    @Option(names = "--yes", description = "Skip interactive confirmations (for TUI integration)")
+    boolean yes;
 
     @Inject
     IncusClient incus;
@@ -81,7 +84,7 @@ public class BuildCommand implements Runnable {
     }
 
     /**
-     * Rebuild all defined golden images. Deletes existing images in reverse
+     * Rebuild all defined templates. Deletes existing images in reverse
      * dependency order (children first), then builds leaf images (parents
      * are built automatically by the recursive build).
      */
@@ -98,14 +101,16 @@ public class BuildCommand implements Runnable {
                 .toList();
 
         var allNames = new java.util.ArrayList<>(defs.keySet());
-        System.out.println("This will rebuild all golden images: " + String.join(", ", allNames));
-        var console = System.console();
-        if (console != null) {
-            System.out.print("Continue? (y/N): ");
-            var answer = console.readLine().strip();
-            if (!answer.equalsIgnoreCase("y")) {
-                System.out.println("Aborted.");
-                return;
+        System.out.println("This will rebuild all templates: " + String.join(", ", allNames));
+        if (!yes) {
+            var console = System.console();
+            if (console != null) {
+                System.out.print("Continue? (y/N): ");
+                var answer = console.readLine().strip();
+                if (!answer.equalsIgnoreCase("y")) {
+                    System.out.println("Aborted.");
+                    return;
+                }
             }
         }
 
@@ -159,15 +164,17 @@ public class BuildCommand implements Runnable {
         System.out.println("Building image: " + targetName);
 
         if (incus.exists(targetName)) {
-            System.out.println("Image '" + targetName + "' already exists.");
-            System.out.println("Rebuilding will destroy the existing image and any changes made to it.");
-            var console = System.console();
-            if (console != null) {
-                System.out.print("Delete and rebuild? (y/N): ");
-                var answer = console.readLine().strip();
-                if (!answer.equalsIgnoreCase("y")) {
-                    System.out.println("Aborted.");
-                    return;
+            if (!yes) {
+                System.out.println("Image '" + targetName + "' already exists.");
+                System.out.println("Rebuilding will destroy the existing image and any changes made to it.");
+                var console = System.console();
+                if (console != null) {
+                    System.out.print("Delete and rebuild? (y/N): ");
+                    var answer = console.readLine().strip();
+                    if (!answer.equalsIgnoreCase("y")) {
+                        System.out.println("Aborted.");
+                        return;
+                    }
                 }
             }
             incus.delete(targetName, true);
@@ -253,10 +260,13 @@ public class BuildCommand implements Runnable {
                 "> /etc/sysctl.d/99-dev-container.conf && " +
                 "sysctl -p /etc/sysctl.d/99-dev-container.conf");
 
-        // Point DNS at the Incus bridge gateway (dnsmasq) so the container can
-        // resolve names during the build. systemd-resolved is disabled after dnf
-        // upgrade to prevent the upgrade from re-enabling it.
-        System.out.println("Configuring DNS...");
+        // The base Fedora image uses systemd-resolved (127.0.0.53) which doesn't
+        // work reliably inside Incus containers. Replace it with a direct resolv.conf
+        // pointing at the bridge gateway's dnsmasq — this is how the container gets
+        // basic DNS resolution (package mirrors, etc.), unrelated to MITM proxy
+        // domain interception. systemd-resolved is disabled permanently after dnf
+        // upgrade (which can re-enable it).
+        System.out.println("Replacing systemd-resolved with direct DNS...");
         var gatewayRaw = incus.exec("network", "get", "incusbr0", "ipv4.address")
                 .assertSuccess("Failed to get bridge IP").stdout().strip();
         var gatewayIp = gatewayRaw.contains("/")
@@ -326,7 +336,7 @@ public class BuildCommand implements Runnable {
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
 
-        // Stop the golden image (it's a template, not a running instance)
+        // Stop the template (it's a stopped snapshot you branch from, not a running instance)
         System.out.println("Stopping image...");
         incus.stop(targetName);
 

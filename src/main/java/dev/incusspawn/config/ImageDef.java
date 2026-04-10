@@ -13,11 +13,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Definition of a golden image, loaded from YAML.
+ * Definition of a template image, loaded from YAML.
  * <p>
- * Resolution order: built-in definitions (classpath) first, then user-defined
- * definitions from {@code ~/.config/incus-spawn/images/}. User definitions
- * with the same name override built-ins.
+ * Resolution order: built-in (classpath) → user ({@code ~/.config/incus-spawn/images/})
+ * → project-local ({@code .incus-spawn/images/}). Later definitions with the
+ * same name override earlier ones.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ImageDef {
@@ -33,6 +33,7 @@ public class ImageDef {
     );
 
     private static final Path USER_IMAGES_DIR = SpawnConfig.configDir().resolve("images");
+    private static final Path PROJECT_IMAGES_DIR = Path.of(".incus-spawn/images");
 
     private String name;
     private String description = "";
@@ -61,12 +62,13 @@ public class ImageDef {
 
     /**
      * Load all image definitions: built-in first, then user-defined overrides.
-     * Returns a map keyed by image name (e.g. "golden-minimal").
+     * Returns a map keyed by image name (e.g. "tpl-minimal").
      */
     public static Map<String, ImageDef> loadAll() {
         var defs = new LinkedHashMap<String, ImageDef>();
         loadBuiltins(defs);
         loadUserDefined(defs);
+        loadFromDirectory(PROJECT_IMAGES_DIR, defs);
         return defs;
     }
 
@@ -95,8 +97,12 @@ public class ImageDef {
     }
 
     private static void loadUserDefined(Map<String, ImageDef> defs) {
-        if (!Files.isDirectory(USER_IMAGES_DIR)) return;
-        try (var stream = Files.list(USER_IMAGES_DIR)) {
+        loadFromDirectory(USER_IMAGES_DIR, defs);
+    }
+
+    private static void loadFromDirectory(Path dir, Map<String, ImageDef> defs) {
+        if (!Files.isDirectory(dir)) return;
+        try (var stream = Files.list(dir)) {
             stream.filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
                     .sorted()
                     .forEach(path -> {
@@ -111,7 +117,7 @@ public class ImageDef {
                         }
                     });
         } catch (IOException e) {
-            System.err.println("Warning: failed to scan " + USER_IMAGES_DIR + ": " + e.getMessage());
+            System.err.println("Warning: failed to scan " + dir + ": " + e.getMessage());
         }
     }
 

@@ -41,7 +41,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 @Command(
         name = "list",
@@ -59,10 +59,11 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, BRANCH, RENAME, BUILD_IMAGE }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME }
     private Mode mode = Mode.BROWSE;
     private String pendingDeleteName;
-    // Branch modal state (unified: replaces old clone + branch)
+    private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
+    // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
     private boolean branchEnableGui;
@@ -80,23 +81,36 @@ public class ListCommand implements Runnable {
     private String statusMessage;
     private String activeButton;
 
-    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_GOLDEN }
+    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
+    // After returning from a shell/branch, focus this instance in the instances panel
+    private String returnToInstance;
+    private String returnToTemplate;
 
+    // Two-panel focus
+    private enum Panel { TEMPLATES, INSTANCES }
+    private Panel focusedPanel = Panel.TEMPLATES;
+
+    // Template panel data (top)
+    private Map<String, dev.incusspawn.config.ImageDef> imageDefs;
+    private List<TemplateInfo> templateEntries;
+    private List<Row> templateRows;
+    private TableState templateTableState;
+
+    // Instance panel data (bottom)
     private List<InstanceInfo> entries;
     private List<Row> tableRows;
     private List<InstanceInfo> rowToEntry;
-    private List<dev.incusspawn.config.ImageDef> buildImageDefs;
-    private int buildImageSelected;
+    private TableState instanceTableState;
 
     @Override
     public void run() {
-        entries = collectEntries();
+        reloadData();
         if (plain) {
-            if (entries.isEmpty()) {
+            if (entries.isEmpty() && templateEntries.stream().noneMatch(t -> !"not built".equals(t.buildStatus))) {
                 System.out.println("No incus-spawn environments found.");
-                System.out.println("Run 'isx build golden-java' to create your first image.");
+                System.out.println("Run 'isx build tpl-java' to create your first template.");
             } else {
                 printPlain(entries);
             }
@@ -109,21 +123,54 @@ public class ListCommand implements Runnable {
 
     private void runTuiLoop() {
         while (true) {
-            entries = collectEntries();
-            buildRowData();
+            reloadData();
             mode = Mode.BROWSE;
             pendingAction = PendingAction.NONE;
 
-            var tableState = new TableState();
-            selectFirstDataRow(tableState);
+            templateTableState = new TableState();
+            instanceTableState = new TableState();
+
+            // Restore template selection by name
+            boolean templateRestored = false;
+            if (returnToTemplate != null) {
+                for (int i = 0; i < templateEntries.size(); i++) {
+                    if (templateEntries.get(i).name.equals(returnToTemplate)) {
+                        templateTableState.select(i);
+                        templateRestored = true;
+                        break;
+                    }
+                }
+            }
+            if (!templateRestored) {
+                if (!templateEntries.isEmpty()) templateTableState.select(0);
+            }
+            returnToTemplate = null;
+
+            // If returning from a shell/branch, focus the target instance
+            if (returnToInstance != null) {
+                focusedPanel = Panel.INSTANCES;
+                boolean found = false;
+                for (int i = 0; i < rowToEntry.size(); i++) {
+                    if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(returnToInstance)) {
+                        instanceTableState.select(i);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) selectFirstDataRow(instanceTableState);
+                returnToInstance = null;
+            } else {
+                selectFirstDataRow(instanceTableState);
+                focusedPanel = Panel.TEMPLATES;
+            }
 
             try {
                 var terminal = createExecTerminal();
                 var backend = createBackend(terminal);
                 try (var runner = TuiRunner.create(TuiConfig.builder().backend(backend).build())) {
                     runner.run(
-                            (event, tui) -> handleEvent(event, tui, tableState),
-                            frame -> render(frame, tableState));
+                            (event, tui) -> handleEvent(event, tui, instanceTableState),
+                            frame -> render(frame, instanceTableState));
                 }
                 terminal.close();
             } catch (Exception e) {
@@ -131,9 +178,17 @@ public class ListCommand implements Runnable {
                 return;
             }
 
+            // Remember template selection for when we re-enter the TUI
+            var tpl = selectedTemplate();
+            if (tpl != null) returnToTemplate = tpl.name;
+
             switch (pendingAction) {
-                case SHELL -> shellInto(pendingActionTarget);
+                case SHELL -> {
+                    returnToInstance = pendingActionTarget;
+                    shellInto(pendingActionTarget);
+                }
                 case BRANCH -> {
+                    returnToInstance = pendingActionTarget;
                     try {
                         createBranch(branchSourceName, pendingActionTarget,
                                 branchEnableGui, branchNetworkMode,
@@ -145,19 +200,61 @@ public class ListCommand implements Runnable {
                         try { System.in.read(); } catch (Exception ignored) {}
                     }
                 }
-                case BUILD_GOLDEN -> {
+                case BUILD_TEMPLATE -> {
                     try {
                         new picocli.CommandLine(BuildCommand.class, factory)
-                                .execute(pendingActionTarget);
+                                .execute(pendingActionTarget, "--yes");
                     } catch (Exception e) {
                         System.err.println("Build failed: " + e.getMessage());
                     }
-                    System.err.println("Press Enter to return to the list...");
+                    System.out.println("Press Enter to return to the list...");
                     try { System.in.read(); } catch (Exception ignored) {}
                 }
                 case NONE -> { return; }
             }
         }
+    }
+
+    /**
+     * Reload all data from Incus and image definitions. Populates both the
+     * template panel (from ImageDef + Incus state) and the instance panel
+     * (non-template instances only).
+     */
+    private void reloadData() {
+        var allInstances = collectEntries();
+        imageDefs = dev.incusspawn.config.ImageDef.loadAll();
+
+        // Build template panel data by merging ImageDef definitions with Incus state
+        templateEntries = new ArrayList<>();
+        var templateNames = new java.util.HashSet<String>();
+        for (var def : imageDefs.values()) {
+            var name = def.getName();
+            // Find matching Incus instance
+            InstanceInfo match = null;
+            for (var inst : allInstances) {
+                if (inst.name.equals(name)) {
+                    match = inst;
+                    break;
+                }
+            }
+            if (match != null) {
+                templateEntries.add(new TemplateInfo(name, def.getDescription(),
+                        match.created.isEmpty() ? "built" : match.created, match.runtime));
+                templateNames.add(name);
+            } else {
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", ""));
+            }
+        }
+        buildTemplateRowData();
+
+        // Instance panel: exclude template instances (they're shown in the template panel)
+        entries = new ArrayList<>();
+        for (var inst : allInstances) {
+            if (!templateNames.contains(inst.name)) {
+                entries.add(inst);
+            }
+        }
+        buildRowData();
     }
 
     private static Terminal createExecTerminal() throws IOException {
@@ -190,14 +287,15 @@ public class ListCommand implements Runnable {
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
+            case CONFIRM_BUILD -> handleConfirmBuildEvent(key, tui);
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
-            case BUILD_IMAGE -> handleBuildImageEvent(key, tui, tableState);
         };
     }
 
     private boolean handleBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        // Global keys (both panels)
         if (key.isKey(KeyCode.F10) || key.isCtrlC()
                 || key.isChar('q') || (key.hasCtrl() && key.isCharIgnoreCase('q'))) {
             tui.quit();
@@ -205,16 +303,116 @@ public class ListCommand implements Runnable {
         }
         statusMessage = null;
 
+        if (key.isKey(KeyCode.TAB)) {
+            focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
+            return true;
+        }
+        if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
+            refreshData(tableState);
+            return true;
+        }
+
+        return (focusedPanel == Panel.TEMPLATES)
+                ? handleTemplateBrowseEvent(key, tui, tableState)
+                : handleInstanceBrowseEvent(key, tui, tableState);
+    }
+
+    private boolean handleTemplateBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        // Navigation within template panel
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            var idx = templateTableState.selected();
+            if (idx != null && idx < templateEntries.size() - 1) templateTableState.select(idx + 1);
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            var idx = templateTableState.selected();
+            if (idx != null && idx > 0) templateTableState.select(idx - 1);
+            return true;
+        }
+        if (key.isKey(KeyCode.HOME)) {
+            if (!templateEntries.isEmpty()) templateTableState.select(0);
+            return true;
+        }
+        if (key.isKey(KeyCode.END)) {
+            if (!templateEntries.isEmpty()) templateTableState.select(templateEntries.size() - 1);
+            return true;
+        }
+
+        var template = selectedTemplate();
+        if (template == null) return false;
+
+        // Shift+F5: Rebuild all templates
+        if (key.isKey(KeyCode.F5) && key.hasShift()) {
+            pendingBuildName = "--all";
+            mode = Mode.CONFIRM_BUILD;
+            return true;
+        }
+
+        // F2: Build/rebuild selected template
+        if (key.isKey(KeyCode.F2)) {
+            var def = imageDefs.get(template.name);
+            if (def != null) {
+                var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
+                if (!credError.isEmpty()) {
+                    statusMessage = credError;
+                    return true;
+                }
+            }
+            if (!"not built".equals(template.buildStatus)) {
+                // Already built — confirm rebuild
+                pendingBuildName = template.name;
+                mode = Mode.CONFIRM_BUILD;
+            } else {
+                pendingAction = PendingAction.BUILD_TEMPLATE;
+                pendingActionTarget = template.name;
+                tui.quit();
+            }
+            return true;
+        }
+
+        // Enter/F4: Branch from template (only if built)
+        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4)) {
+            if ("not built".equals(template.buildStatus)) {
+                statusMessage = "Template not built. Press F2 to build it first.";
+                return true;
+            }
+            openBranchModal(template.name, template.runtime);
+            return true;
+        }
+
+        // Shift+F8: Destroy all built templates
+        if (key.isKey(KeyCode.F8) && key.hasShift()) {
+            var anyBuilt = templateEntries.stream()
+                    .anyMatch(t -> !"not built".equals(t.buildStatus));
+            if (!anyBuilt) {
+                statusMessage = "No templates are built.";
+                return true;
+            }
+            pendingDeleteName = "--all";
+            mode = Mode.CONFIRM_DELETE;
+            return true;
+        }
+
+        // F8: Destroy template
+        if (key.isKey(KeyCode.F8)) {
+            if ("not built".equals(template.buildStatus)) {
+                statusMessage = "Template is not built.";
+                return true;
+            }
+            pendingDeleteName = template.name;
+            mode = Mode.CONFIRM_DELETE;
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean handleInstanceBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        // Navigation within instance panel
         if (key.isKey(KeyCode.DOWN) || key.isChar('j')) { selectNextDataRow(tableState, 1); return true; }
         if (key.isKey(KeyCode.UP) || key.isChar('k'))   { selectNextDataRow(tableState, -1); return true; }
         if (key.isKey(KeyCode.HOME))                     { selectFirstDataRow(tableState); return true; }
         if (key.isKey(KeyCode.END))                      { selectLastDataRow(tableState); return true; }
-
-        if (key.isKey(KeyCode.F2)) {
-            buildImageSelected = 0;
-            mode = Mode.BUILD_IMAGE;
-            return true;
-        }
 
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
@@ -231,21 +429,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.F4)) {
-            branchSourceName = selected.name;
-            branchNameInput = new TextInputState(suggestBranchName(selected.name));
-            branchEnableGui = false;
-            branchNetworkMode = NetworkMode.FULL;
-            branchEnableInbox = false;
-            branchInboxInput = new TextInputState("");
-            branchSourceIsVm = selected.runtime.toUpperCase().contains("VIRTUAL");
-            var adaptiveCpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
-            var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
-            var adaptiveDisk = ResourceLimits.defaultDiskLimit();
-            vmCpuInput = new TextInputState(selected.limitsCpu.isEmpty() ? adaptiveCpu : selected.limitsCpu);
-            vmMemoryInput = new TextInputState(selected.limitsMemory.isEmpty() ? adaptiveMemory : selected.limitsMemory);
-            vmDiskInput = new TextInputState(selected.rootSize.isEmpty() ? adaptiveDisk : selected.rootSize);
-            branchFieldIndex = 0;
-            mode = Mode.BRANCH;
+            openBranchModal(selected.name, selected.runtime);
             return true;
         }
         if (key.isKey(KeyCode.F6) && isRunning(selected)) {
@@ -268,11 +452,25 @@ public class ListCommand implements Runnable {
             }
             return true;
         }
-        if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
-            refreshData(tableState);
-            return true;
-        }
         return false;
+    }
+
+    private void openBranchModal(String sourceName, String runtime) {
+        branchSourceName = sourceName;
+        branchNameInput = new TextInputState(suggestBranchName(sourceName));
+        branchEnableGui = false;
+        branchNetworkMode = NetworkMode.FULL;
+        branchEnableInbox = false;
+        branchInboxInput = new TextInputState("");
+        branchSourceIsVm = runtime.toUpperCase().contains("VIRTUAL");
+        var adaptiveCpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+        var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
+        var adaptiveDisk = ResourceLimits.defaultDiskLimit();
+        vmCpuInput = new TextInputState(adaptiveCpu);
+        vmMemoryInput = new TextInputState(adaptiveMemory);
+        vmDiskInput = new TextInputState(adaptiveDisk);
+        branchFieldIndex = 0;
+        mode = Mode.BRANCH;
     }
 
     private boolean handleBranchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -403,62 +601,46 @@ public class ListCommand implements Runnable {
         return true;
     }
 
-    private boolean handleBuildImageEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
-            mode = Mode.BROWSE;
-            return true;
-        }
-        if (buildImageDefs == null) {
-            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadAll().values());
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            buildImageSelected = Math.min(buildImageSelected + 1, buildImageDefs.size() - 1);
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            buildImageSelected = Math.max(buildImageSelected - 1, 0);
-            return true;
-        }
-        if (key.isKey(KeyCode.ENTER)) {
-            if (trySelectBuildImage(buildImageSelected, tui)) return true;
-            return true;
-        }
-        if (key.code() == KeyCode.CHAR) {
-            int idx = key.character() - '1';
-            if (idx >= 0 && idx < buildImageDefs.size()) {
-                if (trySelectBuildImage(idx, tui)) return true;
-            }
-        }
-        return true;
-    }
-
-    private boolean trySelectBuildImage(int idx, TuiRunner tui) {
-        var allDefs = new java.util.LinkedHashMap<String, dev.incusspawn.config.ImageDef>();
-        for (var d : buildImageDefs) allDefs.put(d.getName(), d);
-        var selected = buildImageDefs.get(idx);
-        var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(selected, allDefs, incus::exists);
-        if (!credError.isEmpty()) {
-            statusMessage = credError;
-            mode = Mode.BROWSE;
-            return true;
-        }
-        pendingAction = PendingAction.BUILD_GOLDEN;
-        pendingActionTarget = selected.getName();
-        tui.quit();
-        return true;
-    }
-
     private boolean handleConfirmDeleteEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
-            try {
-                incus.delete(pendingDeleteName, true);
-                statusMessage = "Destroyed " + pendingDeleteName;
-            } catch (Exception e) {
-                statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
+            if ("--all".equals(pendingDeleteName)) {
+                // Destroy all built templates in reverse order (children before parents)
+                var allNames = new java.util.ArrayList<>(imageDefs.keySet());
+                java.util.Collections.reverse(allNames);
+                int destroyed = 0;
+                for (var name : allNames) {
+                    if (incus.exists(name)) {
+                        try {
+                            incus.delete(name, true);
+                            destroyed++;
+                        } catch (Exception e) {
+                            statusMessage = "Failed to destroy " + name + ": " + e.getMessage();
+                            break;
+                        }
+                    }
+                }
+                if (statusMessage == null || statusMessage.isEmpty()) {
+                    statusMessage = "Destroyed " + destroyed + " template(s)";
+                }
+            } else {
+                try {
+                    incus.delete(pendingDeleteName, true);
+                    statusMessage = "Destroyed " + pendingDeleteName;
+                } catch (Exception e) {
+                    statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
+                }
             }
-            entries = collectEntries();
-            buildRowData();
-            selectFirstDataRow(tableState);
+            refreshData(tableState);
+        }
+        mode = Mode.BROWSE;
+        return true;
+    }
+
+    private boolean handleConfirmBuildEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isChar('y') || key.isChar('Y')) {
+            pendingAction = PendingAction.BUILD_TEMPLATE;
+            pendingActionTarget = pendingBuildName;
+            tui.quit();
         }
         mode = Mode.BROWSE;
         return true;
@@ -487,24 +669,21 @@ public class ListCommand implements Runnable {
 
     // --- Rendering ---
 
-    private boolean hasAnyInstances() {
-        return !entries.isEmpty();
-    }
-
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
         int footerHeight = hasStatus ? 2 : 1;
-        boolean showBanner = !hasAnyInstances();
-        int bannerHeight = showBanner ? 5 : 0;
+        // Template panel height: rows + header + 2 borders, capped
+        int templatePanelHeight = Math.min(templateEntries.size() + 3, Math.max(5, area.height() / 3));
         var chunks = Layout.vertical()
-                .constraints(Constraint.length(bannerHeight), Constraint.fill(), Constraint.length(footerHeight))
+                .constraints(
+                        Constraint.length(templatePanelHeight),
+                        Constraint.fill(),
+                        Constraint.length(footerHeight))
                 .split(area);
 
-        if (showBanner) {
-            renderBuildBanner(frame, chunks.get(0));
-        }
-        renderTable(frame, chunks.get(1), tableState);
+        renderTemplateTable(frame, chunks.get(0));
+        renderInstanceTable(frame, chunks.get(1), tableState);
         renderToolbar(frame, chunks.get(2), tableState, hasStatus);
 
         if (mode != Mode.BROWSE) {
@@ -512,33 +691,55 @@ public class ListCommand implements Runnable {
         }
     }
 
-    private static final Color BANNER_BG = Color.rgb(30, 30, 46);
-    private static final Color BANNER_FG = Color.rgb(205, 214, 244);
-    private static final Color BANNER_BORDER = Color.YELLOW;
+    private void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        boolean focused = focusedPanel == Panel.TEMPLATES;
+        var borderColor = focused ? Color.CYAN : Color.DARK_GRAY;
 
-    private void renderBuildBanner(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Getting Started ")
-                .borderStyle(Style.EMPTY.fg(BANNER_BORDER))
-                .style(Style.EMPTY.bg(BANNER_BG))
-                .build();
-        frame.renderWidget(block, area);
-        var inner = block.inner(area);
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.fill())
-                .split(inner);
-        frame.renderWidget(Paragraph.from(Line.styled(
-                " No images found. Press F2 to build one.",
-                Style.EMPTY.fg(BANNER_FG).bg(BANNER_BG))), rows.get(0));
+        if (templateEntries.isEmpty()) {
+            var block = Block.builder()
+                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                    .title(" Templates ")
+                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
+            frame.renderWidget(block, area);
+            var inner = block.inner(area);
+            if (inner.height() > 0) {
+                frame.renderWidget(Paragraph.from(
+                        Line.styled("  No template definitions found.",
+                                Style.EMPTY.fg(Color.GRAY))), inner);
+            }
+            return;
+        }
+
+        var tableBuilder = Table.builder()
+                .header(Row.from("NAME", "STATUS", "DESCRIPTION")
+                        .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
+                .rows(templateRows)
+                .widths(Constraint.length(20), Constraint.length(14), Constraint.fill())
+                .highlightSymbol(focused ? "\u25b8 " : "  ")
+                .block(Block.builder()
+                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                        .title(" Templates ")
+                        .borderStyle(Style.EMPTY.fg(borderColor)).build());
+
+        if (focused) {
+            tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
+        } else {
+            tableBuilder.highlightStyle(Style.EMPTY);
+        }
+
+        frame.renderStatefulWidget(tableBuilder.build(), area, templateTableState);
     }
 
-    private void renderTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, TableState tableState) {
+    private void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
+                                      TableState tableState) {
+        boolean focused = focusedPanel == Panel.INSTANCES;
+        var borderColor = focused ? Color.CYAN : Color.DARK_GRAY;
+
         if (entries.isEmpty()) {
             var block = Block.builder()
                     .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .title(" incus-spawn ")
-                    .borderStyle(Style.EMPTY.fg(Color.CYAN)).build();
+                    .title(" Instances ")
+                    .borderStyle(Style.EMPTY.fg(borderColor)).build();
             frame.renderWidget(block, area);
             var inner = block.inner(area);
             if (inner.height() > 1) {
@@ -546,49 +747,67 @@ public class ListCommand implements Runnable {
                         .constraints(Constraint.length(inner.height() / 2), Constraint.length(1))
                         .split(inner);
                 frame.renderWidget(Paragraph.from(
-                        Line.styled("  No environments found. Press F2 to build an image.",
+                        Line.styled("  No instances. Select a template and press Enter to create one.",
                                 Style.EMPTY.fg(Color.GRAY))), hint.get(1));
             }
             return;
         }
-        var table = Table.builder()
+
+        var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "STATUS", "PARENT", "RUNTIME", "AGE")
-                        .style(Style.EMPTY.bold().fg(Color.CYAN)))
+                        .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
                 .rows(tableRows)
                 .widths(Constraint.fill(), Constraint.length(12),
                         Constraint.length(20), Constraint.length(12),
                         Constraint.length(10))
-                .highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE))
-                .highlightSymbol("\u25b8 ")
+                .highlightSymbol(focused ? "\u25b8 " : "  ")
                 .block(Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" incus-spawn ")
-                        .borderStyle(Style.EMPTY.fg(Color.CYAN)).build())
-                .build();
-        frame.renderStatefulWidget(table, area, tableState);
+                        .title(" Instances ")
+                        .borderStyle(Style.EMPTY.fg(borderColor)).build());
+
+        if (focused) {
+            tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
+        } else {
+            tableBuilder.highlightStyle(Style.EMPTY);
+        }
+
+        frame.renderStatefulWidget(tableBuilder.build(), area, tableState);
     }
 
     private void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                 TableState tableState, boolean hasStatus) {
         fillBackground(frame, area, BAR_BG);
 
-        var selected = selectedEntry(tableState);
-        boolean hasSelection = selected != null;
-        boolean running = hasSelection && isRunning(selected);
-
         var helpSpans = new ArrayList<Span>();
-        addKey(helpSpans, "F2", "Build\u2026", false);
-        addKey(helpSpans, "F3", "Shell", !hasSelection);
-        addKey(helpSpans, "F4", "Branch\u2026", !hasSelection);
-        addKey(helpSpans, "F5", "Rename\u2026", !hasSelection);
-        addKey(helpSpans, "F6", "Stop", !running);
-        addKey(helpSpans, "F7", "Restart", !running);
-        addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
+        addKey(helpSpans, "Tab", "Switch", false);
+
+        if (focusedPanel == Panel.TEMPLATES) {
+            var template = selectedTemplate();
+            boolean hasTemplate = template != null;
+            boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
+            addKey(helpSpans, "F2", "Build", !hasTemplate);
+            addKey(helpSpans, "\u21e7F5", "Build all", false);
+            addKey(helpSpans, "F4", "Branch\u2026", !isBuilt);
+            addKey(helpSpans, "F8", "Destroy\u2026", !isBuilt);
+            addKey(helpSpans, "\u21e7F8", "Destroy all", false);
+        } else {
+            var selected = selectedEntry(tableState);
+            boolean hasSelection = selected != null;
+            boolean running = hasSelection && isRunning(selected);
+            addKey(helpSpans, "F3", "Shell", !hasSelection);
+            addKey(helpSpans, "F4", "Branch\u2026", !hasSelection);
+            addKey(helpSpans, "F5", "Rename\u2026", !hasSelection);
+            addKey(helpSpans, "F6", "Stop", !running);
+            addKey(helpSpans, "F7", "Restart", !running);
+            addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
+        }
         addKey(helpSpans, "F10", "Quit", false);
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1);
-            var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid");
+            var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
+                    || statusMessage.startsWith("Template");
             var msgFg = isError ? Color.LIGHT_RED : Color.rgb(0, 60, 60);
             frame.renderWidget(
                     Paragraph.from(Line.styled(" " + statusMessage,
@@ -611,10 +830,15 @@ public class ListCommand implements Runnable {
                               TableState tableState) {
         switch (mode) {
             case CONFIRM_DELETE -> {
-                var modalArea = centerRect(screen, 50, 7);
+                var isAll = "--all".equals(pendingDeleteName);
+                var title = isAll ? " Destroy all templates " : " Destroy '" + pendingDeleteName + "' ";
+                var message = isAll
+                        ? "This will destroy all built templates."
+                        : "This action cannot be undone.";
+                var modalArea = centerRect(screen, 54, 7);
                 var block = Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" Destroy '" + pendingDeleteName + "' ")
+                        .title(title)
                         .borderStyle(Style.EMPTY.fg(MODAL_WARN))
                         .style(Style.EMPTY.bg(MODAL_BG))
                         .build();
@@ -624,8 +848,32 @@ public class ListCommand implements Runnable {
                         .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
                         .split(inner);
                 frame.renderWidget(Paragraph.from(Line.styled(
-                        "This action cannot be undone.",
-                        Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
+                        message, Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
+                var btnSpans = new ArrayList<Span>();
+                addModalKey(btnSpans, "y", "Confirm");
+                addModalKey(btnSpans, "any key", "Cancel");
+                frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
+            }
+            case CONFIRM_BUILD -> {
+                var isAll = "--all".equals(pendingBuildName);
+                var title = isAll ? " Rebuild all templates " : " Rebuild '" + pendingBuildName + "' ";
+                var message = isAll
+                        ? "This will delete and rebuild all templates."
+                        : "This will delete and rebuild " + pendingBuildName + ".";
+                var modalArea = centerRect(screen, 54, 7);
+                var block = Block.builder()
+                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                        .title(title)
+                        .borderStyle(Style.EMPTY.fg(MODAL_WARN))
+                        .style(Style.EMPTY.bg(MODAL_BG))
+                        .build();
+                frame.renderWidget(block, modalArea);
+                var inner = block.inner(modalArea);
+                var rows = Layout.vertical()
+                        .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
+                        .split(inner);
+                frame.renderWidget(Paragraph.from(Line.styled(
+                        message, Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
                 var btnSpans = new ArrayList<Span>();
                 addModalKey(btnSpans, "y", "Confirm");
                 addModalKey(btnSpans, "any key", "Cancel");
@@ -655,7 +903,6 @@ public class ListCommand implements Runnable {
             case BRANCH -> renderBranchModal(frame, screen);
             case RENAME -> renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
-            case BUILD_IMAGE -> renderBuildImageModal(frame, screen);
             default -> {}
         }
     }
@@ -686,62 +933,6 @@ public class ListCommand implements Runnable {
         addModalKey(hintSpans, "Enter", "Confirm");
         addModalKey(hintSpans, "Esc", "Cancel");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(3));
-    }
-
-    private void renderBuildImageModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        if (buildImageDefs == null) {
-            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadAll().values());
-        }
-        int height = buildImageDefs.size() + 5; // header + options + spacer + hints + border
-        // " ▸ N label  (description)" — compute width from longest entry, capped at 70
-        int maxLabel = buildImageDefs.stream()
-                .mapToInt(d -> d.getName().length()
-                        + (d.getDescription().isEmpty() ? 0 : d.getDescription().length() + 4))
-                .max().orElse(30);
-        int width = Math.min(Math.max(maxLabel + 10, 40), 70);
-        var modalArea = centerRect(screen, width, height);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Build Image ")
-                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
-                .style(Style.EMPTY.bg(MODAL_BG))
-                .build();
-        frame.renderWidget(block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1)); // header
-        for (int i = 0; i < buildImageDefs.size(); i++) {
-            constraints.add(Constraint.length(1));
-        }
-        constraints.add(Constraint.fill()); // hints
-        var rows = Layout.vertical()
-                .constraints(constraints.toArray(new Constraint[0]))
-                .split(inner);
-
-        frame.renderWidget(Paragraph.from(Line.styled(
-                " Select an image to build:",
-                Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(0));
-        for (int i = 0; i < buildImageDefs.size(); i++) {
-            var def = buildImageDefs.get(i);
-            var label = def.getName();
-            if (def.getDescription() != null && !def.getDescription().isEmpty()) {
-                label += "  (" + def.getDescription() + ")";
-            }
-            var selected = (i == buildImageSelected);
-            var prefix = selected ? " \u25b8 " : "   ";
-            var style = selected
-                    ? Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG)
-                    : Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
-            frame.renderWidget(Paragraph.from(Line.from(List.of(
-                    Span.styled(prefix + (i + 1) + " ", Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG)),
-                    Span.styled(label, style)))), rows.get(i + 1));
-        }
-        var hintSpans = new ArrayList<Span>();
-        addModalKey(hintSpans, "\u2191\u2193", "Select");
-        addModalKey(hintSpans, "Enter", "Confirm");
-        addModalKey(hintSpans, "Esc", "Cancel");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
     }
 
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
@@ -908,7 +1099,7 @@ public class ListCommand implements Runnable {
     }
 
     private String suggestBranchName(String sourceName) {
-        var base = sourceName.startsWith("golden-") ? sourceName.substring(7) : sourceName;
+        var base = sourceName.startsWith("tpl-") ? sourceName.substring(4) : sourceName;
         var existingNames = entries.stream().map(e -> e.name).collect(java.util.stream.Collectors.toSet());
         for (int i = 1; ; i++) {
             var candidate = base + "-" + i;
@@ -1001,15 +1192,36 @@ public class ListCommand implements Runnable {
         return rowToEntry.get(idx);
     }
 
+    private TemplateInfo selectedTemplate() {
+        var idx = templateTableState != null ? templateTableState.selected() : null;
+        if (idx == null || idx < 0 || idx >= templateEntries.size()) return null;
+        return templateEntries.get(idx);
+    }
+
     private void refreshData(TableState tableState) {
-        var selected = selectedEntry(tableState);
-        var selectedName = selected != null ? selected.name : null;
-        entries = collectEntries();
-        buildRowData();
+        // Remember selections by name
+        var selectedInstance = selectedEntry(tableState);
+        var selectedInstanceName = selectedInstance != null ? selectedInstance.name : null;
+        var selectedTpl = selectedTemplate();
+        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
+
+        reloadData();
+
+        // Restore template selection
+        if (selectedTplName != null) {
+            for (int i = 0; i < templateEntries.size(); i++) {
+                if (templateEntries.get(i).name.equals(selectedTplName)) {
+                    templateTableState.select(i);
+                    break;
+                }
+            }
+        }
+
+        // Restore instance selection
         boolean reselected = false;
-        if (selectedName != null) {
+        if (selectedInstanceName != null) {
             for (int i = 0; i < rowToEntry.size(); i++) {
-                if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(selectedName)) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(selectedInstanceName)) {
                     tableState.select(i);
                     reselected = true;
                     break;
@@ -1021,16 +1233,28 @@ public class ListCommand implements Runnable {
 
     // --- Data ---
 
+    private void buildTemplateRowData() {
+        templateRows = new ArrayList<>();
+        for (var t : templateEntries) {
+            var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
+            var statusStyle = "not built".equals(t.buildStatus)
+                    ? Style.EMPTY.fg(Color.GRAY)
+                    : Style.EMPTY.fg(Color.GREEN);
+            var desc = t.description == null ? "" : t.description;
+            templateRows.add(Row.from(t.name, statusDisplay, desc).style(statusStyle));
+        }
+    }
+
     private void buildRowData() {
         tableRows = new ArrayList<>();
         rowToEntry = new ArrayList<>();
 
-        // Sort entries: stopped first (templates), then running, alphabetically within each group
+        // Sort: running first, then stopped, alphabetically within each group
         var sorted = new ArrayList<>(entries);
         sorted.sort((a, b) -> {
             var aRunning = isRunning(a);
             var bRunning = isRunning(b);
-            if (aRunning != bRunning) return aRunning ? 1 : -1;
+            if (aRunning != bRunning) return aRunning ? -1 : 1;
             return a.name.compareToIgnoreCase(b.name);
         });
 
@@ -1087,8 +1311,8 @@ public class ListCommand implements Runnable {
             BranchCommand.applyProxyOnlyFirewall(incus, name);
         }
 
-        if (gui) {
-            configureGui(name);
+        if (gui && !configureGui(name)) {
+            System.err.println("Continuing without GUI passthrough.");
         }
 
         if (inboxPath != null && !inboxPath.isEmpty()) {
@@ -1116,17 +1340,19 @@ public class ListCommand implements Runnable {
         System.out.println();
     }
 
-    private void configureGui(String name) {
+    private boolean configureGui(String name) {
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
         if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Warning: WAYLAND_DISPLAY or XDG_RUNTIME_DIR not set, skipping GUI passthrough.");
-            return;
+            System.err.println("Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.");
+            System.err.println("Make sure you are running isx from a Wayland graphical session.");
+            return false;
         }
         var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
         if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            System.err.println("Warning: Wayland socket not found at " + hostSocket + ", skipping.");
-            return;
+            System.err.println("Error: Wayland socket not found at " + hostSocket);
+            System.err.println("Make sure you are running isx from a Wayland graphical session.");
+            return false;
         }
 
         System.out.println("Enabling GUI passthrough...");
@@ -1148,6 +1374,7 @@ public class ListCommand implements Runnable {
                 "export ELECTRON_OZONE_PLATFORM_HINT=wayland\n" +
                 "ENVEOF\n" +
                 "chmod 644 /etc/profile.d/wayland.sh");
+        return true;
     }
 
     private void configureProxyOnly(String name) {
@@ -1253,6 +1480,9 @@ public class ListCommand implements Runnable {
         }
         System.out.println();
     }
+
+    private record TemplateInfo(String name, String description,
+                                String buildStatus, String runtime) {}
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,

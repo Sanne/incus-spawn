@@ -94,8 +94,8 @@ public class BranchCommand implements Runnable {
             applyProxyOnlyFirewall(name);
         }
 
-        if (gui) {
-            configureGui();
+        if (gui && !configureGui()) {
+            System.err.println("Continuing without GUI passthrough.");
         }
 
         if (inbox != null) {
@@ -143,17 +143,19 @@ public class BranchCommand implements Runnable {
         return null;
     }
 
-    private void configureGui() {
+    private boolean configureGui() {
         var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
         var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
         if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Warning: WAYLAND_DISPLAY or XDG_RUNTIME_DIR not set, skipping GUI passthrough.");
-            return;
+            System.err.println("Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.");
+            System.err.println("Make sure you are running isx from a Wayland graphical session.");
+            return false;
         }
         var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
         if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            System.err.println("Warning: Wayland socket not found at " + hostSocket + ", skipping.");
-            return;
+            System.err.println("Error: Wayland socket not found at " + hostSocket);
+            System.err.println("Make sure you are running isx from a Wayland graphical session.");
+            return false;
         }
 
         System.out.println("Enabling GUI passthrough...");
@@ -173,6 +175,7 @@ public class BranchCommand implements Runnable {
                 "export ELECTRON_OZONE_PLATFORM_HINT=wayland\n" +
                 "ENVEOF\n" +
                 "chmod 644 /etc/profile.d/wayland.sh");
+        return true;
     }
 
     private NetworkMode resolveNetworkMode() {

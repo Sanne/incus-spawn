@@ -64,7 +64,7 @@ public class InitCommand implements Runnable {
 
         System.out.println("\n=== Init complete! ===");
         System.out.println("Next steps:");
-        System.out.println("  1. Build a golden image:  isx build golden-java");
+        System.out.println("  1. Build a template:      isx build tpl-java");
         System.out.println("  2. Start the auth proxy:  isx proxy");
         System.out.println("  3. Launch the TUI:        isx");
     }
@@ -374,7 +374,7 @@ public class InitCommand implements Runnable {
         if (testResult == 0) {
             System.out.println("  Claude Code is available on the host.");
         } else {
-            System.out.println("  Warning: 'claude' command not found on host. It will need to be installed in golden images.");
+            System.out.println("  Warning: 'claude' command not found on host. It will need to be installed in template images.");
         }
 
         config.save();

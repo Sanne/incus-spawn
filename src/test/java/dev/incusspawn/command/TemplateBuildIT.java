@@ -9,14 +9,14 @@ import org.junit.jupiter.api.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Integration tests that build actual golden images using a real Incus daemon.
+ * Integration tests that build actual templates using a real Incus daemon.
  * Run with: mvn verify -DskipITs=false
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class GoldenImageBuildIT {
+class TemplateBuildIT {
 
-    private static final String TEST_MINIMAL = "test-golden-minimal";
+    private static final String TEST_MINIMAL = "test-tpl-minimal";
 
     @Inject
     IncusClient incus;

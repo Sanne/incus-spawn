@@ -41,14 +41,14 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 - Three network modes at branch time: full internet (default), proxy-only, or airgapped
 - Container user: `agentuser` (UID 1000, passwordless sudo)
 
-### Golden Image Hierarchy
+### Template Image Hierarchy
 
 Images are defined in YAML and layered via copy-on-write. Built-in definitions live in `src/main/resources/images/*.yaml`; user-defined images in `~/.config/incus-spawn/images/` can extend or override them:
 
 ```
-golden-minimal   (Base OS only — no tools)
-  └── golden-dev   (Podman, GitHub CLI, Claude Code)
-        └── golden-java  (JDK packages + Maven tool)
+tpl-minimal   (Base OS only — no tools)
+  └── tpl-dev   (Podman, GitHub CLI, Claude Code)
+        └── tpl-java  (JDK packages + Maven tool)
 ```
 
 Each image definition specifies:
@@ -65,7 +65,7 @@ Building an image automatically builds missing parents recursively. `isx build -
 
 ### Tool System
 
-Tools define how software gets installed into golden images. Two formats:
+Tools define how software gets installed into template images. Two formats:
 
 **YAML tools** (primary format) — declarative, no Java needed:
 
@@ -120,7 +120,7 @@ Execution order: packages → run → run_as_user → files → env → verify.
 
 ### Branching
 
-Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparently at the block level, so branches are instant to create and only consume disk space for their own modifications.
+Like `git branch`, branching creates an instant copy-on-write clone of any template image. Each branch has its own independent filesystem -- changes in one branch cannot affect the template image or any other branch. The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparently at the block level, so branches are instant to create and only consume disk space for their own modifications.
 
 The TUI branch modal supports:
 - Custom name
@@ -185,7 +185,7 @@ iptables -P OUTPUT DROP
 **How it works:**
 
 1. The proxy configures bridge-level DNS overrides (via `raw.dnsmasq` on `incusbr0`) so all containers resolve intercepted domains to the gateway IP
-2. Golden images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
+2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
 3. The proxy listens on port 443 on the gateway IP, terminates TLS using per-domain certificates signed by the custom CA
 4. Based on the target domain, the proxy injects authentication headers:
    - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (or Vertex AI translation, see below)
@@ -219,7 +219,7 @@ This approach was chosen over running Claude Code in native Vertex mode inside c
 
 All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge NAT and are unaffected by the proxy.
 
-**Credential validation**: Building a golden image that includes `claude` or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing.
+**Credential validation**: Building a template image that includes `claude` or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing.
 
 **Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth application-default login` completed.
 
@@ -229,8 +229,8 @@ Containers tagged via Incus `user.*` config keys:
 
 ```
 user.incus-spawn.type=base
-user.incus-spawn.profile=golden-java
-user.incus-spawn.parent=golden-dev
+user.incus-spawn.profile=tpl-java
+user.incus-spawn.parent=tpl-dev
 user.incus-spawn.created=2026-04-07
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
 user.incus-spawn.proxy-gateway=10.166.11.1    # (proxy-only branches only)
@@ -251,7 +251,7 @@ Supported CoW drivers: **btrfs**, **zfs**, **lvm**. If btrfs pool creation fails
 - `ImageDefTest` — image definition loading, parent chain, descriptions
 
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
-- `GoldenImageBuildIT` — builds actual images, verifies metadata and agentuser
+- `TemplateBuildIT` — builds actual images, verifies metadata and agentuser
 
 ## Technical Tradeoffs
 
@@ -271,7 +271,7 @@ Built-in YAML tools are loaded from a hardcoded list of filenames rather than sc
 systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration. We disable it, point `/etc/resolv.conf` directly at the Incus bridge gateway (which runs dnsmasq), and make the file immutable with `chattr +i`. This is less flexible than systemd-resolved (no per-link DNS, no DNSSEC validation) but works reliably across container restarts and network changes. Domain interception for the MITM proxy is configured at the bridge level via `raw.dnsmasq` (dnsmasq `address=` directives), not via per-container `/etc/hosts`. This avoids a class of bugs where Incus overwrites `/etc/hosts` on container start.
 
 ### Credential isolation via MITM TLS proxy
-A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub), injects authentication headers server-side, and forwards to the real upstream. Containers resolve these domains to the gateway IP via bridge-level dnsmasq overrides (configured when `isx proxy` starts) and trust the proxy's certificates via a custom CA installed in the golden image. This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints. The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
+A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub), injects authentication headers server-side, and forwards to the real upstream. Containers resolve these domains to the gateway IP via bridge-level dnsmasq overrides (configured when `isx proxy` starts) and trust the proxy's certificates via a custom CA installed in the template image. This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints. The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
 
 ### Vertex AI: proxy-side API translation vs native Vertex mode
 We evaluated two approaches for Vertex AI support: (1) running Claude Code in native Vertex mode inside containers with `CLAUDE_CODE_USE_VERTEX=1` and a fictitious proxy domain, or (2) running Claude Code in standard mode and translating requests proxy-side. We chose proxy-side translation because native Vertex mode requires GCP authentication for client-side model availability validation — even with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, Claude Code rejects models that aren't in its internal Vertex allowlist, which lags behind actual Vertex availability. Proxy-side translation means the container has zero knowledge of Vertex AI: it sends standard Anthropic API requests, and the proxy rewrites them to Vertex `rawPredict` format (URL path rewrite, `model` field → URL, `anthropic_version` body field, Bearer token injection). The `anthropic_version: "vertex-2023-10-16"` value is hardcoded — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched.
@@ -299,7 +299,7 @@ Real API keys and tokens never enter containers, regardless of network mode. Con
 
 The MITM TLS proxy provides credential isolation:
 1. Bridge-level dnsmasq overrides (configured by `isx proxy`) route intercepted domains to the gateway IP
-2. A custom CA certificate (installed in golden images) lets containers trust the proxy's TLS certs
+2. A custom CA certificate (installed in template images) lets containers trust the proxy's TLS certs
 3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, iptables OUTPUT rules additionally block all egress except the proxy port (443) and DNS
@@ -307,4 +307,4 @@ The MITM TLS proxy provides credential isolation:
 ### Filesystem Isolation
 - Inbox mount is strictly read-only
 - No host filesystem access beyond the inbox
-- Clone filesystems are independent CoW copies — changes in one clone don't affect others or the golden image
+- Clone filesystems are independent CoW copies — changes in one clone don't affect others or the template image

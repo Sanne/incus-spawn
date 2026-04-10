@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.SpawnConfig;
 import jakarta.enterprise.context.Dependent;
 
 import java.io.IOException;
@@ -10,9 +11,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Loads YAML tool definitions from built-in resources and user-defined
- * files. User-defined tools (in {@code .incus-spawn/tools/}) take
- * priority over built-in ones.
+ * Loads YAML tool definitions from built-in resources, user-level, and
+ * project-local files.
+ * <p>
+ * Resolution order: built-in (classpath) → user ({@code ~/.config/incus-spawn/tools/})
+ * → project-local ({@code .incus-spawn/tools/}). Later definitions with the
+ * same name override earlier ones.
  */
 @Dependent
 public class ToolDefLoader {
@@ -22,13 +26,14 @@ public class ToolDefLoader {
             "podman.yaml",
             "maven-3.yaml"
     );
-    private Path userToolsDir = Path.of(".incus-spawn/tools");
+    private static final Path USER_TOOLS_DIR = SpawnConfig.configDir().resolve("tools");
+    private Path projectToolsDir = Path.of(".incus-spawn/tools");
 
     private Map<String, YamlToolSetup> tools;
 
-    /** Override the user tools directory (for testing). */
-    void setUserToolsDir(Path dir) {
-        this.userToolsDir = dir;
+    /** Override the project tools directory (for testing). */
+    void setProjectToolsDir(Path dir) {
+        this.projectToolsDir = dir;
         this.tools = null; // force reload
     }
 
@@ -44,7 +49,8 @@ public class ToolDefLoader {
         if (tools == null) {
             tools = new LinkedHashMap<>();
             loadBuiltins();
-            loadUserDefined(); // user tools override builtins
+            loadFromDirectory(USER_TOOLS_DIR);
+            loadFromDirectory(projectToolsDir);
         }
         return tools;
     }
@@ -63,9 +69,9 @@ public class ToolDefLoader {
         }
     }
 
-    private void loadUserDefined() {
-        if (!Files.isDirectory(userToolsDir)) return;
-        try (var stream = Files.list(userToolsDir)) {
+    private void loadFromDirectory(Path dir) {
+        if (!Files.isDirectory(dir)) return;
+        try (var stream = Files.list(dir)) {
             stream.filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
                     .sorted()
                     .forEach(path -> {
@@ -79,7 +85,7 @@ public class ToolDefLoader {
                         }
                     });
         } catch (IOException e) {
-            System.err.println("Warning: failed to scan " + userToolsDir + ": " + e.getMessage());
+            System.err.println("Warning: failed to scan " + dir + ": " + e.getMessage());
         }
     }
 }

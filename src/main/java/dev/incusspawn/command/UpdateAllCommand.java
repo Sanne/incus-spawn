@@ -9,7 +9,7 @@ import java.util.ArrayList;
 
 @Command(
         name = "update-all",
-        description = "Update all golden images (system packages, git repos, dependencies)",
+        description = "Update all templates (system packages, git repos, dependencies)",
         mixinStandardHelpOptions = true
 )
 public class UpdateAllCommand implements Runnable {
@@ -24,33 +24,33 @@ public class UpdateAllCommand implements Runnable {
     public void run() {
         if (!InitCommand.requireInit(factory)) return;
         var instances = incus.list();
-        var goldenImages = new ArrayList<String>();
+        var templates = new ArrayList<String>();
 
         // Collect base images first, then project images (order matters for dependencies)
         for (var instance : instances) {
             var name = instance.get("name");
             var type = getType(name);
             if (Metadata.TYPE_BASE.equals(type)) {
-                goldenImages.add(0, name); // bases first
+                templates.add(0, name); // bases first
             } else if (Metadata.TYPE_PROJECT.equals(type)) {
-                goldenImages.add(name);
+                templates.add(name);
             }
         }
 
-        if (goldenImages.isEmpty()) {
-            System.out.println("No golden images found. Run 'incus-spawn build' first.");
+        if (templates.isEmpty()) {
+            System.out.println("No templates found. Run 'isx build' first.");
             return;
         }
 
-        System.out.println("Updating " + goldenImages.size() + " golden image(s)...\n");
+        System.out.println("Updating " + templates.size() + " template(s)...\n");
 
-        for (var name : goldenImages) {
+        for (var name : templates) {
             System.out.println("--- Updating " + name + " ---");
             updateImage(name);
             System.out.println();
         }
 
-        System.out.println("All golden images updated.");
+        System.out.println("All templates updated.");
     }
 
     private void updateImage(String name) {

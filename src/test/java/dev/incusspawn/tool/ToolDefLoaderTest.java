@@ -44,7 +44,7 @@ class ToolDefLoaderTest {
         Files.writeString(tempDir.resolve("podman.yaml"), userYaml);
 
         var loader = new ToolDefLoader();
-        loader.setUserToolsDir(tempDir);
+        loader.setProjectToolsDir(tempDir);
 
         var tool = loader.find("podman");
         assertNotNull(tool);
@@ -64,7 +64,7 @@ class ToolDefLoaderTest {
         Files.writeString(tempDir.resolve("my-custom-tool.yaml"), userYaml);
 
         var loader = new ToolDefLoader();
-        loader.setUserToolsDir(tempDir);
+        loader.setProjectToolsDir(tempDir);
 
         var tool = loader.find("my-custom-tool");
         assertNotNull(tool, "user-defined custom tool should be discovered");
@@ -74,7 +74,7 @@ class ToolDefLoaderTest {
     @Test
     void nonexistentUserDirIsIgnored(@TempDir Path tempDir) {
         var loader = new ToolDefLoader();
-        loader.setUserToolsDir(tempDir.resolve("does-not-exist"));
+        loader.setProjectToolsDir(tempDir.resolve("does-not-exist"));
         // Should still find builtins without error
         assertNotNull(loader.find("podman"));
     }

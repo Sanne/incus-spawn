@@ -1,6 +1,6 @@
-name: golden-java
+name: tpl-java
 description: JDK + Maven + Claude Code
-parent: golden-dev
+parent: tpl-dev
 packages:
   - java-25-openjdk-devel
   - java-25-openjdk-javadoc

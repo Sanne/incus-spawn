@@ -17,7 +17,7 @@ public class DestroyCommand implements Runnable {
     @Parameters(index = "0", description = "Name of the environment to destroy")
     String name;
 
-    @Option(names = "--force", description = "Force destruction, even for golden images")
+    @Option(names = "--force", description = "Force destruction, even for templates")
     boolean force;
 
     @Inject
@@ -30,11 +30,11 @@ public class DestroyCommand implements Runnable {
             return;
         }
 
-        // Safety check: refuse to destroy golden images without --force
+        // Safety check: refuse to destroy templates without --force
         var type = getType(name);
         if ((Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) && !force) {
-            System.err.println("Error: '" + name + "' is a golden image (type: " + type + ").");
-            System.err.println("Destroying golden images affects all clones derived from them.");
+            System.err.println("Error: '" + name + "' is a template (type: " + type + ").");
+            System.err.println("Destroying templates affects all branches derived from them.");
             System.err.println("Use --force if you really want to destroy it.");
             return;
         }

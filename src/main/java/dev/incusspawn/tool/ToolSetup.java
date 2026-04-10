@@ -3,7 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 
 /**
- * A tool that can be installed into a golden image during build.
+ * A tool that can be installed into a template image during build.
  * Implementations are discovered automatically via CDI.
  */
 public interface ToolSetup {

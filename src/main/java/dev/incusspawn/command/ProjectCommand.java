@@ -12,7 +12,7 @@ import java.nio.file.Path;
 
 @Command(
         name = "project",
-        description = "Manage project golden images",
+        description = "Manage project templates",
         mixinStandardHelpOptions = true,
         subcommands = {
                 ProjectCommand.Create.class,
@@ -23,12 +23,12 @@ public class ProjectCommand {
 
     @Command(
             name = "create",
-            description = "Create a project golden image from a parent base image",
+            description = "Create a project template from a parent base image",
             mixinStandardHelpOptions = true
     )
     public static class Create implements Runnable {
 
-        @Parameters(index = "0", description = "Name of the project golden image")
+        @Parameters(index = "0", description = "Name of the project template")
         String name;
 
         @Option(names = "--config", description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
@@ -48,7 +48,7 @@ public class ProjectCommand {
             }
 
             var parent = projectConfig.getParent();
-            System.out.println("Creating project golden image: " + imageName + " (parent: " + parent + ")");
+            System.out.println("Creating project template: " + imageName + " (parent: " + parent + ")");
 
             if (!incus.exists(parent)) {
                 System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
@@ -90,11 +90,11 @@ public class ProjectCommand {
             incus.configSet(imageName, Metadata.PROJECT, imageName);
             incus.configSet(imageName, Metadata.CREATED, Metadata.today());
 
-            // Stop the golden image
-            System.out.println("Stopping project golden image...");
+            // Stop the template
+            System.out.println("Stopping project template...");
             incus.stop(imageName);
 
-            System.out.println("Project golden image " + imageName + " created successfully.");
+            System.out.println("Project template " + imageName + " created successfully.");
         }
 
         private ProjectConfig loadConfig() {
@@ -121,12 +121,12 @@ public class ProjectCommand {
 
     @Command(
             name = "update",
-            description = "Update a project golden image (system packages, git repos, dependencies)",
+            description = "Update a project template (system packages, git repos, dependencies)",
             mixinStandardHelpOptions = true
     )
     public static class Update implements Runnable {
 
-        @Parameters(index = "0", description = "Name of the project golden image to update")
+        @Parameters(index = "0", description = "Name of the project template to update")
         String name;
 
         @Option(names = "--config", description = "Path to incus-spawn.yaml")
@@ -142,7 +142,7 @@ public class ProjectCommand {
                 return;
             }
 
-            System.out.println("Updating project golden image: " + name);
+            System.out.println("Updating project template: " + name);
 
             // Start if stopped
             incus.start(name);
@@ -177,10 +177,10 @@ public class ProjectCommand {
             }
 
             // Stop
-            System.out.println("Stopping golden image...");
+            System.out.println("Stopping template...");
             incus.stop(name);
 
-            System.out.println("Project golden image " + name + " updated successfully.");
+            System.out.println("Project template " + name + " updated successfully.");
         }
 
         private void waitForReady(String container) {

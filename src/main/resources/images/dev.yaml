@@ -1,6 +1,6 @@
-name: golden-dev
+name: tpl-dev
 description: Podman, GitHub CLI, Claude Code
-parent: golden-minimal
+parent: tpl-minimal
 tools:
   - podman
   - gh

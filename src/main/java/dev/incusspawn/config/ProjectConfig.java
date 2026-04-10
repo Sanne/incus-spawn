@@ -19,7 +19,7 @@ public class ProjectConfig {
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private String name;
-    private String parent = "golden-java";
+    private String parent = "tpl-java";
     private List<String> repos = List.of();
     private String preBuild;
     private GitConfig git = new GitConfig();
