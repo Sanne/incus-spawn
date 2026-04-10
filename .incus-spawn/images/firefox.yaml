@@ -1,0 +1,5 @@
+name: tpl-firefox
+description: With Firefox :)
+parent: tpl-minimal
+packages:
+  - firefox
