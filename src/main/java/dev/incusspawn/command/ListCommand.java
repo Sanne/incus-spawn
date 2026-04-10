@@ -41,6 +41,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Command(
         name = "list",
@@ -1081,9 +1082,6 @@ public class ListCommand implements Runnable {
 
         incus.start(name);
         waitForReady(name);
-
-        // Auth is handled transparently by the host MITM proxy — no container-side
-        // configuration needed. DNS overrides and CA cert are baked into golden images.
 
         if (networkMode == NetworkMode.PROXY_ONLY) {
             BranchCommand.applyProxyOnlyFirewall(incus, name);

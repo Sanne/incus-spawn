@@ -6,7 +6,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.MitmProxy;
+
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import jakarta.enterprise.inject.Instance;
@@ -16,7 +16,7 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.util.Map;
-import java.util.stream.Collectors;
+
 
 @Command(
         name = "build",
@@ -40,8 +40,12 @@ public class BuildCommand implements Runnable {
     @Inject
     Instance<ToolSetup> toolSetups;
 
+    @Inject
+    picocli.CommandLine.IFactory factory;
+
     @Override
     public void run() {
+        if (!InitCommand.requireInit(factory)) return;
         var defs = ImageDef.loadBuiltins();
         var imageDef = defs.get(name);
         if (imageDef == null) {
@@ -176,8 +180,9 @@ public class BuildCommand implements Runnable {
                 "> /etc/sysctl.d/99-dev-container.conf && " +
                 "sysctl -p /etc/sysctl.d/99-dev-container.conf");
 
-        // systemd-resolved (127.0.0.53) doesn't work reliably inside containers.
-        // Disable it and point DNS directly at the Incus bridge gateway (dnsmasq).
+        // Point DNS at the Incus bridge gateway (dnsmasq) so the container can
+        // resolve names during the build. systemd-resolved is disabled after dnf
+        // upgrade to prevent the upgrade from re-enabling it.
         System.out.println("Configuring DNS...");
         var gatewayRaw = incus.exec("network", "get", "incusbr0", "ipv4.address")
                 .assertSuccess("Failed to get bridge IP").stdout().strip();
@@ -185,27 +190,18 @@ public class BuildCommand implements Runnable {
                 ? gatewayRaw.substring(0, gatewayRaw.indexOf('/'))
                 : gatewayRaw;
         incus.shellExec(targetName, "sh", "-c",
-                "systemctl disable --now systemd-resolved 2>/dev/null; " +
-                "systemctl mask systemd-resolved 2>/dev/null; " +
                 "rm -f /etc/resolv.conf; " +
-                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf; " +
-                "chattr +i /etc/resolv.conf");
+                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf");
 
         // Install MITM CA certificate so containers trust the proxy's TLS certs.
-        // DNS overrides route intercepted domains to the gateway where the MITM proxy runs.
-        System.out.println("Installing MITM proxy CA certificate and DNS overrides...");
+        // DNS interception is handled at the bridge level via dnsmasq (configured by isx proxy).
+        System.out.println("Installing MITM proxy CA certificate...");
         var ca = CertificateAuthority.loadOrCreate();
         incus.shellExec(targetName, "sh", "-c",
                 "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
                 ca.caCertPem() +
                 "CERTEOF");
         incus.shellExec(targetName, "update-ca-trust");
-        var hostsEntries = MitmProxy.interceptedDomains().stream()
-                .sorted()
-                .map(d -> gatewayIp + " " + d)
-                .collect(Collectors.joining("\n"));
-        incus.shellExec(targetName, "sh", "-c",
-                "echo '" + hostsEntries + "' >> /etc/hosts");
 
         waitForNetwork(targetName);
 
@@ -213,6 +209,16 @@ public class BuildCommand implements Runnable {
         System.out.println("Updating system packages...");
         requireSuccess(incus.shellExecInteractive(targetName, "dnf", "-y", "upgrade", "--refresh"),
                 "Failed to update system packages");
+
+        // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable it.
+        // Also remove 'resolve' from nsswitch.conf so .local domains go through
+        // regular DNS (dnsmasq) instead of mDNS.
+        System.out.println("Finalizing DNS configuration...");
+        incus.shellExec(targetName, "sh", "-c",
+                "systemctl disable --now systemd-resolved 2>/dev/null; " +
+                "systemctl mask systemd-resolved 2>/dev/null; " +
+                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
+                "chattr +i /etc/resolv.conf");
 
         // Create agentuser with passwordless sudo (container is the security boundary)
         System.out.println("Creating agentuser...");

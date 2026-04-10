@@ -17,8 +17,12 @@ public class UpdateAllCommand implements Runnable {
     @Inject
     IncusClient incus;
 
+    @Inject
+    picocli.CommandLine.IFactory factory;
+
     @Override
     public void run() {
+        if (!InitCommand.requireInit(factory)) return;
         var instances = incus.list();
         var goldenImages = new ArrayList<String>();
 

@@ -15,9 +15,7 @@ public class ClaudeSetup implements ToolSetup {
     public void install(Container c) {
         installBinary(c);
         configureSettings(c);
-        // Auth is handled transparently by the host MITM proxy — no container-side
-        // configuration needed. The proxy intercepts TLS to api.anthropic.com and
-        // injects the API key server-side. Credentials never enter containers.
+        configureAuth(c);
     }
 
     private void installBinary(Container c) {
@@ -59,7 +57,11 @@ public class ClaudeSetup implements ToolSetup {
                   "hasCompletedOnboarding": true,
                   "hasSeenTasksHint": true,
                   "numStartups": 1,
-                  "autoUpdates": false
+                  "autoUpdates": false,
+                  "customApiKeyResponses": {
+                    "approved": ["sk-ant-placeholder"],
+                    "rejected": []
+                  }
                 }
                 """;
         c.sh("mkdir -p /home/agentuser/.claude");
@@ -69,5 +71,17 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
 
         c.appendToProfile("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1");
+    }
+
+    /**
+     * Configure auth env vars so Claude Code skips login and makes API requests.
+     * The MITM proxy handles actual credential injection — no real secrets enter the container.
+     * <p>
+     * Always uses standard (non-Vertex) mode with a placeholder API key. When the host
+     * is configured for Vertex AI, the proxy transparently translates standard API
+     * requests to Vertex AI rawPredict format. The container has zero knowledge of Vertex.
+     */
+    private void configureAuth(Container c) {
+        c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
     }
 }

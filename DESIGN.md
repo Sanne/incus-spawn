@@ -87,10 +87,10 @@ Schema fields (all optional except `name`):
 
 Execution order: packages → run → run_as_user → files → env → verify.
 
-**Java tools** (fallback) — for tools needing programmatic logic (e.g. reading SpawnConfig for credentials):
+**Java tools** (fallback) — for tools needing programmatic logic beyond what YAML supports:
 - Implement `ToolSetup` interface (`name()` + `install(Container)`)
 - Discovered via CDI (`@Dependent`)
-- Currently used by: `claude` (conditional auth), `gh` (token injection)
+- Currently used by: `claude` (binary install + settings), `gh` (dnf install)
 
 **Resolution order**: user-defined YAML (`.incus-spawn/tools/`) → built-in YAML (`resources/tools/`) → Java CDI implementations. First match by name wins.
 
@@ -178,27 +178,42 @@ iptables -P OUTPUT DROP
 
 ### Auth & Security: MITM TLS Proxy
 
-**Credentials never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication. There are no environment variables, credential helpers, shell wrappers, or any other mechanism that could expose credentials to code running inside containers.
+**API keys and tokens never enter containers.** A host-side MITM TLS proxy (`isx proxy`) provides transparent authentication. Placeholder values satisfy tools' local auth checks (e.g. `GH_TOKEN`, `ANTHROPIC_API_KEY`), but the proxy replaces them with real credentials before requests reach upstream servers.
 
 **How it works:**
 
-1. Golden images include DNS overrides (`/etc/hosts`) that resolve intercepted domains to the Incus bridge gateway IP
+1. The proxy configures bridge-level DNS overrides (via `raw.dnsmasq` on `incusbr0`) so all containers resolve intercepted domains to the gateway IP
 2. Golden images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
 3. The proxy listens on port 443 on the gateway IP, terminates TLS using per-domain certificates signed by the custom CA
 4. Based on the target domain, the proxy injects authentication headers:
-   - `api.anthropic.com` (direct API) — `x-api-key: <anthropic-api-key>`
-   - `api.anthropic.com` (Vertex AI mode) — translates the entire request to Vertex AI format (see below)
-   - GitHub domains — `Authorization: Bearer <github-token>`
+   - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (or Vertex AI translation, see below)
+   - `github.com` (git HTTP) — `Authorization: Basic <base64(x-access-token:token)>`
+   - Other GitHub domains (API, CDN) — `Authorization: Bearer <github-token>`
 5. The proxy re-encrypts and forwards to the real upstream over TLS
 
-**Vertex AI support:** When the host is configured for Vertex AI (`useVertex=true` in config), the proxy transparently translates standard Anthropic API requests into Vertex AI API calls. The container runs Claude Code in **standard mode** (no Vertex env vars, no GCP credentials). The proxy:
-- Intercepts `POST /v1/messages` to `api.anthropic.com` (same as direct API)
-- Extracts the model name from the JSON body
-- Rewrites the URL to `https://{region}-aiplatform.googleapis.com/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:rawPredict`
-- Replaces `x-api-key` with `Authorization: Bearer <gcp-token>` (obtained on the host via `gcloud auth print-access-token`, cached for ~50 minutes)
-- The response format is identical (Vertex `rawPredict` passes through the Anthropic response), so Claude Code doesn't know the difference
+**Vertex AI support (proxy-side API translation):** When the host is configured for Vertex AI (`useVertex=true` in config), containers still run Claude Code in **standard (non-Vertex) mode** with `ANTHROPIC_API_KEY=sk-ant-placeholder`. The container has zero knowledge of Vertex AI — no GCP credentials, no Vertex env vars, no special SDK configuration. The proxy transparently translates standard Anthropic API requests to Vertex AI format:
+
+1. Container sends `POST /v1/messages` to `api.anthropic.com` (resolves to gateway via dnsmasq)
+2. Proxy intercepts and buffers the request body
+3. Extracts the `model` field from the JSON body (e.g. `claude-sonnet-4-6`)
+4. Rewrites the request to Vertex AI `rawPredict` format:
+   - URL: `/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` (or `:streamRawPredict` for streaming requests)
+   - Auth: replaces `x-api-key` with `Authorization: Bearer <gcp-token>` (obtained via `gcloud auth print-access-token`, cached ~50 minutes)
+   - Body: replaces the `model` field with `"anthropic_version":"vertex-2023-10-16"` (required by Vertex)
+   - Body: strips all top-level fields not in the Vertex allowlist (beta features like `context_management` cause "Extra inputs" rejections)
+   - Body: strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex)
+   - Header: removes `anthropic-beta` (Vertex rejects unsupported beta feature flags)
+   - Host: rewrites to `{region}-aiplatform.googleapis.com`
+5. Forwards to the real Vertex AI endpoint over TLS
+6. Response format is identical — Vertex `rawPredict` returns standard Anthropic response format
+
+The body translation uses an allowlist approach: only known-good fields (`messages`, `system`, `max_tokens`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `stream`, `metadata`, `tools`, `tool_choice`, `anthropic_version`) are kept. Everything else is dropped. This is more robust than blocklisting individual beta fields, since new Claude Code beta features are automatically stripped without proxy changes.
+
+This approach was chosen over running Claude Code in native Vertex mode inside containers because Vertex mode requires GCP authentication for client-side model validation, which conflicts with the goal of keeping all credentials outside containers.
 
 **Intercepted domains:** `api.anthropic.com`, `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`
+
+**HTTPS only:** The proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`.
 
 All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge NAT and are unaffected by the proxy.
 
@@ -221,11 +236,9 @@ user.incus-spawn.proxy-gateway=10.166.11.1    # (proxy-only branches only)
 
 ### Storage and COW
 
-Clone efficiency depends on the Incus storage backend:
-- **btrfs, zfs, lvm**: copy-on-write — clones share data with golden images
-- **dir**: no COW — each clone is a full copy
+Copy-on-write storage is essential for efficient branching. `isx init` automatically creates a btrfs storage pool (`cow`) if no CoW-capable pool exists. All instance creation (`launch` and `copy`) auto-detects the best CoW pool and uses it via `--storage`, regardless of what the default Incus profile points to.
 
-`isx init` checks the configured storage pool and warns if COW is not available.
+Supported CoW drivers: **btrfs**, **zfs**, **lvm**. If btrfs pool creation fails during init (e.g. unsupported filesystem), the user is warned and can continue with the `dir` driver, but clones will be full copies.
 
 ## Testing
 
@@ -252,11 +265,16 @@ We evaluated Packer (null builder + shell provisioner) and Ansible but rejected 
 ### Hardcoded built-in tool list vs classpath scanning
 Built-in YAML tools are loaded from a hardcoded list of filenames rather than scanning the classpath. This is a deliberate choice: Quarkus native image compilation makes classpath directory listing unreliable, and the list only changes when a developer adds a built-in tool (at which point they also update the loader). User-defined tools in `.incus-spawn/tools/` are discovered via filesystem scanning.
 
-### DNS: static resolv.conf vs systemd-resolved
-systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration. We disable it, point `/etc/resolv.conf` directly at the Incus bridge gateway (which runs dnsmasq), and make the file immutable with `chattr +i`. This is less flexible than systemd-resolved (no per-link DNS, no DNSSEC validation) but works reliably across container restarts and network changes.
+### DNS: static resolv.conf + bridge dnsmasq
+systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers because it expects to manage the network configuration. We disable it, point `/etc/resolv.conf` directly at the Incus bridge gateway (which runs dnsmasq), and make the file immutable with `chattr +i`. This is less flexible than systemd-resolved (no per-link DNS, no DNSSEC validation) but works reliably across container restarts and network changes. Domain interception for the MITM proxy is configured at the bridge level via `raw.dnsmasq` (dnsmasq `address=` directives), not via per-container `/etc/hosts`. This avoids a class of bugs where Incus overwrites `/etc/hosts` on container start.
 
 ### Credential isolation via MITM TLS proxy
-A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub), injects authentication headers server-side, and forwards to the real upstream. Containers resolve these domains to the gateway IP via `/etc/hosts` and trust the proxy's certificates via a custom CA installed in the golden image. This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints. The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
+A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub), injects authentication headers server-side, and forwards to the real upstream. Containers resolve these domains to the gateway IP via bridge-level dnsmasq overrides (configured when `isx proxy` starts) and trust the proxy's certificates via a custom CA installed in the golden image. This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints. The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
+
+### Vertex AI: proxy-side API translation vs native Vertex mode
+We evaluated two approaches for Vertex AI support: (1) running Claude Code in native Vertex mode inside containers with `CLAUDE_CODE_USE_VERTEX=1` and a fictitious proxy domain, or (2) running Claude Code in standard mode and translating requests proxy-side. We chose proxy-side translation because native Vertex mode requires GCP authentication for client-side model availability validation — even with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, Claude Code rejects models that aren't in its internal Vertex allowlist, which lags behind actual Vertex availability. Proxy-side translation means the container has zero knowledge of Vertex AI: it sends standard Anthropic API requests, and the proxy rewrites them to Vertex `rawPredict` format (URL path rewrite, `model` field → URL, `anthropic_version` body field, Bearer token injection). The `anthropic_version: "vertex-2023-10-16"` value is hardcoded — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched.
+
+**Fragility and mitigation:** The allowlist of body fields accepted by Vertex may drift as Anthropic adds new standard (non-beta) fields. If a new field is added to the standard Messages API and becomes required or functionally important, requests will silently succeed but with degraded behavior until the allowlist is updated. The allowlist is defined as `VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`. Beta features are automatically stripped and are not a concern — the allowlist only needs updating when the *standard* API schema changes.
 
 ### Fedora-specific
 The base image and package management are Fedora-specific (`dnf`, `images:fedora/43`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
@@ -269,19 +287,19 @@ The base image and package management are Fedora-specific (`dnf`, `images:fedora
 
 ### Credential Isolation
 
-Credentials never enter containers in any form, regardless of network mode:
+Real API keys and tokens never enter containers, regardless of network mode. Containers hold only placeholder values that satisfy tools' local auth checks; the proxy replaces them with real credentials before requests reach upstream servers.
 
-| Credential | Container exposure | How it works |
-|-----------|-------------------|--------------|
-| Claude API key | **Never in container** | MITM proxy intercepts TLS to `api.anthropic.com`, injects `x-api-key` header server-side |
-| GCP credentials (Vertex AI) | **Never in container** | Proxy translates standard API requests to Vertex format, obtains GCP token on the host via `gcloud`, injects `Authorization: Bearer` — container has no Vertex env vars or GCP credentials |
-| GitHub token | **Never in container** | MITM proxy intercepts TLS to GitHub domains, injects `Authorization: Bearer` header server-side |
+| Credential | Container has | How it works |
+|-----------|--------------|--------------|
+| Claude API key | Placeholder `sk-ant-placeholder` | Proxy replaces `x-api-key` header with real key (direct API) or translates to Vertex AI rawPredict with GCP Bearer token (Vertex mode) |
+| GCP credentials (Vertex AI) | **Nothing** | Container runs Claude Code in standard mode. Proxy translates requests to Vertex AI format and injects GCP Bearer token from `gcloud` on the host |
+| GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
-The MITM TLS proxy provides complete credential isolation:
-1. DNS overrides in `/etc/hosts` route intercepted domains to the gateway IP
+The MITM TLS proxy provides credential isolation:
+1. Bridge-level dnsmasq overrides (configured by `isx proxy`) route intercepted domains to the gateway IP
 2. A custom CA certificate (installed in golden images) lets containers trust the proxy's TLS certs
-3. The proxy terminates TLS, injects auth headers, and forwards to real upstream over TLS
-4. No environment variables, credential helpers, shell wrappers, or accessible endpoints expose credentials
+3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
+4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, iptables OUTPUT rules additionally block all egress except the proxy port (443) and DNS
 
 ### Filesystem Isolation

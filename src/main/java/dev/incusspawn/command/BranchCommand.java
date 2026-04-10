@@ -12,7 +12,6 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.nio.file.Path;
-
 @Command(
         name = "branch",
         description = "Create a new instance from an existing one",
@@ -90,9 +89,6 @@ public class BranchCommand implements Runnable {
 
         incus.start(name);
         waitForReady(name);
-
-        // Auth is handled transparently by the host MITM proxy — no container-side
-        // configuration needed. DNS overrides and CA cert are baked into golden images.
 
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(name);

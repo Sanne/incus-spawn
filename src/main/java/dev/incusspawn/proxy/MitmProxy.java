@@ -13,6 +13,10 @@ import java.security.KeyStore;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -23,7 +27,7 @@ import java.util.regex.Pattern;
  * TLS-terminating MITM proxy for transparent credential injection.
  * <p>
  * Containers resolve intercepted domains (api.anthropic.com, github.com, etc.)
- * to the Incus bridge gateway IP via /etc/hosts. This proxy listens on port 443
+ * to the Incus bridge gateway IP via bridge-level dnsmasq. This proxy listens on port 443
  * on the gateway IP, terminates TLS using per-domain certificates signed by a
  * custom CA, injects authentication headers, and forwards to the real upstream.
  * <p>
@@ -52,22 +56,32 @@ public class MitmProxy {
             "codeload.github.com", "uploads.github.com"
     );
 
-    // Pattern to extract "model" field from JSON body without a full parser
-    private static final Pattern MODEL_PATTERN = Pattern.compile("\"model\"\\s*:\\s*\"([^\"]+)\"");
-    // Pattern to detect streaming requests
-    private static final Pattern STREAM_PATTERN = Pattern.compile("\"stream\"\\s*:\\s*true");
-
     private final String bindAddress;
     private final int mitmPort;
     private final int healthPort;
     private final String anthropicApiKey;
     private final String ghToken;
 
-    // Vertex AI configuration (when useVertex=true, proxy translates standard API
-    // requests to Vertex AI format — containers run in standard mode regardless)
+    // Vertex AI configuration. When useVertex=true, the proxy transparently translates
+    // standard Anthropic API requests (to api.anthropic.com) into Vertex AI rawPredict
+    // requests. Containers always run Claude Code in standard mode — they have no
+    // knowledge of Vertex AI.
     private final boolean useVertex;
     private final String vertexRegion;
     private final String vertexProjectId;
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    // Top-level fields accepted by Vertex AI rawPredict. Anything else (beta features
+    // like context_management, etc.) is stripped to avoid "Extra inputs" rejections.
+    private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
+            "anthropic_version", "messages", "system", "max_tokens",
+            "temperature", "top_p", "top_k", "stop_sequences", "stream",
+            "metadata", "tools", "tool_choice"
+    );
+
+    // Track which stripped fields have already been logged (avoid spam)
+    private final Set<String> loggedStrippedFields = ConcurrentHashMap.newKeySet();
 
     // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min)
     private String cachedVertexToken;
@@ -128,10 +142,36 @@ public class MitmProxy {
 
     /**
      * The set of domains intercepted by this proxy.
-     * Used by BuildCommand to write /etc/hosts entries in golden images.
      */
     public static Set<String> interceptedDomains() {
         return INTERCEPTED_DOMAIN_SET;
+    }
+
+    /**
+     * Configure bridge-level DNS overrides via dnsmasq so all containers on
+     * incusbr0 resolve intercepted domains to the gateway IP.
+     */
+    public static void configureBridgeDns(IncusClient incus) {
+        var gatewayIp = resolveGatewayIp(incus);
+        // Set A records to the gateway IP and block AAAA records (return ::)
+        // to prevent IPv6 connections from bypassing the proxy.
+        var dnsmasqConfig = interceptedDomains().stream()
+                .sorted()
+                .flatMap(d -> java.util.stream.Stream.of(
+                        "address=/" + d + "/" + gatewayIp,
+                        "address=/" + d + "/::"))
+                .collect(java.util.stream.Collectors.joining("\n"));
+        incus.exec("network", "set", "incusbr0", "raw.dnsmasq", dnsmasqConfig)
+                .assertSuccess("Failed to configure bridge DNS overrides");
+        System.out.println("  DNS overrides: " + interceptedDomains().size() +
+                " domains -> " + gatewayIp + " (via bridge dnsmasq)");
+    }
+
+    /**
+     * Clear bridge-level DNS overrides, restoring normal DNS resolution.
+     */
+    public static void clearBridgeDns(IncusClient incus) {
+        incus.exec("network", "set", "incusbr0", "raw.dnsmasq", "");
     }
 
     /**
@@ -154,8 +194,8 @@ public class MitmProxy {
         System.out.println("Health endpoint on " + bindAddress + ":" + healthPort + "/health");
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
         if (useVertex) {
-            System.out.println("Vertex AI mode: translating requests to " +
-                    vertexRegion + "-aiplatform.googleapis.com" +
+            System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
+                    " to " + vertexRegion + "-aiplatform.googleapis.com" +
                     " (project: " + vertexProjectId + ")");
         }
         System.out.println();
@@ -240,17 +280,23 @@ public class MitmProxy {
                 return;
             }
 
-            // Vertex AI translation: rewrite Anthropic API requests to Vertex format
+            // For Anthropic API requests when using Vertex AI, translate the request
+            // to the Vertex rawPredict format. This requires buffering the body to
+            // extract the model name and rewrite the JSON.
+            String upstreamHost;
+            byte[] rewrittenBody = null;
+
             if (useVertex && ANTHROPIC_DOMAINS.contains(domain)) {
-                handleVertexTranslation(request, in, out);
-                return;
+                upstreamHost = vertexRegion + "-aiplatform.googleapis.com";
+                var bodyBytes = request.readRequestBody(in);
+                rewrittenBody = translateToVertex(request, bodyBytes, upstreamHost);
+            } else {
+                upstreamHost = domain;
+                injectHeaders(request, domain);
             }
 
-            // Standard path: inject auth headers and forward to the original domain
-            injectHeaders(request, domain);
-
             var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
-                    .createSocket(domain, 443);
+                    .createSocket(upstreamHost, 443);
             upstreamSocket.setSoTimeout(300_000);
 
             try (upstreamSocket) {
@@ -259,7 +305,14 @@ public class MitmProxy {
                 var upstreamIn = upstreamSocket.getInputStream();
 
                 request.writeTo(upstreamOut);
-                request.relayRequestBody(in, upstreamOut);
+                if (rewrittenBody != null) {
+                    // Vertex: send the rewritten body we already buffered
+                    upstreamOut.write(rewrittenBody);
+                    upstreamOut.flush();
+                } else {
+                    // Non-Vertex: stream body directly from client
+                    request.relayRequestBody(in, upstreamOut);
+                }
 
                 HttpMessage.relayResponse(upstreamIn, out);
             }
@@ -267,62 +320,6 @@ public class MitmProxy {
             // Connection closed or network error — expected during normal operation
         } catch (Exception e) {
             System.err.println("MITM connection error: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Translate a standard Anthropic API request to Vertex AI format.
-     * The container sends a normal request to api.anthropic.com; this method
-     * rewrites it for the Vertex AI rawPredict/streamRawPredict endpoint.
-     */
-    private void handleVertexTranslation(HttpMessage request, java.io.InputStream clientIn,
-                                          java.io.OutputStream clientOut) throws IOException {
-        // Read the full request body to extract the model name and detect streaming
-        var body = request.readRequestBody(clientIn);
-        var bodyStr = new String(body);
-
-        // Extract model name (e.g. "claude-sonnet-4-20250514")
-        var modelMatcher = MODEL_PATTERN.matcher(bodyStr);
-        var model = modelMatcher.find() ? modelMatcher.group(1) : "claude-sonnet-4-20250514";
-
-        // Detect streaming
-        var isStream = STREAM_PATTERN.matcher(bodyStr).find();
-
-        // Build the Vertex AI path
-        var vertexAction = isStream ? "streamRawPredict" : "rawPredict";
-        var vertexPath = "/v1/projects/" + vertexProjectId +
-                "/locations/" + vertexRegion +
-                "/publishers/anthropic/models/" + model +
-                ":" + vertexAction;
-        request.setPath(vertexPath);
-
-        // Replace auth: remove x-api-key, add GCP Bearer token
-        request.removeHeader("x-api-key");
-        var token = getVertexAccessToken();
-        request.setHeader("Authorization", "Bearer " + token);
-
-        // Point to the Vertex AI host
-        var vertexHost = vertexRegion + "-aiplatform.googleapis.com";
-        request.setHeader("Host", vertexHost);
-
-        // Connect to the Vertex AI endpoint
-        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
-                .createSocket(vertexHost, 443);
-        upstreamSocket.setSoTimeout(300_000);
-
-        try (upstreamSocket) {
-            upstreamSocket.startHandshake();
-            var upstreamOut = upstreamSocket.getOutputStream();
-            var upstreamIn = upstreamSocket.getInputStream();
-
-            // Write modified request headers
-            request.writeTo(upstreamOut);
-            // Write the buffered body directly (already read in full)
-            upstreamOut.write(body);
-            upstreamOut.flush();
-
-            // Relay the response back to the client
-            HttpMessage.relayResponse(upstreamIn, clientOut);
         }
     }
 
@@ -352,6 +349,91 @@ public class MitmProxy {
         }
     }
 
+    /**
+     * Translate a standard Anthropic API request into a Vertex AI rawPredict request.
+     * <p>
+     * Differences between the two APIs:
+     * <ul>
+     *   <li>URL: /v1/messages → /v1/projects/{pid}/locations/{region}/publishers/anthropic/models/{model}:rawPredict</li>
+     *   <li>Auth: x-api-key header → Authorization: Bearer (GCP token)</li>
+     *   <li>Body: only {@link #VERTEX_ALLOWED_FIELDS} are kept; everything else is stripped</li>
+     *   <li>Body: "model" replaced with "anthropic_version": "vertex-2023-10-16"</li>
+     *   <li>Body: "scope" removed from nested cache_control objects (beta feature)</li>
+     *   <li>Header: anthropic-beta removed (Vertex rejects unsupported beta flags)</li>
+     *   <li>Streaming: :rawPredict → :streamRawPredict when stream=true</li>
+     * </ul>
+     *
+     * @return the rewritten body bytes
+     */
+    private byte[] translateToVertex(HttpMessage request, byte[] bodyBytes, String upstreamHost) {
+        try {
+            var root = (ObjectNode) JSON.readTree(bodyBytes);
+
+            // Extract model (goes into URL, not body)
+            var model = root.has("model") ? root.get("model").asText() : "claude-sonnet-4-6";
+            var streaming = root.has("stream") && root.get("stream").asBoolean();
+
+            // Strip all top-level fields Vertex doesn't support (beta features, etc.)
+            root.remove("model");
+            var fieldNames = new java.util.ArrayList<String>();
+            root.fieldNames().forEachRemaining(fieldNames::add);
+            var stripped = new java.util.ArrayList<String>();
+            for (var field : fieldNames) {
+                if (!VERTEX_ALLOWED_FIELDS.contains(field)) {
+                    root.remove(field);
+                    stripped.add(field);
+                }
+            }
+            if (!stripped.isEmpty() && loggedStrippedFields.addAll(stripped)) {
+                System.err.println("Vertex translation: stripped unsupported fields: " + stripped);
+            }
+
+            // Add Vertex API version
+            root.put("anthropic_version", "vertex-2023-10-16");
+
+            // Strip "scope" from cache_control objects deep in the tree (beta feature)
+            stripCacheControlScope(root);
+
+            var rewrittenBytes = JSON.writeValueAsBytes(root);
+
+            // Rewrite URL path
+            var endpoint = streaming ? ":streamRawPredict" : ":rawPredict";
+            var vertexPath = "/v1/projects/" + vertexProjectId + "/locations/" + vertexRegion +
+                    "/publishers/anthropic/models/" + model + endpoint;
+            request.setPath(vertexPath);
+
+            // Rewrite headers
+            request.setHeader("Host", upstreamHost);
+            request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
+            request.removeHeader("x-api-key");
+            request.removeHeader("anthropic-beta");
+            request.setHeader("Content-Length", String.valueOf(rewrittenBytes.length));
+
+            return rewrittenBytes;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to translate request body to Vertex format", e);
+        }
+    }
+
+    /**
+     * Recursively remove "scope" from any "cache_control" object in the JSON tree.
+     */
+    private void stripCacheControlScope(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isObject()) {
+            var obj = (ObjectNode) node;
+            if (obj.has("cache_control") && obj.get("cache_control").isObject()) {
+                ((ObjectNode) obj.get("cache_control")).remove("scope");
+            }
+            for (var it = obj.elements(); it.hasNext(); ) {
+                stripCacheControlScope(it.next());
+            }
+        } else if (node.isArray()) {
+            for (var element : node) {
+                stripCacheControlScope(element);
+            }
+        }
+    }
+
     private void injectHeaders(HttpMessage request, String domain) {
         if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (anthropicApiKey != null && !anthropicApiKey.isBlank()) {
@@ -359,7 +441,15 @@ public class MitmProxy {
             }
         } else if (GITHUB_DOMAINS.contains(domain)) {
             if (ghToken != null && !ghToken.isBlank()) {
-                request.setHeader("Authorization", "Bearer " + ghToken);
+                if ("github.com".equals(domain)) {
+                    // Git HTTP transport requires Basic auth (token as password)
+                    var credentials = "x-access-token:" + ghToken;
+                    var encoded = java.util.Base64.getEncoder().encodeToString(credentials.getBytes());
+                    request.setHeader("Authorization", "Basic " + encoded);
+                } else {
+                    // API and CDN domains accept Bearer tokens
+                    request.setHeader("Authorization", "Bearer " + ghToken);
+                }
             }
         }
     }

@@ -182,6 +182,24 @@ public class IncusClient {
         return execInteractive(args);
     }
 
+    private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
+
+    /**
+     * Find the best copy-on-write storage pool, if one exists.
+     * Returns the pool name, or null if no CoW pool is available.
+     */
+    public String findCowPool() {
+        var result = exec("storage", "list", "--format=csv", "--columns=nD");
+        if (!result.success()) return null;
+        for (var line : result.stdout().strip().lines().toList()) {
+            var parts = line.split(",", 2);
+            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
+                return parts[0].strip();
+            }
+        }
+        return null;
+    }
+
     /**
      * Launch a new container or VM from an image.
      */
@@ -193,6 +211,11 @@ public class IncusClient {
         if (vm) {
             args.add("--vm");
         }
+        var cowPool = findCowPool();
+        if (cowPool != null) {
+            args.add("--storage");
+            args.add(cowPool);
+        }
         int exitCode = execInteractive(args);
         if (exitCode != 0) {
             throw new IncusException("Failed to launch " + name + " (exit code " + exitCode + ")");
@@ -201,6 +224,7 @@ public class IncusClient {
 
     /**
      * Copy (clone) an existing container/VM.
+     * Automatically selects the best CoW storage pool if available.
      */
     public void copy(String source, String target, String... extraArgs) {
         var args = new ArrayList<String>();
@@ -208,6 +232,11 @@ public class IncusClient {
         args.add(source);
         args.add(target);
         args.addAll(List.of(extraArgs));
+        var cowPool = findCowPool();
+        if (cowPool != null) {
+            args.add("--storage");
+            args.add(cowPool);
+        }
         exec(args).assertSuccess("Failed to copy " + source + " to " + target);
     }
 

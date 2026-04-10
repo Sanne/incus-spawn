@@ -29,7 +29,7 @@ isx
 
 ## Branching
 
-Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications.
+Like `git branch`, branching creates an instant copy-on-write clone of any golden image. Each branch has its own independent filesystem -- changes in one branch cannot affect the golden image or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications. `isx init` automatically creates a btrfs storage pool if needed.
 
 ```
 golden-java  (stopped template, ~2GB)
@@ -46,12 +46,13 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 
 **API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
 
-- Golden images include DNS overrides (`/etc/hosts`) that resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
+- The proxy configures bridge-level DNS overrides (via dnsmasq on `incusbr0`) so containers resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
 - Golden images include a custom CA certificate so containers trust the proxy's TLS certificates
-- The proxy terminates TLS, injects authentication headers (`x-api-key` for Anthropic, `Authorization: Bearer` for GitHub), and forwards to the real upstream over TLS
-- Tools (`curl`, `git`, `gh`, `claude`) work completely unmodified inside containers — no environment variables, no credential helpers, no shell wrappers
-- **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard Anthropic API requests to Vertex format and injects GCP Bearer tokens — containers run Claude Code in standard mode with zero GCP configuration
-- There is no mechanism for code inside a container to read, extract, or exfiltrate credentials
+- The proxy terminates TLS, injects authentication headers, and forwards to the real upstream over TLS
+- Tools (`curl`, `git`, `gh`, `claude`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
+- **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard API requests to Vertex AI `rawPredict` format — containers run Claude Code in standard mode with zero knowledge of Vertex, no GCP credentials
+- There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
+- **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
 The proxy must be running for non-airgapped containers: `isx proxy` (run in a separate terminal or as a background service).
 

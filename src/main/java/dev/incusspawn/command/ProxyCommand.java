@@ -24,8 +24,12 @@ public class ProxyCommand implements Runnable {
     @Inject
     IncusClient incus;
 
+    @Inject
+    picocli.CommandLine.IFactory factory;
+
     @Override
     public void run() {
+        if (!InitCommand.requireInit(factory)) return;
         var config = dev.incusspawn.config.SpawnConfig.load();
         var claude = config.getClaude();
         var apiKey = claude.getApiKey();
@@ -52,6 +56,8 @@ public class ProxyCommand implements Runnable {
             return;
         }
 
+        MitmProxy.configureBridgeDns(incus);
+
         System.out.println("Starting MITM authentication proxy...");
         System.out.println("  Gateway IP:    " + gatewayIp);
         System.out.println("  MITM port:     " + port);
@@ -71,6 +77,7 @@ public class ProxyCommand implements Runnable {
         // Handle Ctrl+C gracefully
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("\nStopping proxy...");
+            MitmProxy.clearBridgeDns(incus);
             proxy.stop();
         }));
 

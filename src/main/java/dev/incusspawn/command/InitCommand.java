@@ -4,10 +4,12 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
 import jakarta.inject.Inject;
+import picocli.CommandLine;
 import picocli.CommandLine.Command;
 
 import java.io.Console;
 import java.io.IOException;
+import java.nio.file.Files;
 
 @Command(
         name = "init",
@@ -18,6 +20,35 @@ public class InitCommand implements Runnable {
 
     @Inject
     IncusClient incus;
+
+    @Inject
+    CommandLine.IFactory factory;
+
+    /**
+     * Check if init has been run. If not, print a warning and auto-launch init.
+     * Call this at the top of any command that requires init (build, proxy, TUI, etc.).
+     *
+     * @return true if init is complete (either already or just ran), false if user aborted
+     */
+    public static boolean requireInit(CommandLine.IFactory factory) {
+        if (hasBeenInitialized()) return true;
+
+        System.out.println();
+        System.out.println("\u001B[1;33m  First-time setup required.\u001B[0m");
+        System.out.println("  Running 'isx init' to configure Incus, authentication, and the MITM proxy...");
+        System.out.println();
+
+        var exitCode = new CommandLine(InitCommand.class, factory).execute();
+        return exitCode == 0 && hasBeenInitialized();
+    }
+
+    /**
+     * Check whether init has been run by looking for the config file and CA cert.
+     */
+    public static boolean hasBeenInitialized() {
+        return Files.exists(SpawnConfig.configDir().resolve("config.yaml"))
+                && CertificateAuthority.exists();
+    }
 
     @Override
     public void run() {
@@ -112,7 +143,7 @@ public class InitCommand implements Runnable {
         // Add incusbr0 to the trusted zone and enable masquerading so container
         // traffic is NAT'd to the internet. Both are --permanent so they survive reboots.
         System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
-        var addResult = runHost("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
+        var addResult = runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
         if (addResult != 0) {
             System.err.println("  Warning: failed to add incusbr0 to trusted zone.");
             System.err.println("  Containers may not have network/DNS access.");
@@ -124,9 +155,9 @@ public class InitCommand implements Runnable {
         }
 
         System.out.println("  Enabling masquerading (NAT) for container internet access...");
-        runHost("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+        runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
 
-        var reloadResult = runHost("sudo", "firewall-cmd", "--reload");
+        var reloadResult = runHostQuiet("sudo", "firewall-cmd", "--reload");
         if (reloadResult != 0) {
             System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
             return;
@@ -156,13 +187,13 @@ public class InitCommand implements Runnable {
         // sets the FORWARD chain policy to DROP, which blocks Incus container traffic.
         // These direct rules are harmless without Docker and ready if Docker starts later.
         System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
-        runHost("sudo", "firewall-cmd", "--permanent", "--direct",
+        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                 "--add-rule", "ipv4", "filter", "FORWARD", "0",
                 "-i", "incusbr0", "-j", "ACCEPT");
-        runHost("sudo", "firewall-cmd", "--permanent", "--direct",
+        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                 "--add-rule", "ipv4", "filter", "FORWARD", "0",
                 "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
-        runHost("sudo", "firewall-cmd", "--reload");
+        runHostQuiet("sudo", "firewall-cmd", "--reload");
         System.out.println("  Firewall rules applied (persistent via firewalld).");
     }
 
@@ -251,14 +282,16 @@ public class InitCommand implements Runnable {
     private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
 
     private void checkStorageDriver() {
-        var result = incus.exec("storage", "list", "--format=csv", "--columns=nd");
+        var result = incus.exec("storage", "list", "--format=csv", "--columns=nD");
         if (!result.success()) return;
         var lines = result.stdout().strip().lines().toList();
         if (lines.isEmpty()) return;
 
         boolean anyCow = false;
+        var existingPoolNames = new java.util.ArrayList<String>();
         for (var line : lines) {
             var parts = line.split(",", 2);
+            if (parts.length >= 1) existingPoolNames.add(parts[0].strip());
             if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
                 anyCow = true;
                 break;
@@ -266,12 +299,35 @@ public class InitCommand implements Runnable {
         }
 
         if (!anyCow) {
-            System.out.println();
-            System.err.println("  Warning: no copy-on-write storage pool detected.");
-            System.err.println("  Clones and branches will be full copies, using more disk space.");
-            System.err.println("  For efficient storage, consider creating a btrfs or ZFS pool:");
-            System.err.println("    incus storage create default btrfs");
-            System.err.println("  See: https://linuxcontainers.org/incus/docs/main/reference/storage_btrfs/");
+            System.out.println("  No copy-on-write storage pool detected. Creating one...");
+            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs");
+            if (createResult == 0) {
+                System.out.println("  Created btrfs storage pool 'cow'.");
+                System.out.println("  All new instances will use it automatically.");
+            } else {
+                System.out.println();
+                System.err.println("\u001B[1;33m  ╔══════════════════════════════════════════════════════════════╗");
+                System.err.println("  ║  WARNING: Failed to create btrfs storage pool!             ║");
+                System.err.println("  ╚══════════════════════════════════════════════════════════════╝\u001B[0m");
+                System.err.println();
+                System.err.println("  \u001B[33mClones and branches will be FULL COPIES, using significantly");
+                System.err.println("  more disk space and taking much longer to create.\u001B[0m");
+                System.err.println();
+                System.err.println("  You can create one manually later:");
+                System.err.println("    \u001B[1msudo incus storage create cow btrfs\u001B[0m");
+                System.err.println("  incus-spawn will automatically use it for all new instances.");
+                System.err.println();
+
+                var console = System.console();
+                if (console != null) {
+                    System.err.print("  \u001B[1;33mContinue without CoW storage? (y/N): \u001B[0m");
+                    var answer = console.readLine().strip();
+                    if (!answer.equalsIgnoreCase("y")) {
+                        System.out.println("  Aborted. Re-run 'isx init' after creating a CoW storage pool.");
+                        System.exit(0);
+                    }
+                }
+            }
         }
     }
 
@@ -419,6 +475,46 @@ public class InitCommand implements Runnable {
             var pb = new ProcessBuilder(command);
             pb.inheritIO();
             return pb.start().waitFor();
+        } catch (IOException | InterruptedException e) {
+            System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
+            return 1;
+        }
+    }
+
+    /**
+     * Run a host command, capturing stderr and suppressing benign warnings.
+     * Use this for commands like firewall-cmd that emit noisy "ALREADY_ENABLED" warnings.
+     */
+    private int runHostQuiet(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(false);
+            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            var process = pb.start();
+            // Drain stdout (show it)
+            var stdout = new String(process.getInputStream().readAllBytes());
+            if (!stdout.isBlank()) {
+                System.out.print(stdout);
+            }
+            // Capture stderr and filter out benign warnings
+            var stderr = new String(process.getErrorStream().readAllBytes());
+            var exitCode = process.waitFor();
+            if (!stderr.isBlank()) {
+                for (var line : stderr.split("\n")) {
+                    var trimmed = line.strip();
+                    if (trimmed.isEmpty()) continue;
+                    // Suppress benign firewalld warnings about already-configured rules
+                    if (trimmed.contains("ALREADY_ENABLED")
+                            || trimmed.contains("ALREADY_SET")
+                            || trimmed.contains("ALREADY_ACTIVE")) {
+                        // Silently ignore — the rule is already in place, which is what we want
+                        continue;
+                    }
+                    // Print any other stderr as a non-alarming note
+                    System.out.println("  " + trimmed);
+                }
+            }
+            return exitCode;
         } catch (IOException | InterruptedException e) {
             System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
             return 1;

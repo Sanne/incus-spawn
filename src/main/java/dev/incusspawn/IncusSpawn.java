@@ -33,7 +33,8 @@ public class IncusSpawn implements Runnable {
 
     @Override
     public void run() {
-        // Default action when no subcommand is given: show the list
+        if (!InitCommand.requireInit(factory)) return;
+        // Default action when no subcommand is given: show the TUI
         new CommandLine(ListCommand.class, factory).execute();
     }
 
