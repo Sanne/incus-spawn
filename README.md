@@ -89,6 +89,23 @@ tools:
   - maven-3
 ```
 
+Three images are built-in (`golden-minimal`, `golden-dev`, `golden-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` -- user definitions with the same name override built-ins.
+
+Image schema fields (all optional except `name`):
+- `image` -- base OS image, only for root images (default: `images:fedora/43`)
+- `parent` -- parent image name (omit for root images)
+- `packages` -- dnf packages to install
+- `tools` -- tool names to run (resolved from YAML or Java)
+- `description` -- human-readable description for the TUI
+
+```shell
+# Build a specific image (builds missing parents automatically)
+isx build golden-java
+
+# Rebuild all defined images from scratch
+isx build --all
+```
+
 ## Custom Tools
 
 Tools can be defined as YAML files without writing Java:
@@ -206,4 +223,5 @@ Users can then install or update via `jbang app install incus-spawn@Sanne/incus-
 ## Configuration
 
 - `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings
+- `~/.config/incus-spawn/images/*.yaml` -- user-defined golden image definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions

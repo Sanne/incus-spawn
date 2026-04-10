@@ -28,8 +28,12 @@ import java.util.Map;
 )
 public class BuildCommand implements Runnable {
 
-    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-minimal, golden-java)")
+    @Parameters(index = "0", description = "Name of the golden image (e.g. golden-minimal, golden-java)",
+            arity = "0..1")
     String name;
+
+    @Option(names = "--all", description = "Rebuild all defined golden images")
+    boolean all;
 
     @Option(names = "--vm", description = "Build as a VM instead of a container")
     boolean vm;
@@ -54,7 +58,19 @@ public class BuildCommand implements Runnable {
     @Override
     public void run() {
         if (!InitCommand.requireInit(factory)) return;
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
+
+        if (all) {
+            buildAll(defs);
+            return;
+        }
+
+        if (name == null) {
+            System.err.println("Usage: isx build <image-name>  or  isx build --all");
+            System.err.println("Available images: " + String.join(", ", defs.keySet()));
+            System.exit(1);
+        }
+
         var imageDef = defs.get(name);
         if (imageDef == null) {
             System.err.println("Unknown image: " + name);
@@ -62,6 +78,53 @@ public class BuildCommand implements Runnable {
             System.exit(1);
         }
         build(imageDef, defs);
+    }
+
+    /**
+     * Rebuild all defined golden images. Deletes existing images in reverse
+     * dependency order (children first), then builds leaf images (parents
+     * are built automatically by the recursive build).
+     */
+    private void buildAll(Map<String, ImageDef> defs) {
+        // Identify which images are parents of other images
+        var parentNames = defs.values().stream()
+                .filter(d -> !d.isRoot())
+                .map(ImageDef::getParent)
+                .collect(java.util.stream.Collectors.toSet());
+
+        // Leaf images = images that no other image references as parent
+        var leaves = defs.values().stream()
+                .filter(d -> !parentNames.contains(d.getName()))
+                .toList();
+
+        var allNames = new java.util.ArrayList<>(defs.keySet());
+        System.out.println("This will rebuild all golden images: " + String.join(", ", allNames));
+        var console = System.console();
+        if (console != null) {
+            System.out.print("Continue? (y/N): ");
+            var answer = console.readLine().strip();
+            if (!answer.equalsIgnoreCase("y")) {
+                System.out.println("Aborted.");
+                return;
+            }
+        }
+
+        // Delete in reverse order (children before parents)
+        java.util.Collections.reverse(allNames);
+        System.out.println("\nDeleting existing images...");
+        for (var imgName : allNames) {
+            if (incus.exists(imgName)) {
+                System.out.println("  Deleting " + imgName + "...");
+                incus.delete(imgName, true);
+            }
+        }
+
+        // Build each leaf — parents are built recursively
+        System.out.println();
+        for (var leaf : leaves) {
+            build(leaf, defs);
+            System.out.println();
+        }
     }
 
     /**

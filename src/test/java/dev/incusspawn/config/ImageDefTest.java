@@ -7,9 +7,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class ImageDefTest {
 
     @Test
-    void loadBuiltinsReturnsAllImages() {
-        var defs = ImageDef.loadBuiltins();
-        assertEquals(3, defs.size());
+    void loadAllReturnsBuiltinImages() {
+        var defs = ImageDef.loadAll();
+        assertTrue(defs.size() >= 3, "Should load at least 3 built-in images");
         assertTrue(defs.containsKey("golden-minimal"));
         assertTrue(defs.containsKey("golden-dev"));
         assertTrue(defs.containsKey("golden-java"));
@@ -17,7 +17,7 @@ class ImageDefTest {
 
     @Test
     void minimalIsRoot() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         var minimal = defs.get("golden-minimal");
         assertTrue(minimal.isRoot());
         assertNotNull(minimal.getImage());
@@ -28,7 +28,7 @@ class ImageDefTest {
 
     @Test
     void devExtendsMinimal() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         var dev = defs.get("golden-dev");
         assertFalse(dev.isRoot());
         assertEquals("golden-minimal", dev.getParent());
@@ -39,7 +39,7 @@ class ImageDefTest {
 
     @Test
     void javaExtendsDev() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         var java = defs.get("golden-java");
         assertFalse(java.isRoot());
         assertEquals("golden-dev", java.getParent());
@@ -49,7 +49,7 @@ class ImageDefTest {
 
     @Test
     void parentChainIsComplete() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         // java -> dev -> minimal
         var java = defs.get("golden-java");
         var dev = defs.get(java.getParent());
@@ -61,7 +61,7 @@ class ImageDefTest {
 
     @Test
     void descriptionsAreSet() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         assertFalse(defs.get("golden-minimal").getDescription().isEmpty());
         assertFalse(defs.get("golden-dev").getDescription().isEmpty());
         assertFalse(defs.get("golden-java").getDescription().isEmpty());
@@ -69,7 +69,7 @@ class ImageDefTest {
 
     @Test
     void findByNameWorks() {
-        var defs = ImageDef.loadBuiltins();
+        var defs = ImageDef.loadAll();
         assertNotNull(ImageDef.findByName("golden-java", defs));
         assertNull(ImageDef.findByName("nonexistent", defs));
     }

@@ -43,7 +43,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 
 ### Golden Image Hierarchy
 
-Images are defined in YAML (`src/main/resources/images/*.yaml`) and layered via copy-on-write:
+Images are defined in YAML and layered via copy-on-write. Built-in definitions live in `src/main/resources/images/*.yaml`; user-defined images in `~/.config/incus-spawn/images/` can extend or override them:
 
 ```
 golden-minimal   (Base OS only — no tools)
@@ -59,7 +59,9 @@ Each image definition specifies:
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
 
-Building an image automatically builds missing parents recursively.
+Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch.
+
+**Resolution order**: built-in YAML (classpath) first, then user-defined YAML (`~/.config/incus-spawn/images/`). User definitions with the same name override built-ins.
 
 ### Tool System
 

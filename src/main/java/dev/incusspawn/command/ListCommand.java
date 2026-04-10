@@ -409,7 +409,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (buildImageDefs == null) {
-            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadBuiltins().values());
+            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadAll().values());
         }
         if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
             buildImageSelected = Math.min(buildImageSelected + 1, buildImageDefs.size() - 1);
@@ -690,7 +690,7 @@ public class ListCommand implements Runnable {
 
     private void renderBuildImageModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         if (buildImageDefs == null) {
-            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadBuiltins().values());
+            buildImageDefs = new ArrayList<>(dev.incusspawn.config.ImageDef.loadAll().values());
         }
         int height = buildImageDefs.size() + 5; // header + options + spacer + hints + border
         // " ▸ N label  (description)" — compute width from longest entry, capped at 70
