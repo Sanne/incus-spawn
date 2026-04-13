@@ -202,13 +202,21 @@ public class InitCommand implements Runnable {
         System.out.println("[5/7] Configuring MITM authentication proxy...");
 
         // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
-        // for port 443 is redirected to the proxy's listen port. This avoids
-        // conflicting with Incus daemon's 0.0.0.0:443 listener and removes the
-        // need for privileged port binding.
-        System.out.println("  Adding iptables PREROUTING redirect (443 -> "
+        // for the gateway IP on port 443 is redirected to the proxy's listen port.
+        // Only traffic to the gateway IP is redirected (intercepted domains resolve
+        // there via dnsmasq); traffic to other IPs (e.g. maven repos) passes through.
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
                 + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
         runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                 "--add-rule", "ipv4", "nat", "PREROUTING", "0",
+                "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
+                String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                "-j", "REDIRECT", "--to-port",
+                String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+        // Remove overly broad redirect rule from previous installs (missing -d gateway)
+        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                 "-i", "incusbr0", "-p", "tcp", "--dport",
                 String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
                 "-j", "REDIRECT", "--to-port",

@@ -417,6 +417,16 @@ public class ListCommand implements Runnable {
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
 
+        // Shift+F8: Destroy all instances
+        if (key.isKey(KeyCode.F8) && key.hasShift()) {
+            if (entries.isEmpty()) {
+                statusMessage = "No instances to destroy.";
+                return true;
+            }
+            pendingDeleteName = "--all-instances";
+            mode = Mode.CONFIRM_DELETE;
+            return true;
+        }
         if (key.isKey(KeyCode.F8)) {
             pendingDeleteName = selected.name;
             mode = Mode.CONFIRM_DELETE;
@@ -622,6 +632,21 @@ public class ListCommand implements Runnable {
                 if (statusMessage == null || statusMessage.isEmpty()) {
                     statusMessage = "Destroyed " + destroyed + " template(s)";
                 }
+            } else if ("--all-instances".equals(pendingDeleteName)) {
+                // Destroy all instances
+                int destroyed = 0;
+                for (var entry : entries) {
+                    try {
+                        incus.delete(entry.name(), true);
+                        destroyed++;
+                    } catch (Exception e) {
+                        statusMessage = "Failed to destroy " + entry.name() + ": " + e.getMessage();
+                        break;
+                    }
+                }
+                if (statusMessage == null || statusMessage.isEmpty()) {
+                    statusMessage = "Destroyed " + destroyed + " instance(s)";
+                }
             } else {
                 try {
                     incus.delete(pendingDeleteName, true);
@@ -801,6 +826,7 @@ public class ListCommand implements Runnable {
             addKey(helpSpans, "F6", "Stop", !running);
             addKey(helpSpans, "F7", "Restart", !running);
             addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
+            addKey(helpSpans, "\u21e7F8", "Destroy all", entries.isEmpty());
         }
         addKey(helpSpans, "F10", "Quit", false);
 
@@ -830,10 +856,14 @@ public class ListCommand implements Runnable {
                               TableState tableState) {
         switch (mode) {
             case CONFIRM_DELETE -> {
-                var isAll = "--all".equals(pendingDeleteName);
-                var title = isAll ? " Destroy all templates " : " Destroy '" + pendingDeleteName + "' ";
-                var message = isAll
-                        ? "This will destroy all built templates."
+                var isAllTemplates = "--all".equals(pendingDeleteName);
+                var isAllInstances = "--all-instances".equals(pendingDeleteName);
+                var isAll = isAllTemplates || isAllInstances;
+                var title = isAllTemplates ? " Destroy all templates "
+                        : isAllInstances ? " Destroy all instances "
+                        : " Destroy '" + pendingDeleteName + "' ";
+                var message = isAllTemplates ? "This will destroy all built templates."
+                        : isAllInstances ? "This will destroy all instances."
                         : "This action cannot be undone.";
                 var modalArea = centerRect(screen, 54, 7);
                 var block = Block.builder()
