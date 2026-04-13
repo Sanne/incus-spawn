@@ -335,14 +335,16 @@ public class MitmProxy {
         }
         try {
             var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
-            pb.redirectErrorStream(true);
             var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
+            // Read stdout and stderr separately — gcloud may print warnings to
+            // stderr (e.g. credential refresh notices) which would corrupt the token
+            var stdout = new String(process.getInputStream().readAllBytes()).strip();
+            var stderr = new String(process.getErrorStream().readAllBytes()).strip();
             var exitCode = process.waitFor();
             if (exitCode != 0) {
-                throw new RuntimeException("gcloud auth print-access-token failed (exit " + exitCode + "): " + output);
+                throw new RuntimeException("gcloud auth print-access-token failed (exit " + exitCode + "): " + stderr);
             }
-            cachedVertexToken = output;
+            cachedVertexToken = stdout;
             vertexTokenExpiryMs = System.currentTimeMillis() + 50 * 60 * 1000L; // refresh every 50 min
             return cachedVertexToken;
         } catch (IOException | InterruptedException e) {
