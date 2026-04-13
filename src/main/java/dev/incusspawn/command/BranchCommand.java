@@ -224,7 +224,7 @@ public class BranchCommand implements Runnable {
             return;
         }
 
-        var mitmPort = MitmProxy.DEFAULT_MITM_PORT;
+        var mitmPort = MitmProxy.CONTAINER_FACING_PORT;
         var healthPort = MitmProxy.DEFAULT_HEALTH_PORT;
 
         System.out.println("Applying proxy-only firewall rules...");

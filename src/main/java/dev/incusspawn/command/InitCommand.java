@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.MitmProxy;
 import jakarta.inject.Inject;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -200,15 +201,22 @@ public class InitCommand implements Runnable {
     private void configureMitmProxy() {
         System.out.println("[5/7] Configuring MITM authentication proxy...");
 
-        // Allow non-root processes to bind to port 443 (needed by isx proxy).
-        // This is a harmless sysctl on a developer workstation.
-        System.out.println("  Configuring sysctl to allow binding to port 443...");
-        var sysctlResult = runHost("sudo", "sh", "-c",
-                "echo 'net.ipv4.ip_unprivileged_port_start=443' > /etc/sysctl.d/99-incus-spawn.conf && " +
-                "sysctl -p /etc/sysctl.d/99-incus-spawn.conf");
-        if (sysctlResult != 0) {
-            System.err.println("  Warning: failed to configure sysctl. You may need to run 'isx proxy' with elevated privileges.");
-        }
+        // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
+        // for port 443 is redirected to the proxy's listen port. This avoids
+        // conflicting with Incus daemon's 0.0.0.0:443 listener and removes the
+        // need for privileged port binding.
+        System.out.println("  Adding iptables PREROUTING redirect (443 -> "
+                + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
+        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                "--add-rule", "ipv4", "nat", "PREROUTING", "0",
+                "-i", "incusbr0", "-p", "tcp", "--dport",
+                String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                "-j", "REDIRECT", "--to-port",
+                String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+        runHostQuiet("sudo", "firewall-cmd", "--reload");
+
+        // Clean up old sysctl config from previous installs (no longer needed)
+        runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {

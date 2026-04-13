@@ -186,7 +186,7 @@ iptables -P OUTPUT DROP
 
 1. The proxy configures bridge-level DNS overrides (via `raw.dnsmasq` on `incusbr0`) so all containers resolve intercepted domains to the gateway IP
 2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
-3. The proxy listens on port 443 on the gateway IP, terminates TLS using per-domain certificates signed by the custom CA
+3. The proxy listens on port 18443 on the gateway IP. An iptables PREROUTING redirect rule (installed by `isx init` via `firewall-cmd --permanent --direct`) transparently redirects traffic arriving on `incusbr0` destined for port 443 to port 18443, avoiding conflicts with the Incus daemon on port 443. The proxy terminates TLS using per-domain certificates signed by the custom CA
 4. Based on the target domain, the proxy injects authentication headers:
    - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (or Vertex AI translation, see below)
    - `github.com` (git HTTP) — `Authorization: Basic <base64(x-access-token:token)>`

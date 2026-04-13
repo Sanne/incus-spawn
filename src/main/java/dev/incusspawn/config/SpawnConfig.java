@@ -31,11 +31,11 @@ public class SpawnConfig {
         public boolean isUseVertex() { return useVertex; }
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
         public String getCloudMlRegion() { return cloudMlRegion; }
-        public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion; }
+        public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion; }
         public String getVertexProjectId() { return vertexProjectId; }
-        public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId; }
+        public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId; }
         public String getApiKey() { return apiKey; }
-        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -43,7 +43,7 @@ public class SpawnConfig {
         private String token = "";
 
         public String getToken() { return token; }
-        public void setToken(String token) { this.token = token; }
+        public void setToken(String token) { this.token = token == null ? "" : token; }
     }
 
     public ClaudeConfig getClaude() { return claude; }

@@ -36,7 +36,8 @@ import java.util.regex.Pattern;
  */
 public class MitmProxy {
 
-    public static final int DEFAULT_MITM_PORT = 443;
+    public static final int CONTAINER_FACING_PORT = 443;
+    public static final int DEFAULT_MITM_PORT = 18443;
     public static final int DEFAULT_HEALTH_PORT = 18080;
 
     private static final Set<String> INTERCEPTED_DOMAIN_SET = Set.of(
@@ -249,6 +250,7 @@ public class MitmProxy {
         } catch (IOException e) {
             if (running) {
                 System.err.println("Failed to start MITM server: " + e.getMessage());
+                stop();
             }
         }
     }

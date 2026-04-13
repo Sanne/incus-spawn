@@ -14,7 +14,7 @@ import picocli.CommandLine.Option;
 public class ProxyCommand implements Runnable {
 
     @Option(names = "--port", description = "MITM TLS proxy port (default: ${DEFAULT-VALUE})",
-            defaultValue = "443")
+            defaultValue = "18443")
     int port;
 
     @Option(names = "--health-port", description = "Health check HTTP port (default: ${DEFAULT-VALUE})",
@@ -86,7 +86,7 @@ public class ProxyCommand implements Runnable {
         } catch (Exception e) {
             System.err.println("Failed to start proxy: " + e.getMessage());
             System.err.println("Is another proxy already running? Check port " + port + ".");
-            System.err.println("If port 443 requires elevated privileges, run 'isx init' to configure sysctl.");
+            System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
         }
     }
 }
