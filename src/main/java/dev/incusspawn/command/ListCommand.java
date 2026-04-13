@@ -1358,8 +1358,10 @@ public class ListCommand implements Runnable {
             }
         }
 
-        // Fix home dir ownership after all device mounts
-        incus.shellExec(name, "chown", "-R", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
+        // Fix ownership of home dir itself (not recursively — files inside already
+        // have correct ownership from the template, and -R would be very slow on
+        // large images with many pre-built dependencies)
+        incus.shellExec(name, "chown", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
 
         incus.configSet(name, Metadata.PARENT, source);
         incus.configSet(name, Metadata.CREATED, Metadata.today());

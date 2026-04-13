@@ -110,8 +110,10 @@ public class BranchCommand implements Runnable {
             }
         }
 
-        // Fix home dir ownership after all device mounts
-        incus.shellExec(name, "chown", "-R", getUid() + ":" + getUid(), "/home/agentuser");
+        // Fix ownership of home dir itself (not recursively — files inside already
+        // have correct ownership from the template, and -R would be very slow on
+        // large images with many pre-built dependencies)
+        incus.shellExec(name, "chown", getUid() + ":" + getUid(), "/home/agentuser");
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");
