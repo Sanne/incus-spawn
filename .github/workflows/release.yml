@@ -11,13 +11,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-          cache: maven
+      - name: Install JDK 17
+        run: |
+          curl -sL https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse -o jdk.tar.gz
+          mkdir -p $HOME/jdk && tar xzf jdk.tar.gz -C $HOME/jdk --strip-components=1
+          echo "$HOME/jdk/bin" >> $GITHUB_PATH
+          echo "JAVA_HOME=$HOME/jdk" >> $GITHUB_ENV
 
       - name: Set version from tag
         run: |
@@ -28,7 +32,8 @@ jobs:
         run: mvn package -Prelease -DskipTests
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: target/incus-spawn-*-runner.jar
+        run: |
+          cp target/incus-spawn-*-runner.jar target/incus-spawn-runner.jar
+          gh release create $GITHUB_REF_NAME target/incus-spawn-runner.jar --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
