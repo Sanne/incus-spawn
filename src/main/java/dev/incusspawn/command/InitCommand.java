@@ -32,6 +32,7 @@ public class InitCommand implements Runnable {
      * @return true if init is complete (either already or just ran), false if user aborted
      */
     public static boolean requireInit(CommandLine.IFactory factory) {
+        if (!requireLinux()) return false;
         if (hasBeenInitialized()) return true;
 
         System.out.println();
@@ -51,8 +52,32 @@ public class InitCommand implements Runnable {
                 && CertificateAuthority.exists();
     }
 
+    /**
+     * Check that we're running on Linux. Incus is Linux-only, so this tool
+     * cannot work on macOS or Windows.
+     */
+    public static boolean requireLinux() {
+        var os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        if (!os.contains("linux")) {
+            System.err.println();
+            System.err.println("\u001B[1;31m  incus-spawn requires Linux.\u001B[0m");
+            System.err.println();
+            System.err.println("  Incus system containers require a Linux kernel.");
+            System.err.println("  macOS and Windows support is planned but not yet available.");
+            System.err.println("  Detected OS: " + System.getProperty("os.name"));
+            System.err.println();
+            System.err.println("  For now, run incus-spawn on a Linux host or inside a Linux VM.");
+            System.err.println();
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public void run() {
+        if (!requireLinux()) {
+            System.exit(1);
+        }
         System.out.println("=== incus-spawn init ===\n");
 
         checkIncusInstalled();
@@ -70,35 +95,72 @@ public class InitCommand implements Runnable {
         System.out.println("  3. Launch the TUI:        isx");
     }
 
+    /**
+     * Detect the host package manager. Returns the install command prefix
+     * (e.g. {"dnf", "install", "-y"}) or null if none is found.
+     */
+    private static String[] detectInstallCommand() {
+        if (commandExists("dnf"))    return new String[]{"dnf", "install", "-y"};
+        if (commandExists("apt"))    return new String[]{"apt", "install", "-y"};
+        if (commandExists("zypper")) return new String[]{"zypper", "install", "-y"};
+        if (commandExists("pacman")) return new String[]{"pacman", "-S", "--noconfirm"};
+        return null;
+    }
+
+    private static boolean commandExists(String command) {
+        try {
+            var pb = new ProcessBuilder("which", command);
+            pb.redirectErrorStream(true);
+            return pb.start().waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void checkIncusInstalled() {
         System.out.println("[1/7] Checking Incus installation...");
         var result = runHost("which", "incus");
         if (result != 0) {
+            var installCmd = detectInstallCommand();
             System.out.println("  Incus is not installed on this system.");
             System.out.println("  The following steps require sudo privileges:");
-            System.out.println("    - Install the 'incus' package via dnf");
+            System.out.println("    - Install the 'incus' package");
             System.out.println("    - Enable the incus systemd service");
             System.out.println("    - Add your user to the 'incus-admin' group");
             System.out.println();
-            System.out.println("  If you prefer to install manually, abort now (Ctrl+C) and run:");
-            System.out.println("    sudo dnf install incus");
+            if (installCmd != null) {
+                System.out.println("  If you prefer to install manually, abort now (Ctrl+C) and run:");
+                System.out.println("    sudo " + String.join(" ", installCmd) + " incus");
+            } else {
+                System.out.println("  No supported package manager found (dnf, apt, zypper, pacman).");
+                System.out.println("  Install Incus manually (see https://linuxcontainers.org/incus/docs/main/installing/), then run:");
+            }
             System.out.println("    sudo systemctl enable --now incus");
             System.out.println("    sudo usermod -aG incus-admin " + System.getProperty("user.name"));
-            System.out.println("  Then re-run 'incus-spawn init' to continue setup.");
+            System.out.println("  Then re-run 'isx init' to continue setup.");
             System.out.println();
+
+            if (installCmd == null) {
+                System.out.println("  Cannot auto-install without a supported package manager.");
+                System.exit(1);
+            }
 
             var console = System.console();
             if (console != null) {
                 System.out.print("  Proceed with automatic installation? (Y/n): ");
                 var answer = console.readLine().strip();
                 if (answer.equalsIgnoreCase("n")) {
-                    System.out.println("  Aborted. Install Incus manually and re-run 'incus-spawn init'.");
+                    System.out.println("  Aborted. Install Incus manually and re-run 'isx init'.");
                     System.exit(0);
                 }
             }
 
-            System.out.println("  Installing Incus via dnf (sudo required)...");
-            runHost("sudo", "dnf", "install", "-y", "incus");
+            System.out.println("  Installing Incus via " + installCmd[0] + " (sudo required)...");
+            var fullCmd = new String[installCmd.length + 2];
+            fullCmd[0] = "sudo";
+            System.arraycopy(installCmd, 0, fullCmd, 1, installCmd.length);
+            fullCmd[fullCmd.length - 1] = "incus";
+            runHost(fullCmd);
             System.out.println("  Enabling incus service...");
             runHost("sudo", "systemctl", "enable", "--now", "incus");
             System.out.println("  Adding user to incus-admin group...");
@@ -122,7 +184,7 @@ public class InitCommand implements Runnable {
                 System.out.println();
                 System.out.println("  IMPORTANT: Group membership has been updated but is not active in this shell.");
                 System.out.println("  Please run: newgrp incus-admin");
-                System.out.println("  Then re-run 'incus-spawn init' to continue.");
+                System.out.println("  Then re-run 'isx init' to continue.");
                 System.exit(0);
             }
         } catch (Exception e) {

@@ -11,6 +11,12 @@ Unlike Docker/Podman containers, which package a single application with a minim
 
 Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
+## Requirements
+
+- **Linux** -- Incus system containers require a Linux kernel. macOS and Windows are not yet supported but are on the roadmap (likely via a managed Linux VM).
+- **[JBang](https://www.jbang.dev/)** -- used to install and run incus-spawn (installs Java automatically if needed). Alternatively, build from source with `./install.sh --native` for a standalone native binary that needs neither JBang nor a JVM
+- **[Incus](https://linuxcontainers.org/incus/)** -- `isx init` auto-installs via the detected package manager (`dnf`, `apt`, `zypper`, or `pacman`); on other distros, install manually before running init
+
 ## Quick Start
 
 ```shell
