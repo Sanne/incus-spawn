@@ -29,7 +29,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 - **Quarkus CLI** with picocli extension
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
-- **JBang** for easy installation (`jbang app install incus-spawn`)
+- **JBang** for easy installation (`jbang app install isx`)
 
 ## Architecture
 

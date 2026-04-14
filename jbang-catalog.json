@@ -2,7 +2,7 @@
   "catalogs": {},
   "templates": {},
   "aliases": {
-    "incus-spawn": {
+    "isx": {
       "script-ref": "https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar",
       "description": "Manage isolated Incus development environments"
     }

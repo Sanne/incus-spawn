@@ -15,7 +15,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ```shell
 # Install via JBang
-jbang app install incus-spawn@Sanne/incus-spawn
+jbang app install isx@Sanne/incus-spawn
 
 # One-time host setup (Incus, firewall, auth)
 isx init
@@ -183,10 +183,10 @@ Details that save time and avoid frustration:
 
 ```shell
 # Install via JBang (recommended)
-jbang app install incus-spawn@Sanne/incus-spawn
+jbang app install isx@Sanne/incus-spawn
 
 # Or install directly from the latest release
-jbang app install --name incus-spawn https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar
+jbang app install --name isx https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar
 ```
 
 ## Building from source
@@ -218,7 +218,7 @@ This will:
 2. Build a self-contained uber-jar
 3. Create a GitHub Release with auto-generated release notes and the jar attached
 
-Users can then install or update via `jbang app install incus-spawn@Sanne/incus-spawn`.
+Users can then install or update via `jbang app install isx@Sanne/incus-spawn`.
 
 ## Configuration
 
