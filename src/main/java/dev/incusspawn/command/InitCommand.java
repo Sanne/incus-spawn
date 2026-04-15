@@ -87,6 +87,7 @@ public class InitCommand implements Runnable {
         configureMitmProxy();
         setupClaudeAuth();
         setupGitHubAuth();
+        setupSearchPaths();
 
         System.out.println("\n=== Init complete! ===");
         System.out.println("Next steps:");
@@ -118,7 +119,7 @@ public class InitCommand implements Runnable {
     }
 
     private void checkIncusInstalled() {
-        System.out.println("[1/7] Checking Incus installation...");
+        System.out.println("[1/8] Checking Incus installation...");
         var result = runHost("which", "incus");
         if (result != 0) {
             var installCmd = detectInstallCommand();
@@ -193,7 +194,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureFirewall() {
-        System.out.println("[4/7] Configuring firewall for Incus bridge...");
+        System.out.println("[4/8] Configuring firewall for Incus bridge...");
 
         // Check if firewalld is available
         var fwCheck = runHost("which", "firewall-cmd");
@@ -261,7 +262,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureMitmProxy() {
-        System.out.println("[5/7] Configuring MITM authentication proxy...");
+        System.out.println("[5/8] Configuring MITM authentication proxy...");
 
         // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
         // for the gateway IP on port 443 is redirected to the proxy's listen port.
@@ -298,7 +299,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureSubuidSubgid() {
-        System.out.println("[2/7] Configuring subuid/subgid mappings...");
+        System.out.println("[2/8] Configuring subuid/subgid mappings...");
         boolean changed = false;
         try {
             var subuid = java.nio.file.Files.readString(java.nio.file.Path.of("/etc/subuid"));
@@ -321,7 +322,7 @@ public class InitCommand implements Runnable {
     }
 
     private void initializeIncus() {
-        System.out.println("[3/7] Initializing Incus (storage pool, network bridge)...");
+        System.out.println("[3/8] Initializing Incus (storage pool, network bridge)...");
 
         // Check if we can talk to the Incus daemon
         var canConnect = incus.exec("version");
@@ -410,7 +411,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupClaudeAuth() {
-        System.out.println("[6/7] Configuring Claude Code authentication...");
+        System.out.println("[6/8] Configuring Claude Code authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -460,7 +461,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupGitHubAuth() {
-        System.out.println("[7/7] Configuring GitHub authentication...");
+        System.out.println("[7/8] Configuring GitHub authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -545,6 +546,57 @@ public class InitCommand implements Runnable {
                     break;
                 }
             }
+        }
+    }
+
+    private void setupSearchPaths() {
+        System.out.println("[8/8] Configuring template search paths...");
+        var config = SpawnConfig.load();
+        var existing = config.getSearchPaths();
+        if (!existing.isEmpty()) {
+            System.out.println("  Current search paths:");
+            for (var path : existing) {
+                System.out.println("    - " + path);
+            }
+        }
+
+        var console = System.console();
+        if (console == null) {
+            System.err.println("  Error: no console available for interactive setup.");
+            return;
+        }
+
+        System.out.println("  You can add directories containing custom image and tool definitions.");
+        System.out.println("  Each directory should have images/ and/or tools/ subdirectories with YAML files.");
+        System.out.println();
+
+        var paths = new java.util.ArrayList<>(existing);
+        while (true) {
+            System.out.print("  Add a search path (or press Enter to " + (paths.isEmpty() ? "skip" : "finish") + "): ");
+            var input = console.readLine().strip();
+            if (input.isEmpty()) break;
+
+            var path = java.nio.file.Path.of(input);
+            if (!java.nio.file.Files.isDirectory(path)) {
+                System.out.println("  Warning: '" + input + "' is not an existing directory. Adding anyway.");
+            }
+            var resolved = path.toAbsolutePath().normalize().toString();
+            if (paths.contains(resolved)) {
+                System.out.println("  Already in the list.");
+            } else {
+                paths.add(resolved);
+                System.out.println("  Added: " + resolved);
+            }
+        }
+
+        if (!paths.equals(existing)) {
+            config.setSearchPaths(paths);
+            config.save();
+            System.out.println("  Search paths saved.");
+        } else if (paths.isEmpty()) {
+            System.out.println("  No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+        } else {
+            System.out.println("  Search paths unchanged.");
         }
     }
 
