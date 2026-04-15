@@ -20,15 +20,16 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<String> packages() {
+        return def.getPackages();
+    }
+
+    @Override
     public void install(Container container) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
         System.out.println("Installing " + label + "...");
 
-        // 1. Packages
-        if (!def.getPackages().isEmpty()) {
-            container.dnfInstall("Failed to install packages for " + def.getName(),
-                    def.getPackages().toArray(String[]::new));
-        }
+        // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
         // 2. Shell commands as root
         for (var script : def.getRun()) {

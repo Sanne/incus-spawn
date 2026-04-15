@@ -5,6 +5,7 @@ import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -14,22 +15,25 @@ class GhSetupTest {
     private static final String CONTAINER = "test-container";
 
     @Test
-    void installsGhAndSetsGhToken() {
+    void declaresGhPackage() {
+        var setup = new GhSetup();
+        assertEquals(java.util.List.of("gh"), setup.packages());
+    }
+
+    @Test
+    void installSetsGhToken() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var setup = new GhSetup();
         setup.install(new Container(incus, CONTAINER));
 
-        InOrder order = inOrder(incus);
+        // Packages are installed in bulk by BuildCommand, not by install().
+        // install() only configures auth.
+        verify(incus, never()).shellExecInteractive(anyString(), any(String[].class));
 
-        // 1. dnf install gh
-        order.verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("dnf"), eq("install"), eq("-y"), eq("gh"));
-
-        // 2. Set GH_TOKEN placeholder in .bashrc (proxy replaces it with real token)
-        order.verify(incus).shellExec(eq(CONTAINER),
+        // Set GH_TOKEN placeholder in .bashrc (proxy replaces it with real token)
+        verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), contains("GH_TOKEN=gho_placeholder"));
     }
 

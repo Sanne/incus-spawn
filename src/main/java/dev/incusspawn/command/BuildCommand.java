@@ -202,8 +202,9 @@ public class BuildCommand implements Runnable {
 
         mountDnfCache(targetName);
         var container = new Container(incus, targetName);
-        installPackages(container, imageDef);
-        installTools(container, imageDef);
+        var tools = resolveTools(imageDef);
+        installAllPackages(container, imageDef, tools);
+        runToolSetup(container, tools);
         unmountDnfCache(targetName);
 
         // Clean up caches to minimize image size (important for CoW clones)
@@ -322,8 +323,9 @@ public class BuildCommand implements Runnable {
 
         // Install packages and tools from image definition
         var container = new Container(incus, targetName);
-        installPackages(container, imageDef);
-        installTools(container, imageDef);
+        var tools = resolveTools(imageDef);
+        installAllPackages(container, imageDef, tools);
+        runToolSetup(container, tools);
 
         // Unmount host-side DNF cache before cleanup — keeps images clean
         unmountDnfCache(targetName);
@@ -343,25 +345,44 @@ public class BuildCommand implements Runnable {
         System.out.println("Image " + targetName + " built successfully.");
     }
 
-    private void installPackages(Container container, ImageDef imageDef) {
-        var packages = imageDef.getPackages();
-        if (packages.isEmpty()) return;
-        System.out.println("Installing packages: " + String.join(", ", packages) + "...");
-        var args = new java.util.ArrayList<String>();
-        args.addAll(java.util.List.of("dnf", "install", "-y"));
-        args.addAll(packages);
-        container.runInteractive("Failed to install packages", args.toArray(String[]::new));
-    }
-
-    private void installTools(Container container, ImageDef imageDef) {
-        var toolNames = imageDef.getTools();
-        if (toolNames.isEmpty()) return;
-        for (var toolName : toolNames) {
+    /**
+     * Resolve all tools referenced by the image definition.
+     */
+    private java.util.List<ToolSetup> resolveTools(ImageDef imageDef) {
+        var resolved = new java.util.ArrayList<ToolSetup>();
+        for (var toolName : imageDef.getTools()) {
             var tool = findTool(toolName);
             if (tool == null) {
                 System.err.println("Warning: unknown tool '" + toolName + "', skipping.");
-                continue;
+            } else {
+                resolved.add(tool);
             }
+        }
+        return resolved;
+    }
+
+    /**
+     * Collect all packages from the image definition and its tools,
+     * then install them in a single dnf invocation.
+     */
+    private void installAllPackages(Container container, ImageDef imageDef, java.util.List<ToolSetup> tools) {
+        var allPackages = new java.util.LinkedHashSet<>(imageDef.getPackages());
+        for (var tool : tools) {
+            allPackages.addAll(tool.packages());
+        }
+        if (allPackages.isEmpty()) return;
+        System.out.println("Installing packages: " + String.join(", ", allPackages) + "...");
+        var args = new java.util.ArrayList<String>();
+        args.addAll(java.util.List.of("dnf", "install", "-y"));
+        args.addAll(allPackages);
+        container.runInteractive("Failed to install packages", args.toArray(String[]::new));
+    }
+
+    /**
+     * Run the non-package setup steps for each tool (scripts, files, env, verify).
+     */
+    private void runToolSetup(Container container, java.util.List<ToolSetup> tools) {
+        for (var tool : tools) {
             tool.install(container);
         }
     }

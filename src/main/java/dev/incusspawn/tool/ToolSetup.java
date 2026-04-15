@@ -11,6 +11,9 @@ public interface ToolSetup {
     /** Short name for display during build (e.g. "podman", "gh", "claude"). */
     String name();
 
-    /** Install and configure this tool inside the given container. */
+    /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
+    default java.util.List<String> packages() { return java.util.List.of(); }
+
+    /** Install and configure this tool inside the given container. Packages are already installed. */
     void install(Container container);
 }

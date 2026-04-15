@@ -3,6 +3,8 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 import jakarta.enterprise.context.Dependent;
 
+import java.util.List;
+
 @Dependent
 public class GhSetup implements ToolSetup {
 
@@ -12,9 +14,14 @@ public class GhSetup implements ToolSetup {
     }
 
     @Override
+    public List<String> packages() {
+        return List.of("gh");
+    }
+
+    @Override
     public void install(Container c) {
         System.out.println("Installing GitHub CLI...");
-        c.dnfInstall("Failed to install GitHub CLI", "gh");
+        // Package is installed in bulk by BuildCommand before tool.install() is called.
         configureAuth(c);
     }
 

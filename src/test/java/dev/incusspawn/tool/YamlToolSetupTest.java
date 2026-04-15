@@ -7,6 +7,7 @@ import org.mockito.InOrder;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -14,6 +15,16 @@ class YamlToolSetupTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String CONTAINER = "test-container";
+
+    @Test
+    void declaresPackages() {
+        var def = new ToolDef();
+        def.setName("test");
+        def.setPackages(List.of("pkg-a", "pkg-b"));
+
+        var setup = new YamlToolSetup(def);
+        assertEquals(List.of("pkg-a", "pkg-b"), setup.packages());
+    }
 
     @Test
     void executesAllStepsInOrder() {
@@ -40,31 +51,29 @@ class YamlToolSetupTest {
 
         InOrder order = inOrder(incus);
 
-        // 1. packages via dnfInstall -> runInteractive -> shellExecInteractive
-        order.verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("dnf"), eq("install"), eq("-y"), eq("pkg-a"), eq("pkg-b"));
+        // Packages are installed in bulk by BuildCommand, not by install().
 
-        // 2. run -> shellExecInteractive with sh -c
+        // 1. run -> shellExecInteractive with sh -c
         order.verify(incus).shellExecInteractive(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo root-step"));
 
-        // 3. run_as_user -> shellExecInteractive with su -l agentuser -c
+        // 2. run_as_user -> shellExecInteractive with su -l agentuser -c
         order.verify(incus).shellExecInteractive(eq(CONTAINER),
                 eq("su"), eq("-l"), eq("agentuser"), eq("-c"), eq("echo user-step"));
 
-        // 4. writeFile -> shellExec with sh -c (heredoc)
+        // 3. writeFile -> shellExec with sh -c (heredoc)
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), contains("/etc/test.conf"));
 
-        // 5. chown -> shellExec
+        // 4. chown -> shellExec
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("chown"), eq("-R"), eq("testuser:testuser"), eq("/etc/test.conf"));
 
-        // 6. env -> appendToProfile -> shellExec with sh -c
+        // 5. env -> appendToProfile -> shellExec with sh -c
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), contains("export X=1"));
 
-        // 7. verify -> shellExec
+        // 6. verify -> shellExec
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("test-tool"), eq("--version"));
     }
@@ -84,20 +93,20 @@ class YamlToolSetupTest {
     }
 
     @Test
-    void packagesOnlyTool() {
+    void packagesOnlyToolHasNoInstallInteractions() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
 
         var def = new ToolDef();
         def.setName("pkg-only");
         def.setPackages(List.of("vim"));
 
         var setup = new YamlToolSetup(def);
+        assertEquals(List.of("vim"), setup.packages());
+
         setup.install(new Container(incus, CONTAINER));
 
-        verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("dnf"), eq("install"), eq("-y"), eq("vim"));
-        verifyNoMoreInteractions(incus);
+        // Packages are installed in bulk by BuildCommand — install() has nothing to do
+        verifyNoInteractions(incus);
     }
 
     @Test
