@@ -28,12 +28,19 @@ public class ToolDefLoader {
     );
     private static final Path USER_TOOLS_DIR = SpawnConfig.configDir().resolve("tools");
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
+    private List<String> searchPaths;
 
     private Map<String, YamlToolSetup> tools;
 
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
         this.projectToolsDir = dir;
+        this.tools = null; // force reload
+    }
+
+    /** Override the search paths (for testing). */
+    void setSearchPaths(List<String> searchPaths) {
+        this.searchPaths = searchPaths;
         this.tools = null; // force reload
     }
 
@@ -50,6 +57,10 @@ public class ToolDefLoader {
             tools = new LinkedHashMap<>();
             loadBuiltins();
             loadFromDirectory(USER_TOOLS_DIR);
+            var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
+            for (var searchPath : paths) {
+                loadFromDirectory(Path.of(searchPath).resolve("tools"));
+            }
             loadFromDirectory(projectToolsDir);
         }
         return tools;

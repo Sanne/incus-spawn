@@ -20,6 +20,7 @@ public class SpawnConfig {
 
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
+    private java.util.List<String> searchPaths = java.util.List.of();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
@@ -50,6 +51,8 @@ public class SpawnConfig {
     public void setClaude(ClaudeConfig claude) { this.claude = claude; }
     public GitHubConfig getGithub() { return github; }
     public void setGithub(GitHubConfig github) { this.github = github; }
+    public java.util.List<String> getSearchPaths() { return searchPaths; }
+    public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
 
     public static Path configDir() {
         return CONFIG_DIR;

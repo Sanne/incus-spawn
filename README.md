@@ -95,7 +95,7 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). Later sources override earlier ones: built-in → user → project-local.
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)). Later sources override earlier ones: built-in → user → search paths → project-local.
 
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/43`)
@@ -135,7 +135,7 @@ Tool schema fields (all optional except `name`):
 - `env` -- lines appended to agentuser's `.bashrc`
 - `verify` -- verification command (logged, non-fatal)
 
-Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → `.incus-spawn/tools/` (project-local) → Java plugins.
+Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → search paths → `.incus-spawn/tools/` (project-local) → Java plugins.
 
 ## Features
 
@@ -233,3 +233,24 @@ Users can then install or update via `jbang app install isx@Sanne/incus-spawn`.
 - `~/.config/incus-spawn/tools/*.yaml` -- user-level tool definitions
 - `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions
+
+The `config.yaml` supports a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions:
+
+```yaml
+searchPaths:
+  - /home/user/my-templates
+```
+
+```
+my-templates/
+  images/
+    quarkus.yaml
+  tools/
+    gradle.yaml
+```
+
+Resolution order (later sources override earlier ones with the same name):
+1. Built-in (bundled with isx)
+2. User (`~/.config/incus-spawn/`)
+3. Search paths (in listed order)
+4. Project-local (`.incus-spawn/`)

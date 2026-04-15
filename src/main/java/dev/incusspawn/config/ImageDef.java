@@ -65,9 +65,19 @@ public class ImageDef {
      * Returns a map keyed by image name (e.g. "tpl-minimal").
      */
     public static Map<String, ImageDef> loadAll() {
+        return loadAll(SpawnConfig.load().getSearchPaths());
+    }
+
+    /**
+     * Load all image definitions with explicit search paths.
+     */
+    static Map<String, ImageDef> loadAll(List<String> searchPaths) {
         var defs = new LinkedHashMap<String, ImageDef>();
         loadBuiltins(defs);
         loadUserDefined(defs);
+        for (var searchPath : searchPaths) {
+            loadFromDirectory(Path.of(searchPath).resolve("images"), defs);
+        }
         loadFromDirectory(PROJECT_IMAGES_DIR, defs);
         return defs;
     }

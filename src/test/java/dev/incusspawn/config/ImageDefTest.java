@@ -1,6 +1,11 @@
 package dev.incusspawn.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -72,5 +77,88 @@ class ImageDefTest {
         var defs = ImageDef.loadAll();
         assertNotNull(ImageDef.findByName("tpl-java", defs));
         assertNull(ImageDef.findByName("nonexistent", defs));
+    }
+
+    @Test
+    void searchPathLoadsImages(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("quarkus.yaml"), """
+                name: tpl-quarkus
+                description: Quarkus development
+                parent: tpl-java
+                tools:
+                  - podman
+                  - gradle
+                  - quarkus-src
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+
+        var quarkus = defs.get("tpl-quarkus");
+        assertNotNull(quarkus, "tpl-quarkus should be loaded from search path");
+        assertEquals("tpl-java", quarkus.getParent());
+        assertTrue(quarkus.getTools().contains("quarkus-src"));
+        // builtins should still be present
+        assertNotNull(defs.get("tpl-minimal"));
+        assertNotNull(defs.get("tpl-java"));
+    }
+
+    @Test
+    void searchPathOverridesBuiltin(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("java.yaml"), """
+                name: tpl-java
+                description: Custom Java override
+                parent: tpl-dev
+                packages:
+                  - java-25-openjdk-devel
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+
+        var java = defs.get("tpl-java");
+        assertEquals("Custom Java override", java.getDescription());
+    }
+
+    @Test
+    void multipleSearchPaths(@TempDir Path tempDir) throws Exception {
+        var dir1 = tempDir.resolve("repo1");
+        var dir2 = tempDir.resolve("repo2");
+        Files.createDirectories(dir1.resolve("images"));
+        Files.createDirectories(dir2.resolve("images"));
+
+        Files.writeString(dir1.resolve("images/alpha.yaml"), """
+                name: tpl-alpha
+                description: From repo1
+                parent: tpl-dev
+                """);
+        Files.writeString(dir2.resolve("images/beta.yaml"), """
+                name: tpl-beta
+                description: From repo2
+                parent: tpl-java
+                """);
+
+        var defs = ImageDef.loadAll(List.of(dir1.toString(), dir2.toString()));
+
+        assertNotNull(defs.get("tpl-alpha"), "tpl-alpha should be loaded from first search path");
+        assertNotNull(defs.get("tpl-beta"), "tpl-beta should be loaded from second search path");
+    }
+
+    @Test
+    void emptySearchPathsWorks() {
+        var defs = ImageDef.loadAll(List.of());
+        // Should still load builtins
+        assertTrue(defs.size() >= 3);
+        assertNotNull(defs.get("tpl-minimal"));
+    }
+
+    @Test
+    void nonexistentSearchPathIsIgnored() {
+        var defs = ImageDef.loadAll(List.of("/nonexistent/path/that/does/not/exist"));
+        // Should still load builtins without error
+        assertTrue(defs.size() >= 3);
+        assertNotNull(defs.get("tpl-minimal"));
     }
 }
