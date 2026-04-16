@@ -1270,7 +1270,11 @@ public class ListCommand implements Runnable {
         var allRepos = new ArrayList<String>();
         for (var def : chain) {
             for (var repo : def.getRepos()) {
-                allRepos.add(repo.getUrl() + " \u2192 " + repo.getPath());
+                var repoDesc = repo.getUrl() + " \u2192 " + repo.getPath();
+                if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+                    repoDesc += "  (prime: " + repo.getPrime() + ")";
+                }
+                allRepos.add(repoDesc);
             }
         }
         addDetailSection(lines, "Repos", allRepos, labelStyle, lineStyle, dimStyle);
@@ -1342,9 +1346,13 @@ public class ListCommand implements Runnable {
             // Repos
             if (!def.getRepos().isEmpty()) {
                 for (var repo : def.getRepos()) {
-                    lines.add(Line.from(List.of(
-                            Span.styled(contentIndent + "Repo: ", labelStyle),
-                            Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle))));
+                    var repoSpans = new ArrayList<Span>();
+                    repoSpans.add(Span.styled(contentIndent + "Repo: ", labelStyle));
+                    repoSpans.add(Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle));
+                    if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+                        repoSpans.add(Span.styled("  (prime: " + repo.getPrime() + ")", dimStyle));
+                    }
+                    lines.add(Line.from(repoSpans));
                 }
             }
 

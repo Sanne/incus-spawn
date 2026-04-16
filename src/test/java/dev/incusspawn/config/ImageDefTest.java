@@ -159,6 +159,7 @@ class ImageDefTest {
                   - url: https://github.com/quarkusio/quarkus.git
                     path: ~/quarkus
                     branch: main
+                    prime: mvn -B dependency:go-offline
                   - url: https://github.com/hibernate/hibernate-reactive.git
                     path: ~/hibernate-reactive
                 """);
@@ -172,11 +173,13 @@ class ImageDefTest {
         assertEquals("https://github.com/quarkusio/quarkus.git", repo1.getUrl());
         assertEquals("~/quarkus", repo1.getPath());
         assertEquals("main", repo1.getBranch());
+        assertEquals("mvn -B dependency:go-offline", repo1.getPrime());
 
         var repo2 = quarkus.getRepos().get(1);
         assertEquals("https://github.com/hibernate/hibernate-reactive.git", repo2.getUrl());
         assertEquals("~/hibernate-reactive", repo2.getPath());
         assertNull(repo2.getBranch());
+        assertNull(repo2.getPrime());
     }
 
     @Test

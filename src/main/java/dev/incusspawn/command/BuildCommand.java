@@ -473,7 +473,7 @@ public class BuildCommand implements Runnable {
     /**
      * Clone git repos declared in the image definition as agentuser.
      */
-    private void cloneRepos(Container container, ImageDef imageDef) {
+    void cloneRepos(Container container, ImageDef imageDef) {
         for (var repo : imageDef.getRepos()) {
             System.out.println("Cloning " + repo.getUrl() + "...");
             var cmd = new StringBuilder("git clone");
@@ -484,6 +484,13 @@ public class BuildCommand implements Runnable {
             cmd.append(" ").append(repo.getPath());
             container.runAsUser("agentuser", cmd.toString(),
                     "Failed to clone " + repo.getUrl());
+            if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+                System.out.println("Priming " + repo.getPath() + "...");
+                var expanded = expandHome(repo.getPath());
+                container.runAsUser("agentuser",
+                        "cd " + expanded + " && " + repo.getPrime(),
+                        "Failed to prime " + repo.getPath());
+            }
         }
     }
 

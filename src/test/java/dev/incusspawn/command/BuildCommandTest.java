@@ -179,4 +179,55 @@ class BuildCommandTest {
         verify(incus).shellExec(eq("test"), eq("test"), eq("-f"), anyString());
         verify(incus, never()).shellExec(eq("test"), eq("cat"), anyString());
     }
+
+    @Test
+    void cloneReposRunsPrimeCommand() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        // git clone succeeds
+        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/quarkusio/quarkus.git");
+        repo.setPath("~/quarkus");
+        repo.setPrime("mvn -B dependency:go-offline");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.cloneRepos(container, imageDef);
+
+        // Verify clone call
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c", "git clone https://github.com/quarkusio/quarkus.git ~/quarkus");
+        // Verify prime call runs in the repo directory
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c", "cd /home/agentuser/quarkus && mvn -B dependency:go-offline");
+    }
+
+    @Test
+    void cloneReposSkipsPrimeWhenNotSet() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        // no prime set
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.cloneRepos(container, imageDef);
+
+        // Only the clone call, no prime
+        verify(incus, times(1)).shellExecInteractive(eq("test"), any(String[].class));
+    }
 }

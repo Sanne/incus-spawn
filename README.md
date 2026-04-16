@@ -127,12 +127,14 @@ tools:
 repos:
   - url: https://github.com/quarkusio/quarkus.git
     path: ~/quarkus
+    prime: mvn -B dependency:go-offline
 ```
 
 Repo entry fields:
 - `url` (required) -- git clone URL (HTTPS, for proxy compatibility)
 - `path` (required) -- target directory (`~` expands to agentuser's home)
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
+- `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
 
 ## Custom Tools
 

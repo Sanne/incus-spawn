@@ -63,6 +63,7 @@ public class ImageDef {
         private String url;
         private String path;
         private String branch;
+        private String prime;
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
@@ -70,6 +71,8 @@ public class ImageDef {
         public void setPath(String path) { this.path = path; }
         public String getBranch() { return branch; }
         public void setBranch(String branch) { this.branch = branch; }
+        public String getPrime() { return prime; }
+        public void setPrime(String prime) { this.prime = prime; }
     }
 
     /** Whether this image is built from scratch (no parent). */
