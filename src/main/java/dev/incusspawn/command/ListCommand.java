@@ -395,7 +395,7 @@ public class ListCommand implements Runnable {
         // Enter/F4: Branch from template (only if built)
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4)) {
             if ("not built".equals(template.buildStatus)) {
-                statusMessage = "Template not built. Press F2 to build it first.";
+                statusMessage = "Template not built. Press F5 to build it first.";
                 return true;
             }
             openBranchModal(template.name, template.runtime);
