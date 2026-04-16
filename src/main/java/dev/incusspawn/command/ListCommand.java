@@ -362,8 +362,8 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // F2: Build/rebuild selected template
-        if (key.isKey(KeyCode.F2)) {
+        // F5: Build/rebuild selected template
+        if (key.isKey(KeyCode.F5) && !key.hasShift()) {
             var def = imageDefs.get(template.name);
             if (def != null) {
                 var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
@@ -456,17 +456,17 @@ public class ListCommand implements Runnable {
             openBranchModal(selected.name, selected.runtime);
             return true;
         }
-        if (key.isKey(KeyCode.F6) && isRunning(selected)) {
+        if (key.isKey(KeyCode.F7) && !key.hasShift() && isRunning(selected)) {
             execWithFeedback(tui, tableState, "Stopping", "Stopped", "Failed to stop",
                     selected.name, () -> incus.stop(selected.name));
             return true;
         }
-        if (key.isKey(KeyCode.F7) && isRunning(selected)) {
+        if (key.isKey(KeyCode.F7) && key.hasShift() && isRunning(selected)) {
             execWithFeedback(tui, tableState, "Restarting", "Restarted", "Failed to restart",
                     selected.name, () -> incus.restart(selected.name));
             return true;
         }
-        if (key.isKey(KeyCode.F5)) {
+        if (key.isKey(KeyCode.F6)) {
             renameSourceName = selected.name;
             if (isRunning(selected)) {
                 mode = Mode.CONFIRM_STOP_FOR_RENAME;
@@ -849,10 +849,10 @@ public class ListCommand implements Runnable {
             var template = selectedTemplate();
             boolean hasTemplate = template != null;
             boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
-            addKey(helpSpans, "F2", "Build", !hasTemplate);
             addKey(helpSpans, "F3", "Details", !hasTemplate);
-            addKey(helpSpans, "\u21e7F5", "Build all", false);
             addKey(helpSpans, "F4", "Branch\u2026", !isBuilt);
+            addKey(helpSpans, "F5", "Build", !hasTemplate);
+            addKey(helpSpans, "\u21e7F5", "Build all", false);
             addKey(helpSpans, "F8", "Destroy\u2026", !isBuilt);
             addKey(helpSpans, "\u21e7F8", "Destroy all", false);
         } else {
@@ -861,9 +861,9 @@ public class ListCommand implements Runnable {
             boolean running = hasSelection && isRunning(selected);
             addKey(helpSpans, "F3", "Shell", !hasSelection);
             addKey(helpSpans, "F4", "Branch\u2026", !hasSelection);
-            addKey(helpSpans, "F5", "Rename\u2026", !hasSelection);
-            addKey(helpSpans, "F6", "Stop", !running);
-            addKey(helpSpans, "F7", "Restart", !running);
+            addKey(helpSpans, "F6", "Rename\u2026", !hasSelection);
+            addKey(helpSpans, "F7", "Stop", !running);
+            addKey(helpSpans, "\u21e7F7", "Restart", !running);
             addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
             addKey(helpSpans, "\u21e7F8", "Destroy all", entries.isEmpty());
         }
