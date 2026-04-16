@@ -202,6 +202,7 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Inbox mount**: share a host directory read-only into the container
 - **MITM TLS proxy**: transparent auth injection — credentials never enter containers in any form
+- **Proxy caching**: OCI registry blobs and Maven/Gradle artifacts cached on the host, shared across all branches
 - **Proxy-only networking**: iptables restricts egress to the MITM proxy only
 - **Network airgapping**: fully isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
@@ -210,17 +211,39 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 
 ## TUI Keyboard Shortcuts
 
+The TUI has two panels: **Templates** (top) and **Instances** (bottom). Press `Tab` to switch between them. Each function key has a consistent meaning across panels, with `Shift` variants for bulk/escalated operations.
+
+**Templates panel:**
+
 | Key | Action |
 |-----|--------|
-| `F2` | Build a template |
-| `F3` / `Enter` | Shell into selected instance |
-| `F4` | Branch from selected image |
-| `F5` | Rename selected instance |
-| `F6` | Stop selected instance |
-| `F7` | Restart selected instance |
+| `Enter` / `F4` | Branch from selected template |
+| `F3` | Show template details |
+| `F5` | Build selected template |
+| `Shift+F5` | Rebuild all templates |
+| `F8` | Destroy selected template |
+| `Shift+F8` | Destroy all templates |
+
+**Instances panel:**
+
+| Key | Action |
+|-----|--------|
+| `Enter` / `F3` | Shell into selected instance |
+| `F4` | Branch from selected instance |
+| `F6` | Rename selected instance |
+| `F7` | Stop selected instance |
+| `Shift+F7` | Restart selected instance |
 | `F8` | Destroy selected instance |
-| `F10` / `q` | Quit |
+| `Shift+F8` | Destroy all instances |
+
+**Global:**
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Switch panel |
 | `Up/Down`, `j/k` | Navigate |
+| `Ctrl+L` | Refresh |
+| `F10` / `q` | Quit |
 
 **Branch modal** (`F4`):
 
@@ -238,6 +261,9 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 Details that save time and avoid frustration:
 
 - **Shared DNF cache**: building a chain of templates (e.g. `tpl-java` which derives from `tpl-dev` which derives from `tpl-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping templates clean.
+- **Smart package installation**: when building a child template, packages already installed by parent images are automatically skipped by walking the image definition chain -- no redundant `dnf install` calls or "already installed" noise.
+- **Registry blob caching**: the MITM proxy caches OCI container image layers (`~/.cache/incus-spawn/registry/`) by content-addressed SHA256 digest. Pulling the same container image in different branches downloads each layer only once, with integrity verification.
+- **Maven/Gradle artifact caching**: the MITM proxy caches artifacts from Maven Central, Maven repository, and Gradle plugin portal (`~/.cache/incus-spawn/maven/`). Release artifacts are immutable and cached permanently; SNAPSHOT and metadata requests pass through uncached.
 - **Auto-init**: running any command (`isx`, `isx build`, `isx proxy`) without prior setup automatically launches `isx init`.
 - **CoW pool auto-creation**: `isx init` creates a btrfs storage pool if no copy-on-write pool exists, so branches are instant from the start.
 
