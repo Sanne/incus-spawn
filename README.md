@@ -102,6 +102,7 @@ Image schema fields (all optional except `name`):
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
 - `tools` -- tool names to run (resolved from YAML or Java)
+- `repos` -- git repositories to clone as agentuser (see below)
 - `description` -- human-readable description for the TUI
 
 ```shell
@@ -111,6 +112,27 @@ isx build tpl-java
 # Rebuild all defined images from scratch
 isx build --all
 ```
+
+### Declarative Repos
+
+Images can declare git repositories to clone into the container. Repos are cloned as `agentuser` after tool setup completes. For GitHub repos, Claude Code is automatically configured to trust the cloned directory (no "Do you trust this directory?" prompt).
+
+```yaml
+name: tpl-quarkus
+description: Quarkus development
+parent: tpl-java
+tools:
+  - podman
+  - gradle
+repos:
+  - url: https://github.com/quarkusio/quarkus.git
+    path: ~/quarkus
+```
+
+Repo entry fields:
+- `url` (required) -- git clone URL (HTTPS, for proxy compatibility)
+- `path` (required) -- target directory (`~` expands to agentuser's home)
+- `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
 
 ## Custom Tools
 

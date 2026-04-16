@@ -1,5 +1,8 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
@@ -205,6 +208,8 @@ public class BuildCommand implements Runnable {
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools);
         runToolSetup(container, tools);
+        cloneRepos(container, imageDef);
+        updateClaudeJsonTrust(container, imageDef);
         unmountDnfCache(targetName);
 
         // Clean up caches to minimize image size (important for CoW clones)
@@ -326,6 +331,8 @@ public class BuildCommand implements Runnable {
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools);
         runToolSetup(container, tools);
+        cloneRepos(container, imageDef);
+        updateClaudeJsonTrust(container, imageDef);
 
         // Unmount host-side DNF cache before cleanup — keeps images clean
         unmountDnfCache(targetName);
@@ -461,6 +468,119 @@ public class BuildCommand implements Runnable {
 
     private void unmountDnfCache(String container) {
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
+    }
+
+    /**
+     * Clone git repos declared in the image definition as agentuser.
+     */
+    private void cloneRepos(Container container, ImageDef imageDef) {
+        for (var repo : imageDef.getRepos()) {
+            System.out.println("Cloning " + repo.getUrl() + "...");
+            var cmd = new StringBuilder("git clone");
+            if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
+                cmd.append(" --branch ").append(repo.getBranch());
+            }
+            cmd.append(" ").append(repo.getUrl());
+            cmd.append(" ").append(repo.getPath());
+            container.runAsUser("agentuser", cmd.toString(),
+                    "Failed to clone " + repo.getUrl());
+        }
+    }
+
+    private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";
+    private static final String AGENTUSER_HOME = "/home/agentuser";
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /**
+     * Update .claude.json to pre-trust cloned repo directories and register GitHub repo paths.
+     */
+    void updateClaudeJsonTrust(Container container, ImageDef imageDef) {
+        if (imageDef.getRepos().isEmpty()) return;
+
+        var checkResult = container.exec("test", "-f", CLAUDE_JSON_PATH);
+        if (!checkResult.success()) return;
+
+        var catResult = container.exec("cat", CLAUDE_JSON_PATH);
+        if (!catResult.success()) {
+            System.err.println("Warning: could not read " + CLAUDE_JSON_PATH);
+            return;
+        }
+
+        try {
+            var root = (ObjectNode) JSON.readTree(catResult.stdout());
+
+            var projects = root.has("projects")
+                    ? (ObjectNode) root.get("projects")
+                    : root.putObject("projects");
+
+            var githubRepoPaths = root.has("githubRepoPaths")
+                    ? (ObjectNode) root.get("githubRepoPaths")
+                    : root.putObject("githubRepoPaths");
+
+            for (var repo : imageDef.getRepos()) {
+                var expandedPath = expandHome(repo.getPath());
+
+                if (!projects.has(expandedPath)) {
+                    var projectEntry = projects.putObject(expandedPath);
+                    projectEntry.putArray("allowedTools");
+                    projectEntry.put("hasTrustDialogAccepted", true);
+                }
+
+                var ownerRepo = parseGitHubOwnerRepo(repo.getUrl());
+                if (ownerRepo != null) {
+                    ArrayNode paths;
+                    if (githubRepoPaths.has(ownerRepo)) {
+                        paths = (ArrayNode) githubRepoPaths.get(ownerRepo);
+                    } else {
+                        paths = githubRepoPaths.putArray(ownerRepo);
+                    }
+                    boolean found = false;
+                    for (var node : paths) {
+                        if (node.asText().equals(expandedPath)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        paths.add(expandedPath);
+                    }
+                }
+            }
+
+            var updatedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            container.writeFile(CLAUDE_JSON_PATH, updatedJson);
+            container.chown(CLAUDE_JSON_PATH, "agentuser:agentuser");
+        } catch (Exception e) {
+            System.err.println("Warning: failed to update " + CLAUDE_JSON_PATH + ": " + e.getMessage());
+        }
+    }
+
+    static String expandHome(String path) {
+        if (path.startsWith("~/")) {
+            return AGENTUSER_HOME + path.substring(1);
+        }
+        if (path.equals("~")) {
+            return AGENTUSER_HOME;
+        }
+        return path;
+    }
+
+    static String parseGitHubOwnerRepo(String url) {
+        if (url == null) return null;
+        var prefix = "https://github.com/";
+        if (!url.startsWith(prefix)) return null;
+        var rest = url.substring(prefix.length());
+        if (rest.endsWith(".git")) {
+            rest = rest.substring(0, rest.length() - 4);
+        }
+        if (rest.endsWith("/")) {
+            rest = rest.substring(0, rest.length() - 1);
+        }
+        var parts = rest.split("/");
+        if (parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+            return null;
+        }
+        return parts[0] + "/" + parts[1];
     }
 
 }

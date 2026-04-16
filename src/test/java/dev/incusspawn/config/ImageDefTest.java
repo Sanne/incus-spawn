@@ -147,6 +147,47 @@ class ImageDefTest {
     }
 
     @Test
+    void parseImageWithRepos(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("quarkus.yaml"), """
+                name: tpl-quarkus
+                parent: tpl-java
+                tools:
+                  - podman
+                repos:
+                  - url: https://github.com/quarkusio/quarkus.git
+                    path: ~/quarkus
+                    branch: main
+                  - url: https://github.com/hibernate/hibernate-reactive.git
+                    path: ~/hibernate-reactive
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var quarkus = defs.get("tpl-quarkus");
+        assertNotNull(quarkus);
+        assertEquals(2, quarkus.getRepos().size());
+
+        var repo1 = quarkus.getRepos().get(0);
+        assertEquals("https://github.com/quarkusio/quarkus.git", repo1.getUrl());
+        assertEquals("~/quarkus", repo1.getPath());
+        assertEquals("main", repo1.getBranch());
+
+        var repo2 = quarkus.getRepos().get(1);
+        assertEquals("https://github.com/hibernate/hibernate-reactive.git", repo2.getUrl());
+        assertEquals("~/hibernate-reactive", repo2.getPath());
+        assertNull(repo2.getBranch());
+    }
+
+    @Test
+    void imageWithoutReposDefaultsToEmptyList() {
+        var defs = ImageDef.loadAll();
+        var minimal = defs.get("tpl-minimal");
+        assertNotNull(minimal);
+        assertTrue(minimal.getRepos().isEmpty());
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

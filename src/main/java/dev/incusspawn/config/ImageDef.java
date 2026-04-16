@@ -41,6 +41,7 @@ public class ImageDef {
     private String parent;
     private List<String> packages = List.of();
     private List<String> tools = List.of();
+    private List<RepoEntry> repos = List.of();
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -54,6 +55,22 @@ public class ImageDef {
     public void setPackages(List<String> packages) { this.packages = packages; }
     public List<String> getTools() { return tools; }
     public void setTools(List<String> tools) { this.tools = tools; }
+    public List<RepoEntry> getRepos() { return repos; }
+    public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RepoEntry {
+        private String url;
+        private String path;
+        private String branch;
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public String getBranch() { return branch; }
+        public void setBranch(String branch) { this.branch = branch; }
+    }
 
     /** Whether this image is built from scratch (no parent). */
     public boolean isRoot() {

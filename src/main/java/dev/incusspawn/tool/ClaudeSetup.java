@@ -61,6 +61,12 @@ public class ClaudeSetup implements ToolSetup {
                   "customApiKeyResponses": {
                     "approved": ["sk-ant-placeholder"],
                     "rejected": []
+                  },
+                  "projects": {
+                    "/home/agentuser": {
+                      "allowedTools": [],
+                      "hasTrustDialogAccepted": true
+                    }
                   }
                 }
                 """;
