@@ -355,10 +355,18 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // Shift+F5: Rebuild all templates
+        // Shift+F5: Build all templates
         if (key.isKey(KeyCode.F5) && key.hasShift()) {
-            pendingBuildName = "--all";
-            mode = Mode.CONFIRM_BUILD;
+            var anyNotBuilt = templateEntries.stream()
+                    .anyMatch(t -> "not built".equals(t.buildStatus));
+            if (anyNotBuilt) {
+                pendingAction = PendingAction.BUILD_TEMPLATE;
+                pendingActionTarget = "--missing";
+                tui.quit();
+            } else {
+                pendingBuildName = "--all";
+                mode = Mode.CONFIRM_BUILD;
+            }
             return true;
         }
 

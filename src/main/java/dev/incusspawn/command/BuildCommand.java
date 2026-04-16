@@ -38,6 +38,9 @@ public class BuildCommand implements Runnable {
     @Option(names = "--all", description = "Rebuild all defined templates")
     boolean all;
 
+    @Option(names = "--missing", description = "Build only templates that don't exist yet")
+    boolean missing;
+
     @Option(names = "--vm", description = "Build as a VM instead of a container")
     boolean vm;
 
@@ -66,6 +69,10 @@ public class BuildCommand implements Runnable {
         if (!InitCommand.requireInit(factory)) return;
         var defs = ImageDef.loadAll();
 
+        if (missing) {
+            buildMissing(defs);
+            return;
+        }
         if (all) {
             buildAll(defs);
             return;
@@ -132,6 +139,26 @@ public class BuildCommand implements Runnable {
         for (var leaf : leaves) {
             build(leaf, defs);
             System.out.println();
+        }
+    }
+
+    /**
+     * Build only templates that don't exist yet. Skips already-built
+     * images without deleting them. Parents are built recursively if missing.
+     */
+    private void buildMissing(Map<String, ImageDef> defs) {
+        var parentNames = defs.values().stream()
+                .filter(d -> !d.isRoot())
+                .map(ImageDef::getParent)
+                .collect(java.util.stream.Collectors.toSet());
+        var leaves = defs.values().stream()
+                .filter(d -> !parentNames.contains(d.getName()))
+                .toList();
+        for (var leaf : leaves) {
+            if (!incus.exists(leaf.getName())) {
+                build(leaf, defs);
+                System.out.println();
+            }
         }
     }
 
