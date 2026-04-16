@@ -2,6 +2,10 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.incus.Container;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /**
  * Adapts a {@link ToolDef} (parsed from YAML) into a {@link ToolSetup}
  * that can be executed by the build system.
@@ -9,9 +13,15 @@ import dev.incusspawn.incus.Container;
 public class YamlToolSetup implements ToolSetup {
 
     private final ToolDef def;
+    private final DownloadCache downloadCache;
 
     public YamlToolSetup(ToolDef def) {
+        this(def, new DownloadCache());
+    }
+
+    YamlToolSetup(ToolDef def, DownloadCache downloadCache) {
         this.def = def;
+        this.downloadCache = downloadCache;
     }
 
     @Override
@@ -30,6 +40,11 @@ public class YamlToolSetup implements ToolSetup {
         System.out.println("Installing " + label + "...");
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
+
+        // 1. Downloads — fetch on host, extract on host, push into container
+        for (var dl : def.getDownloads()) {
+            processDownload(dl, container);
+        }
 
         // 2. Shell commands as root
         for (var script : def.getRun()) {
@@ -65,5 +80,74 @@ public class YamlToolSetup implements ToolSetup {
                 System.err.println("  Warning: verification failed for " + def.getName());
             }
         }
+    }
+
+    private void processDownload(ToolDef.DownloadEntry dl, Container container) {
+        try {
+            // Download to host cache
+            var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
+            var filename = cached.getFileName().toString();
+
+            // Extract on host into temp directory
+            var extractDir = Files.createTempDirectory("isx-extract-");
+            try {
+                extractOnHost(cached, extractDir);
+
+                // Push extracted content into container
+                container.exec("mkdir", "-p", dl.getExtract());
+                // Get the top-level entries and push each one
+                try (var entries = Files.list(extractDir)) {
+                    for (var entry : entries.toList()) {
+                        container.filePushRecursive(entry.toString(), dl.getExtract());
+                    }
+                }
+
+                // Create symlinks
+                for (var linkEntry : dl.getLinks().entrySet()) {
+                    container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
+                }
+            } finally {
+                // Clean up host temp dir
+                deleteRecursive(extractDir);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to process download for " + def.getName()
+                    + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static void extractOnHost(Path archive, Path destDir) throws IOException {
+        var name = archive.getFileName().toString().toLowerCase();
+        int exitCode;
+        try {
+            if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
+                exitCode = new ProcessBuilder("tar", "xzf", archive.toString(), "-C", destDir.toString())
+                        .inheritIO().start().waitFor();
+            } else if (name.endsWith(".tar.bz2")) {
+                exitCode = new ProcessBuilder("tar", "xjf", archive.toString(), "-C", destDir.toString())
+                        .inheritIO().start().waitFor();
+            } else if (name.endsWith(".tar.xz")) {
+                exitCode = new ProcessBuilder("tar", "xJf", archive.toString(), "-C", destDir.toString())
+                        .inheritIO().start().waitFor();
+            } else if (name.endsWith(".zip")) {
+                exitCode = new ProcessBuilder("unzip", "-q", archive.toString(), "-d", destDir.toString())
+                        .inheritIO().start().waitFor();
+            } else {
+                throw new IOException("Unsupported archive format: " + name);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Extraction interrupted", e);
+        }
+        if (exitCode != 0) {
+            throw new IOException("Extraction failed (exit code " + exitCode + ") for " + archive);
+        }
+    }
+
+    private static void deleteRecursive(Path dir) {
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
     }
 }

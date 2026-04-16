@@ -65,6 +65,11 @@ public class Container {
         exec("chown", "-R", owner, path);
     }
 
+    /** Push a directory recursively into the container. */
+    public void filePushRecursive(String sourceDir, String destPath) {
+        incus.filePushRecursive(sourceDir, name, destPath);
+    }
+
     /** Append a line to agentuser's .bashrc. */
     public void appendToProfile(String line) {
         sh("echo '" + line + "' >> /home/agentuser/.bashrc");

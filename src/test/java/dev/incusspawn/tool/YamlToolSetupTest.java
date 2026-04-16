@@ -3,9 +3,14 @@ package dev.incusspawn.tool;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InOrder;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -107,6 +112,46 @@ class YamlToolSetupTest {
 
         // Packages are installed in bulk by BuildCommand — install() has nothing to do
         verifyNoInteractions(incus);
+    }
+
+    @Test
+    void downloadsExecuteBeforeRunCommands(@TempDir Path tempDir) throws IOException {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        // Create a fake archive (just a file to make the extraction step work)
+        var fakeArchive = tempDir.resolve("tool.tar.gz");
+        Files.writeString(fakeArchive, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(fakeArchive);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool.tar.gz");
+        dl.setSha256("abc123");
+        dl.setExtract("/opt");
+        dl.setLinks(Map.of("/opt/tool/bin/tool", "/usr/local/bin/tool"));
+
+        var def = new ToolDef();
+        def.setName("dl-tool");
+        def.setDownloads(List.of(dl));
+        def.setRun(List.of("echo after-download"));
+
+        var setup = new YamlToolSetup(def, downloadCache);
+        // install() will fail at the extractOnHost step since fakeArchive isn't a real archive,
+        // but we can verify that downloadCache.download() was called before any run commands
+        try {
+            setup.install(new Container(incus, CONTAINER));
+        } catch (RuntimeException expected) {
+            // Extraction of the fake archive will fail
+        }
+
+        // Verify download was attempted (before the run commands)
+        verify(downloadCache).download("https://example.com/tool.tar.gz", "abc123");
+        // The run command should NOT have been called since downloads failed first
+        verify(incus, never()).shellExecInteractive(eq(CONTAINER),
+                eq("sh"), eq("-c"), eq("echo after-download"));
     }
 
     @Test

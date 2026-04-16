@@ -129,11 +129,43 @@ verify: node --version
 
 Tool schema fields (all optional except `name`):
 - `packages` -- dnf packages to install
+- `downloads` -- artifacts to download, cache on the host, and extract into the container (see below)
 - `run` -- shell commands as root
 - `run_as_user` -- shell commands as agentuser
 - `files` -- files to write (with optional `owner`)
 - `env` -- lines appended to agentuser's `.bashrc`
 - `verify` -- verification command (logged, non-fatal)
+
+### Declarative Downloads
+
+The `downloads` field replaces manual `curl`/`tar`/`unzip` scripts with a declarative approach. Downloads are cached on the host at `~/.cache/incus-spawn/downloads/`, so rebuilding images doesn't re-download unchanged artifacts. Extraction happens on the host -- the container doesn't need `tar`, `unzip`, or `curl`.
+
+```yaml
+name: maven-3
+description: Apache Maven 3.9.14
+
+downloads:
+  - url: https://dlcdn.apache.org/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz
+    sha256: 126ed3233e569bd0add9e889d226139acd3de9005876a01fe6108fbf4246f515
+    extract: /opt
+    links:
+      /opt/apache-maven-3.9.14/bin/mvn: /usr/local/bin/mvn
+
+env:
+  - export MAVEN_HOME=/opt/apache-maven-3.9.14
+
+verify: mvn --version
+```
+
+Download entry fields:
+- `url` (required) -- download URL
+- `sha256` (recommended) -- SHA-256 checksum; enables cache reuse and verifies integrity
+- `extract` (required) -- directory in the container to extract into
+- `links` (optional) -- map of `source_path: symlink_path` to create after extraction
+
+Supported archive formats: `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
+
+Execution order during `install()`: packages → **downloads** → `run` → `run_as_user` → `files` → `env` → `verify`.
 
 Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → search paths → `.incus-spawn/tools/` (project-local) → Java plugins.
 

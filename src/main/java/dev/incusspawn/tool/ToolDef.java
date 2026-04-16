@@ -8,6 +8,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.Map;
 
 /**
  * A tool installation defined in YAML. Each definition declares
@@ -21,6 +22,7 @@ public class ToolDef {
 
     private String name;
     private String description = "";
+    private List<DownloadEntry> downloads = List.of();
     private List<String> packages = List.of();
     private List<String> run = List.of();
     @JsonProperty("run_as_user")
@@ -33,6 +35,8 @@ public class ToolDef {
     public void setName(String name) { this.name = name; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+    public List<DownloadEntry> getDownloads() { return downloads; }
+    public void setDownloads(List<DownloadEntry> downloads) { this.downloads = downloads; }
     public List<String> getPackages() { return packages; }
     public void setPackages(List<String> packages) { this.packages = packages; }
     public List<String> getRun() { return run; }
@@ -45,6 +49,23 @@ public class ToolDef {
     public void setEnv(List<String> env) { this.env = env; }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class DownloadEntry {
+        private String url;
+        private String sha256;
+        private String extract;
+        private Map<String, String> links = Map.of();
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String getSha256() { return sha256; }
+        public void setSha256(String sha256) { this.sha256 = sha256; }
+        public String getExtract() { return extract; }
+        public void setExtract(String extract) { this.extract = extract; }
+        public Map<String, String> getLinks() { return links; }
+        public void setLinks(Map<String, String> links) { this.links = links; }
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class FileEntry {

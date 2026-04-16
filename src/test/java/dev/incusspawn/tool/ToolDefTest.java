@@ -52,12 +52,55 @@ class ToolDefTest {
     }
 
     @Test
+    void parseToolWithDownloads() throws Exception {
+        var yaml = """
+                name: maven-3
+                downloads:
+                  - url: https://example.com/maven-3.9.14-bin.tar.gz
+                    sha256: abc123def456
+                    extract: /opt
+                    links:
+                      /opt/maven-3.9.14/bin/mvn: /usr/local/bin/mvn
+                      /opt/maven-3.9.14/bin/mvnDebug: /usr/local/bin/mvnDebug
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals(1, def.getDownloads().size());
+        var dl = def.getDownloads().get(0);
+        assertEquals("https://example.com/maven-3.9.14-bin.tar.gz", dl.getUrl());
+        assertEquals("abc123def456", dl.getSha256());
+        assertEquals("/opt", dl.getExtract());
+        assertEquals(2, dl.getLinks().size());
+        assertEquals("/usr/local/bin/mvn", dl.getLinks().get("/opt/maven-3.9.14/bin/mvn"));
+        assertEquals("/usr/local/bin/mvnDebug", dl.getLinks().get("/opt/maven-3.9.14/bin/mvnDebug"));
+    }
+
+    @Test
+    void parseToolWithDownloadsNoSha256() throws Exception {
+        var yaml = """
+                name: tool-no-sha
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    extract: /opt
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals(1, def.getDownloads().size());
+        var dl = def.getDownloads().get(0);
+        assertEquals("https://example.com/tool.tar.gz", dl.getUrl());
+        assertNull(dl.getSha256());
+        assertEquals("/opt", dl.getExtract());
+        assertTrue(dl.getLinks().isEmpty());
+    }
+
+    @Test
     void parseMinimalTool() throws Exception {
         var yaml = "name: minimal\n";
         var def = ToolDef.loadFromStream(toStream(yaml));
 
         assertEquals("minimal", def.getName());
         assertEquals("", def.getDescription());
+        assertTrue(def.getDownloads().isEmpty());
         assertTrue(def.getPackages().isEmpty());
         assertTrue(def.getRun().isEmpty());
         assertTrue(def.getRunAsUser().isEmpty());

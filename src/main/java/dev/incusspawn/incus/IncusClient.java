@@ -365,6 +365,14 @@ public class IncusClient {
                 .assertSuccess("Failed to push file to " + container);
     }
 
+    /**
+     * Push a directory recursively into a container.
+     */
+    public void filePushRecursive(String sourceDir, String container, String destPath) {
+        exec("file", "push", "-r", sourceDir, container + destPath)
+                .assertSuccess("Failed to push directory to " + container);
+    }
+
     private String readStream(java.io.InputStream is) throws IOException {
         try (var reader = new BufferedReader(new InputStreamReader(is))) {
             return reader.lines().collect(Collectors.joining("\n"));
