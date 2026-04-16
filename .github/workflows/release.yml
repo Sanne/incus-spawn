@@ -37,3 +37,15 @@ jobs:
           gh release create $GITHUB_REF_NAME target/incus-spawn-runner.jar --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump POM to next snapshot
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          IFS='.' read -r major minor patch <<< "$VERSION"
+          NEXT="${major}.${minor}.$((patch + 1))-SNAPSHOT"
+          mvn versions:set -DnewVersion=$NEXT -DgenerateBackupPoms=false
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          git commit -m "Bump version to $NEXT after $GITHUB_REF_NAME release"
+          git push origin HEAD:main
