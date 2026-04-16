@@ -779,12 +779,12 @@ public class ListCommand implements Runnable {
         }
 
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "PARENT", "RUNTIME", "AGE")
+                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE")
                         .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
                 .rows(tableRows)
                 .widths(Constraint.fill(), Constraint.length(12),
-                        Constraint.length(20), Constraint.length(12),
-                        Constraint.length(10))
+                        Constraint.length(16), Constraint.length(20),
+                        Constraint.length(12), Constraint.length(10))
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 .block(Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
@@ -1296,8 +1296,8 @@ public class ListCommand implements Runnable {
                 case "STOPPED" -> Style.EMPTY.fg(Color.GRAY);
                 default -> Style.EMPTY;
             };
-            tableRows.add(Row.from(entry.name, entry.status, parent,
-                    entry.runtime, age).style(statusStyle));
+            tableRows.add(Row.from(entry.name, entry.status, entry.ipv4,
+                    parent, entry.runtime, age).style(statusStyle));
             rowToEntry.add(entry);
         }
     }
@@ -1475,6 +1475,22 @@ public class ListCommand implements Runnable {
                 var expandedDevices = node.path("expanded_devices");
                 var rootSize = expandedDevices.path("root").path("size").asText("");
 
+                // Extract first global IPv4 address from state.network
+                var ipv4 = "";
+                var network = node.path("state").path("network");
+                for (var ifaces = network.fields(); ifaces.hasNext(); ) {
+                    var iface = ifaces.next();
+                    if (iface.getKey().equals("lo")) continue;
+                    for (var addr : iface.getValue().path("addresses")) {
+                        if ("inet".equals(addr.path("family").asText())
+                                && "global".equals(addr.path("scope").asText())) {
+                            ipv4 = addr.path("address").asText();
+                            break;
+                        }
+                    }
+                    if (!ipv4.isEmpty()) break;
+                }
+
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),
                         node.path("status").asText(),
@@ -1485,7 +1501,8 @@ public class ListCommand implements Runnable {
                         parent,
                         configVal(config, "limits.cpu", ""),
                         configVal(config, "limits.memory", ""),
-                        rootSize));
+                        rootSize,
+                        ipv4));
             }
             return entryList;
         } catch (Exception e) {
@@ -1500,15 +1517,16 @@ public class ListCommand implements Runnable {
 
     private void printPlain(List<InstanceInfo> items) {
         var nameWidth = Math.max(20, items.stream().mapToInt(e -> e.name.length()).max().orElse(20));
-        var fmt = "  %-" + nameWidth + "s  %-10s  %-20s  %-10s  %s%n";
+        var fmt = "  %-" + nameWidth + "s  %-10s  %-15s  %-20s  %-10s  %s%n";
 
-        System.out.printf(fmt, "NAME", "STATUS", "PARENT", "RUNTIME", "AGE");
-        System.out.printf(fmt, "-".repeat(nameWidth), "----------",
+        System.out.printf(fmt, "NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE");
+        System.out.printf(fmt, "-".repeat(nameWidth), "----------", "---------------",
                 "--------------------", "----------", "---");
         for (var entry : items) {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
             var parent = entry.parent.isEmpty() ? "-" : entry.parent;
-            System.out.printf(fmt, entry.name, entry.status, parent, entry.runtime, age);
+            var ip = entry.ipv4.isEmpty() ? "-" : entry.ipv4;
+            System.out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age);
         }
         System.out.println();
     }
@@ -1519,5 +1537,6 @@ public class ListCommand implements Runnable {
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
                                 String runtime, String parent,
-                                String limitsCpu, String limitsMemory, String rootSize) {}
+                                String limitsCpu, String limitsMemory, String rootSize,
+                                String ipv4) {}
 }
