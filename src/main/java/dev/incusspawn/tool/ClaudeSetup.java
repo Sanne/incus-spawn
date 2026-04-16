@@ -37,7 +37,6 @@ public class ClaudeSetup implements ToolSetup {
                 {
                   "permissions": {
                     "defaultMode": "bypassPermissions",
-                    "skipDangerousModePermissionPrompt": true,
                     "allow": [
                       "Bash(*)",
                       "Read(**)",
@@ -49,7 +48,8 @@ public class ClaudeSetup implements ToolSetup {
                       "WebSearch",
                       "Agent(*)"
                     ]
-                  }
+                  },
+                  "skipDangerousModePermissionPrompt": true
                 }
                 """;
         var claudeJson = """
