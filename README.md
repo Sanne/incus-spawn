@@ -14,7 +14,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 ## Requirements
 
 - **Linux** -- Incus system containers require a Linux kernel. macOS and Windows are not yet supported but are on the roadmap (likely via a managed Linux VM).
-- **[JBang](https://www.jbang.dev/)** -- used to install and run incus-spawn (installs Java automatically if needed). Alternatively, build from source with `./install.sh --native` for a standalone native binary that needs neither JBang nor a JVM
+- **[JBang](https://www.jbang.dev/)** -- used to install and run incus-spawn. Alternatively, build from source with `./install.sh --native` for a standalone native binary that needs neither JBang nor a JVM
 - **[Incus](https://linuxcontainers.org/incus/)** -- `isx init` auto-installs via the detected package manager (`dnf`, `apt`, `zypper`, or `pacman`); on other distros, install manually before running init
 
 ## Quick Start
@@ -95,7 +95,9 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)). Later sources override earlier ones: built-in → user → search paths → project-local.
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
+You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)); this is useful to version your templates in a separate git project.
+Later sources override earlier ones: built-in → user → search paths → project-local.
 
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/43`)
@@ -109,13 +111,14 @@ Image schema fields (all optional except `name`):
 # Build a specific image (builds missing parents automatically)
 isx build tpl-java
 
-# Rebuild all defined images from scratch
+# Rebuild all discovered images from scratch
 isx build --all
 ```
 
 ### Declarative Repos
 
-Images can declare git repositories to clone into the container. Repos are cloned as `agentuser` after tool setup completes. For GitHub repos, Claude Code is automatically configured to trust the cloned directory (no "Do you trust this directory?" prompt).
+Images can declare git repositories to clone into the container.
+Declaring a git repository rather than using shell commands to fetch it allows for better integration into other tools, such as Claude Code.
 
 ```yaml
 name: tpl-quarkus
@@ -138,48 +141,37 @@ Repo entry fields:
 
 ## Custom Tools
 
-Tools can be defined as YAML files without writing Java:
+Template inheritance forms a single chain -- a template has exactly one parent. Tools provide composition: reusable capabilities that any template can mix in independently. A `gradle` tool can be added to a Java template, a Kotlin template, or a project-local template without duplicating definitions or creating diamond inheritance.
+
+Tools are defined as YAML files and referenced from image definitions via `tools:`:
 
 ```yaml
-# .incus-spawn/tools/node.yaml
-name: node
-description: Node.js LTS
-run:
-  - |
-    curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
-    dnf install -y nodejs
-verify: node --version
+# .incus-spawn/tools/gradle.yaml
+name: gradle
+description: Gradle 9.4.1
+
+downloads:
+  - url: https://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+    sha256: 2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb
+    extract: /opt
+    links:
+      /opt/gradle-9.4.1/bin/gradle: /usr/local/bin/gradle
+
+verify: gradle --version
+
 ```
+
+Downloads declared this way are cached on the host at `~/.cache/incus-spawn/downloads/`, so rebuilding images doesn't re-download unchanged artifacts.
+Extraction happens on the host -- the container doesn't need `tar`, `unzip`, or `curl`.
 
 Tool schema fields (all optional except `name`):
 - `packages` -- dnf packages to install
-- `downloads` -- artifacts to download, cache on the host, and extract into the container (see below)
+- `downloads` -- artifacts to download, cache on the host, and extract into the container
 - `run` -- shell commands as root
 - `run_as_user` -- shell commands as agentuser
 - `files` -- files to write (with optional `owner`)
 - `env` -- lines appended to agentuser's `.bashrc`
 - `verify` -- verification command (logged, non-fatal)
-
-### Declarative Downloads
-
-The `downloads` field replaces manual `curl`/`tar`/`unzip` scripts with a declarative approach. Downloads are cached on the host at `~/.cache/incus-spawn/downloads/`, so rebuilding images doesn't re-download unchanged artifacts. Extraction happens on the host -- the container doesn't need `tar`, `unzip`, or `curl`.
-
-```yaml
-name: maven-3
-description: Apache Maven 3.9.14
-
-downloads:
-  - url: https://dlcdn.apache.org/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz
-    sha256: 126ed3233e569bd0add9e889d226139acd3de9005876a01fe6108fbf4246f515
-    extract: /opt
-    links:
-      /opt/apache-maven-3.9.14/bin/mvn: /usr/local/bin/mvn
-
-env:
-  - export MAVEN_HOME=/opt/apache-maven-3.9.14
-
-verify: mvn --version
-```
 
 Download entry fields:
 - `url` (required) -- download URL
@@ -189,7 +181,7 @@ Download entry fields:
 
 Supported archive formats: `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
-Execution order during `install()`: packages → **downloads** → `run` → `run_as_user` → `files` → `env` → `verify`.
+Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `env` → `verify`.
 
 Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → search paths → `.incus-spawn/tools/` (project-local) → Java plugins.
 
@@ -197,13 +189,13 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 
 - **Instant branching**: copy-on-write clones that share storage with the parent image
 - **System containers**: full init, real networking, bare-metal-like developer experience
-- **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel
+- **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel (optional)
 - **Interactive TUI**: Midnight Commander-style interface for managing environments
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Inbox mount**: share a host directory read-only into the container
 - **MITM TLS proxy**: transparent auth injection — credentials never enter containers in any form
 - **Proxy caching**: OCI registry blobs and Maven/Gradle artifacts cached on the host, shared across all branches
-- **Proxy-only networking**: iptables restricts egress to the MITM proxy only
+- **Proxy-only networking**: (optional) iptables restricts egress to the MITM proxy only
 - **Network airgapping**: fully isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
 - **Claude Code integration**: auth via MITM proxy — API key never enters containers
@@ -261,11 +253,10 @@ The TUI has two panels: **Templates** (top) and **Instances** (bottom). Press `T
 Details that save time and avoid frustration:
 
 - **Shared DNF cache**: building a chain of templates (e.g. `tpl-java` which derives from `tpl-dev` which derives from `tpl-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping templates clean.
-- **Smart package installation**: when building a child template, packages already installed by parent images are automatically skipped by walking the image definition chain -- no redundant `dnf install` calls or "already installed" noise.
 - **Registry blob caching**: the MITM proxy caches OCI container image layers (`~/.cache/incus-spawn/registry/`) by content-addressed SHA256 digest. Pulling the same container image in different branches downloads each layer only once, with integrity verification.
 - **Maven/Gradle artifact caching**: the MITM proxy caches artifacts from Maven Central, Maven repository, and Gradle plugin portal (`~/.cache/incus-spawn/maven/`). Release artifacts are immutable and cached permanently; SNAPSHOT and metadata requests pass through uncached.
-- **Auto-init**: running any command (`isx`, `isx build`, `isx proxy`) without prior setup automatically launches `isx init`.
 - **CoW pool auto-creation**: `isx init` creates a btrfs storage pool if no copy-on-write pool exists, so branches are instant from the start.
+- **Sudo ready**: your agents and scripts can invoke sudo at will, no password will be required.
 
 ## Installation
 
