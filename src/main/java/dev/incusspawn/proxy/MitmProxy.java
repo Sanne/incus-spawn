@@ -6,16 +6,26 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
 import javax.net.ssl.*;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,22 +50,33 @@ public class MitmProxy {
     public static final int DEFAULT_MITM_PORT = 18443;
     public static final int DEFAULT_HEALTH_PORT = 18080;
 
-    private static final Set<String> INTERCEPTED_DOMAIN_SET = Set.of(
-            "api.anthropic.com",
-            "github.com",
-            "api.github.com",
-            "raw.githubusercontent.com",
-            "objects.githubusercontent.com",
-            "codeload.github.com",
-            "uploads.github.com"
-    );
-
     private static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
     private static final Set<String> GITHUB_DOMAINS = Set.of(
             "github.com", "api.github.com",
             "raw.githubusercontent.com", "objects.githubusercontent.com",
             "codeload.github.com", "uploads.github.com"
     );
+    private static final Set<String> REGISTRY_DOMAINS = Set.of(
+            "registry-1.docker.io", "auth.docker.io",
+            "ghcr.io", "quay.io"
+    );
+
+    private static final Set<String> INTERCEPTED_DOMAIN_SET;
+    static {
+        var all = new HashSet<String>();
+        all.addAll(ANTHROPIC_DOMAINS);
+        all.addAll(GITHUB_DOMAINS);
+        all.addAll(REGISTRY_DOMAINS);
+        INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
+    }
+
+    // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
+    // Group 1 = image name (e.g. "library/postgres"), group 2 = digest
+    private static final Pattern BLOB_DIGEST_PATTERN = Pattern.compile(
+            "/v2/(.+)/blobs/(sha256:[a-f0-9]{64})");
+
+    private static final Path REGISTRY_CACHE_DIR = Path.of(
+            System.getProperty("user.home"), ".cache", "incus-spawn", "registry");
 
     private final String bindAddress;
     private final int mitmPort;
@@ -194,6 +215,8 @@ public class MitmProxy {
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + bindAddress + ":" + healthPort + "/health");
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
+        System.out.println("Registry cache: " + REGISTRY_CACHE_DIR +
+                " (domains: " + REGISTRY_DOMAINS + ")");
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexRegion + "-aiplatform.googleapis.com" +
@@ -279,6 +302,12 @@ public class MitmProxy {
             if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
                 System.err.println("MITM: unknown domain: " + domain);
                 out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
+                return;
+            }
+
+            // Registry traffic — cache blobs, relay everything else
+            if (REGISTRY_DOMAINS.contains(domain)) {
+                handleRegistryRequest(request, in, out, domain);
                 return;
             }
 
@@ -467,6 +496,279 @@ public class MitmProxy {
                 }
             }
         }
+    }
+
+    // --- Registry blob caching ---
+
+    /**
+     * Handle a request to a container registry domain.
+     * GET requests for blobs with a SHA256 digest are served from cache or
+     * fetched, cached, and served. Everything else is relayed transparently.
+     */
+    private void handleRegistryRequest(HttpMessage request, InputStream clientIn,
+                                       OutputStream clientOut, String domain) throws Exception {
+        var path = request.path();
+        var method = request.method();
+
+        if ("GET".equals(method) && path != null) {
+            var matcher = BLOB_DIGEST_PATTERN.matcher(path);
+            if (matcher.matches()) {
+                var imageName = matcher.group(1);
+                var digest = matcher.group(2);
+                var imageRef = domain + "/" + imageName;
+                var cacheFile = REGISTRY_CACHE_DIR.resolve(digest.replace(":", "-"));
+
+                if (Files.exists(cacheFile)) {
+                    System.out.println("Registry cache hit: " + imageRef +
+                            " " + digest.substring(0, 19) +
+                            "... (" + formatSize(Files.size(cacheFile)) + ")");
+                    serveCachedBlob(cacheFile, digest, clientOut);
+                    return;
+                }
+
+                fetchCacheAndServe(request, clientIn, clientOut, domain,
+                        digest, cacheFile, imageRef);
+                return;
+            }
+        }
+
+        // Non-cacheable (auth tokens, manifests, HEAD, tag lookups) — relay
+        relayToUpstream(request, clientIn, clientOut, domain);
+    }
+
+    /**
+     * Serve a cached blob with a synthetic HTTP 200 response.
+     */
+    private void serveCachedBlob(Path cacheFile, String digest,
+                                 OutputStream clientOut) throws IOException {
+        var size = Files.size(cacheFile);
+        var header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "Content-Length: " + size + "\r\n" +
+                "Docker-Content-Digest: " + digest + "\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+        clientOut.write(header.getBytes());
+        try (var fis = Files.newInputStream(cacheFile)) {
+            fis.transferTo(clientOut);
+        }
+        clientOut.flush();
+    }
+
+    /**
+     * Fetch a blob from upstream, tee-stream it to the client and a temp file,
+     * verify the SHA256 digest, and atomically move into the cache.
+     */
+    private void fetchCacheAndServe(HttpMessage request, InputStream clientIn,
+                                    OutputStream clientOut, String domain,
+                                    String digest, Path cacheFile,
+                                    String imageRef) throws Exception {
+        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
+                .createSocket(domain, 443);
+        upstreamSocket.setSoTimeout(300_000);
+
+        try (upstreamSocket) {
+            upstreamSocket.startHandshake();
+            var upstreamOut = upstreamSocket.getOutputStream();
+            var upstreamIn = upstreamSocket.getInputStream();
+
+            request.writeTo(upstreamOut);
+            request.relayRequestBody(clientIn, upstreamOut);
+
+            var response = HttpMessage.readResponse(upstreamIn);
+            if (response == null) return;
+
+            var statusCode = response.statusCode();
+
+            if (statusCode == 307 || statusCode == 302 || statusCode == 301) {
+                var location = response.header("Location");
+                if (location != null) {
+                    fetchFromRedirect(location, clientOut, digest, cacheFile, imageRef);
+                    return;
+                }
+            }
+
+            if (statusCode == 200) {
+                Files.createDirectories(REGISTRY_CACHE_DIR);
+                var tempFile = Files.createTempFile(REGISTRY_CACHE_DIR, "blob-", ".tmp");
+                try {
+                    response.writeTo(clientOut);
+                    var contentLength = response.header("Content-Length");
+
+                    try (var fileOut = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
+                        if (contentLength != null) {
+                            teeStream(upstreamIn, clientOut, fileOut,
+                                    Long.parseLong(contentLength.trim()));
+                        } else {
+                            teeUntilEof(upstreamIn, clientOut, fileOut);
+                        }
+                    }
+
+                    if (verifyDigest(tempFile, digest)) {
+                        Files.move(tempFile, cacheFile,
+                                StandardCopyOption.ATOMIC_MOVE,
+                                StandardCopyOption.REPLACE_EXISTING);
+                        System.out.println("Registry cached: " + imageRef +
+                                " " + digest.substring(0, 19) +
+                                "... (" + formatSize(Files.size(cacheFile)) + ")");
+                    } else {
+                        System.err.println("Registry cache: SHA256 mismatch for " +
+                                imageRef + " " + digest + ", not caching");
+                        Files.deleteIfExists(tempFile);
+                    }
+                } catch (Exception e) {
+                    Files.deleteIfExists(tempFile);
+                    throw e;
+                }
+                return;
+            }
+
+            // Non-200, non-redirect — relay as-is
+            response.writeTo(clientOut);
+            response.relayResponseBody(upstreamIn, clientOut);
+        }
+    }
+
+    /**
+     * Follow a redirect (307/302/301) on the host side, tee-stream the
+     * response to the client and cache file, then verify the digest.
+     */
+    private void fetchFromRedirect(String location, OutputStream clientOut,
+                                   String digest, Path cacheFile,
+                                   String imageRef) throws Exception {
+        var conn = (HttpURLConnection) new URL(location).openConnection();
+        conn.setInstanceFollowRedirects(true);
+        conn.setReadTimeout(300_000);
+        conn.setConnectTimeout(30_000);
+
+        try {
+            var responseCode = conn.getResponseCode();
+            if (responseCode != 200) {
+                var errorBody = conn.getErrorStream() != null
+                        ? conn.getErrorStream().readAllBytes() : new byte[0];
+                var header = "HTTP/1.1 " + responseCode + " " +
+                        conn.getResponseMessage() + "\r\n" +
+                        "Content-Length: " + errorBody.length + "\r\n" +
+                        "Connection: close\r\n\r\n";
+                clientOut.write(header.getBytes());
+                clientOut.write(errorBody);
+                clientOut.flush();
+                return;
+            }
+
+            var contentLength = conn.getContentLengthLong();
+            Files.createDirectories(REGISTRY_CACHE_DIR);
+            var tempFile = Files.createTempFile(REGISTRY_CACHE_DIR, "blob-", ".tmp");
+
+            try (var cdnIn = conn.getInputStream()) {
+                var header = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        (contentLength >= 0 ? "Content-Length: " + contentLength + "\r\n" : "") +
+                        "Docker-Content-Digest: " + digest + "\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n";
+                clientOut.write(header.getBytes());
+
+                try (var fileOut = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
+                    if (contentLength >= 0) {
+                        teeStream(cdnIn, clientOut, fileOut, contentLength);
+                    } else {
+                        teeUntilEof(cdnIn, clientOut, fileOut);
+                    }
+                }
+
+                if (verifyDigest(tempFile, digest)) {
+                    Files.move(tempFile, cacheFile,
+                            StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                    System.out.println("Registry cached: " + imageRef +
+                            " " + digest.substring(0, 19) +
+                            "... (" + formatSize(Files.size(cacheFile)) + ")");
+                } else {
+                    System.err.println("Registry cache: SHA256 mismatch for " +
+                            imageRef + " " + digest + ", not caching");
+                    Files.deleteIfExists(tempFile);
+                }
+            } catch (Exception e) {
+                Files.deleteIfExists(tempFile);
+                throw e;
+            }
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    /**
+     * Relay a non-cacheable registry request transparently to upstream.
+     */
+    private void relayToUpstream(HttpMessage request, InputStream clientIn,
+                                 OutputStream clientOut, String domain) throws Exception {
+        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
+                .createSocket(domain, 443);
+        upstreamSocket.setSoTimeout(300_000);
+
+        try (upstreamSocket) {
+            upstreamSocket.startHandshake();
+            var upstreamOut = upstreamSocket.getOutputStream();
+            var upstreamIn = upstreamSocket.getInputStream();
+
+            request.writeTo(upstreamOut);
+            request.relayRequestBody(clientIn, upstreamOut);
+            HttpMessage.relayResponse(upstreamIn, clientOut);
+        }
+    }
+
+    // --- Tee streaming helpers ---
+
+    private static void teeStream(InputStream in, OutputStream out1,
+                                  OutputStream out2, long length) throws IOException {
+        var buffer = new byte[8192];
+        long remaining = length;
+        while (remaining > 0) {
+            int toRead = (int) Math.min(buffer.length, remaining);
+            int n = in.read(buffer, 0, toRead);
+            if (n == -1) break;
+            out1.write(buffer, 0, n);
+            out1.flush();
+            out2.write(buffer, 0, n);
+            remaining -= n;
+        }
+        out2.flush();
+    }
+
+    private static void teeUntilEof(InputStream in, OutputStream out1,
+                                    OutputStream out2) throws IOException {
+        var buffer = new byte[8192];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out1.write(buffer, 0, n);
+            out1.flush();
+            out2.write(buffer, 0, n);
+        }
+        out2.flush();
+    }
+
+    private static boolean verifyDigest(Path file, String expectedDigest) throws Exception {
+        var parts = expectedDigest.split(":", 2);
+        if (parts.length != 2 || !"sha256".equals(parts[0])) return false;
+
+        var md = MessageDigest.getInstance("SHA-256");
+        try (var in = Files.newInputStream(file)) {
+            var buffer = new byte[8192];
+            int n;
+            while ((n = in.read(buffer)) != -1) {
+                md.update(buffer, 0, n);
+            }
+        }
+        var actual = java.util.HexFormat.of().formatHex(md.digest());
+        return actual.equals(parts[1]);
+    }
+
+    private static String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
     // --- SSL Context ---

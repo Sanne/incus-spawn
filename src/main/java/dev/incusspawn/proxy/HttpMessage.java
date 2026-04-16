@@ -84,12 +84,63 @@ public class HttpMessage {
     }
 
     /**
+     * Read an HTTP/1.1 response status line and headers from the stream.
+     * Same wire format as a request — just the first line is a status line
+     * instead of a request line.
+     */
+    public static HttpMessage readResponse(InputStream in) throws IOException {
+        return readRequest(in);
+    }
+
+    /**
+     * Relay the response body from the stream based on Content-Length,
+     * chunked transfer encoding, or until EOF.
+     * Call after {@link #readResponse} has consumed the status line and headers.
+     */
+    public void relayResponseBody(InputStream in, OutputStream out) throws IOException {
+        var cl = header("Content-Length");
+        var te = header("Transfer-Encoding");
+        if (cl != null) {
+            relayFixedLength(in, out, Long.parseLong(cl.trim()));
+        } else if (te != null && te.toLowerCase().contains("chunked")) {
+            relayChunked(in, out);
+        } else {
+            relayUntilEof(in, out);
+        }
+    }
+
+    /**
      * Extract the HTTP method from the request line (e.g. "GET", "POST").
      */
     public String method() {
         if (requestLine == null) return null;
         var space = requestLine.indexOf(' ');
         return space > 0 ? requestLine.substring(0, space) : requestLine;
+    }
+
+    /**
+     * Extract the request path (e.g. "/v2/library/postgres/blobs/sha256:abc").
+     */
+    public String path() {
+        if (requestLine == null) return null;
+        var firstSpace = requestLine.indexOf(' ');
+        var lastSpace = requestLine.lastIndexOf(' ');
+        if (firstSpace > 0 && lastSpace > firstSpace) {
+            return requestLine.substring(firstSpace + 1, lastSpace);
+        }
+        return null;
+    }
+
+    /**
+     * Extract the HTTP status code from a response status line (e.g. 200, 307).
+     */
+    public int statusCode() {
+        if (requestLine == null) return -1;
+        var parts = requestLine.split("\\s+", 3);
+        if (parts.length >= 2) {
+            try { return Integer.parseInt(parts[1]); } catch (NumberFormatException e) { return -1; }
+        }
+        return -1;
     }
 
     /**
