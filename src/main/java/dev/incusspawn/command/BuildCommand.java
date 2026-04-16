@@ -433,9 +433,11 @@ public class BuildCommand implements Runnable {
     }
 
     private void cleanCaches(String container) {
+        // DNF cache is on the host mount (unmounted before this call) — only
+        // clean container-local leftovers and temp files to minimize image size.
         System.out.println("Cleaning up caches...");
         incus.shellExec(container, "sh", "-c",
-                "dnf -y clean all && rm -rf /var/cache/dnf /tmp/* /var/tmp/*");
+                "rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*");
     }
 
     private void waitForNetwork(String container) {
@@ -489,7 +491,7 @@ public class BuildCommand implements Runnable {
         }
         incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
                 "source=" + DNF_CACHE_DIR,
-                "path=/var/cache/dnf",
+                "path=/var/cache/libdnf5",
                 "shift=true");
     }
 
