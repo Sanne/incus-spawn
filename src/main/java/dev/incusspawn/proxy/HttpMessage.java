@@ -326,7 +326,7 @@ public class HttpMessage {
 
     // --- Low-level I/O ---
 
-    private static String readLine(InputStream in) throws IOException {
+    static String readLine(InputStream in) throws IOException {
         var sb = new StringBuilder();
         int c;
         while ((c = in.read()) != -1) {

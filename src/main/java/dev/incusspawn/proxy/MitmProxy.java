@@ -293,80 +293,78 @@ public class MitmProxy {
             clientSocket.setSoTimeout(120_000);
             clientSocket.startHandshake();
 
+            var sniDomain = sniByThread.remove(Thread.currentThread().getId());
             var in = clientSocket.getInputStream();
             var out = clientSocket.getOutputStream();
 
-            // Read the HTTP request
-            var request = HttpMessage.readRequest(in);
-            if (request == null) return;
+            // HTTP/1.1 keep-alive: loop reading requests until client disconnects
+            while (true) {
+                var request = HttpMessage.readRequest(in);
+                if (request == null) return;
 
-            // Determine domain from Host header or SNI
-            var domain = request.host();
-            if (domain == null) {
-                var sniDomain = sniByThread.remove(Thread.currentThread().getId());
-                domain = sniDomain;
-            } else {
-                sniByThread.remove(Thread.currentThread().getId());
-            }
+                var domain = request.host();
+                if (domain == null) domain = sniDomain;
 
-            if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
-                System.err.println("MITM: unknown domain: " + domain);
-                out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
-                return;
-            }
-
-            // Registry traffic — cache blobs, relay everything else
-            if (REGISTRY_DOMAINS.contains(domain)) {
-                handleRegistryRequest(request, in, out, domain);
-                return;
-            }
-
-            // Maven/Gradle repository traffic — cache artifacts
-            if (MAVEN_DOMAINS.contains(domain)) {
-                handleMavenRequest(request, in, out, domain);
-                return;
-            }
-
-            // For Anthropic API requests when using Vertex AI, translate the request
-            // to the Vertex rawPredict format. This requires buffering the body to
-            // extract the model name and rewrite the JSON.
-            String upstreamHost;
-            byte[] rewrittenBody = null;
-
-            if (useVertex && ANTHROPIC_DOMAINS.contains(domain)) {
-                upstreamHost = vertexRegion + "-aiplatform.googleapis.com";
-                var bodyBytes = request.readRequestBody(in);
-                rewrittenBody = translateToVertex(request, bodyBytes, upstreamHost);
-            } else {
-                upstreamHost = domain;
-                injectHeaders(request, domain);
-            }
-
-            var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
-                    .createSocket(upstreamHost, 443);
-            upstreamSocket.setSoTimeout(300_000);
-
-            try (upstreamSocket) {
-                upstreamSocket.startHandshake();
-                var upstreamOut = upstreamSocket.getOutputStream();
-                var upstreamIn = upstreamSocket.getInputStream();
-
-                request.writeTo(upstreamOut);
-                if (rewrittenBody != null) {
-                    // Vertex: send the rewritten body we already buffered
-                    upstreamOut.write(rewrittenBody);
-                    upstreamOut.flush();
-                } else {
-                    // Non-Vertex: stream body directly from client
-                    request.relayRequestBody(in, upstreamOut);
+                if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
+                    System.err.println("MITM: unknown domain: " + domain);
+                    out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
+                    return;
                 }
 
-                HttpMessage.relayResponse(upstreamIn, out);
+                // Force Connection: close on upstream requests so each upstream
+                // socket closes after responding (EOF arrives for tee streaming).
+                // The client connection stays open for keep-alive.
+                request.setHeader("Connection", "close");
+
+                if (REGISTRY_DOMAINS.contains(domain)) {
+                    handleRegistryRequest(request, in, out, domain);
+                } else if (MAVEN_DOMAINS.contains(domain)) {
+                    handleMavenRequest(request, in, out, domain);
+                } else {
+                    handleApiRequest(request, in, out, domain);
+                }
             }
+        } catch (java.net.SocketTimeoutException e) {
+            // Keep-alive timeout — client idle, normal closure
         } catch (IOException e) {
             // Connection closed or network error — expected during normal operation
         } catch (Exception e) {
             System.err.println("MITM connection error: " + e.getMessage());
+        }
+    }
+
+    private void handleApiRequest(HttpMessage request, InputStream clientIn,
+                                  OutputStream clientOut, String domain) throws Exception {
+        String upstreamHost;
+        byte[] rewrittenBody = null;
+
+        if (useVertex && ANTHROPIC_DOMAINS.contains(domain)) {
+            upstreamHost = vertexRegion + "-aiplatform.googleapis.com";
+            var bodyBytes = request.readRequestBody(clientIn);
+            rewrittenBody = translateToVertex(request, bodyBytes, upstreamHost);
+        } else {
+            upstreamHost = domain;
+            injectHeaders(request, domain);
+        }
+
+        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
+                .createSocket(upstreamHost, 443);
+        upstreamSocket.setSoTimeout(300_000);
+
+        try (upstreamSocket) {
+            upstreamSocket.startHandshake();
+            var upstreamOut = upstreamSocket.getOutputStream();
+            var upstreamIn = upstreamSocket.getInputStream();
+
+            request.writeTo(upstreamOut);
+            if (rewrittenBody != null) {
+                upstreamOut.write(rewrittenBody);
+                upstreamOut.flush();
+            } else {
+                request.relayRequestBody(clientIn, upstreamOut);
+            }
+
+            relayResponseStrippingConnectionHeader(upstreamIn, clientOut);
         }
     }
 
@@ -566,7 +564,7 @@ public class MitmProxy {
         if (digest != null) {
             sb.append("Docker-Content-Digest: ").append(digest).append("\r\n");
         }
-        sb.append("Connection: close\r\n\r\n");
+        sb.append("\r\n");
         clientOut.write(sb.toString().getBytes());
         try (var fis = Files.newInputStream(cacheFile)) {
             fis.transferTo(clientOut);
@@ -614,13 +612,18 @@ public class MitmProxy {
                 Files.createDirectories(cacheDir);
                 var tempFile = Files.createTempFile(cacheDir, "dl-", ".tmp");
                 try {
+                    response.removeHeader("Connection");
                     response.writeTo(clientOut);
                     var contentLength = response.header("Content-Length");
+                    var transferEncoding = response.header("Transfer-Encoding");
 
                     try (var fileOut = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
                         if (contentLength != null) {
                             teeStream(upstreamIn, clientOut, fileOut,
                                     Long.parseLong(contentLength.trim()));
+                        } else if (transferEncoding != null
+                                && transferEncoding.toLowerCase().contains("chunked")) {
+                            teeChunked(upstreamIn, clientOut, fileOut);
                         } else {
                             teeUntilEof(upstreamIn, clientOut, fileOut);
                         }
@@ -646,6 +649,7 @@ public class MitmProxy {
             }
 
             // Non-200, non-redirect — relay as-is
+            response.removeHeader("Connection");
             response.writeTo(clientOut);
             response.relayResponseBody(upstreamIn, clientOut);
         }
@@ -671,8 +675,7 @@ public class MitmProxy {
                         ? conn.getErrorStream().readAllBytes() : new byte[0];
                 var header = "HTTP/1.1 " + responseCode + " " +
                         conn.getResponseMessage() + "\r\n" +
-                        "Content-Length: " + errorBody.length + "\r\n" +
-                        "Connection: close\r\n\r\n";
+                        "Content-Length: " + errorBody.length + "\r\n\r\n";
                 clientOut.write(header.getBytes());
                 clientOut.write(errorBody);
                 clientOut.flush();
@@ -694,7 +697,7 @@ public class MitmProxy {
                 if (digest != null) {
                     sb.append("Docker-Content-Digest: ").append(digest).append("\r\n");
                 }
-                sb.append("Connection: close\r\n\r\n");
+                sb.append("\r\n");
                 clientOut.write(sb.toString().getBytes());
 
                 try (var fileOut = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
@@ -784,8 +787,22 @@ public class MitmProxy {
 
             request.writeTo(upstreamOut);
             request.relayRequestBody(clientIn, upstreamOut);
-            HttpMessage.relayResponse(upstreamIn, clientOut);
+            relayResponseStrippingConnectionHeader(upstreamIn, clientOut);
         }
+    }
+
+    /**
+     * Read an HTTP response from upstream, strip the Connection header
+     * (upstream says "close" but we want keep-alive on the client side),
+     * then write to the client.
+     */
+    private static void relayResponseStrippingConnectionHeader(
+            InputStream upstreamIn, OutputStream clientOut) throws IOException {
+        var response = HttpMessage.readResponse(upstreamIn);
+        if (response == null) return;
+        response.removeHeader("Connection");
+        response.writeTo(clientOut);
+        response.relayResponseBody(upstreamIn, clientOut);
     }
 
     // --- Tee streaming helpers ---
@@ -816,6 +833,52 @@ public class MitmProxy {
             out2.write(buffer, 0, n);
         }
         out2.flush();
+    }
+
+    /**
+     * Tee a chunked transfer-encoded stream: relay raw chunked framing to the
+     * client (which expects it per the response headers), but write only the
+     * decoded payload to the cache file.
+     */
+    private static void teeChunked(InputStream in, OutputStream clientOut,
+                                   OutputStream cacheOut) throws IOException {
+        while (true) {
+            var chunkHeader = HttpMessage.readLine(in);
+            if (chunkHeader == null) break;
+            clientOut.write((chunkHeader + "\r\n").getBytes());
+            clientOut.flush();
+
+            int chunkSize;
+            try {
+                chunkSize = Integer.parseInt(chunkHeader.trim().split(";")[0], 16);
+            } catch (NumberFormatException e) {
+                break;
+            }
+
+            if (chunkSize == 0) {
+                var trailer = HttpMessage.readLine(in);
+                if (trailer != null) clientOut.write((trailer + "\r\n").getBytes());
+                clientOut.flush();
+                break;
+            }
+
+            var buffer = new byte[8192];
+            long remaining = chunkSize;
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buffer.length, remaining);
+                int n = in.read(buffer, 0, toRead);
+                if (n == -1) break;
+                clientOut.write(buffer, 0, n);
+                cacheOut.write(buffer, 0, n);
+                remaining -= n;
+            }
+            clientOut.flush();
+
+            var crlf = HttpMessage.readLine(in);
+            if (crlf != null) clientOut.write((crlf + "\r\n").getBytes());
+            clientOut.flush();
+        }
+        cacheOut.flush();
     }
 
     private static boolean verifyDigest(Path file, String expectedDigest) throws Exception {
