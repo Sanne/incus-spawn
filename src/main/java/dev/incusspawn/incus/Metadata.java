@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 
@@ -24,16 +25,30 @@ public final class Metadata {
 
     private Metadata() {}
 
-    public static String today() {
-        return LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+    public static String now() {
+        return LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
 
-    public static String ageDescription(String createdDate) {
+    /** @deprecated Use {@link #now()} instead. */
+    @Deprecated
+    public static String today() {
+        return now();
+    }
+
+    public static String ageDescription(String created) {
         try {
-            var created = LocalDate.parse(createdDate, DateTimeFormatter.ISO_LOCAL_DATE);
-            var days = ChronoUnit.DAYS.between(created, LocalDate.now());
-            if (days == 0) return "today";
-            if (days == 1) return "1 day ago";
+            // Try datetime first (new format), fall back to date-only (legacy)
+            LocalDateTime createdTime;
+            if (created.contains("T")) {
+                createdTime = LocalDateTime.parse(created, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            } else {
+                createdTime = LocalDate.parse(created, DateTimeFormatter.ISO_LOCAL_DATE).atStartOfDay();
+            }
+            var now = LocalDateTime.now();
+            var days = ChronoUnit.DAYS.between(createdTime.toLocalDate(), now.toLocalDate());
+            var time = createdTime.format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+            if (days == 0) return "today " + time;
+            if (days == 1) return "yesterday " + time;
             if (days < 7) return days + " days ago";
             if (days < 30) return (days / 7) + " weeks ago";
             return (days / 30) + " months ago";

@@ -736,10 +736,10 @@ public class ListCommand implements Runnable {
         }
 
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "DESCRIPTION")
+                .header(Row.from("NAME", "BUILT", "DESCRIPTION")
                         .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
                 .rows(templateRows)
-                .widths(Constraint.length(20), Constraint.length(14), Constraint.fill())
+                .widths(Constraint.length(20), Constraint.length(18), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 .block(Block.builder()
                         .borders(Borders.ALL).borderType(BorderType.ROUNDED)
