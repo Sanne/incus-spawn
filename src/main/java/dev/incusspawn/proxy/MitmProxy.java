@@ -60,6 +60,10 @@ public class MitmProxy {
             "registry-1.docker.io", "auth.docker.io",
             "ghcr.io", "quay.io"
     );
+    private static final Set<String> MAVEN_DOMAINS = Set.of(
+            "repo.maven.apache.org", "repo1.maven.org",
+            "plugins.gradle.org"
+    );
 
     private static final Set<String> INTERCEPTED_DOMAIN_SET;
     static {
@@ -67,6 +71,7 @@ public class MitmProxy {
         all.addAll(ANTHROPIC_DOMAINS);
         all.addAll(GITHUB_DOMAINS);
         all.addAll(REGISTRY_DOMAINS);
+        all.addAll(MAVEN_DOMAINS);
         INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
     }
 
@@ -77,6 +82,9 @@ public class MitmProxy {
 
     private static final Path REGISTRY_CACHE_DIR = Path.of(
             System.getProperty("user.home"), ".cache", "incus-spawn", "registry");
+
+    private static final Path MAVEN_CACHE_DIR = Path.of(
+            System.getProperty("user.home"), ".cache", "incus-spawn", "maven");
 
     private final String bindAddress;
     private final int mitmPort;
@@ -217,6 +225,8 @@ public class MitmProxy {
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
         System.out.println("Registry cache: " + REGISTRY_CACHE_DIR +
                 " (domains: " + REGISTRY_DOMAINS + ")");
+        System.out.println("Maven cache: " + MAVEN_CACHE_DIR +
+                " (domains: " + MAVEN_DOMAINS + ")");
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexRegion + "-aiplatform.googleapis.com" +
@@ -308,6 +318,12 @@ public class MitmProxy {
             // Registry traffic — cache blobs, relay everything else
             if (REGISTRY_DOMAINS.contains(domain)) {
                 handleRegistryRequest(request, in, out, domain);
+                return;
+            }
+
+            // Maven/Gradle repository traffic — cache artifacts
+            if (MAVEN_DOMAINS.contains(domain)) {
+                handleMavenRequest(request, in, out, domain);
                 return;
             }
 
@@ -522,7 +538,7 @@ public class MitmProxy {
                     System.out.println("Registry cache hit: " + imageRef +
                             " " + digest.substring(0, 19) +
                             "... (" + formatSize(Files.size(cacheFile)) + ")");
-                    serveCachedBlob(cacheFile, digest, clientOut);
+                    serveCachedFile(cacheFile, digest, clientOut);
                     return;
                 }
 
@@ -537,18 +553,21 @@ public class MitmProxy {
     }
 
     /**
-     * Serve a cached blob with a synthetic HTTP 200 response.
+     * Serve a cached file with a synthetic HTTP 200 response.
+     * If {@code digest} is non-null, includes a Docker-Content-Digest header (OCI blobs).
      */
-    private void serveCachedBlob(Path cacheFile, String digest,
+    private void serveCachedFile(Path cacheFile, String digest,
                                  OutputStream clientOut) throws IOException {
         var size = Files.size(cacheFile);
-        var header = "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: application/octet-stream\r\n" +
-                "Content-Length: " + size + "\r\n" +
-                "Docker-Content-Digest: " + digest + "\r\n" +
-                "Connection: close\r\n" +
-                "\r\n";
-        clientOut.write(header.getBytes());
+        var sb = new StringBuilder();
+        sb.append("HTTP/1.1 200 OK\r\n");
+        sb.append("Content-Type: application/octet-stream\r\n");
+        sb.append("Content-Length: ").append(size).append("\r\n");
+        if (digest != null) {
+            sb.append("Docker-Content-Digest: ").append(digest).append("\r\n");
+        }
+        sb.append("Connection: close\r\n\r\n");
+        clientOut.write(sb.toString().getBytes());
         try (var fis = Files.newInputStream(cacheFile)) {
             fis.transferTo(clientOut);
         }
@@ -556,13 +575,15 @@ public class MitmProxy {
     }
 
     /**
-     * Fetch a blob from upstream, tee-stream it to the client and a temp file,
-     * verify the SHA256 digest, and atomically move into the cache.
+     * Fetch a file from upstream, tee-stream it to the client and a temp file,
+     * and atomically move into the cache. When {@code digest} is non-null,
+     * the cached file is verified against the SHA256 digest (OCI blobs);
+     * when null the file is cached unconditionally (immutable Maven artifacts).
      */
     private void fetchCacheAndServe(HttpMessage request, InputStream clientIn,
                                     OutputStream clientOut, String domain,
                                     String digest, Path cacheFile,
-                                    String imageRef) throws Exception {
+                                    String ref) throws Exception {
         var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
                 .createSocket(domain, 443);
         upstreamSocket.setSoTimeout(300_000);
@@ -583,14 +604,15 @@ public class MitmProxy {
             if (statusCode == 307 || statusCode == 302 || statusCode == 301) {
                 var location = response.header("Location");
                 if (location != null) {
-                    fetchFromRedirect(location, clientOut, digest, cacheFile, imageRef);
+                    fetchFromRedirect(location, clientOut, digest, cacheFile, ref);
                     return;
                 }
             }
 
             if (statusCode == 200) {
-                Files.createDirectories(REGISTRY_CACHE_DIR);
-                var tempFile = Files.createTempFile(REGISTRY_CACHE_DIR, "blob-", ".tmp");
+                var cacheDir = cacheFile.getParent();
+                Files.createDirectories(cacheDir);
+                var tempFile = Files.createTempFile(cacheDir, "dl-", ".tmp");
                 try {
                     response.writeTo(clientOut);
                     var contentLength = response.header("Content-Length");
@@ -604,17 +626,17 @@ public class MitmProxy {
                         }
                     }
 
-                    if (verifyDigest(tempFile, digest)) {
+                    if (digest != null && !verifyDigest(tempFile, digest)) {
+                        System.err.println("Cache: SHA256 mismatch for " +
+                                ref + " " + digest + ", not caching");
+                        Files.deleteIfExists(tempFile);
+                    } else {
                         Files.move(tempFile, cacheFile,
                                 StandardCopyOption.ATOMIC_MOVE,
                                 StandardCopyOption.REPLACE_EXISTING);
-                        System.out.println("Registry cached: " + imageRef +
-                                " " + digest.substring(0, 19) +
-                                "... (" + formatSize(Files.size(cacheFile)) + ")");
-                    } else {
-                        System.err.println("Registry cache: SHA256 mismatch for " +
-                                imageRef + " " + digest + ", not caching");
-                        Files.deleteIfExists(tempFile);
+                        System.out.println("Cached: " + ref +
+                                (digest != null ? " " + digest.substring(0, 19) + "..." : "") +
+                                " (" + formatSize(Files.size(cacheFile)) + ")");
                     }
                 } catch (Exception e) {
                     Files.deleteIfExists(tempFile);
@@ -631,11 +653,12 @@ public class MitmProxy {
 
     /**
      * Follow a redirect (307/302/301) on the host side, tee-stream the
-     * response to the client and cache file, then verify the digest.
+     * response to the client and cache file. When {@code digest} is non-null,
+     * verifies SHA256 before committing to cache.
      */
     private void fetchFromRedirect(String location, OutputStream clientOut,
                                    String digest, Path cacheFile,
-                                   String imageRef) throws Exception {
+                                   String ref) throws Exception {
         var conn = (HttpURLConnection) new URL(location).openConnection();
         conn.setInstanceFollowRedirects(true);
         conn.setReadTimeout(300_000);
@@ -657,17 +680,22 @@ public class MitmProxy {
             }
 
             var contentLength = conn.getContentLengthLong();
-            Files.createDirectories(REGISTRY_CACHE_DIR);
-            var tempFile = Files.createTempFile(REGISTRY_CACHE_DIR, "blob-", ".tmp");
+            var cacheDir = cacheFile.getParent();
+            Files.createDirectories(cacheDir);
+            var tempFile = Files.createTempFile(cacheDir, "dl-", ".tmp");
 
             try (var cdnIn = conn.getInputStream()) {
-                var header = "HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        (contentLength >= 0 ? "Content-Length: " + contentLength + "\r\n" : "") +
-                        "Docker-Content-Digest: " + digest + "\r\n" +
-                        "Connection: close\r\n" +
-                        "\r\n";
-                clientOut.write(header.getBytes());
+                var sb = new StringBuilder();
+                sb.append("HTTP/1.1 200 OK\r\n");
+                sb.append("Content-Type: application/octet-stream\r\n");
+                if (contentLength >= 0) {
+                    sb.append("Content-Length: ").append(contentLength).append("\r\n");
+                }
+                if (digest != null) {
+                    sb.append("Docker-Content-Digest: ").append(digest).append("\r\n");
+                }
+                sb.append("Connection: close\r\n\r\n");
+                clientOut.write(sb.toString().getBytes());
 
                 try (var fileOut = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
                     if (contentLength >= 0) {
@@ -677,17 +705,17 @@ public class MitmProxy {
                     }
                 }
 
-                if (verifyDigest(tempFile, digest)) {
+                if (digest != null && !verifyDigest(tempFile, digest)) {
+                    System.err.println("Cache: SHA256 mismatch for " +
+                            ref + " " + digest + ", not caching");
+                    Files.deleteIfExists(tempFile);
+                } else {
                     Files.move(tempFile, cacheFile,
                             StandardCopyOption.ATOMIC_MOVE,
                             StandardCopyOption.REPLACE_EXISTING);
-                    System.out.println("Registry cached: " + imageRef +
-                            " " + digest.substring(0, 19) +
-                            "... (" + formatSize(Files.size(cacheFile)) + ")");
-                } else {
-                    System.err.println("Registry cache: SHA256 mismatch for " +
-                            imageRef + " " + digest + ", not caching");
-                    Files.deleteIfExists(tempFile);
+                    System.out.println("Cached: " + ref +
+                            (digest != null ? " " + digest.substring(0, 19) + "..." : "") +
+                            " (" + formatSize(Files.size(cacheFile)) + ")");
                 }
             } catch (Exception e) {
                 Files.deleteIfExists(tempFile);
@@ -698,8 +726,50 @@ public class MitmProxy {
         }
     }
 
+    // --- Maven/Gradle artifact caching ---
+
     /**
-     * Relay a non-cacheable registry request transparently to upstream.
+     * Handle a request to a Maven/Gradle repository.
+     * GET requests for cacheable artifact paths are served from cache or
+     * fetched, cached, and served. Metadata and SNAPSHOT paths are relayed
+     * transparently since they can change between builds.
+     */
+    private void handleMavenRequest(HttpMessage request, InputStream clientIn,
+                                    OutputStream clientOut, String domain) throws Exception {
+        var path = request.path();
+        var method = request.method();
+
+        if ("GET".equals(method) && path != null && isMavenCacheable(path)) {
+            var cacheFile = MAVEN_CACHE_DIR.resolve(domain).resolve(path.substring(1));
+
+            if (Files.exists(cacheFile)) {
+                System.out.println("Maven cache hit: " + domain + path +
+                        " (" + formatSize(Files.size(cacheFile)) + ")");
+                serveCachedFile(cacheFile, null, clientOut);
+                return;
+            }
+
+            fetchCacheAndServe(request, clientIn, clientOut, domain,
+                    null, cacheFile, domain + path);
+            return;
+        }
+
+        relayToUpstream(request, clientIn, clientOut, domain);
+    }
+
+    /**
+     * Check whether a Maven repository path is safe to cache.
+     * Release artifacts are immutable; metadata and snapshots are not.
+     */
+    private static boolean isMavenCacheable(String path) {
+        if (path.contains("..")) return false;
+        if (path.contains("maven-metadata.xml")) return false;
+        if (path.contains("-SNAPSHOT")) return false;
+        return true;
+    }
+
+    /**
+     * Relay a non-cacheable request transparently to upstream.
      */
     private void relayToUpstream(HttpMessage request, InputStream clientIn,
                                  OutputStream clientOut, String domain) throws Exception {
