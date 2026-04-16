@@ -80,7 +80,7 @@ public class ListCommand implements Runnable {
     private TextInputState renameInput;
     private String renameSourceName;
     private String statusMessage;
-    private String activeButton;
+    private String progressMessage;
     // Template detail modal state
     private boolean detailViewCompact = true;
     private int detailScrollOffset;
@@ -198,21 +198,22 @@ public class ListCommand implements Runnable {
                                 branchEnableGui, branchNetworkMode,
                                 branchEnableInbox ? branchInboxInput.text().strip() : null,
                                 branchSourceIsVm);
+                        statusMessage = "Created branch " + pendingActionTarget;
                     } catch (Exception e) {
-                        System.err.println("Branch failed: " + e.getMessage());
-                        System.err.println("Press Enter to return to the list...");
-                        try { System.in.read(); } catch (Exception ignored) {}
+                        statusMessage = "Failed to create branch " + pendingActionTarget + ": " + e.getMessage();
                     }
                 }
                 case BUILD_TEMPLATE -> {
+                    returnToTemplate = pendingActionTarget;
                     try {
-                        new picocli.CommandLine(BuildCommand.class, factory)
+                        int exitCode = new picocli.CommandLine(BuildCommand.class, factory)
                                 .execute(pendingActionTarget, "--yes");
+                        statusMessage = exitCode == 0
+                                ? "Built " + pendingActionTarget + " successfully"
+                                : "Failed to build " + pendingActionTarget;
                     } catch (Exception e) {
-                        System.err.println("Build failed: " + e.getMessage());
+                        statusMessage = "Failed to build " + pendingActionTarget + ": " + e.getMessage();
                     }
-                    System.out.println("Press Enter to return to the list...");
-                    try { System.in.read(); } catch (Exception ignored) {}
                 }
                 case NONE -> { return; }
             }
@@ -456,12 +457,12 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.F6) && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "F6", "Stopped", "Failed to stop",
+            execWithFeedback(tui, tableState, "Stopping", "Stopped", "Failed to stop",
                     selected.name, () -> incus.stop(selected.name));
             return true;
         }
         if (key.isKey(KeyCode.F7) && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "F7", "Restarted", "Failed to restart",
+            execWithFeedback(tui, tableState, "Restarting", "Restarted", "Failed to restart",
                     selected.name, () -> incus.restart(selected.name));
             return true;
         }
@@ -626,6 +627,7 @@ public class ListCommand implements Runnable {
 
     private boolean handleConfirmDeleteEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
+            mode = Mode.BROWSE;
             if ("--all".equals(pendingDeleteName)) {
                 // Destroy all built templates in reverse order (children before parents)
                 var allNames = new java.util.ArrayList<>(imageDefs.keySet());
@@ -633,6 +635,8 @@ public class ListCommand implements Runnable {
                 int destroyed = 0;
                 for (var name : allNames) {
                     if (incus.exists(name)) {
+                        progressMessage = "Destroying " + name + "...";
+                        tui.draw(frame -> render(frame, tableState));
                         try {
                             incus.delete(name, true);
                             destroyed++;
@@ -649,6 +653,8 @@ public class ListCommand implements Runnable {
                 // Destroy all instances
                 int destroyed = 0;
                 for (var entry : entries) {
+                    progressMessage = "Destroying " + entry.name() + "...";
+                    tui.draw(frame -> render(frame, tableState));
                     try {
                         incus.delete(entry.name(), true);
                         destroyed++;
@@ -661,6 +667,8 @@ public class ListCommand implements Runnable {
                     statusMessage = "Destroyed " + destroyed + " instance(s)";
                 }
             } else {
+                progressMessage = "Destroying " + pendingDeleteName + "...";
+                tui.draw(frame -> render(frame, tableState));
                 try {
                     incus.delete(pendingDeleteName, true);
                     statusMessage = "Destroyed " + pendingDeleteName;
@@ -668,6 +676,7 @@ public class ListCommand implements Runnable {
                     statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
                 }
             }
+            progressMessage = null;
             refreshData(tableState);
         }
         mode = Mode.BROWSE;
@@ -686,16 +695,17 @@ public class ListCommand implements Runnable {
 
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
-            activeButton = "F5";
+            mode = Mode.BROWSE;
+            progressMessage = "Stopping " + renameSourceName + "...";
             tui.draw(frame -> render(frame, tableState));
             try {
                 incus.stop(renameSourceName);
-                activeButton = null;
+                progressMessage = null;
                 refreshData(tableState);
                 renameInput = new TextInputState(renameSourceName);
                 mode = Mode.RENAME;
             } catch (Exception e) {
-                activeButton = null;
+                progressMessage = null;
                 statusMessage = "Failed to stop " + renameSourceName + ": " + e.getMessage();
                 mode = Mode.BROWSE;
             }
@@ -726,6 +736,21 @@ public class ListCommand implements Runnable {
 
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
+        }
+
+        // Progress overlay — rendered on top of everything else, regardless of mode
+        if (progressMessage != null) {
+            int width = Math.min(progressMessage.length() + 6, area.width() - 4);
+            var modalArea = centerRect(area, width, 3);
+            var block = Block.builder()
+                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                    .borderStyle(Style.EMPTY.fg(MODAL_ACCENT))
+                    .style(Style.EMPTY.bg(MODAL_BG))
+                    .build();
+            frame.renderWidget(block, modalArea);
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    " " + progressMessage,
+                    Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), block.inner(modalArea));
         }
     }
 
@@ -848,10 +873,14 @@ public class ListCommand implements Runnable {
             var rows = splitVertical(area, 1, 1);
             var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
                     || statusMessage.startsWith("Template");
-            var msgFg = isError ? Color.LIGHT_RED : Color.rgb(0, 60, 60);
+            var statusBg = Color.rgb(0, 0, 80);
+            var msgFg = isError ? Color.LIGHT_RED : Color.WHITE;
             frame.renderWidget(
-                    Paragraph.from(Line.styled(" " + statusMessage,
-                            Style.EMPTY.bold().fg(msgFg).bg(BAR_BG))), rows.get(0));
+                    Paragraph.builder()
+                            .text(Text.from(Line.styled(" " + statusMessage,
+                                    Style.EMPTY.bold().fg(msgFg))))
+                            .style(Style.EMPTY.bg(statusBg))
+                            .build(), rows.get(0));
             frame.renderWidget(Paragraph.from(Line.from(helpSpans)), rows.get(1));
         } else {
             frame.renderWidget(Paragraph.from(Line.from(helpSpans)), area);
@@ -1391,13 +1420,9 @@ public class ListCommand implements Runnable {
     private static final Color BAR_KEY_FG = Color.WHITE;
     private static final Color BAR_LABEL_FG = Color.BLACK;
     private static final Color BAR_DISABLED_FG = Color.rgb(0, 100, 110);
-    private static final Color BAR_ACTIVE_BG = Color.WHITE;
 
     private void addKey(List<Span> spans, String key, String label, boolean disabled) {
-        if (key.equals(activeButton)) {
-            spans.add(Span.styled(" " + key + " ", Style.EMPTY.bold().fg(BAR_LABEL_FG).bg(BAR_ACTIVE_BG)));
-            spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_ACTIVE_BG)));
-        } else if (disabled) {
+        if (disabled) {
             spans.add(Span.styled(" " + key + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
             spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
         } else {
@@ -1422,9 +1447,9 @@ public class ListCommand implements Runnable {
         return "RUNNING".equalsIgnoreCase(entry.status);
     }
 
-    private void execWithFeedback(TuiRunner tui, TableState tableState, String buttonKey,
+    private void execWithFeedback(TuiRunner tui, TableState tableState, String progressVerb,
                                     String doneVerb, String failVerb, String name, Runnable action) {
-        activeButton = buttonKey;
+        progressMessage = progressVerb + " " + name + "...";
         tui.draw(frame -> render(frame, tableState));
         try {
             action.run();
@@ -1432,7 +1457,7 @@ public class ListCommand implements Runnable {
         } catch (Exception e) {
             statusMessage = failVerb + " " + name;
         }
-        activeButton = null;
+        progressMessage = null;
         refreshData(tableState);
     }
 
