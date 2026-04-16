@@ -12,6 +12,7 @@ import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
@@ -59,7 +60,7 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL }
     private Mode mode = Mode.BROWSE;
     private String pendingDeleteName;
     private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
@@ -80,6 +81,9 @@ public class ListCommand implements Runnable {
     private String renameSourceName;
     private String statusMessage;
     private String activeButton;
+    // Template detail modal state
+    private boolean detailViewCompact = true;
+    private int detailScrollOffset;
 
     private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE }
     private PendingAction pendingAction = PendingAction.NONE;
@@ -291,6 +295,7 @@ public class ListCommand implements Runnable {
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
+            case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key);
         };
     }
 
@@ -340,6 +345,14 @@ public class ListCommand implements Runnable {
 
         var template = selectedTemplate();
         if (template == null) return false;
+
+        // F3: Show template details
+        if (key.isKey(KeyCode.F3)) {
+            detailViewCompact = true;
+            detailScrollOffset = 0;
+            mode = Mode.TEMPLATE_DETAIL;
+            return true;
+        }
 
         // Shift+F5: Rebuild all templates
         if (key.isKey(KeyCode.F5) && key.hasShift()) {
@@ -812,6 +825,7 @@ public class ListCommand implements Runnable {
             boolean hasTemplate = template != null;
             boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
             addKey(helpSpans, "F2", "Build", !hasTemplate);
+            addKey(helpSpans, "F3", "Details", !hasTemplate);
             addKey(helpSpans, "\u21e7F5", "Build all", false);
             addKey(helpSpans, "F4", "Branch\u2026", !isBuilt);
             addKey(helpSpans, "F8", "Destroy\u2026", !isBuilt);
@@ -933,6 +947,7 @@ public class ListCommand implements Runnable {
             case BRANCH -> renderBranchModal(frame, screen);
             case RENAME -> renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
+            case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             default -> {}
         }
     }
@@ -1113,6 +1128,232 @@ public class ListCommand implements Runnable {
             spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
         }
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    // --- Template detail modal ---
+
+    private boolean handleTemplateDetailEvent(KeyEvent key) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.TAB)) {
+            detailViewCompact = !detailViewCompact;
+            detailScrollOffset = 0;
+            return true;
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            detailScrollOffset++;
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            if (detailScrollOffset > 0) detailScrollOffset--;
+            return true;
+        }
+        if (key.isKey(KeyCode.HOME)) {
+            detailScrollOffset = 0;
+            return true;
+        }
+        if (key.isKey(KeyCode.END)) {
+            detailScrollOffset = Integer.MAX_VALUE; // capped during render
+            return true;
+        }
+        return false;
+    }
+
+    private void renderTemplateDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var template = selectedTemplate();
+        if (template == null) return;
+
+        var contentLines = detailViewCompact
+                ? buildCompactDetailLines(template.name)
+                : buildTreeDetailLines(template.name);
+
+        int maxLineWidth = 0;
+        for (var line : contentLines) {
+            int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
+            if (w > maxLineWidth) maxLineWidth = w;
+        }
+        int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4); // +2 border +2 padding
+        int maxHeight = screen.height() - 2;
+        int modalHeight = Math.min(contentLines.size() + 4, maxHeight); // +2 border +1 spacer +1 hints
+
+        var viewLabel = detailViewCompact ? "Compact" : "Tree";
+        var modalArea = centerRect(screen, modalWidth, modalHeight);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" " + template.name + " \u2014 " + viewLabel + " ")
+                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
+                .style(Style.EMPTY.bg(MODAL_BG))
+                .build();
+        frame.renderWidget(block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = Layout.vertical()
+                .constraints(Constraint.fill(), Constraint.length(1))
+                .split(inner);
+
+        // Render scrolled content
+        int visibleHeight = rows.get(0).height();
+        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
+        detailScrollOffset = Math.min(detailScrollOffset, maxScroll);
+
+        var visibleLines = contentLines.subList(
+                detailScrollOffset,
+                Math.min(detailScrollOffset + visibleHeight, contentLines.size()));
+        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), rows.get(0));
+
+        // Hint bar
+        var hintSpans = new ArrayList<Span>();
+        addModalKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
+        if (contentLines.size() > visibleHeight) {
+            addModalKey(hintSpans, "\u2191\u2193", "Scroll");
+        }
+        addModalKey(hintSpans, "Esc", "Close");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+    }
+
+    private List<dev.incusspawn.config.ImageDef> getInheritanceChain(String templateName) {
+        var chain = new ArrayList<dev.incusspawn.config.ImageDef>();
+        var current = imageDefs.get(templateName);
+        while (current != null) {
+            chain.add(0, current); // prepend so root is first
+            if (current.isRoot()) break;
+            current = imageDefs.get(current.getParent());
+        }
+        return chain;
+    }
+
+    private List<Line> buildCompactDetailLines(String templateName) {
+        var chain = getInheritanceChain(templateName);
+        if (chain.isEmpty()) return List.of();
+
+        var lines = new ArrayList<Line>();
+        var current = chain.get(chain.size() - 1);
+        var lineStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
+        var labelStyle = Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG);
+        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
+
+        // Description
+        if (!current.getDescription().isEmpty()) {
+            lines.add(Line.styled(current.getDescription(), lineStyle));
+        }
+        lines.add(Line.styled("", lineStyle));
+
+        // Base image
+        var root = chain.get(0);
+        lines.add(Line.from(List.of(
+                Span.styled("Base image: ", labelStyle),
+                Span.styled(root.getImage(), lineStyle))));
+
+        // Inheritance chain
+        if (chain.size() > 1) {
+            var names = new ArrayList<String>();
+            for (var def : chain) names.add(def.getName());
+            lines.add(Line.from(List.of(
+                    Span.styled("Inherits:   ", labelStyle),
+                    Span.styled(String.join(" \u2192 ", names), lineStyle))));
+        }
+        lines.add(Line.styled("", lineStyle));
+
+        // Collect all packages
+        var allPackages = new ArrayList<String>();
+        for (var def : chain) allPackages.addAll(def.getPackages());
+        addDetailSection(lines, "Packages", allPackages, labelStyle, lineStyle, dimStyle);
+
+        // Collect all tools
+        var allTools = new ArrayList<String>();
+        for (var def : chain) allTools.addAll(def.getTools());
+        addDetailSection(lines, "Tools", allTools, labelStyle, lineStyle, dimStyle);
+
+        // Collect all repos
+        var allRepos = new ArrayList<String>();
+        for (var def : chain) {
+            for (var repo : def.getRepos()) {
+                allRepos.add(repo.getUrl() + " \u2192 " + repo.getPath());
+            }
+        }
+        addDetailSection(lines, "Repos", allRepos, labelStyle, lineStyle, dimStyle);
+
+        return lines;
+    }
+
+    private void addDetailSection(List<Line> lines, String label, List<String> items,
+                                   Style labelStyle, Style lineStyle, Style dimStyle) {
+        if (items.isEmpty()) {
+            lines.add(Line.from(List.of(
+                    Span.styled(label + ": ", labelStyle),
+                    Span.styled("(none)", dimStyle))));
+        } else {
+            lines.add(Line.styled(label + ":", labelStyle));
+            for (var item : items) {
+                lines.add(Line.styled("  " + item, lineStyle));
+            }
+        }
+        lines.add(Line.styled("", lineStyle));
+    }
+
+    private List<Line> buildTreeDetailLines(String templateName) {
+        var chain = getInheritanceChain(templateName);
+        if (chain.isEmpty()) return List.of();
+
+        var lines = new ArrayList<Line>();
+        var lineStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
+        var labelStyle = Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG);
+        var nameStyle = Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG);
+        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
+
+        for (int i = 0; i < chain.size(); i++) {
+            var def = chain.get(i);
+            var indent = "  ".repeat(i);
+            var connector = i == 0 ? "" : "\u2514 ";
+            var contentIndent = i == 0 ? "  " : "  ".repeat(i) + "  ";
+
+            // Name line
+            var nameSpans = new ArrayList<Span>();
+            if (!indent.isEmpty() || !connector.isEmpty()) {
+                nameSpans.add(Span.styled(indent + connector, dimStyle));
+            }
+            nameSpans.add(Span.styled(def.getName(), nameStyle));
+            if (def.isRoot()) {
+                nameSpans.add(Span.styled("  " + def.getImage(), dimStyle));
+            }
+            lines.add(Line.from(nameSpans));
+
+            // Description
+            if (!def.getDescription().isEmpty()) {
+                lines.add(Line.styled(contentIndent + def.getDescription(), lineStyle));
+            }
+
+            // Packages
+            if (!def.getPackages().isEmpty()) {
+                lines.add(Line.from(List.of(
+                        Span.styled(contentIndent + "Packages: ", labelStyle),
+                        Span.styled(String.join(", ", def.getPackages()), lineStyle))));
+            }
+
+            // Tools
+            if (!def.getTools().isEmpty()) {
+                lines.add(Line.from(List.of(
+                        Span.styled(contentIndent + "Tools: ", labelStyle),
+                        Span.styled(String.join(", ", def.getTools()), lineStyle))));
+            }
+
+            // Repos
+            if (!def.getRepos().isEmpty()) {
+                for (var repo : def.getRepos()) {
+                    lines.add(Line.from(List.of(
+                            Span.styled(contentIndent + "Repo: ", labelStyle),
+                            Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle))));
+                }
+            }
+
+            if (i < chain.size() - 1) {
+                lines.add(Line.styled("", lineStyle));
+            }
+        }
+
+        return lines;
     }
 
     private static dev.tamboui.layout.Rect centerRect(dev.tamboui.layout.Rect screen, int width, int height) {
