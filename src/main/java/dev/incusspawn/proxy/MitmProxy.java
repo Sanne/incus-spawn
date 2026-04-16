@@ -7,6 +7,7 @@ import dev.incusspawn.incus.IncusClient;
 
 import javax.net.ssl.*;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -17,6 +18,7 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.zip.GZIPInputStream;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.Principal;
@@ -626,6 +628,15 @@ public class MitmProxy {
                             teeChunked(upstreamIn, clientOut, fileOut);
                         } else {
                             teeUntilEof(upstreamIn, clientOut, fileOut);
+                        }
+                    }
+
+                    var contentEncoding = response.header("Content-Encoding");
+                    if (contentEncoding != null && contentEncoding.toLowerCase().contains("gzip")) {
+                        var compressed = Files.readAllBytes(tempFile);
+                        try (var gzIn = new GZIPInputStream(new ByteArrayInputStream(compressed));
+                             var decompOut = Files.newOutputStream(tempFile)) {
+                            gzIn.transferTo(decompOut);
                         }
                     }
 
