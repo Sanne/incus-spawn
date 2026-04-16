@@ -184,16 +184,16 @@ public class BuildCommand implements Runnable {
         }
 
         if (imageDef.isRoot()) {
-            buildFromScratch(imageDef);
+            buildFromScratch(imageDef, defs);
         } else {
-            buildFromParent(imageDef);
+            buildFromParent(imageDef, defs);
         }
     }
 
     /**
      * Build an image by copying its parent and applying layers from the image definition.
      */
-    private void buildFromParent(ImageDef imageDef) {
+    private void buildFromParent(ImageDef imageDef, Map<String, ImageDef> defs) {
         var targetName = imageDef.getName();
         var parentName = imageDef.getParent();
 
@@ -206,7 +206,7 @@ public class BuildCommand implements Runnable {
         mountDnfCache(targetName);
         var container = new Container(incus, targetName);
         var tools = resolveTools(imageDef);
-        installAllPackages(container, imageDef, tools);
+        installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
@@ -231,7 +231,7 @@ public class BuildCommand implements Runnable {
      * Build an image from scratch using the base OS image.
      * This is the full setup path: DNS, user, packages, tools.
      */
-    private void buildFromScratch(ImageDef imageDef) {
+    private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs) {
         var targetName = imageDef.getName();
         var image = imageDef.getImage();
 
@@ -329,7 +329,7 @@ public class BuildCommand implements Runnable {
         // Install packages and tools from image definition
         var container = new Container(incus, targetName);
         var tools = resolveTools(imageDef);
-        installAllPackages(container, imageDef, tools);
+        installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
@@ -370,15 +370,42 @@ public class BuildCommand implements Runnable {
 
     /**
      * Collect all packages from the image definition and its tools,
-     * then install them in a single dnf invocation.
+     * subtract those already installed by ancestor images, and install
+     * only the remaining packages.
      */
-    private void installAllPackages(Container container, ImageDef imageDef, java.util.List<ToolSetup> tools) {
+    private void installAllPackages(Container container, ImageDef imageDef,
+                                    java.util.List<ToolSetup> tools,
+                                    Map<String, ImageDef> defs) {
         var allPackages = new java.util.LinkedHashSet<>(imageDef.getPackages());
         for (var tool : tools) {
             allPackages.addAll(tool.packages());
         }
         if (allPackages.isEmpty()) return;
-        System.out.println("Installing packages: " + String.join(", ", allPackages) + "...");
+
+        // Collect packages already installed by ancestor images
+        var ancestorPackages = new java.util.LinkedHashSet<String>();
+        var parentName = imageDef.getParent();
+        while (parentName != null && !parentName.isBlank()) {
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) break;
+            ancestorPackages.addAll(parentDef.getPackages());
+            for (var tool : resolveTools(parentDef)) {
+                ancestorPackages.addAll(tool.packages());
+            }
+            parentName = parentDef.getParent();
+        }
+
+        var totalCount = allPackages.size();
+        allPackages.removeAll(ancestorPackages);
+
+        if (allPackages.isEmpty()) {
+            System.out.println("All " + totalCount + " packages already installed.");
+            return;
+        }
+
+        System.out.println("Installing " + allPackages.size() + " packages (" +
+                (totalCount - allPackages.size()) + " already installed): " +
+                String.join(", ", allPackages) + "...");
         var args = new java.util.ArrayList<String>();
         args.addAll(java.util.List.of("dnf", "install", "-y"));
         args.addAll(allPackages);
