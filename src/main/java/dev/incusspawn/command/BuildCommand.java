@@ -299,7 +299,8 @@ public class BuildCommand implements Runnable {
 
         // Update all packages to latest security patches
         System.out.println("Updating system packages...");
-        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "-y", "upgrade", "--refresh"),
+        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "-y", "--setopt=keepcache=true",
+                "upgrade", "--refresh"),
                 "Failed to update system packages");
 
         // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable it.
@@ -323,7 +324,7 @@ public class BuildCommand implements Runnable {
         // Install base packages needed by most tools
         System.out.println("Installing base packages...");
         requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y",
-                "git", "curl", "which", "procps-ng", "findutils"),
+                "--setopt=keepcache=true", "git", "curl", "which", "procps-ng", "findutils"),
                 "Failed to install base packages");
 
         // Install packages and tools from image definition
@@ -407,7 +408,7 @@ public class BuildCommand implements Runnable {
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages) + "...");
         var args = new java.util.ArrayList<String>();
-        args.addAll(java.util.List.of("dnf", "install", "-y"));
+        args.addAll(java.util.List.of("dnf", "install", "-y", "--setopt=keepcache=true"));
         args.addAll(allPackages);
         container.runInteractive("Failed to install packages", args.toArray(String[]::new));
     }
