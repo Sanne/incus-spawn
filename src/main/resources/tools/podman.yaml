@@ -1,5 +1,5 @@
 name: podman
-description: Podman container runtime
+description: Podman container runtime configured for Testcontainers
 
 packages:
   - podman
@@ -11,9 +11,15 @@ run:
     ln -sf /usr/local/bin/podman /usr/local/bin/docker
   - |
     systemctl enable podman.socket &&
-    printf 'd /run/podman 0755 root root -\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
+    printf 'd /run/podman 0755 root root -\nL /run/docker.sock - - - - /run/podman/podman.sock\n' \
       > /etc/tmpfiles.d/podman-socket.conf &&
     systemd-tmpfiles --create &&
     mkdir -p /etc/systemd/system/podman.socket.d &&
     printf '[Socket]\nSocketMode=0666\n' \
       > /etc/systemd/system/podman.socket.d/override.conf
+
+env:
+  - export DOCKER_HOST=unix:///var/run/docker.sock
+  - export TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=false
+
+verify: podman info --format '{{.Host.RemoteSocket.Path}}'
