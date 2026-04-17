@@ -88,6 +88,16 @@ public class MitmProxy {
     private static final Path MAVEN_CACHE_DIR = Path.of(
             System.getProperty("user.home"), ".cache", "incus-spawn", "maven");
 
+    private static final Path M2_REPOSITORY = Path.of(
+            System.getProperty("user.home"), ".m2", "repository");
+
+    // URL path prefix preceding Maven coordinates on each domain
+    private static final java.util.Map<String, String> MAVEN_PATH_PREFIX = java.util.Map.of(
+            "repo.maven.apache.org", "/maven2/",
+            "repo1.maven.org", "/maven2/",
+            "plugins.gradle.org", "/m2/"
+    );
+
     private final String bindAddress;
     private final int mitmPort;
     private final int healthPort;
@@ -229,6 +239,8 @@ public class MitmProxy {
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + MAVEN_CACHE_DIR +
                 " (domains: " + MAVEN_DOMAINS + ")");
+        System.out.println("Maven .m2 fallback: " +
+                (Files.isDirectory(M2_REPOSITORY) ? M2_REPOSITORY : "not available"));
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexRegion + "-aiplatform.googleapis.com" +
@@ -763,6 +775,34 @@ public class MitmProxy {
                 return;
             }
 
+            // Try host .m2 fallback for artifact files (not checksums/signatures)
+            if (isMavenArtifactFile(path)) {
+                var m2File = resolveM2Path(domain, path);
+                if (m2File != null && Files.isRegularFile(m2File)) {
+                    var upstreamSha1 = fetchSha1FromUpstream(domain, path + ".sha1");
+                    if (upstreamSha1 != null) {
+                        var localSha1 = computeSha1(m2File);
+                        if (upstreamSha1.equals(localSha1)) {
+                            Files.createDirectories(cacheFile.getParent());
+                            try {
+                                Files.createLink(cacheFile, m2File);
+                            } catch (IOException e) {
+                                // Cross-filesystem or unsupported — fall back to copy
+                                Files.copy(m2File, cacheFile, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                            System.out.println("Maven .m2 hit: " + domain + path +
+                                    " (" + formatSize(Files.size(cacheFile)) + ", SHA1 verified)");
+                            serveCachedFile(cacheFile, null, clientOut);
+                            return;
+                        } else {
+                            System.out.println("Maven .m2 SHA1 mismatch: " + domain + path +
+                                    " (local=" + localSha1.substring(0, 8) + "..." +
+                                    " upstream=" + upstreamSha1.substring(0, 8) + "...)");
+                        }
+                    }
+                }
+            }
+
             fetchCacheAndServe(request, clientIn, clientOut, domain,
                     null, cacheFile, domain + path);
             return;
@@ -780,6 +820,92 @@ public class MitmProxy {
         if (path.contains("maven-metadata.xml")) return false;
         if (path.contains("-SNAPSHOT")) return false;
         return true;
+    }
+
+    /**
+     * Check whether a Maven path refers to an actual artifact (jar, pom, etc.)
+     * rather than a checksum or signature sidecar (.sha1, .sha256, .md5, .asc).
+     */
+    static boolean isMavenArtifactFile(String path) {
+        return !path.endsWith(".sha1") && !path.endsWith(".sha256")
+                && !path.endsWith(".md5") && !path.endsWith(".asc");
+    }
+
+    /**
+     * Map a Maven repository URL path to the corresponding path in ~/.m2/repository.
+     * Returns null if the domain is unknown or the path doesn't match.
+     */
+    static Path resolveM2Path(String domain, String urlPath) {
+        var prefix = MAVEN_PATH_PREFIX.get(domain);
+        if (prefix == null || !urlPath.startsWith(prefix)) return null;
+        var relativePath = urlPath.substring(prefix.length());
+        if (relativePath.contains("..")) return null;
+        return M2_REPOSITORY.resolve(relativePath);
+    }
+
+    /**
+     * Compute the SHA-1 digest of a local file, returning the lowercase hex string.
+     */
+    static String computeSha1(Path file) throws Exception {
+        var md = MessageDigest.getInstance("SHA-1");
+        try (var in = Files.newInputStream(file)) {
+            var buffer = new byte[8192];
+            int n;
+            while ((n = in.read(buffer)) != -1) {
+                md.update(buffer, 0, n);
+            }
+        }
+        return java.util.HexFormat.of().formatHex(md.digest());
+    }
+
+    /**
+     * Fetch the .sha1 checksum for a Maven artifact from the upstream repository.
+     * Returns the hex SHA1 string, or null if the checksum could not be retrieved.
+     */
+    private static String fetchSha1FromUpstream(String domain, String sha1Path) {
+        try {
+            var socket = (SSLSocket) SSLSocketFactory.getDefault()
+                    .createSocket(domain, 443);
+            socket.setSoTimeout(30_000);
+
+            try (socket) {
+                socket.startHandshake();
+                var out = socket.getOutputStream();
+                var in = socket.getInputStream();
+
+                var request = "GET " + sha1Path + " HTTP/1.1\r\n"
+                        + "Host: " + domain + "\r\n"
+                        + "Connection: close\r\n"
+                        + "\r\n";
+                out.write(request.getBytes());
+                out.flush();
+
+                var response = HttpMessage.readResponse(in);
+                if (response == null || response.statusCode() != 200) return null;
+
+                var clHeader = response.header("Content-Length");
+                byte[] body;
+                if (clHeader != null) {
+                    int len = Integer.parseInt(clHeader.trim());
+                    body = new byte[len];
+                    int offset = 0;
+                    while (offset < len) {
+                        int n = in.read(body, offset, len - offset);
+                        if (n == -1) break;
+                        offset += n;
+                    }
+                } else {
+                    body = in.readAllBytes();
+                }
+
+                // Handle "hash" or "hash  filename" formats
+                var hex = new String(body).trim().split("\\s+")[0].toLowerCase();
+                if (hex.matches("[a-f0-9]{40}")) return hex;
+                return null;
+            }
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
