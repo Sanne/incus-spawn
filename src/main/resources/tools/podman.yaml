@@ -11,5 +11,9 @@ run:
     ln -sf /usr/local/bin/podman /usr/local/bin/docker
   - |
     systemctl enable podman.socket &&
-    echo 'd /run/podman 0755 root root -' > /etc/tmpfiles.d/podman-socket.conf &&
-    ln -sf /run/podman/podman.sock /var/run/docker.sock
+    printf 'd /run/podman 0755 root root -\nL /var/run/docker.sock - - - - /run/podman/podman.sock\n' \
+      > /etc/tmpfiles.d/podman-socket.conf &&
+    systemd-tmpfiles --create &&
+    mkdir -p /etc/systemd/system/podman.socket.d &&
+    printf '[Socket]\nSocketMode=0666\n' \
+      > /etc/systemd/system/podman.socket.d/override.conf
