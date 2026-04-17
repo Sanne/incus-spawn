@@ -749,17 +749,7 @@ public class ListCommand implements Runnable {
 
         // Progress overlay — rendered on top of everything else, regardless of mode
         if (progressMessage != null) {
-            int width = Math.min(progressMessage.length() + 6, area.width() - 4);
-            var modalArea = centerRect(area, width, 3);
-            var block = Block.builder()
-                    .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                    .borderStyle(Style.EMPTY.fg(MODAL_ACCENT))
-                    .style(Style.EMPTY.bg(MODAL_BG))
-                    .build();
-            frame.renderWidget(block, modalArea);
-            frame.renderWidget(Paragraph.from(Line.styled(
-                    " " + progressMessage,
-                    Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), block.inner(modalArea));
+            ModalRenderer.renderProgressOverlay(frame, area, progressMessage);
         }
     }
 
@@ -898,12 +888,6 @@ public class ListCommand implements Runnable {
 
     // --- Modal dialogs (centered overlay) ---
 
-    private static final Color MODAL_BG = Color.rgb(30, 30, 46);
-    private static final Color MODAL_FG = Color.rgb(205, 214, 244);
-    private static final Color MODAL_BORDER = Color.CYAN;
-    private static final Color MODAL_ACCENT = Color.LIGHT_CYAN;
-    private static final Color MODAL_WARN = Color.LIGHT_RED;
-
     private void renderModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen,
                               TableState tableState) {
         switch (mode) {
@@ -917,24 +901,7 @@ public class ListCommand implements Runnable {
                 var message = isAllTemplates ? "This will destroy all built templates."
                         : isAllInstances ? "This will destroy all instances."
                         : "This action cannot be undone.";
-                var modalArea = centerRect(screen, 54, 7);
-                var block = Block.builder()
-                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(title)
-                        .borderStyle(Style.EMPTY.fg(MODAL_WARN))
-                        .style(Style.EMPTY.bg(MODAL_BG))
-                        .build();
-                frame.renderWidget(block, modalArea);
-                var inner = block.inner(modalArea);
-                var rows = Layout.vertical()
-                        .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                        .split(inner);
-                frame.renderWidget(Paragraph.from(Line.styled(
-                        message, Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
-                var btnSpans = new ArrayList<Span>();
-                addModalKey(btnSpans, "y", "Confirm");
-                addModalKey(btnSpans, "any key", "Cancel");
-                frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
+                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
             }
             case CONFIRM_BUILD -> {
                 var isAll = "--all".equals(pendingBuildName);
@@ -942,236 +909,130 @@ public class ListCommand implements Runnable {
                 var message = isAll
                         ? "This will delete and rebuild all templates."
                         : "This will delete and rebuild " + pendingBuildName + ".";
-                var modalArea = centerRect(screen, 54, 7);
-                var block = Block.builder()
-                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(title)
-                        .borderStyle(Style.EMPTY.fg(MODAL_WARN))
-                        .style(Style.EMPTY.bg(MODAL_BG))
-                        .build();
-                frame.renderWidget(block, modalArea);
-                var inner = block.inner(modalArea);
-                var rows = Layout.vertical()
-                        .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                        .split(inner);
-                frame.renderWidget(Paragraph.from(Line.styled(
-                        message, Style.EMPTY.fg(MODAL_WARN).bg(MODAL_BG))), rows.get(1));
-                var btnSpans = new ArrayList<Span>();
-                addModalKey(btnSpans, "y", "Confirm");
-                addModalKey(btnSpans, "any key", "Cancel");
-                frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
+                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
             }
             case CONFIRM_STOP_FOR_RENAME -> {
-                var modalArea = centerRect(screen, 52, 7);
-                var block = Block.builder()
-                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" Rename '" + renameSourceName + "' ")
-                        .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
-                        .style(Style.EMPTY.bg(MODAL_BG))
-                        .build();
-                frame.renderWidget(block, modalArea);
-                var inner = block.inner(modalArea);
-                var rows = Layout.vertical()
-                        .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                        .split(inner);
-                frame.renderWidget(Paragraph.from(Line.styled(
-                        "Instance is running. Stop it first?",
-                        Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(1));
-                var btnSpans = new ArrayList<Span>();
-                addModalKey(btnSpans, "y", "Stop & rename");
-                addModalKey(btnSpans, "any key", "Cancel");
-                frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
+                ModalRenderer.renderConfirmModal(frame, screen,
+                        " Rename '" + renameSourceName + "' ",
+                        "Instance is running. Stop it first?", ModalRenderer.BORDER,
+                        "Stop & rename");
             }
             case BRANCH -> renderBranchModal(frame, screen);
-            case RENAME -> renderInputModal(frame, screen,
+            case RENAME -> ModalRenderer.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             default -> {}
         }
     }
 
-    private void renderInputModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen,
-                                   String title, String label, String placeholder,
-                                   TextInputState inputState) {
-        var modalArea = centerRect(screen, 54, 7);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" " + title + " ")
-                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
-                .style(Style.EMPTY.bg(MODAL_BG))
-                .build();
-        frame.renderWidget(block, modalArea);
-        var inner = block.inner(modalArea);
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                .split(inner);
-        frame.renderWidget(Paragraph.from(Line.styled(
-                label, Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(0));
-        TextInput.builder()
-                .placeholder(placeholder)
-                .style(Style.EMPTY.fg(Color.WHITE).bg(Color.rgb(49, 50, 68)))
-                .build()
-                .renderWithCursor(rows.get(1), frame.buffer(), inputState, frame);
-        var hintSpans = new ArrayList<Span>();
-        addModalKey(hintSpans, "Enter", "Confirm");
-        addModalKey(hintSpans, "Esc", "Cancel");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(3));
-    }
-
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        // Calculate dynamic height based on what's shown
-        int height = 8; // name + toggles + hints
-        if (branchSourceIsVm) height += 2; // VM resource row + spacer
-        if (branchEnableInbox) height += 1; // inbox path field
-        var modalArea = centerRect(screen, 54, height);
+        int height = 8;
+        if (branchSourceIsVm) height += 2;
+        if (branchEnableInbox) height += 1;
+        var modalArea = ModalRenderer.centerRect(screen, 54, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(" Branch from '" + branchSourceName + "' ")
-                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
-                .style(Style.EMPTY.bg(MODAL_BG))
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
                 .build();
-        frame.renderWidget(block, modalArea);
+        ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1)); // name label
-        constraints.add(Constraint.length(1)); // name input
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
         if (branchSourceIsVm) {
-            constraints.add(Constraint.length(1)); // spacer
-            constraints.add(Constraint.length(1)); // vm resources
+            constraints.add(Constraint.length(1));
+            constraints.add(Constraint.length(1));
         }
-        constraints.add(Constraint.length(1)); // spacer
-        constraints.add(Constraint.length(1)); // gui toggle
-        constraints.add(Constraint.length(1)); // network mode radio
-        constraints.add(Constraint.length(1)); // inbox toggle
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
         if (branchEnableInbox) {
-            constraints.add(Constraint.length(1)); // inbox path
+            constraints.add(Constraint.length(1));
         }
-        constraints.add(Constraint.fill()); // hints
+        constraints.add(Constraint.fill());
 
         var rows = Layout.vertical()
                 .constraints(constraints.toArray(new Constraint[0]))
                 .split(inner);
 
         int row = 0;
-        // Name field
         frame.renderWidget(Paragraph.from(Line.styled(
-                "Name:", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), rows.get(row++));
+                "Name:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG))), rows.get(row++));
         if (branchFieldIndex == 0) {
             TextInput.builder()
                     .placeholder("branch-name")
-                    .style(Style.EMPTY.fg(Color.WHITE).bg(Color.rgb(49, 50, 68)))
+                    .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
                     .build()
                     .renderWithCursor(rows.get(row++), frame.buffer(), branchNameInput, frame);
         } else {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    branchNameInput.text(), Style.EMPTY.fg(Color.GRAY).bg(Color.rgb(49, 50, 68)))),
+                    branchNameInput.text(), Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.INPUT_BG))),
                     rows.get(row++));
         }
 
-        // VM resources
         if (branchSourceIsVm) {
-            row++; // spacer
+            row++;
             renderVmResourceFields(frame, rows.get(row++));
         }
 
-        row++; // spacer
-        renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
-        renderNetworkModeRadio(frame, rows.get(row++), "Alt-n", branchNetworkMode);
-        renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
+        row++;
+        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
+        ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), "Alt-n", branchNetworkMode);
+        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
 
         if (branchEnableInbox) {
             var inboxRow = rows.get(row++);
             frame.renderWidget(Paragraph.from(Line.styled(
-                    "  Path:", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))), inboxRow);
+                    "  Path:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG))), inboxRow);
             var pathArea = new dev.tamboui.layout.Rect(
                     inboxRow.x() + 8, inboxRow.y(), inboxRow.width() - 8, 1);
             if (branchFieldIndex == inboxFieldIndex()) {
                 TextInput.builder()
                         .placeholder("/path/to/dir")
-                        .style(Style.EMPTY.fg(Color.WHITE).bg(Color.rgb(49, 50, 68)))
+                        .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
                         .build()
                         .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
             } else {
                 var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
-                var fg = branchInboxInput.text().isEmpty() ? Color.rgb(80, 80, 100) : Color.GRAY;
+                var fg = branchInboxInput.text().isEmpty() ? ModalRenderer.PLACEHOLDER_FG : Color.GRAY;
                 frame.renderWidget(Paragraph.from(Line.styled(
-                        display, Style.EMPTY.fg(fg).bg(Color.rgb(49, 50, 68)))), pathArea);
+                        display, Style.EMPTY.fg(fg).bg(ModalRenderer.INPUT_BG))), pathArea);
             }
         }
 
         var hintSpans = new ArrayList<Span>();
-        addModalKey(hintSpans, "Enter", "Confirm");
-        addModalKey(hintSpans, "Esc", "Cancel");
+        ModalRenderer.addKey(hintSpans, "Enter", "Confirm");
+        ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
         if (branchSourceIsVm || branchEnableInbox) {
-            addModalKey(hintSpans, "Tab", "Next field");
+            ModalRenderer.addKey(hintSpans, "Tab", "Next field");
         }
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 
     private void renderVmResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var labelStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
-        var inputBg = Color.rgb(49, 50, 68);
-        var inactiveBg = Color.rgb(40, 40, 55);
-        var disabledFg = Color.rgb(80, 80, 100);
+        var labelStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
 
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
+        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
         spans.add(Span.styled("CPU ", labelStyle));
-        renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1, inputBg, inactiveBg, disabledFg);
-        spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
+        ModalRenderer.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
+        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
         spans.add(Span.styled("RAM ", labelStyle));
-        renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2, inputBg, inactiveBg, disabledFg);
-        spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
+        ModalRenderer.renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2);
+        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
         spans.add(Span.styled("Disk ", labelStyle));
-        renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3, inputBg, inactiveBg, disabledFg);
-        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
-    }
-
-    private static void renderInlineField(List<Span> spans, String value, boolean disabled,
-                                           boolean active, Color inputBg, Color inactiveBg, Color disabledFg) {
-        var display = String.format("%-6s", value);
-        if (disabled) {
-            spans.add(Span.styled(display, Style.EMPTY.fg(disabledFg).bg(inactiveBg)));
-        } else if (active) {
-            spans.add(Span.styled(display, Style.EMPTY.bold().fg(Color.WHITE).bg(inputBg)));
-        } else {
-            spans.add(Span.styled(display, Style.EMPTY.fg(Color.GRAY).bg(inactiveBg)));
-        }
-    }
-
-    private void renderToggle(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                               String shortcut, String label, boolean enabled) {
-        var check = enabled ? "\u25c9" : "\u25cb";
-        var checkColor = enabled ? Color.GREEN : Color.GRAY;
-        frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + shortcut + " ", Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG)),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(MODAL_BG)),
-                Span.styled(label, Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG))))), area);
-    }
-
-    private void renderNetworkModeRadio(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                        String shortcut, NetworkMode selected) {
-        var spans = new ArrayList<Span>();
-        spans.add(Span.styled(" " + shortcut + " ", Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG)));
-        for (NetworkMode mode : NetworkMode.values()) {
-            boolean isSelected = (mode == selected);
-            var symbol = isSelected ? "\u25c9" : "\u25cb"; // ◉ vs ○
-            var color = isSelected ? Color.GREEN : Color.GRAY;
-            spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(MODAL_BG)));
-            var labelStyle = isSelected
-                    ? Style.EMPTY.bold().fg(MODAL_FG).bg(MODAL_BG)
-                    : Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
-            spans.add(Span.styled(mode.label(), labelStyle));
-            spans.add(Span.styled("  ", Style.EMPTY.bg(MODAL_BG)));
-        }
+        ModalRenderer.renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
     // --- Template detail modal ---
 
     private boolean handleTemplateDetailEvent(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F3)) {
             mode = Mode.BROWSE;
             return true;
         }
@@ -1217,21 +1078,20 @@ public class ListCommand implements Runnable {
         int modalHeight = Math.min(contentLines.size() + 4, maxHeight); // +2 border +1 spacer +1 hints
 
         var viewLabel = detailViewCompact ? "Compact" : "Tree";
-        var modalArea = centerRect(screen, modalWidth, modalHeight);
+        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(" " + template.name + " \u2014 " + viewLabel + " ")
-                .borderStyle(Style.EMPTY.fg(MODAL_BORDER))
-                .style(Style.EMPTY.bg(MODAL_BG))
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
                 .build();
-        frame.renderWidget(block, modalArea);
+        ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical()
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        // Render scrolled content
         int visibleHeight = rows.get(0).height();
         int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
         detailScrollOffset = Math.min(detailScrollOffset, maxScroll);
@@ -1241,13 +1101,12 @@ public class ListCommand implements Runnable {
                 Math.min(detailScrollOffset + visibleHeight, contentLines.size()));
         frame.renderWidget(Paragraph.from(Text.from(visibleLines)), rows.get(0));
 
-        // Hint bar
         var hintSpans = new ArrayList<Span>();
-        addModalKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
+        ModalRenderer.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
         if (contentLines.size() > visibleHeight) {
-            addModalKey(hintSpans, "\u2191\u2193", "Scroll");
+            ModalRenderer.addKey(hintSpans, "\u2191\u2193", "Scroll");
         }
-        addModalKey(hintSpans, "Esc", "Close");
+        ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
@@ -1268,9 +1127,9 @@ public class ListCommand implements Runnable {
 
         var lines = new ArrayList<Line>();
         var current = chain.get(chain.size() - 1);
-        var lineStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
-        var labelStyle = Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG);
-        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
+        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
+        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
 
         // Description
         if (!current.getDescription().isEmpty()) {
@@ -1340,10 +1199,10 @@ public class ListCommand implements Runnable {
         if (chain.isEmpty()) return List.of();
 
         var lines = new ArrayList<Line>();
-        var lineStyle = Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG);
-        var labelStyle = Style.EMPTY.fg(MODAL_ACCENT).bg(MODAL_BG);
-        var nameStyle = Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG);
-        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(MODAL_BG);
+        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
+        var nameStyle = Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
+        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
 
         for (int i = 0; i < chain.size(); i++) {
             var def = chain.get(i);
@@ -1400,19 +1259,6 @@ public class ListCommand implements Runnable {
         }
 
         return lines;
-    }
-
-    private static dev.tamboui.layout.Rect centerRect(dev.tamboui.layout.Rect screen, int width, int height) {
-        int w = Math.min(width, screen.width());
-        int h = Math.min(height, screen.height());
-        int x = screen.x() + (screen.width() - w) / 2;
-        int y = screen.y() + (screen.height() - h) / 2;
-        return new dev.tamboui.layout.Rect(x, y, w, h);
-    }
-
-    private void addModalKey(List<Span> spans, String key, String label) {
-        spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(MODAL_ACCENT).bg(MODAL_BG)));
-        spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(MODAL_FG).bg(MODAL_BG)));
     }
 
     private String suggestBranchName(String sourceName) {
