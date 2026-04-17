@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>dev.incusspawn</groupId>
     <artifactId>incus-spawn</artifactId>
-    <version>0.1.4-SNAPSHOT</version>
+    <version>0.1.5-SNAPSHOT</version>
     <name>incus-spawn</name>
     <description>CLI tool for managing isolated Incus development environments</description>
     <url>https://github.com/Sanne/incus-spawn</url>
