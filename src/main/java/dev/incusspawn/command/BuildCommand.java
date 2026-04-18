@@ -29,7 +29,7 @@ import java.util.Map;
         description = "Build or rebuild a template image (e.g. tpl-minimal, tpl-java)",
         mixinStandardHelpOptions = true
 )
-public class BuildCommand implements Runnable {
+public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
     @Parameters(index = "0", description = "Name of the template (e.g. tpl-minimal, tpl-java)",
             arity = "0..1")
@@ -65,32 +65,37 @@ public class BuildCommand implements Runnable {
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
 
     @Override
-    public void run() {
-        if (!InitCommand.requireInit(factory)) return;
+    public Integer call() {
+        if (!InitCommand.requireInit(factory)) return 0;
         var defs = ImageDef.loadAll();
 
-        if (missing) {
-            buildMissing(defs);
-            return;
-        }
-        if (all) {
-            buildAll(defs);
-            return;
-        }
+        try {
+            if (missing) {
+                buildMissing(defs);
+                return 0;
+            }
+            if (all) {
+                buildAll(defs);
+                return 0;
+            }
 
-        if (name == null) {
-            System.err.println("Usage: isx build <image-name>  or  isx build --all");
-            System.err.println("Available images: " + String.join(", ", defs.keySet()));
-            System.exit(1);
-        }
+            if (name == null) {
+                System.err.println("Usage: isx build <image-name>  or  isx build --all");
+                System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                return 1;
+            }
 
-        var imageDef = defs.get(name);
-        if (imageDef == null) {
-            System.err.println("Unknown image: " + name);
-            System.err.println("Available images: " + String.join(", ", defs.keySet()));
-            System.exit(1);
+            var imageDef = defs.get(name);
+            if (imageDef == null) {
+                System.err.println("Unknown image: " + name);
+                System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                return 1;
+            }
+            build(imageDef, defs);
+            return 0;
+        } catch (BuildFailedException e) {
+            return 1;
         }
-        build(imageDef, defs);
     }
 
     /**
@@ -210,10 +215,36 @@ public class BuildCommand implements Runnable {
             incus.delete(targetName, true);
         }
 
-        if (imageDef.isRoot()) {
-            buildFromScratch(imageDef, defs);
-        } else {
-            buildFromParent(imageDef, defs);
+        try {
+            if (imageDef.isRoot()) {
+                buildFromScratch(imageDef, defs);
+            } else {
+                buildFromParent(imageDef, defs);
+            }
+        } catch (Exception e) {
+            System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
+            System.err.println("\033[1mBuild failed for " + targetName + ": " + e.getMessage() + "\033[0m");
+            promoteToFailedInstance(targetName);
+            throw new BuildFailedException(targetName);
+        }
+    }
+
+    private void promoteToFailedInstance(String containerName) {
+        var promotedName = containerName + "-failed-build";
+        try {
+            if (incus.exists(promotedName)) {
+                incus.delete(promotedName, true);
+            }
+            try { unmountDnfCache(containerName); } catch (Exception ignored) {}
+            incus.stop(containerName);
+            incus.rename(containerName, promotedName);
+            incus.configSet(promotedName, Metadata.TYPE, Metadata.TYPE_FAILED_BUILD);
+            incus.configSet(promotedName, Metadata.PARENT, containerName);
+            incus.configSet(promotedName, Metadata.CREATED, Metadata.now());
+            System.err.println("\033[1mContainer promoted to instance '" + promotedName + "' for inspection.\033[0m");
+        } catch (Exception promoteError) {
+            System.err.println("Failed to promote container: " + promoteError.getMessage());
+            System.err.println("Container '" + containerName + "' may still exist for manual cleanup.");
         }
     }
 
@@ -478,9 +509,8 @@ public class BuildCommand implements Runnable {
                 return;
             }
             if (attempt == 9) {
-                System.err.println("  DNS resolution is not working. Check your network setup.");
-                System.err.println("  The container '" + container + "' has been left running for inspection.");
-                System.exit(1);
+                throw new RuntimeException(
+                        "DNS resolution is not working. Check your network setup.");
             }
             try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
             System.out.println("  Waiting for DNS... (attempt " + (attempt + 2) + "/10)");
@@ -498,10 +528,17 @@ public class BuildCommand implements Runnable {
 
     private void requireSuccess(int exitCode, String message) {
         if (exitCode != 0) {
-            System.err.println("\nBuild failed: " + message + " (exit code " + exitCode + ")");
-            System.err.println("The container '" + name + "' has been left running for inspection.");
-            System.err.println("To clean up: incus-spawn destroy " + name + " --force");
-            System.exit(1);
+            throw new RuntimeException(
+                    message + " (exit code " + exitCode + ")");
+        }
+    }
+
+    static class BuildFailedException extends RuntimeException {
+        final String containerName;
+
+        BuildFailedException(String containerName) {
+            super(null, null, true, false);
+            this.containerName = containerName;
         }
     }
 

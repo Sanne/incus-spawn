@@ -22,6 +22,7 @@ public final class Metadata {
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
     public static final String TYPE_CLONE = "clone";
+    public static final String TYPE_FAILED_BUILD = "failed-build";
 
     private Metadata() {}
 

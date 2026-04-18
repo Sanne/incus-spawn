@@ -211,7 +211,7 @@ public class ListCommand implements Runnable {
                         statusMessage = exitCode == 0
                                 ? "Built " + pendingActionTarget + " successfully"
                                 : "Failed to build " + pendingActionTarget
-                                        + " (exit code " + exitCode + "). Container left running for inspection.";
+                                        + ". Check instance '" + pendingActionTarget + "-failed-build' for inspection.";
                     } catch (Exception e) {
                         statusMessage = "Failed to build " + pendingActionTarget + ": " + e.getMessage();
                     }
