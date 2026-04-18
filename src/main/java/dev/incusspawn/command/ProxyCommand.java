@@ -6,12 +6,22 @@ import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.PrintStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 @Command(
         name = "proxy",
         description = "Start the MITM authentication proxy (required for non-airgapped containers)",
         mixinStandardHelpOptions = true
 )
 public class ProxyCommand implements Runnable {
+
+    static final Path LOG_FILE = Path.of(System.getProperty("user.home"),
+            ".local", "state", "incus-spawn", "proxy.log");
 
     @Option(names = "--port", description = "MITM TLS proxy port (default: ${DEFAULT-VALUE})",
             defaultValue = "18443")
@@ -21,6 +31,13 @@ public class ProxyCommand implements Runnable {
             defaultValue = "18080")
     int healthPort;
 
+    @Option(names = "--logs",
+            description = "Show proxy logs instead of starting the proxy. " +
+                    "Follows the log file in real time (like tail -f). " +
+                    "Does NOT start the proxy.",
+            defaultValue = "false")
+    boolean showLogs;
+
     @Inject
     IncusClient incus;
 
@@ -29,6 +46,11 @@ public class ProxyCommand implements Runnable {
 
     @Override
     public void run() {
+        if (showLogs) {
+            showProxyLogs();
+            return;
+        }
+
         if (!InitCommand.requireInit(factory)) return;
         var config = dev.incusspawn.config.SpawnConfig.load();
         var claude = config.getClaude();
@@ -56,6 +78,8 @@ public class ProxyCommand implements Runnable {
             return;
         }
 
+        installLogTee();
+
         MitmProxy.configureBridgeDns(incus);
 
         System.out.println("Starting MITM authentication proxy...");
@@ -69,6 +93,7 @@ public class ProxyCommand implements Runnable {
             System.out.println("  API key:       " + (apiKey.isBlank() ? "(not configured)" : "configured"));
         }
         System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
+        System.out.println("  Log file:      " + LOG_FILE);
         System.out.println();
 
         var proxy = new MitmProxy(gatewayIp, port, healthPort, apiKey, ghToken,
@@ -87,6 +112,66 @@ public class ProxyCommand implements Runnable {
             System.err.println("Failed to start proxy: " + e.getMessage());
             System.err.println("Is another proxy already running? Check port " + port + ".");
             System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
+        }
+    }
+
+    private void installLogTee() {
+        try {
+            Files.createDirectories(LOG_FILE.getParent());
+            var fileOut = new FileOutputStream(LOG_FILE.toFile(), true);
+            System.setOut(new PrintStream(new TeeOutputStream(System.out, fileOut), true));
+            System.setErr(new PrintStream(new TeeOutputStream(System.err, fileOut), true));
+        } catch (IOException e) {
+            System.err.println("Warning: could not open log file " + LOG_FILE + ": " + e.getMessage());
+        }
+    }
+
+    private void showProxyLogs() {
+        if (!Files.exists(LOG_FILE)) {
+            System.err.println("No proxy log file found at " + LOG_FILE);
+            System.err.println("The proxy has not been started yet, or logs have been cleared.");
+            return;
+        }
+        try {
+            var pb = new ProcessBuilder("tail", "-f", LOG_FILE.toString());
+            pb.inheritIO();
+            var process = pb.start();
+            process.waitFor();
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Failed to tail log file: " + e.getMessage());
+        }
+    }
+
+    private static class TeeOutputStream extends OutputStream {
+        private final OutputStream console;
+        private final OutputStream file;
+
+        TeeOutputStream(OutputStream console, OutputStream file) {
+            this.console = console;
+            this.file = file;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            console.write(b);
+            file.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            console.write(b, off, len);
+            file.write(b, off, len);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            console.flush();
+            file.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            file.close();
         }
     }
 }

@@ -89,10 +89,16 @@ public class InitCommand implements Runnable {
         setupGitHubAuth();
         setupSearchPaths();
 
+        boolean proxyServiceInstalled = offerProxyService();
+
         System.out.println("\n=== Init complete! ===");
         System.out.println("Next steps:");
         System.out.println("  1. Build a template:      isx build tpl-java");
-        System.out.println("  2. Start the auth proxy:  isx proxy");
+        if (proxyServiceInstalled) {
+            System.out.println("  2. Proxy is running as a service (systemctl --user status incus-spawn-proxy)");
+        } else {
+            System.out.println("  2. Start the auth proxy:  isx proxy");
+        }
         System.out.println("  3. Launch the TUI:        isx");
     }
 
@@ -598,6 +604,103 @@ public class InitCommand implements Runnable {
         } else {
             System.out.println("  Search paths unchanged.");
         }
+    }
+
+    private boolean offerProxyService() {
+        System.out.println();
+        System.out.println("  Optional: install the proxy as a systemd service so it starts");
+        System.out.println("  automatically and survives reboots.");
+        System.out.println();
+        var console = System.console();
+        if (console == null) return false;
+        System.out.print("  Install proxy service? (Y/n): ");
+        var answer = console.readLine().strip();
+        if (answer.equalsIgnoreCase("n")) {
+            System.out.println("  Skipped. You can start the proxy manually with: isx proxy");
+            return false;
+        }
+        return installProxyService();
+    }
+
+    private boolean installProxyService() {
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) {
+            System.err.println("  Could not find 'isx' in PATH. Skipping service installation.");
+            System.err.println("  You can start the proxy manually with: isx proxy");
+            return false;
+        }
+
+        var serviceContent = """
+                [Unit]
+                Description=incus-spawn MITM authentication proxy
+                After=incus.service
+
+                [Service]
+                Type=simple
+                ExecStart=%s proxy
+                Restart=on-failure
+                RestartSec=5
+
+                [Install]
+                WantedBy=default.target
+                """.formatted(isxPath);
+
+        var serviceDir = java.nio.file.Path.of(System.getProperty("user.home"),
+                ".config", "systemd", "user");
+        var serviceFile = serviceDir.resolve("incus-spawn-proxy.service");
+        try {
+            Files.createDirectories(serviceDir);
+            Files.writeString(serviceFile, serviceContent);
+            System.out.println("  Service file written to " + serviceFile);
+        } catch (IOException e) {
+            System.err.println("  Failed to write service file: " + e.getMessage());
+            return false;
+        }
+
+        System.out.println("  Enabling and starting proxy service...");
+        runHostQuiet("systemctl", "--user", "daemon-reload");
+        runHostQuiet("systemctl", "--user", "enable", "--now", "incus-spawn-proxy");
+
+        // Enable lingering so the service starts at boot without a login session
+        System.out.println("  Enabling lingering for user (sudo required)...");
+        runHostQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
+
+        // Verify
+        try {
+            var pb = new ProcessBuilder("systemctl", "--user", "is-active", "incus-spawn-proxy");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            process.waitFor();
+            if ("active".equals(output)) {
+                System.out.println("  Proxy service is running.");
+                return true;
+            } else {
+                System.err.println("  Warning: service status is '" + output + "'.");
+                System.err.println("  Check logs with: journalctl --user -u incus-spawn-proxy");
+                return false;
+            }
+        } catch (Exception e) {
+            System.err.println("  Could not verify service status: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static String resolveIsxPath() {
+        try {
+            var pb = new ProcessBuilder("which", "isx");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            if (process.waitFor() == 0 && !output.isBlank()) {
+                return output;
+            }
+        } catch (Exception ignored) {}
+        var fallback = java.nio.file.Path.of(System.getProperty("user.home"), ".local", "bin", "isx");
+        if (Files.isExecutable(fallback)) {
+            return fallback.toString();
+        }
+        return null;
     }
 
     private int runHost(String... command) {

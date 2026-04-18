@@ -67,6 +67,8 @@ public final class ProxyHealthCheck {
                     + "and caches Maven/Docker artifacts during builds.\n\n"
                     + "Start it in a separate terminal:\n"
                     + "  \033[1misx proxy\033[0m\n\n"
+                    + "Or install it as a service (auto-starts on boot):\n"
+                    + "  \033[1misx init\033[0m\n\n"
                     + "Then re-run this command.\n"
                     + separator;
             case RUNNING -> "";

@@ -1593,8 +1593,10 @@ public class ListCommand implements Runnable {
                     + "GitHub, and caches Maven/Docker artifacts.\n"
                     + "\n"
                     + "Start it in a separate terminal:\n"
+                    + "  isx proxy\n"
                     + "\n"
-                    + "  isx proxy";
+                    + "Or install it as a service (auto-starts on boot):\n"
+                    + "  isx init";
         }
         mode = Mode.ERROR;
         return true;
