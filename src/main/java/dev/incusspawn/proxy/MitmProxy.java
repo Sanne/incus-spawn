@@ -216,6 +216,11 @@ public class MitmProxy {
         incus.exec("network", "set", "incusbr0", "raw.dnsmasq", "");
     }
 
+    public static String getDnsOverrides(IncusClient incus) {
+        var result = incus.exec("network", "get", "incusbr0", "raw.dnsmasq");
+        return result.success() ? result.stdout().strip() : "";
+    }
+
     /**
      * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
      */

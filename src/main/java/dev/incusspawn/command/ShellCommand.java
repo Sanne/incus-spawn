@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Parameters;
@@ -24,6 +27,11 @@ public class ShellCommand implements Runnable {
             System.err.println("Error: no instance named '" + name + "' found.");
             System.err.println("Run 'incus-spawn list' to see available environments.");
             return;
+        }
+
+        var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
+        if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
+            if (!ProxyHealthCheck.checkOrWarn(incus)) return;
         }
 
         // Start if stopped

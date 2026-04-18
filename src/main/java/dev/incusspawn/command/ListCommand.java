@@ -5,6 +5,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.tamboui.backend.jline3.JLineBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -60,8 +61,9 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, ERROR }
     private Mode mode = Mode.BROWSE;
+    private String errorMessage;
     private String pendingDeleteName;
     private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
     // Branch modal state
@@ -298,6 +300,7 @@ public class ListCommand implements Runnable {
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key);
+            case ERROR -> { mode = Mode.BROWSE; yield true; }
         };
     }
 
@@ -361,6 +364,7 @@ public class ListCommand implements Runnable {
             var anyNotBuilt = templateEntries.stream()
                     .anyMatch(t -> "not built".equals(t.buildStatus));
             if (anyNotBuilt) {
+                if (showProxyError()) return true;
                 pendingAction = PendingAction.BUILD_TEMPLATE;
                 pendingActionTarget = "--missing";
                 tui.quit();
@@ -386,6 +390,7 @@ public class ListCommand implements Runnable {
                 pendingBuildName = template.name;
                 mode = Mode.CONFIRM_BUILD;
             } else {
+                if (showProxyError()) return true;
                 pendingAction = PendingAction.BUILD_TEMPLATE;
                 pendingActionTarget = template.name;
                 tui.quit();
@@ -456,6 +461,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F3)) {
+            if (showProxyErrorIfNeeded(selected.name)) return true;
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = selected.name;
             tui.quit();
@@ -520,6 +526,7 @@ public class ListCommand implements Runnable {
                 mode = Mode.BROWSE;
                 return true;
             }
+            if (branchNetworkMode != NetworkMode.AIRGAP && showProxyError()) return true;
             pendingAction = PendingAction.BRANCH;
             pendingActionTarget = name;
             tui.quit();
@@ -694,6 +701,7 @@ public class ListCommand implements Runnable {
 
     private boolean handleConfirmBuildEvent(KeyEvent key, TuiRunner tui) {
         if (key.isChar('y') || key.isChar('Y')) {
+            if (showProxyError()) return true;
             pendingAction = PendingAction.BUILD_TEMPLATE;
             pendingActionTarget = pendingBuildName;
             tui.quit();
@@ -921,6 +929,7 @@ public class ListCommand implements Runnable {
             case RENAME -> ModalRenderer.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
+            case ERROR -> ModalRenderer.renderErrorModal(frame, screen, errorMessage);
             default -> {}
         }
     }
@@ -1434,8 +1443,7 @@ public class ListCommand implements Runnable {
     private void createBranch(String source, String name, boolean gui, NetworkMode networkMode,
                                String inboxPath, boolean vm) {
         if (incus.exists(name)) {
-            System.err.println("Error: an instance named '" + name + "' already exists.");
-            return;
+            throw new RuntimeException("an instance named '" + name + "' already exists.");
         }
 
         System.out.println("Branching '" + name + "' from '" + source + "'...");
@@ -1564,6 +1572,38 @@ public class ListCommand implements Runnable {
         } catch (Exception e) {
             return 1000;
         }
+    }
+
+    private boolean showProxyError() {
+        var proxyStatus = ProxyHealthCheck.check(incus);
+        if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) return false;
+        if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
+            ProxyHealthCheck.clearStaleDns(incus);
+            errorMessage = "The MITM proxy is not running, but DNS overrides\n"
+                    + "are still active from a previous session.\n"
+                    + "\n"
+                    + "Stale DNS overrides have been cleared.\n"
+                    + "Start the proxy in a separate terminal:\n"
+                    + "\n"
+                    + "  isx proxy";
+        } else {
+            errorMessage = "The MITM proxy is not running.\n"
+                    + "\n"
+                    + "The proxy provides authentication for Claude,\n"
+                    + "GitHub, and caches Maven/Docker artifacts.\n"
+                    + "\n"
+                    + "Start it in a separate terminal:\n"
+                    + "\n"
+                    + "  isx proxy";
+        }
+        mode = Mode.ERROR;
+        return true;
+    }
+
+    private boolean showProxyErrorIfNeeded(String containerName) {
+        var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
+        if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
+        return showProxyError();
     }
 
     private void shellInto(String name) {

@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -62,6 +63,11 @@ public class BranchCommand implements Runnable {
             return;
         }
 
+        var networkMode = resolveNetworkMode();
+        if (networkMode != NetworkMode.AIRGAP) {
+            if (!ProxyHealthCheck.checkOrWarn(incus)) return;
+        }
+
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
         incus.copy(resolvedSource, name);
 
@@ -75,7 +81,6 @@ public class BranchCommand implements Runnable {
         incus.configSet(name, "limits.memory", memory);
         incus.exec("config", "device", "set", name, "root", "size=" + disk);
 
-        var networkMode = resolveNetworkMode();
         configureNetwork(networkMode);
 
         // Tag with metadata

@@ -9,6 +9,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -180,6 +181,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             System.err.println("Error: " + credentialError);
             System.exit(1);
         }
+
+        ProxyHealthCheck.requireProxy(incus);
 
         // If this image has a parent, ensure it exists
         if (!imageDef.isRoot()) {

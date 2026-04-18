@@ -148,6 +148,33 @@ final class ModalRenderer {
         frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
     }
 
+    static void renderErrorModal(Frame frame, Rect screen, String message) {
+        var lines = message.lines().toList();
+        int height = lines.size() + 5;
+        int width = Math.min(lines.stream().mapToInt(String::length).max().orElse(30) + 6, screen.width() - 4);
+        var modalArea = centerRect(screen, Math.max(width, 40), height);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" Error ")
+                .borderStyle(Style.EMPTY.fg(WARN))
+                .style(Style.EMPTY.bg(BG))
+                .build();
+        renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+        var constraints = new ArrayList<Constraint>();
+        for (int i = 0; i < lines.size(); i++) constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.fill());
+        var rows = Layout.vertical().constraints(constraints).split(inner);
+        for (int i = 0; i < lines.size(); i++) {
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    " " + lines.get(i), Style.EMPTY.fg(FG).bg(BG))), rows.get(i));
+        }
+        var hintSpans = new ArrayList<Span>();
+        addKey(hintSpans, "any key", "Dismiss");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
+    }
+
     static void renderProgressOverlay(Frame frame, Rect screen, String message) {
         int width = Math.min(message.length() + 6, screen.width() - 4);
         var modalArea = centerRect(screen, width, 3);
