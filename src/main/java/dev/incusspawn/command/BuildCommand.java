@@ -588,6 +588,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var repo = imageDef.getSkills().getRepo();
         var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL).build();
+        var cache = new dev.incusspawn.tool.SkillsCache();
 
         container.exec("mkdir", "-p", SKILLS_DIR);
 
@@ -595,7 +596,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             var resolved = resolveSkillSource(entry, repo);
             System.out.println("Installing skill: " + resolved + "...");
             try {
-                var skills = fetchSkills(resolved, http);
+                var skills = fetchSkills(resolved, http, cache);
                 for (var skill : skills) {
                     var skillDir = SKILLS_DIR + "/" + skill.name();
                     container.exec("mkdir", "-p", skillDir);
@@ -615,6 +616,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
     /**
      * Fetch one or more SKILL.md files for the given resolved source.
+     * GitHub skills are cached on the host at {@code ~/.cache/incus-spawn/skills/}.
      * Supports:
      * <ul>
      *   <li>{@code owner/repo@skill-name} — single skill from a GitHub repo</li>
@@ -623,7 +625,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      *   <li>{@code ./local/path} or {@code /absolute/path} — local directory</li>
      * </ul>
      */
-    static List<SkillFile> fetchSkills(String source, HttpClient http)
+    static List<SkillFile> fetchSkills(String source, HttpClient http,
+            dev.incusspawn.tool.SkillsCache cache)
             throws IOException, InterruptedException {
         // Local path
         if (source.startsWith("./") || source.startsWith("/")) {
@@ -641,30 +644,15 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         if (atIdx >= 0) {
             var ownerRepo = normalised.substring(0, atIdx);
             var skillName = normalised.substring(atIdx + 1);
-            return List.of(fetchGitHubSkill(ownerRepo, skillName, http));
+            return List.of(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
         }
 
         // owner/repo — fetch all skills via Trees API
-        return fetchAllGitHubSkills(normalised, http);
+        return fetchAllGitHubSkills(normalised, http, cache);
     }
 
-    private static SkillFile fetchGitHubSkill(String ownerRepo, String skillName, HttpClient http)
-            throws IOException, InterruptedException {
-        // Try common default branches
-        for (var branch : List.of("main", "master")) {
-            var url = "https://raw.githubusercontent.com/" + ownerRepo + "/" + branch
-                    + "/" + skillName + "/SKILL.md";
-            var response = http.send(
-                    HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10)).build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                return new SkillFile(skillName, response.body());
-            }
-        }
-        throw new IOException("SKILL.md not found in " + ownerRepo + " for skill '" + skillName + "'");
-    }
-
-    private static List<SkillFile> fetchAllGitHubSkills(String ownerRepo, HttpClient http)
+    private static List<SkillFile> fetchAllGitHubSkills(String ownerRepo, HttpClient http,
+            dev.incusspawn.tool.SkillsCache cache)
             throws IOException, InterruptedException {
         // Use GitHub Trees API to find all SKILL.md files
         for (var branch : List.of("main", "master")) {
@@ -688,7 +676,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 // Match <skill-name>/SKILL.md at the top level only
                 if (path.matches("[^/]+/SKILL\\.md")) {
                     var skillName = path.substring(0, path.indexOf('/'));
-                    skills.add(fetchGitHubSkill(ownerRepo, skillName, http));
+                    skills.add(new SkillFile(skillName, cache.fetchSkillMd(ownerRepo, skillName, http)));
                 }
             }
             if (!skills.isEmpty()) return skills;
