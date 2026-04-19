@@ -180,7 +180,7 @@ Skill source formats:
 - `./local-path` -- local directory (always read from disk, not cached)
 - `skill-name` -- bare name; requires `skills.repo` to be set, resolved as `repo@skill-name`. There is no implicit default catalog — omitting `repo` means bare names will fail at build time.
 
-Skills are fetched on the host at build time and written into the container at `~/.claude/skills/<skill-name>/SKILL.md` — the global skills directory that Claude Code reads automatically.
+Skills are fetched on the host at build time and cached at `~/.cache/incus-spawn/skills/`. They are not installed on the host — each SKILL.md is written directly into the container at `~/.claude/skills/<skill-name>/SKILL.md`, the global skills directory that Claude Code reads automatically. Subsequent builds reuse the cached files without hitting the network.
 
 Skills are deduplicated across the parent chain: if a parent already declares a skill, child images skip it.
 
