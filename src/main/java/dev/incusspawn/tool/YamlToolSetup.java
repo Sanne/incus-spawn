@@ -86,7 +86,6 @@ public class YamlToolSetup implements ToolSetup {
         try {
             // Download to host cache
             var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
-            var filename = cached.getFileName().toString();
 
             // Extract on host into temp directory
             var extractDir = Files.createTempDirectory("isx-extract-");
@@ -95,7 +94,6 @@ public class YamlToolSetup implements ToolSetup {
 
                 // Push extracted content into container
                 container.exec("mkdir", "-p", dl.getExtract());
-                // Get the top-level entries and push each one
                 try (var entries = Files.list(extractDir)) {
                     for (var entry : entries.toList()) {
                         container.filePushRecursive(entry.toString(), dl.getExtract());
@@ -107,7 +105,6 @@ public class YamlToolSetup implements ToolSetup {
                     container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
                 }
             } finally {
-                // Clean up host temp dir
                 deleteRecursive(extractDir);
             }
         } catch (IOException e) {

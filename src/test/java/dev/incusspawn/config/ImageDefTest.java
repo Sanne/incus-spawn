@@ -191,6 +191,63 @@ class ImageDefTest {
     }
 
     @Test
+    void imageWithoutSkillsDefaultsToEmpty() {
+        var defs = ImageDef.loadAll();
+        var minimal = defs.get("tpl-minimal");
+        assertNotNull(minimal);
+        assertTrue(minimal.getSkills().getList().isEmpty());
+        assertNull(minimal.getSkills().getRepo());
+    }
+
+    @Test
+    void parseImageWithSkillsObjectForm(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("agent.yaml"), """
+                name: tpl-agent
+                description: Agent with skills
+                parent: tpl-dev
+                skills:
+                  repo: myorg/claude-skills
+                  list:
+                    - security-review
+                    - myorg/other-catalog@special-skill
+                    - https://github.com/owner/repo
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var agent = defs.get("tpl-agent");
+        assertNotNull(agent);
+        assertEquals("myorg/claude-skills", agent.getSkills().getRepo());
+        assertEquals(3, agent.getSkills().getList().size());
+        assertEquals("security-review", agent.getSkills().getList().get(0));
+        assertEquals("myorg/other-catalog@special-skill", agent.getSkills().getList().get(1));
+        assertEquals("https://github.com/owner/repo", agent.getSkills().getList().get(2));
+    }
+
+    @Test
+    void parseImageWithSkillsListShorthand(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("agent.yaml"), """
+                name: tpl-agent
+                description: Agent with skills
+                parent: tpl-dev
+                skills:
+                  - xixu-me/skills@xget
+                  - myorg/catalog
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var agent = defs.get("tpl-agent");
+        assertNotNull(agent);
+        assertNull(agent.getSkills().getRepo());
+        assertEquals(2, agent.getSkills().getList().size());
+        assertEquals("xixu-me/skills@xget", agent.getSkills().getList().get(0));
+        assertEquals("myorg/catalog", agent.getSkills().getList().get(1));
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

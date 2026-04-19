@@ -105,6 +105,7 @@ Image schema fields (all optional except `name`):
 - `packages` -- dnf packages to install
 - `tools` -- tool names to run (resolved from YAML or Java)
 - `repos` -- git repositories to clone as agentuser (see below)
+- `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
 - `description` -- human-readable description for the TUI
 
 ```shell
@@ -138,6 +139,52 @@ Repo entry fields:
 - `path` (required) -- target directory (`~` expands to agentuser's home)
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
+
+### Claude Code Skills
+
+Template images can declare [Claude Code skills](https://skills.sh) to bake in at build time. Skills are installed once into the template and inherited by every instance branched from it.
+
+```yaml
+name: tpl-agent
+description: Agent with security skills
+parent: tpl-dev
+skills:
+  repo: myorg/claude-skills      # default catalog for bare skill names
+  list:
+    - security-review            # short name → myorg/claude-skills@security-review
+    - code-review                # short name → myorg/claude-skills@code-review
+    - xixu-me/skills@xget        # explicit owner/repo@skill-name
+    - myorg/catalog              # all skills from a repo
+```
+
+When no catalog `repo` is needed, you can use the list shorthand:
+
+```yaml
+skills:
+  - xixu-me/skills@xget
+  - myorg/catalog
+```
+
+For local skills (e.g. skills you are developing), point to a directory containing a `SKILL.md` or subdirectories each with their own `SKILL.md`. Relative paths are resolved from the directory where `isx build` is run:
+
+```yaml
+skills:
+  - ./my-skills/code-review      # single skill: my-skills/code-review/SKILL.md
+  - ./my-skills                  # all skills: one per subdirectory with SKILL.md
+```
+
+Skill source formats:
+- `owner/repo@skill-name` -- specific skill from a GitHub repo
+- `owner/repo` -- all skills from a GitHub repo
+- `https://github.com/owner/repo` -- full GitHub URL
+- `./local-path` -- local directory (always read from disk, not cached)
+- `skill-name` -- bare name; requires `skills.repo` to be set, resolved as `repo@skill-name`. There is no implicit default catalog — omitting `repo` means bare names will fail at build time.
+
+Skills are fetched on the host at build time and written into the container at `~/.claude/skills/<skill-name>/SKILL.md` — the global skills directory that Claude Code reads automatically.
+
+Skills are deduplicated across the parent chain: if a parent already declares a skill, child images skip it.
+
+To find available skills, browse [skills.sh](https://skills.sh).
 
 ## Custom Tools
 
@@ -199,6 +246,7 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **Network airgapping**: fully isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
 - **Claude Code integration**: auth via MITM proxy — API key never enters containers
+- **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 
 ## TUI Keyboard Shortcuts
