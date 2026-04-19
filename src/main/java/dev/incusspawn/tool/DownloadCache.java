@@ -21,13 +21,14 @@ import java.util.HexFormat;
  */
 public class DownloadCache {
 
-    private static final Path CACHE_DIR = Path.of(
-            System.getProperty("user.home"), ".cache", "incus-spawn", "downloads");
+    private static Path defaultCacheDir() {
+        return Path.of(System.getProperty("user.home"), ".cache", "incus-spawn", "downloads");
+    }
 
     private final Path cacheDir;
 
     public DownloadCache() {
-        this(CACHE_DIR);
+        this(defaultCacheDir());
     }
 
     /** Constructor for testing with a custom cache directory. */

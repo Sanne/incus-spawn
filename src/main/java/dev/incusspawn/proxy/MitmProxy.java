@@ -82,14 +82,17 @@ public class MitmProxy {
     private static final Pattern BLOB_DIGEST_PATTERN = Pattern.compile(
             "/v2/(.+)/blobs/(sha256:[a-f0-9]{64})");
 
-    private static final Path REGISTRY_CACHE_DIR = Path.of(
-            System.getProperty("user.home"), ".cache", "incus-spawn", "registry");
+    private static Path registryCacheDir() {
+        return Path.of(System.getProperty("user.home"), ".cache", "incus-spawn", "registry");
+    }
 
-    private static final Path MAVEN_CACHE_DIR = Path.of(
-            System.getProperty("user.home"), ".cache", "incus-spawn", "maven");
+    private static Path mavenCacheDir() {
+        return Path.of(System.getProperty("user.home"), ".cache", "incus-spawn", "maven");
+    }
 
-    private static final Path M2_REPOSITORY = Path.of(
-            System.getProperty("user.home"), ".m2", "repository");
+    private static Path m2Repository() {
+        return Path.of(System.getProperty("user.home"), ".m2", "repository");
+    }
 
     // URL path prefix preceding Maven coordinates on each domain
     private static final java.util.Map<String, String> MAVEN_PATH_PREFIX = java.util.Map.of(
@@ -240,12 +243,12 @@ public class MitmProxy {
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + bindAddress + ":" + healthPort + "/health");
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
-        System.out.println("Registry cache: " + REGISTRY_CACHE_DIR +
+        System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
-        System.out.println("Maven cache: " + MAVEN_CACHE_DIR +
+        System.out.println("Maven cache: " + mavenCacheDir() +
                 " (domains: " + MAVEN_DOMAINS + ")");
         System.out.println("Maven .m2 fallback: " +
-                (Files.isDirectory(M2_REPOSITORY) ? M2_REPOSITORY : "not available"));
+                (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexRegion + "-aiplatform.googleapis.com" +
@@ -549,7 +552,7 @@ public class MitmProxy {
                 var imageName = matcher.group(1);
                 var digest = matcher.group(2);
                 var imageRef = domain + "/" + imageName;
-                var cacheFile = REGISTRY_CACHE_DIR.resolve(digest.replace(":", "-"));
+                var cacheFile = registryCacheDir().resolve(digest.replace(":", "-"));
 
                 if (Files.exists(cacheFile)) {
                     System.out.println("Registry cache hit: " + imageRef +
@@ -771,7 +774,7 @@ public class MitmProxy {
         var method = request.method();
 
         if ("GET".equals(method) && path != null && isMavenCacheable(path)) {
-            var cacheFile = MAVEN_CACHE_DIR.resolve(domain).resolve(path.substring(1));
+            var cacheFile = mavenCacheDir().resolve(domain).resolve(path.substring(1));
 
             if (Files.exists(cacheFile)) {
                 System.out.println("Maven cache hit: " + domain + path +
@@ -845,7 +848,7 @@ public class MitmProxy {
         if (prefix == null || !urlPath.startsWith(prefix)) return null;
         var relativePath = urlPath.substring(prefix.length());
         if (relativePath.contains("..")) return null;
-        return M2_REPOSITORY.resolve(relativePath);
+        return m2Repository().resolve(relativePath);
     }
 
     /**
