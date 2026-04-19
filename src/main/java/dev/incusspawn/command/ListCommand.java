@@ -6,7 +6,6 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
-import dev.tamboui.backend.jline3.JLineBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Color;
@@ -14,7 +13,6 @@ import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
-import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
@@ -29,18 +27,12 @@ import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 import jakarta.inject.Inject;
-import org.jline.terminal.Terminal;
-import org.jline.terminal.impl.exec.ExecTerminalProvider;
-import org.jline.terminal.spi.SystemStream;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.io.IOException;
-import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -170,15 +162,10 @@ public class ListCommand implements Runnable {
                 focusedPanel = Panel.TEMPLATES;
             }
 
-            try {
-                var terminal = createExecTerminal();
-                var backend = createBackend(terminal);
-                try (var runner = TuiRunner.create(TuiConfig.builder().backend(backend).build())) {
-                    runner.run(
-                            (event, tui) -> handleEvent(event, tui, instanceTableState),
-                            frame -> render(frame, instanceTableState));
-                }
-                terminal.close();
+            try (var runner = TuiRunner.create()) {
+                runner.run(
+                        (event, tui) -> handleEvent(event, tui, instanceTableState),
+                        frame -> render(frame, instanceTableState));
             } catch (Exception e) {
                 printPlain(entries);
                 return;
@@ -263,29 +250,6 @@ public class ListCommand implements Runnable {
             }
         }
         buildRowData();
-    }
-
-    private static Terminal createExecTerminal() throws IOException {
-        java.util.logging.Logger.getLogger("org.jline").setLevel(java.util.logging.Level.SEVERE);
-        var provider = new ExecTerminalProvider();
-        return provider.sysTerminal("isx", System.getenv("TERM"), false,
-                StandardCharsets.UTF_8, false, Terminal.SignalHandler.SIG_DFL,
-                false, SystemStream.Output);
-    }
-
-    private static JLineBackend createBackend(Terminal terminal) throws Exception {
-        var backend = new JLineBackend();
-        var clazz = JLineBackend.class;
-        getField(clazz, "terminal").set(backend, terminal);
-        getField(clazz, "writer").set(backend, terminal.writer());
-        getField(clazz, "reader").set(backend, terminal.reader());
-        return backend;
-    }
-
-    private static Field getField(Class<?> clazz, String name) throws NoSuchFieldException {
-        var f = clazz.getDeclaredField(name);
-        f.setAccessible(true);
-        return f;
     }
 
     // --- Event handling ---

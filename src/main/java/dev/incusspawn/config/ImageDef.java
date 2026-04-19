@@ -3,6 +3,7 @@ package dev.incusspawn.config;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,6 +20,7 @@ import java.util.Map;
  * → project-local ({@code .incus-spawn/images/}). Later definitions with the
  * same name override earlier ones.
  */
+@RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ImageDef {
 
@@ -32,7 +34,7 @@ public class ImageDef {
             "minimal.yaml", "dev.yaml", "java.yaml"
     );
 
-    private static final Path USER_IMAGES_DIR = SpawnConfig.configDir().resolve("images");
+    private static Path userImagesDir() { return SpawnConfig.configDir().resolve("images"); }
     private static final Path PROJECT_IMAGES_DIR = Path.of(".incus-spawn/images");
 
     private String name;
@@ -127,7 +129,7 @@ public class ImageDef {
     }
 
     private static void loadUserDefined(Map<String, ImageDef> defs) {
-        loadFromDirectory(USER_IMAGES_DIR, defs);
+        loadFromDirectory(userImagesDir(), defs);
     }
 
     private static void loadFromDirectory(Path dir, Map<String, ImageDef> defs) {

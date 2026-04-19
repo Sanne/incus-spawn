@@ -25,8 +25,8 @@ import java.util.Base64;
  */
 public class CertificateAuthority {
 
-    private static final Path CA_KEY_FILE = SpawnConfig.configDir().resolve("ca.key");
-    private static final Path CA_CERT_FILE = SpawnConfig.configDir().resolve("ca.crt");
+    private static Path caKeyFile() { return SpawnConfig.configDir().resolve("ca.key"); }
+    private static Path caCertFile() { return SpawnConfig.configDir().resolve("ca.crt"); }
 
     private final PrivateKey caKey;
     private final X509Certificate caCert;
@@ -41,7 +41,7 @@ public class CertificateAuthority {
      */
     public static CertificateAuthority loadOrCreate() {
         try {
-            if (Files.exists(CA_KEY_FILE) && Files.exists(CA_CERT_FILE)) {
+            if (Files.exists(caKeyFile()) && Files.exists(caCertFile())) {
                 return load();
             }
             return generate();
@@ -54,7 +54,7 @@ public class CertificateAuthority {
      * Check whether a CA certificate already exists on disk.
      */
     public static boolean exists() {
-        return Files.exists(CA_KEY_FILE) && Files.exists(CA_CERT_FILE);
+        return Files.exists(caKeyFile()) && Files.exists(caCertFile());
     }
 
     /**
@@ -87,8 +87,8 @@ public class CertificateAuthority {
                 // Sign with CA
                 run("openssl", "x509", "-req",
                         "-in", csrFile.toString(),
-                        "-CA", CA_CERT_FILE.toString(),
-                        "-CAkey", CA_KEY_FILE.toString(),
+                        "-CA", caCertFile().toString(),
+                        "-CAkey", caKeyFile().toString(),
                         "-CAcreateserial",
                         "-out", domainCertFile.toString(),
                         "-days", "365",
@@ -117,7 +117,7 @@ public class CertificateAuthority {
      */
     public String caCertPem() {
         try {
-            return Files.readString(CA_CERT_FILE);
+            return Files.readString(caCertFile());
         } catch (IOException e) {
             throw new RuntimeException("Failed to read CA cert: " + e.getMessage(), e);
         }
@@ -134,36 +134,36 @@ public class CertificateAuthority {
     // --- Private helpers ---
 
     private static CertificateAuthority load() throws Exception {
-        var key = loadPrivateKey(CA_KEY_FILE);
-        var cert = loadCertificate(CA_CERT_FILE);
+        var key = loadPrivateKey(caKeyFile());
+        var cert = loadCertificate(caCertFile());
         return new CertificateAuthority(key, cert);
     }
 
     private static CertificateAuthority generate() throws Exception {
         System.out.println("Generating MITM CA certificate...");
-        Files.createDirectories(CA_KEY_FILE.getParent());
+        Files.createDirectories(caKeyFile().getParent());
 
         // Generate CA key
-        run("openssl", "genrsa", "-out", CA_KEY_FILE.toString(), "2048");
-        Files.setPosixFilePermissions(CA_KEY_FILE,
+        run("openssl", "genrsa", "-out", caKeyFile().toString(), "2048");
+        Files.setPosixFilePermissions(caKeyFile(),
                 PosixFilePermissions.fromString("rw-------"));
 
         // Generate self-signed CA cert
         run("openssl", "req", "-x509", "-new", "-nodes",
-                "-key", CA_KEY_FILE.toString(),
+                "-key", caKeyFile().toString(),
                 "-sha256", "-days", "3650",
-                "-out", CA_CERT_FILE.toString(),
+                "-out", caCertFile().toString(),
                 "-subj", "/CN=incus-spawn MITM CA/O=incus-spawn",
                 "-addext", "basicConstraints=critical,CA:TRUE",
                 "-addext", "keyUsage=critical,keyCertSign,cRLSign");
-        Files.setPosixFilePermissions(CA_CERT_FILE,
+        Files.setPosixFilePermissions(caCertFile(),
                 PosixFilePermissions.fromString("rw-------"));
 
-        System.out.println("  CA certificate saved to " + CA_CERT_FILE);
-        System.out.println("  CA private key saved to " + CA_KEY_FILE);
+        System.out.println("  CA certificate saved to " + caCertFile());
+        System.out.println("  CA private key saved to " + caKeyFile());
 
-        var key = loadPrivateKey(CA_KEY_FILE);
-        var cert = loadCertificate(CA_CERT_FILE);
+        var key = loadPrivateKey(caKeyFile());
+        var cert = loadCertificate(caCertFile());
         return new CertificateAuthority(key, cert);
     }
 

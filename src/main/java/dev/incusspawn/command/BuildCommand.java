@@ -61,8 +61,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     picocli.CommandLine.IFactory factory;
 
     // Host-side DNF cache shared across builds to avoid redundant metadata downloads
-    private static final Path DNF_CACHE_DIR = Path.of(System.getProperty("user.home"),
-            ".cache", "incus-spawn", "dnf");
+    private static Path dnfCacheDir() { return Path.of(System.getProperty("user.home"),
+            ".cache", "incus-spawn", "dnf"); }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
 
     @Override
@@ -552,13 +552,13 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      */
     private void mountDnfCache(String container) {
         try {
-            Files.createDirectories(DNF_CACHE_DIR);
+            Files.createDirectories(dnfCacheDir());
         } catch (IOException e) {
             System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
             return;
         }
         incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
-                "source=" + DNF_CACHE_DIR,
+                "source=" + dnfCacheDir(),
                 "path=/var/cache/libdnf5",
                 "shift=true");
     }

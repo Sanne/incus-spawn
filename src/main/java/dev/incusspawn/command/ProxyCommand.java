@@ -20,8 +20,8 @@ import java.nio.file.Path;
 )
 public class ProxyCommand implements Runnable {
 
-    static final Path LOG_FILE = Path.of(System.getProperty("user.home"),
-            ".local", "state", "incus-spawn", "proxy.log");
+    static Path logFile() { return Path.of(System.getProperty("user.home"),
+            ".local", "state", "incus-spawn", "proxy.log"); }
 
     @Option(names = "--port", description = "MITM TLS proxy port (default: ${DEFAULT-VALUE})",
             defaultValue = "18443")
@@ -93,7 +93,7 @@ public class ProxyCommand implements Runnable {
             System.out.println("  API key:       " + (apiKey.isBlank() ? "(not configured)" : "configured"));
         }
         System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  Log file:      " + LOG_FILE);
+        System.out.println("  Log file:      " + logFile());
         System.out.println();
 
         var proxy = new MitmProxy(gatewayIp, port, healthPort, apiKey, ghToken,
@@ -117,23 +117,23 @@ public class ProxyCommand implements Runnable {
 
     private void installLogTee() {
         try {
-            Files.createDirectories(LOG_FILE.getParent());
-            var fileOut = new FileOutputStream(LOG_FILE.toFile(), true);
+            Files.createDirectories(logFile().getParent());
+            var fileOut = new FileOutputStream(logFile().toFile(), true);
             System.setOut(new PrintStream(new TeeOutputStream(System.out, fileOut), true));
             System.setErr(new PrintStream(new TeeOutputStream(System.err, fileOut), true));
         } catch (IOException e) {
-            System.err.println("Warning: could not open log file " + LOG_FILE + ": " + e.getMessage());
+            System.err.println("Warning: could not open log file " + logFile() + ": " + e.getMessage());
         }
     }
 
     private void showProxyLogs() {
-        if (!Files.exists(LOG_FILE)) {
-            System.err.println("No proxy log file found at " + LOG_FILE);
+        if (!Files.exists(logFile())) {
+            System.err.println("No proxy log file found at " + logFile());
             System.err.println("The proxy has not been started yet, or logs have been cleared.");
             return;
         }
         try {
-            var pb = new ProcessBuilder("tail", "-f", LOG_FILE.toString());
+            var pb = new ProcessBuilder("tail", "-f", logFile().toString());
             pb.inheritIO();
             var process = pb.start();
             process.waitFor();

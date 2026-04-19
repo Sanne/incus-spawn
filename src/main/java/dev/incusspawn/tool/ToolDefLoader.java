@@ -26,7 +26,7 @@ public class ToolDefLoader {
             "podman.yaml",
             "maven-3.yaml"
     );
-    private static final Path USER_TOOLS_DIR = SpawnConfig.configDir().resolve("tools");
+    private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
     private List<String> searchPaths;
 
@@ -56,7 +56,7 @@ public class ToolDefLoader {
         if (tools == null) {
             tools = new LinkedHashMap<>();
             loadBuiltins();
-            loadFromDirectory(USER_TOOLS_DIR);
+            loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
             for (var searchPath : paths) {
                 loadFromDirectory(Path.of(searchPath).resolve("tools"));

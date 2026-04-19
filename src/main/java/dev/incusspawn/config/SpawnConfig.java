@@ -3,6 +3,7 @@ package dev.incusspawn.config;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -11,11 +12,10 @@ import java.nio.file.Path;
 /**
  * Global incus-spawn configuration stored in ~/.config/incus-spawn/config.yaml
  */
+@RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SpawnConfig {
 
-    private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".config", "incus-spawn");
-    private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.yaml");
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
     private ClaudeConfig claude = new ClaudeConfig();
@@ -55,7 +55,7 @@ public class SpawnConfig {
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
 
     public static Path configDir() {
-        return CONFIG_DIR;
+        return Path.of(System.getProperty("user.home"), ".config", "incus-spawn");
     }
 
     /**
@@ -97,11 +97,12 @@ public class SpawnConfig {
     }
 
     public static SpawnConfig load() {
-        if (!Files.exists(CONFIG_FILE)) {
+        var configFile = configDir().resolve("config.yaml");
+        if (!Files.exists(configFile)) {
             return new SpawnConfig();
         }
         try {
-            return YAML.readValue(CONFIG_FILE.toFile(), SpawnConfig.class);
+            return YAML.readValue(configFile.toFile(), SpawnConfig.class);
         } catch (IOException e) {
             System.err.println("Warning: could not read config: " + e.getMessage());
             return new SpawnConfig();
@@ -110,13 +111,14 @@ public class SpawnConfig {
 
     public void save() {
         try {
-            Files.createDirectories(CONFIG_DIR);
-            YAML.writeValue(CONFIG_FILE.toFile(), this);
+            var configFile = configDir().resolve("config.yaml");
+            Files.createDirectories(configFile.getParent());
+            YAML.writeValue(configFile.toFile(), this);
             // Restrict permissions - config contains tokens
-            CONFIG_FILE.toFile().setReadable(false, false);
-            CONFIG_FILE.toFile().setReadable(true, true);
-            CONFIG_FILE.toFile().setWritable(false, false);
-            CONFIG_FILE.toFile().setWritable(true, true);
+            configFile.toFile().setReadable(false, false);
+            configFile.toFile().setReadable(true, true);
+            configFile.toFile().setWritable(false, false);
+            configFile.toFile().setWritable(true, true);
         } catch (IOException e) {
             throw new RuntimeException("Failed to save config: " + e.getMessage(), e);
         }
