@@ -373,7 +373,6 @@ public class IncusClient {
                 .assertSuccess("Failed to push directory to " + container);
     }
 
-
     private String readStream(java.io.InputStream is) throws IOException {
         try (var reader = new BufferedReader(new InputStreamReader(is))) {
             return reader.lines().collect(Collectors.joining("\n"));

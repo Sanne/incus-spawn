@@ -157,7 +157,7 @@ skills:
     - myorg/catalog              # all skills from a repo
 ```
 
-When no catalog `repo` is needed, you can use the list shorthand:
+There is no implicit default catalog -- `repo` is only needed to resolve bare skill names (like `security-review` above). When all entries use the fully qualified `owner/repo@skill` or `owner/repo` form, you can omit `repo` and use the list shorthand:
 
 ```yaml
 skills:
@@ -178,7 +178,7 @@ Skill source formats:
 - `owner/repo` -- all skills from a GitHub repo
 - `https://github.com/owner/repo` -- full GitHub URL
 - `./local-path` -- local directory (always read from disk, not cached)
-- `skill-name` -- bare name; requires `skills.repo` to be set, resolved as `repo@skill-name`. There is no implicit default catalog — omitting `repo` means bare names will fail at build time.
+- `skill-name` -- bare name, resolved as `repo@skill-name` using the `skills.repo` field. There is no built-in default catalog, so bare names require `repo` to be set -- otherwise the build will stop with an error explaining how to fix it.
 
 Skills are fetched on the host at build time and cached at `~/.cache/incus-spawn/skills/`. They are not installed on the host — each SKILL.md is written directly into the container at `~/.claude/skills/<skill-name>/SKILL.md`, the global skills directory that Claude Code reads automatically. Subsequent builds reuse the cached files without hitting the network.
 

@@ -18,13 +18,14 @@ import java.time.Duration;
  */
 public class SkillsCache {
 
-    static final Path CACHE_DIR = Path.of(
-            System.getProperty("user.home"), ".cache", "incus-spawn", "skills");
+    private static Path defaultCacheDir() {
+        return Path.of(System.getProperty("user.home"), ".cache", "incus-spawn", "skills");
+    }
 
     private final Path cacheDir;
 
     public SkillsCache() {
-        this(CACHE_DIR);
+        this(defaultCacheDir());
     }
 
     SkillsCache(Path cacheDir) {
@@ -33,31 +34,64 @@ public class SkillsCache {
 
     /**
      * Fetch a SKILL.md from GitHub, returning its content.
-     * Cached by owner/repo/skillName — served from cache if present.
+     * Cached by owner/repo/skillName. On subsequent calls, a conditional
+     * request (If-None-Match) revalidates the cache without re-downloading
+     * unchanged content.
      */
     public String fetchSkillMd(String ownerRepo, String skillName, HttpClient http)
             throws IOException, InterruptedException {
         var cached = cacheDir.resolve(ownerRepo).resolve(skillName).resolve("SKILL.md");
-        if (Files.exists(cached)) {
+        var etagFile = cacheDir.resolve(ownerRepo).resolve(skillName).resolve(".etag");
+
+        String existingEtag = null;
+        boolean hasCached = Files.exists(cached);
+        if (hasCached && Files.exists(etagFile)) {
+            existingEtag = Files.readString(etagFile).strip();
+        }
+
+        DownloadResult result;
+        try {
+            result = downloadSkillMd(ownerRepo, skillName, http, existingEtag);
+        } catch (IOException e) {
+            if (hasCached) {
+                System.err.println("Warning: could not refresh skill '" + skillName
+                        + "' from " + ownerRepo + " (offline?), using cached version.");
+                return Files.readString(cached);
+            }
+            throw e;
+        }
+        if (result == null) {
             return Files.readString(cached);
         }
 
-        var content = downloadSkillMd(ownerRepo, skillName, http);
         Files.createDirectories(cached.getParent());
-        Files.writeString(cached, content);
-        return content;
+        Files.writeString(cached, result.content());
+        if (result.etag() != null) {
+            Files.writeString(etagFile, result.etag());
+        }
+        return result.content();
     }
 
-    private static String downloadSkillMd(String ownerRepo, String skillName, HttpClient http)
+    private record DownloadResult(String content, String etag) {}
+
+    private static DownloadResult downloadSkillMd(String ownerRepo, String skillName,
+            HttpClient http, String ifNoneMatch)
             throws IOException, InterruptedException {
         for (var branch : new String[]{"main", "master"}) {
             var url = "https://raw.githubusercontent.com/" + ownerRepo + "/" + branch
                     + "/" + skillName + "/SKILL.md";
-            var response = http.send(
-                    HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10)).build(),
-                    HttpResponse.BodyHandlers.ofString());
+            var reqBuilder = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(10));
+            if (ifNoneMatch != null) {
+                reqBuilder.header("If-None-Match", ifNoneMatch);
+            }
+            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 304) {
+                return null;
+            }
             if (response.statusCode() == 200) {
-                return response.body();
+                var etag = response.headers().firstValue("ETag").orElse(null);
+                return new DownloadResult(response.body(), etag);
             }
         }
         throw new IOException("SKILL.md not found in " + ownerRepo + " for skill '" + skillName + "'");

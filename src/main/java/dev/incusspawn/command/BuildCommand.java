@@ -548,6 +548,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     static class BuildFailedException extends RuntimeException {
         final String containerName;
 
+        BuildFailedException() {
+            this(null);
+        }
+
         BuildFailedException(String containerName) {
             super(null, null, true, false);
             this.containerName = containerName;
@@ -596,7 +600,14 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         container.exec("mkdir", "-p", SKILLS_DIR);
 
         for (var entry : skillSources) {
-            var resolved = resolveSkillSource(entry, repo);
+            String resolved;
+            try {
+                resolved = resolveSkillSource(entry, repo);
+            } catch (IllegalArgumentException e) {
+                System.err.println("Error: " + e.getMessage());
+                System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in your image definition.");
+                throw new BuildFailedException();
+            }
             System.out.println("Installing skill: " + resolved + "...");
             try {
                 var skills = fetchSkills(resolved, http, cache);
@@ -606,7 +617,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                     container.writeFile(skillDir + "/SKILL.md", skill.content());
                 }
             } catch (IOException | InterruptedException e) {
-                throw new RuntimeException("Failed to fetch skill '" + resolved + "': " + e.getMessage(), e);
+                System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
+                throw new BuildFailedException();
             }
         }
 
