@@ -1,13 +1,19 @@
 package dev.incusspawn.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +48,8 @@ public class ImageDef {
     private List<String> packages = List.of();
     private List<String> tools = List.of();
     private List<RepoEntry> repos = List.of();
+    @JsonDeserialize(using = SkillsDef.Deserializer.class)
+    private SkillsDef skills = SkillsDef.EMPTY;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -57,6 +65,79 @@ public class ImageDef {
     public void setTools(List<String> tools) { this.tools = tools; }
     public List<RepoEntry> getRepos() { return repos; }
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
+    public SkillsDef getSkills() { return skills; }
+    public void setSkills(SkillsDef skills) { this.skills = skills; }
+
+    /**
+     * Groups the skills catalog repo and skill list under a single {@code skills} key.
+     * <p>
+     * Supports two YAML forms:
+     * <pre>
+     * # Object form (with optional repo):
+     * skills:
+     *   repo: myorg/claude-skills
+     *   list:
+     *     - security-review
+     *     - xixu-me/skills@xget
+     *
+     * # List shorthand (no repo):
+     * skills:
+     *   - xixu-me/skills@xget
+     *   - myorg/catalog
+     * </pre>
+     */
+    public static class SkillsDef {
+        static final SkillsDef EMPTY = new SkillsDef(null, List.of());
+
+        private final String repo;
+        private final List<String> list;
+
+        public SkillsDef(String repo, List<String> list) {
+            this.repo = repo;
+            this.list = list != null ? list : List.of();
+        }
+
+        /** Default skills catalog, used to resolve bare skill names (e.g. {@code security-review}). */
+        public String getRepo() { return repo; }
+
+        /** Skill sources declared in this image. */
+        public List<String> getList() { return list; }
+
+        public static class Deserializer extends StdDeserializer<SkillsDef> {
+            public Deserializer() { super(SkillsDef.class); }
+
+            @Override
+            public SkillsDef deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+                if (p.currentToken() == JsonToken.START_ARRAY) {
+                    // List shorthand: skills: [...]
+                    var items = new ArrayList<String>();
+                    while (p.nextToken() != JsonToken.END_ARRAY) {
+                        items.add(p.getText());
+                    }
+                    return new SkillsDef(null, items);
+                }
+                // Object form: skills: { repo: ..., list: [...] }
+                String repo = null;
+                List<String> list = List.of();
+                while (p.nextToken() != JsonToken.END_OBJECT) {
+                    var field = p.currentName();
+                    p.nextToken();
+                    switch (field) {
+                        case "repo" -> repo = p.getText();
+                        case "list" -> {
+                            var items = new ArrayList<String>();
+                            while (p.nextToken() != JsonToken.END_ARRAY) {
+                                items.add(p.getText());
+                            }
+                            list = items;
+                        }
+                        default -> p.skipChildren();
+                    }
+                }
+                return new SkillsDef(repo, list);
+            }
+        }
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class RepoEntry {

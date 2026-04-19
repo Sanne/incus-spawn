@@ -208,6 +208,122 @@ class BuildCommandTest {
                 "su", "-l", "agentuser", "-c", "cd /home/agentuser/quarkus && mvn -B dependency:go-offline");
     }
 
+    // --- resolveSkillSource ---
+
+    @Test
+    void resolveSkillSourceUrl() {
+        assertEquals("https://github.com/owner/repo",
+                BuildCommand.resolveSkillSource("https://github.com/owner/repo", null));
+    }
+
+    @Test
+    void resolveSkillSourceLocalRelativePath() {
+        assertEquals("./my-local-skills",
+                BuildCommand.resolveSkillSource("./my-local-skills", null));
+    }
+
+    @Test
+    void resolveSkillSourceLocalAbsolutePath() {
+        assertEquals("/opt/skills",
+                BuildCommand.resolveSkillSource("/opt/skills", null));
+    }
+
+    @Test
+    void resolveSkillSourceFullOwnerRepo() {
+        assertEquals("myorg/other-catalog@special-skill",
+                BuildCommand.resolveSkillSource("myorg/other-catalog@special-skill", null));
+    }
+
+    @Test
+    void resolveSkillSourceOwnerRepoNoSkill() {
+        assertEquals("myorg/catalog",
+                BuildCommand.resolveSkillSource("myorg/catalog", null));
+    }
+
+    @Test
+    void resolveSkillSourceShortNameWithRepo() {
+        assertEquals("myorg/claude-skills@security-review",
+                BuildCommand.resolveSkillSource("security-review", "myorg/claude-skills"));
+    }
+
+    @Test
+    void resolveSkillSourceShortNameWithoutRepoThrows() {
+        assertThrows(IllegalArgumentException.class,
+                () -> BuildCommand.resolveSkillSource("security-review", null));
+    }
+
+    @Test
+    void resolveSkillSourceShortNameBlankRepoThrows() {
+        assertThrows(IllegalArgumentException.class,
+                () -> BuildCommand.resolveSkillSource("security-review", ""));
+    }
+
+    // --- collectEffectiveSkills ---
+
+    @Test
+    void collectEffectiveSkillsNoSkills() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-empty");
+        var cmd = new BuildCommand();
+        assertTrue(cmd.collectEffectiveSkills(imageDef, java.util.Map.of()).isEmpty());
+    }
+
+    @Test
+    void collectEffectiveSkillsNoParent() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-root");
+        imageDef.setSkills(new ImageDef.SkillsDef(null, List.of("security-review", "code-review")));
+        var cmd = new BuildCommand();
+        assertEquals(List.of("security-review", "code-review"),
+                cmd.collectEffectiveSkills(imageDef, java.util.Map.of()));
+    }
+
+    @Test
+    void collectEffectiveSkillsDeduplicatesParentSkills() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setSkills(new ImageDef.SkillsDef(null, List.of("security-review")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setSkills(new ImageDef.SkillsDef(null, List.of("security-review", "code-review")));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var cmd = new BuildCommand();
+        var effective = cmd.collectEffectiveSkills(child, defs);
+
+        assertEquals(List.of("code-review"), effective,
+                "security-review already in parent should be excluded");
+    }
+
+    @Test
+    void collectEffectiveSkillsDeduplicatesAcrossGrandparent() {
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-grandparent");
+        grandparent.setSkills(new ImageDef.SkillsDef(null, List.of("base-skill")));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setParent("tpl-grandparent");
+        parent.setSkills(new ImageDef.SkillsDef(null, List.of("parent-skill")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setSkills(new ImageDef.SkillsDef(null, List.of("base-skill", "parent-skill", "child-skill")));
+
+        var defs = java.util.Map.of(
+                "tpl-grandparent", grandparent,
+                "tpl-parent", parent,
+                "tpl-child", child);
+        var cmd = new BuildCommand();
+        var effective = cmd.collectEffectiveSkills(child, defs);
+
+        assertEquals(List.of("child-skill"), effective,
+                "Only child-skill should remain after deduplication");
+    }
+
     @Test
     void cloneReposSkipsPrimeWhenNotSet() {
         var incus = mock(IncusClient.class);

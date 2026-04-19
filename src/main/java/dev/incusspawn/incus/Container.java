@@ -70,6 +70,11 @@ public class Container {
         incus.filePushRecursive(sourceDir, name, destPath);
     }
 
+    /** Push a single file into the container at the exact destination path. */
+    public void filePush(String sourcePath, String destPath) {
+        incus.filePush(sourcePath, name, destPath);
+    }
+
     /** Append a line to agentuser's .bashrc. */
     public void appendToProfile(String line) {
         sh("echo '" + line + "' >> /home/agentuser/.bashrc");

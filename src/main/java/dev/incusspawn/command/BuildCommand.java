@@ -19,8 +19,15 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 
@@ -266,6 +273,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
+        installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
         unmountDnfCache(targetName);
@@ -390,6 +398,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
+        installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
@@ -562,6 +571,197 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
     private void unmountDnfCache(String container) {
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
+    }
+
+    /** Global skills directory for Claude Code inside the container. */
+    private static final String SKILLS_DIR = "/home/agentuser/.claude/skills";
+
+    /**
+     * Install Claude Code skills declared in the image definition.
+     * Fetches SKILL.md files on the host and writes them directly into the container.
+     * Deduplicates against skills already declared by ancestor images.
+     */
+    void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var skillSources = collectEffectiveSkills(imageDef, defs);
+        if (skillSources.isEmpty()) return;
+
+        var repo = imageDef.getSkills().getRepo();
+        var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL).build();
+
+        container.exec("mkdir", "-p", SKILLS_DIR);
+
+        for (var entry : skillSources) {
+            var resolved = resolveSkillSource(entry, repo);
+            System.out.println("Installing skill: " + resolved + "...");
+            try {
+                var skills = fetchSkills(resolved, http);
+                for (var skill : skills) {
+                    var skillDir = SKILLS_DIR + "/" + skill.name();
+                    container.exec("mkdir", "-p", skillDir);
+                    container.writeFile(skillDir + "/SKILL.md", skill.content());
+                }
+            } catch (IOException | InterruptedException e) {
+                throw new RuntimeException("Failed to fetch skill '" + resolved + "': " + e.getMessage(), e);
+            }
+        }
+
+        // Fix ownership so agentuser owns the skills directory
+        container.exec("chown", "-R", "agentuser:agentuser", SKILLS_DIR);
+    }
+
+    /** A fetched skill ready to be written into the container. */
+    record SkillFile(String name, String content) {}
+
+    /**
+     * Fetch one or more SKILL.md files for the given resolved source.
+     * Supports:
+     * <ul>
+     *   <li>{@code owner/repo@skill-name} — single skill from a GitHub repo</li>
+     *   <li>{@code owner/repo} — all skills from a GitHub repo (via Trees API)</li>
+     *   <li>{@code https://github.com/owner/repo} — same as owner/repo</li>
+     *   <li>{@code ./local/path} or {@code /absolute/path} — local directory</li>
+     * </ul>
+     */
+    static List<SkillFile> fetchSkills(String source, HttpClient http)
+            throws IOException, InterruptedException {
+        // Local path
+        if (source.startsWith("./") || source.startsWith("/")) {
+            return fetchLocalSkills(Path.of(source));
+        }
+
+        // Normalise GitHub URL to owner/repo[@skill]
+        var normalised = source;
+        if (normalised.startsWith("https://github.com/")) {
+            normalised = normalised.substring("https://github.com/".length()).replaceAll("\\.git$", "");
+        }
+
+        // owner/repo@skill-name
+        var atIdx = normalised.indexOf('@');
+        if (atIdx >= 0) {
+            var ownerRepo = normalised.substring(0, atIdx);
+            var skillName = normalised.substring(atIdx + 1);
+            return List.of(fetchGitHubSkill(ownerRepo, skillName, http));
+        }
+
+        // owner/repo — fetch all skills via Trees API
+        return fetchAllGitHubSkills(normalised, http);
+    }
+
+    private static SkillFile fetchGitHubSkill(String ownerRepo, String skillName, HttpClient http)
+            throws IOException, InterruptedException {
+        // Try common default branches
+        for (var branch : List.of("main", "master")) {
+            var url = "https://raw.githubusercontent.com/" + ownerRepo + "/" + branch
+                    + "/" + skillName + "/SKILL.md";
+            var response = http.send(
+                    HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 200) {
+                return new SkillFile(skillName, response.body());
+            }
+        }
+        throw new IOException("SKILL.md not found in " + ownerRepo + " for skill '" + skillName + "'");
+    }
+
+    private static List<SkillFile> fetchAllGitHubSkills(String ownerRepo, HttpClient http)
+            throws IOException, InterruptedException {
+        // Use GitHub Trees API to find all SKILL.md files
+        for (var branch : List.of("main", "master")) {
+            var treeUrl = "https://api.github.com/repos/" + ownerRepo + "/git/trees/"
+                    + branch + "?recursive=1";
+            var token = System.getenv("GITHUB_TOKEN");
+            var reqBuilder = HttpRequest.newBuilder(URI.create(treeUrl))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Accept", "application/vnd.github+json");
+            if (token != null && !token.isBlank()) {
+                reqBuilder.header("Authorization", "Bearer " + token);
+            }
+            var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) continue;
+
+            var mapper = new ObjectMapper();
+            var tree = mapper.readTree(response.body()).path("tree");
+            var skills = new ArrayList<SkillFile>();
+            for (var node : tree) {
+                var path = node.path("path").asText();
+                // Match <skill-name>/SKILL.md at the top level only
+                if (path.matches("[^/]+/SKILL\\.md")) {
+                    var skillName = path.substring(0, path.indexOf('/'));
+                    skills.add(fetchGitHubSkill(ownerRepo, skillName, http));
+                }
+            }
+            if (!skills.isEmpty()) return skills;
+        }
+        throw new IOException("No SKILL.md files found in " + ownerRepo);
+    }
+
+    private static List<SkillFile> fetchLocalSkills(Path localPath) throws IOException {
+        if (!Files.isDirectory(localPath)) {
+            throw new IOException("Local skill path is not a directory: " + localPath);
+        }
+        // If there's a SKILL.md directly in this dir, treat it as a single skill
+        var directSkill = localPath.resolve("SKILL.md");
+        if (Files.exists(directSkill)) {
+            return List.of(new SkillFile(localPath.getFileName().toString(),
+                    Files.readString(directSkill)));
+        }
+        // Otherwise scan subdirectories for SKILL.md files
+        var skills = new ArrayList<SkillFile>();
+        try (var entries = Files.list(localPath)) {
+            for (var entry : entries.toList()) {
+                var skillMd = entry.resolve("SKILL.md");
+                if (Files.isDirectory(entry) && Files.exists(skillMd)) {
+                    skills.add(new SkillFile(entry.getFileName().toString(),
+                            Files.readString(skillMd)));
+                }
+            }
+        }
+        if (skills.isEmpty()) {
+            throw new IOException("No SKILL.md files found in " + localPath);
+        }
+        return skills;
+    }
+
+    /**
+     * Collect skills declared in this image, minus any already declared by ancestor images.
+     */
+    List<String> collectEffectiveSkills(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var skills = new java.util.LinkedHashSet<>(imageDef.getSkills().getList());
+        if (skills.isEmpty()) return List.of();
+
+        var ancestorSkills = new java.util.LinkedHashSet<String>();
+        var parentName = imageDef.getParent();
+        while (parentName != null && !parentName.isBlank()) {
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) break;
+            ancestorSkills.addAll(parentDef.getSkills().getList());
+            parentName = parentDef.getParent();
+        }
+        skills.removeAll(ancestorSkills);
+        return new ArrayList<>(skills);
+    }
+
+    /**
+     * Resolve a skill entry to a fully-qualified source string.
+     * <ul>
+     *   <li>Contains {@code ://} or starts with {@code .} or {@code /} → local/URL, pass through</li>
+     *   <li>Contains {@code /} → owner/repo or owner/repo@skill, pass through</li>
+     *   <li>Plain name → prepend {@code skillsRepo@}; throws if no skillsRepo set</li>
+     * </ul>
+     */
+    static String resolveSkillSource(String skill, String skillsRepo) {
+        if (skill.contains("://") || skill.startsWith(".") || skill.startsWith("/")) {
+            return skill;
+        }
+        if (skill.contains("/")) {
+            return skill;
+        }
+        if (skillsRepo == null || skillsRepo.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Skill '" + skill + "' is a short name but no skills.repo is defined in the image definition.");
+        }
+        return skillsRepo + "@" + skill;
     }
 
     /**
