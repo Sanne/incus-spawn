@@ -3,7 +3,6 @@ package dev.incusspawn;
 import dev.incusspawn.command.*;
 import io.quarkus.picocli.runtime.annotations.TopCommand;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.ConfigProvider;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IVersionProvider;
@@ -44,10 +43,11 @@ public class IncusSpawn implements Runnable {
     static class VersionProvider implements IVersionProvider {
         @Override
         public String[] getVersion() {
-            var version = ConfigProvider.getConfig()
-                    .getOptionalValue("quarkus.application.version", String.class)
-                    .orElse("dev");
-            return new String[]{"incus-spawn " + version};
+            var info = BuildInfo.instance();
+            return new String[]{
+                    "incus-spawn " + info.version() + " (" + info.gitSha() + ")",
+                    "incus client " + info.incusClient() + ", server " + info.incusServer()
+            };
         }
     }
 }

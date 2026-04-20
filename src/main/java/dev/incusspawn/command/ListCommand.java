@@ -54,7 +54,7 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, ERROR }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INFO, ERROR }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -265,6 +265,7 @@ public class ListCommand implements Runnable {
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key);
+            case INFO -> { if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) { mode = Mode.BROWSE; } yield true; }
             case ERROR -> { mode = Mode.BROWSE; yield true; }
         };
     }
@@ -278,6 +279,10 @@ public class ListCommand implements Runnable {
         }
         statusMessage = null;
 
+        if (key.isKey(KeyCode.F1)) {
+            mode = Mode.INFO;
+            return true;
+        }
         if (key.isKey(KeyCode.TAB)) {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
@@ -817,7 +822,7 @@ public class ListCommand implements Runnable {
         fillBackground(frame, area, BAR_BG);
 
         var items = new ArrayList<KeyItem>();
-        items.add(makeKey("Tab", "Switch", false));
+        items.add(makeKey("F1", "Info", false));
 
         if (focusedPanel == Panel.TEMPLATES) {
             var template = selectedTemplate();
@@ -910,6 +915,7 @@ public class ListCommand implements Runnable {
             case RENAME -> ModalRenderer.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
+            case INFO -> renderInfoModal(frame, screen);
             case ERROR -> ModalRenderer.renderErrorModal(frame, screen, errorMessage);
             default -> {}
         }
@@ -1048,6 +1054,55 @@ public class ListCommand implements Runnable {
             return true;
         }
         return false;
+    }
+
+    private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var info = dev.incusspawn.BuildInfo.instance();
+        var lines = List.of(
+                Line.from(List.of(
+                        Span.styled("incus-spawn", Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
+                        Span.styled(" (isx) ", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                        Span.styled(info.version(), Style.EMPTY.fg(Color.GREEN).bg(ModalRenderer.BG)))),
+                Line.styled("Commit " + info.gitSha(),
+                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                Line.styled("Incus  client " + info.incusClient() + ", server " + info.incusServer(),
+                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                Line.styled("", Style.EMPTY),
+                Line.styled("Copyright 2026 Sanne Grinovero",
+                        Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("Licensed under the Apache License 2.0",
+                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                Line.styled("github.com/Sanne/incus-spawn",
+                        Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
+                Line.styled("", Style.EMPTY),
+                Line.styled("Manage isolated Incus development environments.",
+                        Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("Use Tab to switch panels, F-keys for actions.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+
+        int width = 52;
+        int height = lines.size() + 5;
+        var modalArea = ModalRenderer.centerRect(screen, width, height);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" About incus-spawn ")
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .build();
+        ModalRenderer.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+        var constraints = new ArrayList<Constraint>();
+        for (int i = 0; i < lines.size(); i++) constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.fill());
+        var rows = Layout.vertical().constraints(constraints).split(inner);
+        for (int i = 0; i < lines.size(); i++) {
+            frame.renderWidget(Paragraph.from(lines.get(i)), rows.get(i));
+        }
+        var hintSpans = new ArrayList<Span>();
+        ModalRenderer.addKey(hintSpans, "F1/Esc", "Close");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
     }
 
     private void renderTemplateDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
