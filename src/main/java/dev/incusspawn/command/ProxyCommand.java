@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.MitmProxy;
 import jakarta.inject.Inject;
@@ -20,8 +21,7 @@ import java.nio.file.Path;
 )
 public class ProxyCommand implements Runnable {
 
-    static Path logFile() { return Path.of(System.getProperty("user.home"),
-            ".local", "state", "incus-spawn", "proxy.log"); }
+    static Path logFile() { return RuntimeConstants.PROXY_LOG_FILE; }
 
     @Option(names = "--port", description = "MITM TLS proxy port (default: ${DEFAULT-VALUE})",
             defaultValue = "18443")

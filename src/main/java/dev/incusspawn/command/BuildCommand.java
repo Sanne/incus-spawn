@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
@@ -67,9 +68,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    // Host-side DNF cache shared across builds to avoid redundant metadata downloads
-    private static Path dnfCacheDir() { return Path.of(System.getProperty("user.home"),
-            ".cache", "incus-spawn", "dnf"); }
+    private static Path dnfCacheDir() { return RuntimeConstants.DNF_CACHE_DIR; }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
 
     @Override

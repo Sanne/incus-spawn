@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -645,8 +646,7 @@ public class InitCommand implements Runnable {
                 WantedBy=default.target
                 """.formatted(isxPath);
 
-        var serviceDir = java.nio.file.Path.of(System.getProperty("user.home"),
-                ".config", "systemd", "user");
+        var serviceDir = RuntimeConstants.SYSTEMD_USER_DIR;
         var serviceFile = serviceDir.resolve("incus-spawn-proxy.service");
         try {
             Files.createDirectories(serviceDir);
@@ -696,7 +696,7 @@ public class InitCommand implements Runnable {
                 return output;
             }
         } catch (Exception ignored) {}
-        var fallback = java.nio.file.Path.of(System.getProperty("user.home"), ".local", "bin", "isx");
+        var fallback = RuntimeConstants.LOCAL_BIN_ISX;
         if (Files.isExecutable(fallback)) {
             return fallback.toString();
         }

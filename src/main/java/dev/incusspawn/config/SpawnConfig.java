@@ -6,6 +6,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
+import dev.incusspawn.RuntimeConstants;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -55,7 +56,7 @@ public class SpawnConfig {
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
 
     public static Path configDir() {
-        return Path.of(System.getProperty("user.home"), ".config", "incus-spawn");
+        return RuntimeConstants.CONFIG_DIR;
     }
 
     /**

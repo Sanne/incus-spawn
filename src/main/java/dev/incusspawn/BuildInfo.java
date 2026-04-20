@@ -2,58 +2,27 @@ package dev.incusspawn;
 
 import java.util.Properties;
 
-import org.eclipse.microprofile.config.ConfigProvider;
+public record BuildInfo(String version, String gitSha, String runtime) {
 
-public record BuildInfo(String version, String gitSha, String incusClient, String incusServer, String runtime) {
+    private static final BuildInfo INSTANCE = new BuildInfo(
+            readProperty("build.properties", "app.version", "dev"),
+            readProperty("git.properties", "git.commit.id", "unknown"),
+            detectRuntime());
 
-    private static volatile BuildInfo instance;
+    public static BuildInfo instance() { return INSTANCE; }
 
-    public static BuildInfo instance() {
-        var result = instance;
-        if (result == null) {
-            synchronized (BuildInfo.class) {
-                result = instance;
-                if (result == null) {
-                    result = load();
-                    instance = result;
-                }
-            }
-        }
-        return result;
-    }
+    public String incusClient() { return RuntimeConstants.INCUS_CLIENT; }
+    public String incusServer() { return RuntimeConstants.INCUS_SERVER; }
 
-    private static BuildInfo load() {
-        var version = ConfigProvider.getConfig()
-                .getOptionalValue("quarkus.application.version", String.class)
-                .orElse("dev");
-        String gitSha = "unknown";
-        try (var is = BuildInfo.class.getClassLoader().getResourceAsStream("git.properties")) {
+    private static String readProperty(String resource, String key, String fallback) {
+        try (var is = BuildInfo.class.getClassLoader().getResourceAsStream(resource)) {
             if (is != null) {
                 var props = new Properties();
                 props.load(is);
-                gitSha = props.getProperty("git.commit.id", "unknown");
+                return props.getProperty(key, fallback);
             }
-        } catch (Exception ignored) {
-        }
-        String incusClient = "unknown";
-        String incusServer = "unknown";
-        try {
-            var pb = new ProcessBuilder("incus", "version");
-            pb.redirectErrorStream(true);
-            var p = pb.start();
-            var output = new String(p.getInputStream().readAllBytes()).strip();
-            if (p.waitFor() == 0 && !output.isEmpty()) {
-                for (var line : output.lines().toList()) {
-                    if (line.startsWith("Client version:")) {
-                        incusClient = line.substring("Client version:".length()).strip();
-                    } else if (line.startsWith("Server version:")) {
-                        incusServer = line.substring("Server version:".length()).strip();
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return new BuildInfo(version, gitSha, incusClient, incusServer, detectRuntime());
+        } catch (Exception ignored) {}
+        return fallback;
     }
 
     private static String detectRuntime() {
