@@ -7,6 +7,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.tamboui.layout.Constraint;
+import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
@@ -809,36 +810,38 @@ public class ListCommand implements Runnable {
         frame.renderStatefulWidget(tableBuilder.build(), area, tableState);
     }
 
+    private record KeyItem(Line line, int width) {}
+
     private void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                 TableState tableState, boolean hasStatus) {
         fillBackground(frame, area, BAR_BG);
 
-        var helpSpans = new ArrayList<Span>();
-        addKey(helpSpans, "Tab", "Switch", false);
+        var items = new ArrayList<KeyItem>();
+        items.add(makeKey("Tab", "Switch", false));
 
         if (focusedPanel == Panel.TEMPLATES) {
             var template = selectedTemplate();
             boolean hasTemplate = template != null;
             boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
-            addKey(helpSpans, "F3", "Details", !hasTemplate);
-            addKey(helpSpans, "F4", "Branch\u2026", !isBuilt);
-            addKey(helpSpans, "F5", "Build", !hasTemplate);
-            addKey(helpSpans, "\u21e7F5", "Build all", false);
-            addKey(helpSpans, "F8", "Destroy\u2026", !isBuilt);
-            addKey(helpSpans, "\u21e7F8", "Destroy all", false);
+            items.add(makeKey("F3", "Details", !hasTemplate));
+            items.add(makeKey("F4", "Branch\u2026", !isBuilt));
+            items.add(makeKey("F5", "Build", !hasTemplate));
+            items.add(makeKey("\u21e7F5", "Build all", false));
+            items.add(makeKey("F8", "Destroy\u2026", !isBuilt));
+            items.add(makeKey("\u21e7F8", "Destroy all", false));
         } else {
             var selected = selectedEntry(tableState);
             boolean hasSelection = selected != null;
             boolean running = hasSelection && isRunning(selected);
-            addKey(helpSpans, "F3", "Shell", !hasSelection);
-            addKey(helpSpans, "F4", "Branch\u2026", !hasSelection);
-            addKey(helpSpans, "F6", "Rename\u2026", !hasSelection);
-            addKey(helpSpans, "F7", "Stop", !running);
-            addKey(helpSpans, "\u21e7F7", "Restart", !running);
-            addKey(helpSpans, "F8", "Destroy\u2026", !hasSelection);
-            addKey(helpSpans, "\u21e7F8", "Destroy all", entries.isEmpty());
+            items.add(makeKey("F3", "Shell", !hasSelection));
+            items.add(makeKey("F4", "Branch\u2026", !hasSelection));
+            items.add(makeKey("F6", "Rename\u2026", !hasSelection));
+            items.add(makeKey("F7", "Stop", !running));
+            items.add(makeKey("\u21e7F7", "Restart", !running));
+            items.add(makeKey("F8", "Destroy\u2026", !hasSelection));
+            items.add(makeKey("\u21e7F8", "Destroy all", entries.isEmpty()));
         }
-        addKey(helpSpans, "F10", "Quit", false);
+        items.add(makeKey("F10", "Quit", false));
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1);
@@ -852,9 +855,23 @@ public class ListCommand implements Runnable {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            frame.renderWidget(Paragraph.from(Line.from(helpSpans)), rows.get(1));
+            renderKeyItems(frame, rows.get(1), items);
         } else {
-            frame.renderWidget(Paragraph.from(Line.from(helpSpans)), area);
+            renderKeyItems(frame, area, items);
+        }
+    }
+
+    private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
+                                 List<KeyItem> items) {
+        var constraints = items.stream()
+                .map(item -> Constraint.length(item.width()))
+                .toArray(Constraint[]::new);
+        var cells = Layout.horizontal()
+                .flex(Flex.SPACE_BETWEEN)
+                .constraints(constraints)
+                .split(area);
+        for (int i = 0; i < items.size(); i++) {
+            frame.renderWidget(Paragraph.from(items.get(i).line()), cells.get(i));
         }
     }
 
@@ -1249,14 +1266,16 @@ public class ListCommand implements Runnable {
     private static final Color BAR_LABEL_FG = Color.BLACK;
     private static final Color BAR_DISABLED_FG = Color.rgb(0, 100, 110);
 
-    private void addKey(List<Span> spans, String key, String label, boolean disabled) {
+    private KeyItem makeKey(String key, String label, boolean disabled) {
+        var spans = new ArrayList<Span>();
         if (disabled) {
-            spans.add(Span.styled(" " + key + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
-            spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
+            spans.add(Span.styled(key, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
+            spans.add(Span.styled(label, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
         } else {
-            spans.add(Span.styled(" " + key + " ", Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
-            spans.add(Span.styled(label + " ", Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
+            spans.add(Span.styled(key, Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
+            spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
+        return new KeyItem(Line.from(spans), key.length() + label.length());
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
