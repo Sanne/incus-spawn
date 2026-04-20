@@ -46,7 +46,8 @@ public class IncusSpawn implements Runnable {
             var info = BuildInfo.instance();
             return new String[]{
                     "incus-spawn " + info.version() + " (" + info.gitSha() + ")",
-                    "incus client " + info.incusClient() + ", server " + info.incusServer()
+                    "incus client " + info.incusClient() + ", server " + info.incusServer(),
+                    info.runtime()
             };
         }
     }

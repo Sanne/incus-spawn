@@ -4,12 +4,22 @@ import java.util.Properties;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 
-public record BuildInfo(String version, String gitSha, String incusClient, String incusServer) {
+public record BuildInfo(String version, String gitSha, String incusClient, String incusServer, String runtime) {
 
-    private static final BuildInfo INSTANCE = load();
+    private static volatile BuildInfo instance;
 
     public static BuildInfo instance() {
-        return INSTANCE;
+        var result = instance;
+        if (result == null) {
+            synchronized (BuildInfo.class) {
+                result = instance;
+                if (result == null) {
+                    result = load();
+                    instance = result;
+                }
+            }
+        }
+        return result;
     }
 
     private static BuildInfo load() {
@@ -43,6 +53,15 @@ public record BuildInfo(String version, String gitSha, String incusClient, Strin
             }
         } catch (Exception ignored) {
         }
-        return new BuildInfo(version, gitSha, incusClient, incusServer);
+        return new BuildInfo(version, gitSha, incusClient, incusServer, detectRuntime());
+    }
+
+    private static String detectRuntime() {
+        var graalVersion = System.getProperty("org.graalvm.version");
+        if (graalVersion != null) {
+            return "native (GraalVM " + graalVersion + ")";
+        }
+        return System.getProperty("java.vm.name", "Unknown JVM")
+                + " " + System.getProperty("java.version", "");
     }
 }

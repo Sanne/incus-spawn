@@ -1067,6 +1067,8 @@ public class ListCommand implements Runnable {
                         Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
                 Line.styled("Incus  client " + info.incusClient() + ", server " + info.incusServer(),
                         Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                Line.styled(info.runtime(),
+                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Copyright 2026 Sanne Grinovero",
                         Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
