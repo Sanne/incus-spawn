@@ -282,7 +282,7 @@ public class IncusClient {
      * Set a config key on a container/VM.
      */
     public void configSet(String name, String key, String value) {
-        exec("config", "set", name, key, value)
+        exec("config", "set", name, key + "=" + value)
                 .assertSuccess("Failed to set config " + key + " on " + name);
     }
 
