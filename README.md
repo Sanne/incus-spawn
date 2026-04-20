@@ -61,7 +61,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
-The proxy must be running for non-airgapped containers: `isx proxy` (run in a separate terminal or as a background service).
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots. Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy --logs`.
 
 ### Network Modes
 
@@ -249,6 +249,7 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **Claude Code integration**: auth via MITM proxy — API key never enters containers
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
+- **Shell completions**: bash, zsh, and fish via `isx completion {bash,zsh,fish}`
 
 ## TUI Keyboard Shortcuts
 
@@ -283,6 +284,7 @@ The TUI has two panels: **Templates** (top) and **Instances** (bottom). Press `T
 |-----|--------|
 | `Tab` | Switch panel |
 | `Up/Down`, `j/k` | Navigate |
+| `F1` | Info |
 | `Ctrl+L` | Refresh |
 | `F10` / `q` | Quit |
 
@@ -302,10 +304,12 @@ The TUI has two panels: **Templates** (top) and **Instances** (bottom). Press `T
 Details that save time and avoid frustration:
 
 - **Shared DNF cache**: building a chain of templates (e.g. `tpl-java` which derives from `tpl-dev` which derives from `tpl-minimal`) mounts a host-side cache (`~/.cache/incus-spawn/dnf`) into each container during the build. DNF metadata and downloaded packages are shared across all builds, so child images don't re-download what the parent just fetched. The cache is unmounted before the image is finalized, keeping templates clean.
-- **Registry blob caching**: the MITM proxy caches OCI container image layers (`~/.cache/incus-spawn/registry/`) by content-addressed SHA256 digest. Pulling the same container image in different branches downloads each layer only once, with integrity verification.
-- **Maven/Gradle artifact caching**: the MITM proxy caches artifacts from Maven Central, Maven repository, and Gradle plugin portal (`~/.cache/incus-spawn/maven/`). Release artifacts are immutable and cached permanently; SNAPSHOT and metadata requests pass through uncached.
+- **Registry blob caching**: the MITM proxy caches OCI container image layers (`~/.cache/incus-spawn/registry/`) by content-addressed SHA256 digest. Pulling the same container image in different branches downloads each layer only once. Each blob is verified against its SHA256 digest before being committed to the cache.
+- **Maven/Gradle artifact caching**: the MITM proxy caches artifacts from Maven Central, Maven repository, and Gradle plugin portal (`~/.cache/incus-spawn/maven/`). Release artifacts are immutable and cached permanently; SNAPSHOT and metadata requests pass through uncached. When artifacts already exist in the host's `~/.m2/repository`, the proxy verifies their SHA1 against the upstream checksum before serving — stale or corrupted local artifacts are never served.
 - **CoW pool auto-creation**: `isx init` creates a btrfs storage pool if no copy-on-write pool exists, so branches are instant from the start.
 - **Sudo ready**: your agents and scripts can invoke sudo at will, no password will be required.
+- **Failed build inspection**: if a template build fails, the container is promoted to an inspectable instance so you can shell in and debug.
+- **Proxy health check**: builds, branches, and shell access verify the proxy is reachable before proceeding, so you get a clear error instead of mysterious connection failures.
 
 ## Installation
 
@@ -362,8 +366,10 @@ This will:
 2. Build a self-contained uber-jar (for JBang users)
 3. Build a native binary via container-based GraalVM compilation
 4. Create a GitHub Release with auto-generated release notes and both artifacts attached
+5. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
+6. Bump the POM version to the next snapshot
 
-Users can then install or update via `curl -fsSL .../get-isx.sh | sh` (native) or `jbang app install isx@Sanne/incus-spawn` (JVM).
+Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
 
 ## Configuration
 
