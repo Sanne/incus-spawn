@@ -608,6 +608,11 @@ public class InitCommand implements Runnable {
     }
 
     private boolean offerProxyService() {
+        if (isProxyServiceActive()) {
+            System.out.println();
+            System.out.println("  Proxy service is already running.");
+            return true;
+        }
         System.out.println();
         System.out.println("  Optional: install the proxy as a systemd service so it starts");
         System.out.println("  automatically and survives reboots.");
@@ -621,6 +626,18 @@ public class InitCommand implements Runnable {
             return false;
         }
         return installProxyService();
+    }
+
+    private static boolean isProxyServiceActive() {
+        try {
+            var pb = new ProcessBuilder("systemctl", "--user", "is-active", "incus-spawn-proxy");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            return process.waitFor() == 0 && "active".equals(output);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean installProxyService() {
