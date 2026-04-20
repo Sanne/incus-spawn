@@ -47,6 +47,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Publish to COPR
+        continue-on-error: true
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sudo apt-get install -y -qq rpm > /dev/null
+          pip install --quiet copr-cli
+          mkdir -p ~/.config
+          printf '[copr-cli]\nlogin = %s\nusername = %s\ntoken = %s\ncopr_url = https://copr.fedorainfracloud.org\n' \
+            "$COPR_LOGIN" "$COPR_USERNAME" "$COPR_TOKEN" > ~/.config/copr
+          CHANGELOG="* $(date +'%a %b %d %Y') Sanne Grinovero <sanne@hibernate.org> - ${VERSION}-1\n- See https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
+          sed -e "s/@VERSION@/$VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
+          mkdir -p ~/rpmbuild/{SOURCES,SPECS}
+          cp target/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
+          cp /tmp/incus-spawn.spec ~/rpmbuild/SPECS/
+          rpmbuild -bs ~/rpmbuild/SPECS/incus-spawn.spec
+          copr-cli build incus-spawn ~/rpmbuild/SRPMS/incus-spawn-*.src.rpm
+        env:
+          COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
+          COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
+          COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
+
       - name: Bump POM to next snapshot
         run: |
           VERSION=${GITHUB_REF_NAME#v}

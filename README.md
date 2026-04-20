@@ -14,14 +14,13 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 ## Requirements
 
 - **Linux** -- Incus system containers require a Linux kernel. macOS and Windows are not yet supported but are on the roadmap (likely via a managed Linux VM).
-- **[JBang](https://www.jbang.dev/)** -- used to install and run incus-spawn. Alternatively, build from source with `./install.sh --native` for a standalone native binary that needs neither JBang nor a JVM
 - **[Incus](https://linuxcontainers.org/incus/)** -- `isx init` auto-installs via the detected package manager (`dnf`, `apt`, `zypper`, or `pacman`); on other distros, install manually before running init
 
 ## Quick Start
 
 ```shell
-# Install via JBang
-jbang app install isx@Sanne/incus-spawn
+# Install
+curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
 
 # One-time host setup (Incus, firewall, auth)
 isx init
@@ -32,6 +31,8 @@ isx build tpl-java
 # Launch the interactive TUI
 isx
 ```
+
+Fedora users can also install via `dnf`, and JBang users via `jbang` — see [Installation](#installation) for all options.
 
 ## Branching
 
@@ -308,21 +309,28 @@ Details that save time and avoid frustration:
 
 ## Installation
 
-### Native binary (recommended, Linux x86_64)
+### Fedora (DNF)
+
+```shell
+sudo dnf copr enable sanne/incus-spawn
+sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
+sudo dnf install incus-spawn
+```
+
+Updates automatically with `sudo dnf upgrade`.
+
+### Any Linux distro (native binary)
 
 ```shell
 curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
 ```
 
-Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location.
+Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location. To update, re-run the same command.
 
 ### JVM via JBang
 
 ```shell
 jbang app install isx@Sanne/incus-spawn
-
-# Or install directly from the latest release
-jbang app install --name isx https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar
 ```
 
 ## Building from source
@@ -337,7 +345,7 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 
 # Install locally
 ./install.sh            # JVM
-./install.sh --native   # native (requires GraalVM)
+./install.sh --native   # native (requires Docker, Podman, or GraalVM)
 ```
 
 ## Releasing
