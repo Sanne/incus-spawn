@@ -1182,6 +1182,11 @@ public class ListCommand implements Runnable {
         }
         lines.add(Line.styled("", lineStyle));
 
+        // Source
+        lines.add(Line.from(List.of(
+                Span.styled("Source:     ", labelStyle),
+                Span.styled(current.getSource(), dimStyle))));
+
         // Base image
         var root = chain.get(0);
         lines.add(Line.from(List.of(
@@ -1265,6 +1270,9 @@ public class ListCommand implements Runnable {
                 nameSpans.add(Span.styled("  " + def.getImage(), dimStyle));
             }
             lines.add(Line.from(nameSpans));
+
+            // Source
+            lines.add(Line.styled(contentIndent + def.getSource(), dimStyle));
 
             // Description
             if (!def.getDescription().isEmpty()) {

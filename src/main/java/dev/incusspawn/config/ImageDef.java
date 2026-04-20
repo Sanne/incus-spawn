@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
@@ -53,6 +54,9 @@ public class ImageDef {
     @JsonDeserialize(using = SkillsDef.Deserializer.class)
     private SkillsDef skills = SkillsDef.EMPTY;
 
+    @JsonIgnore
+    private String source = "unknown";
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getDescription() { return description; }
@@ -69,6 +73,8 @@ public class ImageDef {
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
     public SkillsDef getSkills() { return skills; }
     public void setSkills(SkillsDef skills) { this.skills = skills; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
 
     /**
      * Groups the skills catalog repo and skill list under a single {@code skills} key.
@@ -204,6 +210,7 @@ public class ImageDef {
         for (var filename : BUILTIN_FILES) {
             var def = loadResource(RESOURCE_DIR + filename);
             if (def != null) {
+                def.setSource("built-in");
                 defs.put(def.getName(), def);
             }
         }
@@ -222,6 +229,7 @@ public class ImageDef {
                         try (var is = Files.newInputStream(path)) {
                             var def = YAML.readValue(is, ImageDef.class);
                             if (def.getName() != null) {
+                                def.setSource(path.toString());
                                 defs.put(def.getName(), def);
                             }
                         } catch (IOException e) {
