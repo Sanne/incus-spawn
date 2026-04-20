@@ -308,8 +308,17 @@ Details that save time and avoid frustration:
 
 ## Installation
 
+### Native binary (recommended, Linux x86_64)
+
 ```shell
-# Install via JBang (recommended)
+curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
+```
+
+Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location.
+
+### JVM via JBang
+
+```shell
 jbang app install isx@Sanne/incus-spawn
 
 # Or install directly from the latest release
@@ -342,10 +351,11 @@ git push origin v0.1.0
 
 This will:
 1. Set the project version from the tag (e.g. `v0.1.0` becomes `0.1.0`)
-2. Build a self-contained uber-jar
-3. Create a GitHub Release with auto-generated release notes and the jar attached
+2. Build a self-contained uber-jar (for JBang users)
+3. Build a native binary via container-based GraalVM compilation
+4. Create a GitHub Release with auto-generated release notes and both artifacts attached
 
-Users can then install or update via `jbang app install isx@Sanne/incus-spawn`.
+Users can then install or update via `curl -fsSL .../get-isx.sh | sh` (native) or `jbang app install isx@Sanne/incus-spawn` (JVM).
 
 ## Configuration
 

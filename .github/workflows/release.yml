@@ -29,12 +29,21 @@ jobs:
           mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false
 
       - name: Build uber-jar
-        run: mvn package -Prelease -DskipTests
+        run: |
+          mvn package -Prelease -DskipTests
+          cp target/incus-spawn-*-runner.jar target/incus-spawn-runner.jar
+
+      - name: Build native image
+        run: |
+          mvn package -Dnative -Dquarkus.native.container-build=true -DskipTests
+          cp target/incus-spawn-*-runner target/incus-spawn-linux-amd64
 
       - name: Create GitHub Release
         run: |
-          cp target/incus-spawn-*-runner.jar target/incus-spawn-runner.jar
-          gh release create $GITHUB_REF_NAME target/incus-spawn-runner.jar --generate-notes
+          gh release create $GITHUB_REF_NAME \
+            target/incus-spawn-runner.jar \
+            target/incus-spawn-linux-amd64 \
+            --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
