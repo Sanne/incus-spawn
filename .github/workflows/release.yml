@@ -16,9 +16,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install JDK 17
+      - name: Install JDK 25
         run: |
-          curl -sL https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse -o jdk.tar.gz
+          curl -sL https://api.adoptium.net/v3/binary/latest/25/ea/linux/x64/jdk/hotspot/normal/eclipse -o jdk.tar.gz
           mkdir -p $HOME/jdk && tar xzf jdk.tar.gz -C $HOME/jdk --strip-components=1
           echo "$HOME/jdk/bin" >> $GITHUB_PATH
           echo "JAVA_HOME=$HOME/jdk" >> $GITHUB_ENV
