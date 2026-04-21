@@ -17,6 +17,8 @@ public final class RuntimeConstants {
     public static final Path SYSTEMD_USER_DIR = HOME.resolve(".config/systemd/user");
     public static final Path LOCAL_BIN_ISX = HOME.resolve(".local/bin/isx");
     public static final Path PROXY_LOG_FILE = HOME.resolve(".local/state/incus-spawn/proxy.log");
+    public static final String PROXY_SERVICE_NAME = "incus-spawn-proxy";
+    public static final Path PROXY_SERVICE_FILE = SYSTEMD_USER_DIR.resolve(PROXY_SERVICE_NAME + ".service");
 
     public static final String INCUS_CLIENT;
     public static final String INCUS_SERVER;
