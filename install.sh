@@ -11,7 +11,12 @@ if [ "$1" = "--native" ]; then
     "$SCRIPT_DIR/mvnw" package -Dnative -Dquarkus.native.container-build=true -DskipTests -q
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
     mkdir -p "$INSTALL_DIR"
-    cp "$SCRIPT_DIR"/target/incus-spawn-*-runner "$INSTALL_DIR/$BINARY_NAME"
+    RUNNER=$(ls -t "$SCRIPT_DIR"/target/incus-spawn-*-runner 2>/dev/null | head -1)
+    if [ -z "$RUNNER" ]; then
+        echo "Error: no native runner found in target/"
+        exit 1
+    fi
+    cp "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 else
     echo "Building JVM package..."
