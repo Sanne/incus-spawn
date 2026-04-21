@@ -26,6 +26,9 @@ import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
+import dev.tamboui.widgets.scrollbar.Scrollbar;
+import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
+import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.table.TableState;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
@@ -81,6 +84,8 @@ public class ListCommand implements Runnable {
     private int detailScrollOffset;
     // Instance detail modal state
     private int instanceDetailScrollOffset;
+    // Info modal state
+    private int infoScrollOffset;
 
     private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE }
     private PendingAction pendingAction = PendingAction.NONE;
@@ -273,7 +278,7 @@ public class ListCommand implements Runnable {
             case RENAME -> handleRenameEvent(key, tui, tableState);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
-            case INFO -> { if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) { mode = Mode.BROWSE; } yield true; }
+            case INFO -> handleInfoEvent(key);
             case ERROR -> { mode = Mode.BROWSE; yield true; }
         };
     }
@@ -288,6 +293,7 @@ public class ListCommand implements Runnable {
         statusMessage = null;
 
         if (key.isKey(KeyCode.F1)) {
+            infoScrollOffset = 0;
             mode = Mode.INFO;
             return true;
         }
@@ -874,10 +880,9 @@ public class ListCommand implements Runnable {
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                  List<KeyItem> items) {
         var constraints = items.stream()
-                .map(item -> Constraint.length(item.width()))
+                .map(item -> Constraint.ratio(1, items.size()))
                 .toArray(Constraint[]::new);
         var cells = Layout.horizontal()
-                .flex(Flex.SPACE_BETWEEN)
                 .constraints(constraints)
                 .split(area);
         for (int i = 0; i < items.size(); i++) {
@@ -1109,6 +1114,30 @@ public class ListCommand implements Runnable {
         return false;
     }
 
+    private boolean handleInfoEvent(KeyEvent key) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            infoScrollOffset++;
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            if (infoScrollOffset > 0) infoScrollOffset--;
+            return true;
+        }
+        if (key.isKey(KeyCode.HOME)) {
+            infoScrollOffset = 0;
+            return true;
+        }
+        if (key.isKey(KeyCode.END)) {
+            infoScrollOffset = Integer.MAX_VALUE;
+            return true;
+        }
+        return true;
+    }
+
     private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var info = dev.incusspawn.BuildInfo.instance();
         var lines = List.of(
@@ -1135,13 +1164,24 @@ public class ListCommand implements Runnable {
                 Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
                 Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
                 Line.styled("", Style.EMPTY),
-                Line.styled("Use Tab to switch panels, F-keys for actions.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                Line.styled("Hold Shift with F5/F7/F8 for bulk variants", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                Line.styled("(Build all, Restart, Destroy all).", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+                Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("", Style.EMPTY),
+                shortcutRow("Tab", "Switch panels", null, null),
+                shortcutRow("F1", "This dialog", null, null),
+                shortcutRow("F2", "Shell into instance", null, null),
+                shortcutRow("F3", "View details", null, null),
+                shortcutRow("F4", "Branch", null, null),
+                shortcutRow("F5", "Build template", "⇧F5", "Build all"),
+                shortcutRow("F6", "Rename instance", null, null),
+                shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
+                shortcutRow("F8", "Destroy", "⇧F8", "Destroy all"),
+                shortcutRow("F10", "Quit", null, null));
 
         int width = 52;
-        int height = lines.size() + 5;
-        var modalArea = ModalRenderer.centerRect(screen, width, height);
+        int maxHeight = screen.height() - 2;
+        int modalHeight = Math.min(lines.size() + 4, maxHeight);
+
+        var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(" About incus-spawn ")
@@ -1150,17 +1190,69 @@ public class ListCommand implements Runnable {
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
-        var constraints = new ArrayList<Constraint>();
-        for (int i = 0; i < lines.size(); i++) constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.fill());
-        var rows = Layout.vertical().constraints(constraints).split(inner);
-        for (int i = 0; i < lines.size(); i++) {
-            frame.renderWidget(Paragraph.from(lines.get(i)), rows.get(i));
-        }
+
+        var rows = Layout.vertical()
+                .constraints(Constraint.fill(), Constraint.length(1))
+                .split(inner);
+
+        infoScrollOffset = renderScrollableContent(frame, rows.get(0), lines, infoScrollOffset);
+
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "F1/Esc", "Close");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+    }
+
+    private int renderScrollableContent(dev.tamboui.terminal.Frame frame,
+                                        dev.tamboui.layout.Rect contentArea,
+                                        List<Line> contentLines, int scrollOffset) {
+        boolean needsScroll = contentLines.size() > contentArea.height();
+        dev.tamboui.layout.Rect textArea;
+        dev.tamboui.layout.Rect scrollbarArea;
+        if (needsScroll) {
+            var cols = Layout.horizontal()
+                    .constraints(Constraint.fill(), Constraint.length(1))
+                    .split(contentArea);
+            textArea = cols.get(0);
+            scrollbarArea = cols.get(1);
+        } else {
+            textArea = contentArea;
+            scrollbarArea = null;
+        }
+
+        int visibleHeight = textArea.height();
+        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
+        scrollOffset = Math.min(scrollOffset, maxScroll);
+
+        var visibleLines = contentLines.subList(
+                scrollOffset,
+                Math.min(scrollOffset + visibleHeight, contentLines.size()));
+        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), textArea);
+
+        if (scrollbarArea != null) {
+            var scrollbar = Scrollbar.builder()
+                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
+                    .thumbStyle(Style.EMPTY.fg(ModalRenderer.ACCENT))
+                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
+                    .style(Style.EMPTY.bg(ModalRenderer.BG))
+                    .build();
+            var state = new ScrollbarState()
+                    .contentLength(contentLines.size())
+                    .viewportContentLength(visibleHeight)
+                    .position(scrollOffset);
+            frame.renderStatefulWidget(scrollbar, scrollbarArea, state);
+        }
+        return scrollOffset;
+    }
+
+    private static Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
+        var spans = new ArrayList<Span>();
+        spans.add(Span.styled(String.format("  %-5s", key), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+        spans.add(Span.styled(String.format("%-18s", desc), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+        if (shiftKey != null) {
+            spans.add(Span.styled(String.format("%-5s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+            spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+        }
+        return Line.from(spans);
     }
 
     private void renderTemplateDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
@@ -1195,21 +1287,11 @@ public class ListCommand implements Runnable {
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        int visibleHeight = rows.get(0).height();
-        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
-        detailScrollOffset = Math.min(detailScrollOffset, maxScroll);
-
-        var visibleLines = contentLines.subList(
-                detailScrollOffset,
-                Math.min(detailScrollOffset + visibleHeight, contentLines.size()));
-        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), rows.get(0));
+        detailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, detailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
         ModalRenderer.addKey(hintSpans, "F4", "Edit");
-        if (contentLines.size() > visibleHeight) {
-            ModalRenderer.addKey(hintSpans, "\u2191\u2193", "Scroll");
-        }
         ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
@@ -1243,20 +1325,10 @@ public class ListCommand implements Runnable {
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        int visibleHeight = rows.get(0).height();
-        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
-        instanceDetailScrollOffset = Math.min(instanceDetailScrollOffset, maxScroll);
-
-        var visibleLines = contentLines.subList(
-                instanceDetailScrollOffset,
-                Math.min(instanceDetailScrollOffset + visibleHeight, contentLines.size()));
-        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), rows.get(0));
+        instanceDetailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "F2", "Shell");
-        if (contentLines.size() > visibleHeight) {
-            ModalRenderer.addKey(hintSpans, "↑↓", "Scroll");
-        }
         ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
@@ -1515,9 +1587,11 @@ public class ListCommand implements Runnable {
     private static final Color BAR_KEY_FG = Color.WHITE;
     private static final Color BAR_LABEL_FG = Color.BLACK;
     private static final Color BAR_DISABLED_FG = Color.rgb(0, 100, 110);
+    private static final Color BAR_SEPARATOR_FG = Color.rgb(0, 140, 150);
 
     private KeyItem makeKey(String key, String label, boolean disabled) {
         var spans = new ArrayList<Span>();
+        spans.add(Span.styled("│", Style.EMPTY.fg(BAR_SEPARATOR_FG).bg(BAR_BG)));
         if (disabled) {
             spans.add(Span.styled(key, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
             spans.add(Span.styled(label, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
@@ -1525,7 +1599,7 @@ public class ListCommand implements Runnable {
             spans.add(Span.styled(key, Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
             spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
-        return new KeyItem(Line.from(spans), key.length() + label.length());
+        return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
