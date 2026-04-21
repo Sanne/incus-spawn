@@ -179,10 +179,35 @@ public class CompletionCommand implements Runnable {
             }
 
             _isx_proxy() {
-              _arguments \\
+              local state line; typeset -A opt_args
+              _arguments -C \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '--port=[MITM TLS proxy port]:port' \\
-                '--health-port=[Health check HTTP port]:port'
+                '1: :->subcmd' \\
+                '*:: :->args'
+
+              local -a _proxy_subcmds
+              _proxy_subcmds=(
+                'start:start the MITM authentication proxy'
+                'stop:stop the proxy'
+                'status:check if the proxy is running'
+                'install:install the proxy as a systemd user service'
+                'uninstall:stop and remove the systemd proxy service'
+                'logs:follow the proxy log file in real time'
+              )
+
+              case $state in
+                subcmd) _describe -t subcmds 'proxy subcommand' _proxy_subcmds ;;
+                args)
+                  case $line[1] in
+                    start)
+                      _arguments \\
+                        '(-h --help)'{-h,--help}'[Show help]' \\
+                        '--port=[MITM TLS proxy port]:port' \\
+                        '--health-port=[Health check HTTP port]:port' ;;
+                    stop|status|install|uninstall|logs)
+                      _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
+                  esac ;;
+              esac
             }
 
             _isx_completion() {
@@ -214,7 +239,7 @@ public class CompletionCommand implements Runnable {
                     'list:list all incus-spawn environments'
                     'destroy:destroy a clone environment'
                     'update-all:update all templates (packages, git repos, dependencies)'
-                    'proxy:start the MITM authentication proxy'
+                    'proxy:manage the MITM authentication proxy'
                     'completion:print shell completion script'
                     'templates:manage template definitions'
                     'instances:list connectable instance names'
@@ -351,7 +376,22 @@ public class CompletionCommand implements Runnable {
                   fi
                   ;;
                 proxy)
-                  COMPREPLY=( $(compgen -W "--help --port --health-port" -- "$cur") )
+                  local proxy_subcmds="start stop status install uninstall logs"
+                  local proxy_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      start|stop|status|install|uninstall|logs) proxy_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  if [[ -z "$proxy_cmd" ]]; then
+                    COMPREPLY=( $(compgen -W "$proxy_subcmds --help" -- "$cur") )
+                  else
+                    case "$proxy_cmd" in
+                      start) COMPREPLY=( $(compgen -W "--help --port --health-port" -- "$cur") ) ;;
+                      *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
+                    esac
+                  fi
                   ;;
                 completion)
                   case "$prev" in
@@ -431,7 +471,7 @@ public class CompletionCommand implements Runnable {
             complete -c isx -f -n __isx_no_subcommand -a list         -d 'List all incus-spawn environments'
             complete -c isx -f -n __isx_no_subcommand -a destroy      -d 'Destroy a clone environment'
             complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
-            complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Start the MITM authentication proxy'
+            complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
             complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
@@ -492,8 +532,15 @@ public class CompletionCommand implements Runnable {
 
             # ── proxy ────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand proxy' -l port        -d 'MITM TLS proxy port'
-            complete -c isx -f -n '__isx_using_subcommand proxy' -l health-port -d 'Health check HTTP port'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
+
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
 
             # ── completion ───────────────────────────────────────────────────────────────
 
