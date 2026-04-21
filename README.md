@@ -351,15 +351,16 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 
 ## Releasing
 
-Releases are automated via GitHub Actions. To create a new release:
+Releases are automated via GitHub Actions. To create a new release, run:
 
 ```shell
-git tag v0.1.0
-git push origin v0.1.0
+./release.sh
 ```
 
-This will:
-1. Set the project version from the tag (e.g. `v0.1.0` becomes `0.1.0`)
+The script derives the version from the POM snapshot (e.g. `0.1.9-SNAPSHOT` → `v0.1.9`), validates the working tree, creates the tag, and pushes it. You can also pass an explicit version: `./release.sh 0.2.0`.
+
+Pushing the tag triggers a workflow that will:
+1. Set the project version from the tag
 2. Build a self-contained uber-jar (for JBang users)
 3. Build a native binary via container-based GraalVM compilation
 4. Create a GitHub Release with auto-generated release notes and both artifacts attached
