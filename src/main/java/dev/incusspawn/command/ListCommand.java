@@ -80,7 +80,7 @@ public class ListCommand implements Runnable {
     private boolean detailViewCompact = true;
     private int detailScrollOffset;
 
-    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE }
+    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
     // After returning from a shell/branch, focus this instance in the instances panel
@@ -206,6 +206,11 @@ public class ListCommand implements Runnable {
                         statusMessage = "Failed to build " + pendingActionTarget + ": " + e.getMessage();
                     }
                 }
+                case EDIT_TEMPLATE -> {
+                    returnToTemplate = pendingActionTarget;
+                    new picocli.CommandLine(TemplatesCommand.Edit.class, factory)
+                            .execute(pendingActionTarget);
+                }
                 case NONE -> { return; }
             }
         }
@@ -264,7 +269,7 @@ public class ListCommand implements Runnable {
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
-            case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key);
+            case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INFO -> { if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) { mode = Mode.BROWSE; } yield true; }
             case ERROR -> { mode = Mode.BROWSE; yield true; }
         };
@@ -1027,9 +1032,19 @@ public class ListCommand implements Runnable {
 
     // --- Template detail modal ---
 
-    private boolean handleTemplateDetailEvent(KeyEvent key) {
+    private boolean handleTemplateDetailEvent(KeyEvent key, TuiRunner tui) {
         if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F3)) {
             mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.F4)) {
+            var template = selectedTemplate();
+            if (template != null) {
+                pendingAction = PendingAction.EDIT_TEMPLATE;
+                pendingActionTarget = template.name;
+                mode = Mode.BROWSE;
+                tui.quit();
+            }
             return true;
         }
         if (key.isKey(KeyCode.TAB)) {
@@ -1150,6 +1165,7 @@ public class ListCommand implements Runnable {
 
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
+        ModalRenderer.addKey(hintSpans, "F4", "Edit");
         if (contentLines.size() > visibleHeight) {
             ModalRenderer.addKey(hintSpans, "\u2191\u2193", "Scroll");
         }

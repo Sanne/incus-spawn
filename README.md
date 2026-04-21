@@ -100,6 +100,23 @@ Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own b
 You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)); this is useful to version your templates in a separate git project.
 Later sources override earlier ones: built-in → user → search paths → project-local.
 
+Use `isx templates` to manage templates from the CLI:
+
+```shell
+# List all available templates
+isx templates list
+isx templates list -v          # with source path and description
+
+# Create a new template (opens in $EDITOR with a commented skeleton)
+isx templates new my-app       # creates ~/.config/incus-spawn/images/my-app.yaml
+isx templates new my-app --project  # creates .incus-spawn/images/my-app.yaml
+
+# Edit an existing template
+isx templates edit tpl-java    # opens in $EDITOR, validates on save
+```
+
+Editing a built-in template automatically creates a user-level override in `~/.config/incus-spawn/images/`. The override takes precedence over the built-in but will not auto-update with isx upgrades. Templates are validated after editing: YAML syntax, required fields, and parent references are checked.
+
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/43`)
 - `parent` -- parent image name (omit for root images)
@@ -250,6 +267,34 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 - **Shell completions**: bash, zsh, and fish via `isx completion {bash,zsh,fish}`
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `isx` | Launch the interactive TUI |
+| `isx init` | One-time host setup (Incus, firewall, auth) |
+| `isx build <template>` | Build or rebuild a template image |
+| `isx build --all` | Rebuild all discovered templates |
+| `isx build --missing` | Build only templates that don't exist yet |
+| `isx branch <name>` | Create a CoW clone from a template or instance |
+| `isx shell <instance>` | Open a shell in an instance |
+| `isx destroy <instance>` | Destroy an instance |
+| `isx update-all` | Update all templates (packages, repos, tools) |
+| `isx templates` | List available templates |
+| `isx templates list -v` | List templates with source and description |
+| `isx templates new <name>` | Create a new template definition |
+| `isx templates edit <name>` | Edit a template in `$EDITOR` |
+| `isx project create <name>` | Create a project template from `incus-spawn.yaml` |
+| `isx project update <name>` | Update an existing project template |
+| `isx proxy start` | Start the MITM auth proxy |
+| `isx proxy stop` | Stop the proxy |
+| `isx proxy status` | Show proxy status |
+| `isx proxy install` | Install proxy as a systemd user service |
+| `isx proxy logs` | View proxy logs |
+| `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
+
+Use `isx <command> --help` for detailed options on any command.
 
 ## Small Luxuries
 

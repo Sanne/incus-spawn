@@ -70,10 +70,37 @@ public class CompletionCommand implements Runnable {
               _describe -t instances 'instance' instances
             }
 
-            _isx_templates() {
+            _isx_template_names() {
               local -a templates
               templates=(${(f)"$(isx templates 2>/dev/null)"})
               _describe -t templates 'template' templates
+            }
+
+            _isx_templates() {
+              local state line; typeset -A opt_args
+              _arguments -C \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1: :->subcmd' \\
+                '*:: :->args'
+
+              local -a _tpl_subcmds
+              _tpl_subcmds=(
+                'list:list available template names'
+                'edit:edit a template definition'
+                'new:create a new template definition'
+              )
+
+              case $state in
+                subcmd)
+                  _describe -t subcmds 'templates subcommand' _tpl_subcmds
+                  _isx_template_names ;;
+                args)
+                  case $line[1] in
+                    edit) _arguments '1:template:_isx_template_names' ;;
+                    new)  _arguments '--project[Create in project-local directory]' '1:name' ;;
+                    list) _arguments '(-v --verbose)'{-v,--verbose}'[Show source and description]' ;;
+                  esac ;;
+              esac
             }
 
             _isx_branch() {
@@ -98,7 +125,7 @@ public class CompletionCommand implements Runnable {
                 '--missing[Build only templates that don'"'"'t exist yet]' \\
                 '--vm[Build as a VM instead of a container]' \\
                 '--yes[Skip interactive confirmations]' \\
-                '1::template name:_isx_templates'
+                '1::template name:_isx_template_names'
             }
 
             _isx_destroy() {
@@ -189,7 +216,7 @@ public class CompletionCommand implements Runnable {
                     'update-all:update all templates (packages, git repos, dependencies)'
                     'proxy:start the MITM authentication proxy'
                     'completion:print shell completion script'
-                    'templates:list available template names'
+                    'templates:manage template definitions'
                     'instances:list connectable instance names'
                   )
                   _describe -t commands 'isx command' cmds ;;
@@ -206,7 +233,7 @@ public class CompletionCommand implements Runnable {
                     project)    _isx_project ;;
                     proxy)      _isx_proxy ;;
                     completion) _isx_completion ;;
-                    templates)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
+                    templates)  _isx_templates ;;
                     instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                   esac ;;
               esac
@@ -334,7 +361,33 @@ public class CompletionCommand implements Runnable {
                   esac
                   COMPREPLY=( $(compgen -W "--help --install" -- "$cur") )
                   ;;
-                init|update-all|templates|instances)
+                templates)
+                  local tpl_subcmds="list edit new"
+                  local tpl_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      list|edit|new) tpl_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  if [[ -z "$tpl_cmd" ]]; then
+                    COMPREPLY=( $(compgen -W "$tpl_subcmds $(_isx_list_templates) --help" -- "$cur") )
+                  else
+                    case "$tpl_cmd" in
+                      list) COMPREPLY=( $(compgen -W "--help --verbose -v" -- "$cur") ) ;;
+                      edit)
+                        case "$prev" in
+                          edit)
+                            COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help" -- "$cur") )
+                            return ;;
+                        esac
+                        COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                        ;;
+                      new) COMPREPLY=( $(compgen -W "--help --project" -- "$cur") ) ;;
+                    esac
+                  fi
+                  ;;
+                init|update-all|instances)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
               esac
@@ -380,7 +433,7 @@ public class CompletionCommand implements Runnable {
             complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
             complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Start the MITM authentication proxy'
             complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
-            complete -c isx -f -n __isx_no_subcommand -a templates    -d 'List available template names'
+            complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
 
             # ── branch ───────────────────────────────────────────────────────────────────
@@ -425,6 +478,17 @@ public class CompletionCommand implements Runnable {
             complete -c isx -F -n '__isx_using_subcommand project; and __isx_using_subcommand create' -l config -d 'Path to incus-spawn.yaml'
             complete -c isx -F -n '__isx_using_subcommand project; and __isx_using_subcommand update' -l config -d 'Path to incus-spawn.yaml'
             complete -c isx -f -n '__isx_using_subcommand project; and __isx_using_subcommand update' -a '(__isx_instances)' -d 'Project template name'
+
+            # ── templates ────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a list -d 'List available template names'
+            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a edit -d 'Edit a template definition'
+            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a new  -d 'Create a new template definition'
+            complete -c isx -f -n '__isx_using_subcommand templates; and not string match -qr -- "\\b(list|edit|new)\\b" (commandline -opc)' -a '(__isx_templates)' -d 'Template name'
+
+            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
+            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand edit' -a '(__isx_templates)' -d 'Template name'
+            complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand new' -l project -d 'Create in project-local directory'
 
             # ── proxy ────────────────────────────────────────────────────────────────────
 

@@ -41,8 +41,25 @@ public class ImageDef {
             "minimal.yaml", "dev.yaml", "java.yaml"
     );
 
-    private static Path userImagesDir() { return SpawnConfig.configDir().resolve("images"); }
     private static final Path PROJECT_IMAGES_DIR = Path.of(".incus-spawn/images");
+
+    public static Path userImagesDir() { return SpawnConfig.configDir().resolve("images"); }
+
+    public static Path projectImagesDir() { return PROJECT_IMAGES_DIR; }
+
+    /**
+     * Parse an image definition from a YAML file on disk.
+     */
+    public static ImageDef parseFile(Path file) throws IOException {
+        return YAML.readValue(file.toFile(), ImageDef.class);
+    }
+
+    /**
+     * Derive the YAML filename from a template name (e.g. {@code tpl-java} -> {@code java.yaml}).
+     */
+    public static String filenameForName(String name) {
+        return (name.startsWith("tpl-") ? name.substring(4) : name) + ".yaml";
+    }
 
     private String name;
     private String description = "";
