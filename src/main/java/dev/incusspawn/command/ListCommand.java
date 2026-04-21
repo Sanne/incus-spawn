@@ -854,9 +854,14 @@ public class ListCommand implements Runnable {
         items.add(makeKey("F10", "Quit", false));
 
         var shiftItems = new ArrayList<KeyItem>();
-        shiftItems.add(makeKey("\u21e7F5", "Build all", !onTemplates));
-        shiftItems.add(makeKey("\u21e7F7", "Restart", !running || onTemplates));
-        shiftItems.add(makeKey("\u21e7F8", "Destroy all", onTemplates ? false : entries.isEmpty()));
+        for (int i = 0; i < items.size(); i++) {
+            shiftItems.add(switch (i) {
+                case 4 -> makeKey("\u21e7F5", "Build all", !onTemplates);
+                case 6 -> makeKey("\u21e7F7", "Restart", !running || onTemplates);
+                case 7 -> makeKey("\u21e7F8", "Destroy all", onTemplates ? false : entries.isEmpty());
+                default -> makeSpacer(items.get(i).width());
+            });
+        }
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1, 1);
@@ -1534,6 +1539,10 @@ public class ListCommand implements Runnable {
             spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
         return new KeyItem(Line.from(spans), key.length() + label.length());
+    }
+
+    private KeyItem makeSpacer(int width) {
+        return new KeyItem(Line.styled("", Style.EMPTY.bg(BAR_BG)), width);
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
