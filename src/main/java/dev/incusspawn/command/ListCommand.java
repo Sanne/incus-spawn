@@ -1633,7 +1633,7 @@ public class ListCommand implements Runnable {
                     + "Stale DNS overrides have been cleared.\n"
                     + "Start the proxy in a separate terminal:\n"
                     + "\n"
-                    + "  isx proxy";
+                    + "  isx proxy start";
         } else {
             errorMessage = "The MITM proxy is not running.\n"
                     + "\n"
@@ -1641,7 +1641,7 @@ public class ListCommand implements Runnable {
                     + "GitHub, and caches Maven/Docker artifacts.\n"
                     + "\n"
                     + "Start it in a separate terminal:\n"
-                    + "  isx proxy\n"
+                    + "  isx proxy start\n"
                     + "\n"
                     + "Or install it as a service (auto-starts on boot):\n"
                     + "  isx init";

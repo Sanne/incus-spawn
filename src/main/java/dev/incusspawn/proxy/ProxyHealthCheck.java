@@ -58,7 +58,7 @@ public final class ProxyHealthCheck {
                     + "are resolving to the gateway where nothing is listening.\n"
                     + "Stale DNS overrides have been cleared.\n\n"
                     + "Start the proxy in a separate terminal:\n"
-                    + "  \033[1misx proxy\033[0m\n\n"
+                    + "  \033[1misx proxy start\033[0m\n\n"
                     + "Then re-run this command.\n"
                     + separator;
             case NOT_RUNNING -> separator + "\n"
@@ -66,7 +66,7 @@ public final class ProxyHealthCheck {
                     + "The proxy provides authentication for Claude, GitHub,\n"
                     + "and caches Maven/Docker artifacts during builds.\n\n"
                     + "Start it in a separate terminal:\n"
-                    + "  \033[1misx proxy\033[0m\n\n"
+                    + "  \033[1misx proxy start\033[0m\n\n"
                     + "Or install it as a service (auto-starts on boot):\n"
                     + "  \033[1misx init\033[0m\n\n"
                     + "Then re-run this command.\n"

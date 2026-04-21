@@ -5,6 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyService;
 import jakarta.inject.Inject;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -100,7 +101,7 @@ public class InitCommand implements Runnable {
         if (proxyServiceInstalled) {
             System.out.println("  2. Proxy is running as a service (systemctl --user status incus-spawn-proxy)");
         } else {
-            System.out.println("  2. Start the auth proxy:  isx proxy");
+            System.out.println("  2. Start the auth proxy:  isx proxy start");
         }
         System.out.println("  3. Launch the TUI:        isx");
     }
@@ -622,7 +623,8 @@ public class InitCommand implements Runnable {
     }
 
     private boolean offerProxyService() {
-        if (isProxyServiceActive()) {
+        if (ProxyService.isActive()) {
+            ProxyService.upgradeIfNeeded();
             System.out.println();
             System.out.println("  Proxy service is already running.");
             return true;
@@ -636,102 +638,10 @@ public class InitCommand implements Runnable {
         System.out.print("  Install proxy service? (Y/n): ");
         var answer = console.readLine().strip();
         if (answer.equalsIgnoreCase("n")) {
-            System.out.println("  Skipped. You can start the proxy manually with: isx proxy");
+            System.out.println("  Skipped. You can start the proxy manually with: isx proxy start");
             return false;
         }
-        return installProxyService();
-    }
-
-    private static boolean isProxyServiceActive() {
-        try {
-            var pb = new ProcessBuilder("systemctl", "--user", "is-active", "incus-spawn-proxy");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            return process.waitFor() == 0 && "active".equals(output);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private boolean installProxyService() {
-        var isxPath = resolveIsxPath();
-        if (isxPath == null) {
-            System.err.println("  Could not find 'isx' in PATH. Skipping service installation.");
-            System.err.println("  You can start the proxy manually with: isx proxy");
-            return false;
-        }
-
-        var serviceContent = """
-                [Unit]
-                Description=incus-spawn MITM authentication proxy
-                After=incus.service
-
-                [Service]
-                Type=simple
-                ExecStart=%s proxy
-                Restart=on-failure
-                RestartSec=5
-
-                [Install]
-                WantedBy=default.target
-                """.formatted(isxPath);
-
-        var serviceDir = RuntimeConstants.SYSTEMD_USER_DIR;
-        var serviceFile = serviceDir.resolve("incus-spawn-proxy.service");
-        try {
-            Files.createDirectories(serviceDir);
-            Files.writeString(serviceFile, serviceContent);
-            System.out.println("  Service file written to " + serviceFile);
-        } catch (IOException e) {
-            System.err.println("  Failed to write service file: " + e.getMessage());
-            return false;
-        }
-
-        System.out.println("  Enabling and starting proxy service...");
-        runHostQuiet("systemctl", "--user", "daemon-reload");
-        runHostQuiet("systemctl", "--user", "enable", "--now", "incus-spawn-proxy");
-
-        // Enable lingering so the service starts at boot without a login session
-        System.out.println("  Enabling lingering for user (sudo required)...");
-        runHostQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
-
-        // Verify
-        try {
-            var pb = new ProcessBuilder("systemctl", "--user", "is-active", "incus-spawn-proxy");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            process.waitFor();
-            if ("active".equals(output)) {
-                System.out.println("  Proxy service is running.");
-                return true;
-            } else {
-                System.err.println("  Warning: service status is '" + output + "'.");
-                System.err.println("  Check logs with: journalctl --user -u incus-spawn-proxy");
-                return false;
-            }
-        } catch (Exception e) {
-            System.err.println("  Could not verify service status: " + e.getMessage());
-            return false;
-        }
-    }
-
-    private static String resolveIsxPath() {
-        try {
-            var pb = new ProcessBuilder("which", "isx");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() == 0 && !output.isBlank()) {
-                return output;
-            }
-        } catch (Exception ignored) {}
-        var fallback = RuntimeConstants.LOCAL_BIN_ISX;
-        if (Files.isExecutable(fallback)) {
-            return fallback.toString();
-        }
-        return null;
+        return ProxyService.install();
     }
 
     private int runHost(String... command) {
