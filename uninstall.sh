@@ -30,16 +30,17 @@ echo "======================="
 echo ""
 echo "This will remove:"
 echo "  - Binary:            $INSTALL_DIR/$BINARY_NAME"
-echo "  - Cache:             $CACHE_DIR/"
 echo "  - State:             $STATE_DIR/"
 echo "  - Systemd service:   $SYSTEMD_SERVICE"
 echo "  - Shell completions: (if installed)"
 if $PURGE; then
+    echo "  - Cache:             $CACHE_DIR/  (--purge)"
     echo "  - Config:            $CONFIG_DIR/  (--purge)"
 else
     echo ""
-    echo "Config preserved:      $CONFIG_DIR/"
-    echo "  (use --purge to also remove configuration)"
+    echo "Preserved:             $CONFIG_DIR/"
+    echo "                       $CACHE_DIR/"
+    echo "  (use --purge to also remove configuration and cache)"
 fi
 echo ""
 
@@ -83,28 +84,29 @@ for f in "$ZSH_COMPLETION" "$BASH_COMPLETION" "$FISH_COMPLETION"; do
     fi
 done
 
-# ── Remove cache and state directories ───────────────────────────────────────
+# ── Remove state directory ───────────────────────────────────────────────────
 
-for dir in "$CACHE_DIR" "$STATE_DIR"; do
-    if [ -d "$dir" ]; then
-        echo "Removing $dir/..."
-        rm -rf "$dir"
-    fi
-done
+if [ -d "$STATE_DIR" ]; then
+    echo "Removing $STATE_DIR/..."
+    rm -rf "$STATE_DIR"
+fi
 
-# ── Remove config (only with --purge) ───────────────────────────────────────
+# ── Remove cache and config (only with --purge) ──────────────────────────────
 
 if $PURGE; then
-    if [ -d "$CONFIG_DIR" ]; then
-        echo "Removing $CONFIG_DIR/..."
-        rm -rf "$CONFIG_DIR"
-    fi
+    for dir in "$CACHE_DIR" "$CONFIG_DIR"; do
+        if [ -d "$dir" ]; then
+            echo "Removing $dir/..."
+            rm -rf "$dir"
+        fi
+    done
 fi
 
 echo ""
 echo "incus-spawn has been uninstalled."
-if ! $PURGE && [ -d "$CONFIG_DIR" ]; then
-    echo "Configuration preserved in $CONFIG_DIR/"
+if ! $PURGE; then
+    [ -d "$CONFIG_DIR" ] && echo "Configuration preserved in $CONFIG_DIR/"
+    [ -d "$CACHE_DIR" ]  && echo "Cache preserved in $CACHE_DIR/"
 fi
 echo ""
 echo "Note: Incus containers and images created by isx are still present."
