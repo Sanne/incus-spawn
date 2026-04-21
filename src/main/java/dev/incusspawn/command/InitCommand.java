@@ -391,6 +391,7 @@ public class InitCommand implements Runnable {
             } else if (commandExists("pacman")) {
                 runHostQuiet("sudo", "pacman", "-S", "--noconfirm", "btrfs-progs");
             }
+            runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
             var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs");
             if (createResult == 0) {
                 System.out.println("  Created btrfs storage pool 'cow'.");
@@ -401,8 +402,12 @@ public class InitCommand implements Runnable {
                 System.err.println("  ║  WARNING: Failed to create btrfs storage pool!             ║");
                 System.err.println("  ╚══════════════════════════════════════════════════════════════╝\u001B[0m");
                 System.err.println();
-                System.err.println("  \u001B[33mClones and branches will be FULL COPIES, using significantly");
-                System.err.println("  more disk space and taking much longer to create.\u001B[0m");
+                System.err.println("  \u001B[33mThis is expected inside containers or VMs without loop device");
+                System.err.println("  support. On bare metal, ensure the 'loop' kernel module is");
+                System.err.println("  loaded (sudo modprobe loop) and try again.\u001B[0m");
+                System.err.println();
+                System.err.println("  \u001B[33mWithout a CoW pool, clones and branches will be FULL COPIES,");
+                System.err.println("  using significantly more disk space and taking longer to create.\u001B[0m");
                 System.err.println();
                 System.err.println("  You can create one manually later:");
                 System.err.println("    \u001B[1msudo incus storage create cow btrfs\u001B[0m");
