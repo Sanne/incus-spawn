@@ -12,6 +12,7 @@ import picocli.CommandLine.Command;
 import java.io.Console;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 
 @Command(
         name = "init",
@@ -81,6 +82,7 @@ public class InitCommand implements Runnable {
         }
         System.out.println("=== incus-spawn init ===\n");
 
+        installDependencies();
         checkIncusInstalled();
         configureSubuidSubgid();
         initializeIncus();
@@ -123,6 +125,27 @@ public class InitCommand implements Runnable {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private void installDependencies() {
+        var installCmd = detectInstallCommand();
+        if (installCmd == null) return;
+
+        var missing = new ArrayList<String>();
+        if (!commandExists("openssl")) missing.add("openssl");
+        if (!commandExists("btrfs"))   missing.add("btrfs-progs");
+        if (missing.isEmpty()) return;
+
+        System.out.println("Installing dependencies: " + String.join(", ", missing) + "...");
+        // zypper uses "btrfsprogs" instead of "btrfs-progs"
+        if (commandExists("zypper")) {
+            missing.replaceAll(p -> "btrfs-progs".equals(p) ? "btrfsprogs" : p);
+        }
+        var cmd = new ArrayList<String>();
+        cmd.add("sudo");
+        cmd.addAll(java.util.List.of(installCmd));
+        cmd.addAll(missing);
+        runHost(cmd.toArray(String[]::new));
     }
 
     private void checkIncusInstalled() {
@@ -292,19 +315,6 @@ public class InitCommand implements Runnable {
         // Clean up old sysctl config from previous installs (no longer needed)
         runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
 
-        // Ensure openssl is available (needed for CA and domain cert generation)
-        if (!commandExists("openssl")) {
-            System.out.println("  Installing openssl...");
-            var installCmd = detectInstallCommand();
-            if (installCmd != null) {
-                var cmd = new String[installCmd.length + 2];
-                cmd[0] = "sudo";
-                System.arraycopy(installCmd, 0, cmd, 1, installCmd.length);
-                cmd[cmd.length - 1] = "openssl";
-                runHostQuiet(cmd);
-            }
-        }
-
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
             System.out.println("  MITM CA certificate already exists.");
@@ -395,15 +405,6 @@ public class InitCommand implements Runnable {
 
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
-            if (commandExists("dnf")) {
-                runHostQuiet("sudo", "dnf", "install", "-y", "-q", "btrfs-progs");
-            } else if (commandExists("apt")) {
-                runHostQuiet("sudo", "apt", "install", "-y", "-qq", "btrfs-progs");
-            } else if (commandExists("zypper")) {
-                runHostQuiet("sudo", "zypper", "install", "-y", "btrfsprogs");
-            } else if (commandExists("pacman")) {
-                runHostQuiet("sudo", "pacman", "-S", "--noconfirm", "btrfs-progs");
-            }
             runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
             var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs");
             if (createResult == 0) {
@@ -530,26 +531,16 @@ public class InitCommand implements Runnable {
             System.out.println("  Testing GitHub token...");
             boolean verified = false;
             try {
-                var testPb = new ProcessBuilder("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                        "-H", "Authorization: token " + token,
-                        "-H", "Accept: application/vnd.github+json",
-                        "https://api.github.com/user");
-                testPb.redirectErrorStream(true);
-                var process = testPb.start();
-                var output = new String(process.getInputStream().readAllBytes()).strip();
-                var exitCode = process.waitFor();
-                if (exitCode == 0 && "200".equals(output)) {
-                    // Fetch the username to confirm which identity the token belongs to
-                    var userPb = new ProcessBuilder("curl", "-s",
-                            "-H", "Authorization: token " + token,
-                            "-H", "Accept: application/vnd.github+json",
-                            "https://api.github.com/user");
-                    userPb.redirectErrorStream(true);
-                    var userProcess = userPb.start();
-                    var userOutput = new String(userProcess.getInputStream().readAllBytes()).strip();
-                    userProcess.waitFor();
-                    // Extract login from JSON (simple extraction to avoid dependency)
-                    var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"").matcher(userOutput);
+                var client = java.net.http.HttpClient.newHttpClient();
+                var request = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create("https://api.github.com/user"))
+                        .header("Authorization", "token " + token)
+                        .header("Accept", "application/vnd.github+json")
+                        .GET().build();
+                var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 200) {
+                    var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
+                            .matcher(response.body());
                     if (loginMatch.find()) {
                         System.out.println("  Token verified. Authenticated as: " + loginMatch.group(1));
                     } else {
@@ -557,7 +548,7 @@ public class InitCommand implements Runnable {
                     }
                     verified = true;
                 } else {
-                    System.out.println("  Authentication failed (HTTP " + output + ").");
+                    System.out.println("  Authentication failed (HTTP " + response.statusCode() + ").");
                 }
             } catch (Exception e) {
                 System.out.println("  Could not test token: " + e.getMessage());
