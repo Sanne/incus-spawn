@@ -720,7 +720,7 @@ public class ListCommand implements Runnable {
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
-        int footerHeight = hasStatus ? 3 : 2;
+        int footerHeight = hasStatus ? 2 : 1;
         // Template panel height: rows + header + 2 borders, capped
         int templatePanelHeight = Math.min(templateEntries.size() + 3, Math.max(5, area.height() / 3));
         var chunks = Layout.vertical()
@@ -853,23 +853,8 @@ public class ListCommand implements Runnable {
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
         items.add(makeKey("F10", "Quit", false));
 
-        var shiftItems = new ArrayList<KeyItem>();
-        for (int i = 0; i < items.size(); i++) {
-            shiftItems.add(switch (i) {
-                case 4 -> makeKey("\u21e7F5", "Build all", !onTemplates);
-                case 6 -> makeKey("\u21e7F7", "Restart", !running || onTemplates);
-                case 7 -> makeKey("\u21e7F8", "Destroy all", onTemplates ? false : entries.isEmpty());
-                default -> makeSpacer(items.get(i).width());
-            });
-        }
-
-        var columnWidths = new int[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            columnWidths[i] = Math.max(items.get(i).width(), shiftItems.get(i).width());
-        }
-
         if (hasStatus) {
-            var rows = splitVertical(area, 1, 1, 1);
+            var rows = splitVertical(area, 1, 1);
             var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
                     || statusMessage.startsWith("Template");
             var statusBg = Color.rgb(0, 0, 80);
@@ -880,21 +865,17 @@ public class ListCommand implements Runnable {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            renderKeyItems(frame, rows.get(1), shiftItems, columnWidths);
-            renderKeyItems(frame, rows.get(2), items, columnWidths);
+            renderKeyItems(frame, rows.get(1), items);
         } else {
-            var rows = splitVertical(area, 1, 1);
-            renderKeyItems(frame, rows.get(0), shiftItems, columnWidths);
-            renderKeyItems(frame, rows.get(1), items, columnWidths);
+            renderKeyItems(frame, area, items);
         }
     }
 
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                 List<KeyItem> items, int[] columnWidths) {
-        var constraints = new Constraint[columnWidths.length];
-        for (int i = 0; i < columnWidths.length; i++) {
-            constraints[i] = Constraint.length(columnWidths[i]);
-        }
+                                 List<KeyItem> items) {
+        var constraints = items.stream()
+                .map(item -> Constraint.length(item.width()))
+                .toArray(Constraint[]::new);
         var cells = Layout.horizontal()
                 .flex(Flex.SPACE_BETWEEN)
                 .constraints(constraints)
@@ -1545,10 +1526,6 @@ public class ListCommand implements Runnable {
             spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
         return new KeyItem(Line.from(spans), key.length() + label.length());
-    }
-
-    private KeyItem makeSpacer(int width) {
-        return new KeyItem(Line.styled("", Style.EMPTY.bg(BAR_BG)), width);
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
