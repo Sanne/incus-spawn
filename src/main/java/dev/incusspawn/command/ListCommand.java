@@ -863,6 +863,11 @@ public class ListCommand implements Runnable {
             });
         }
 
+        var columnWidths = new int[items.size()];
+        for (int i = 0; i < items.size(); i++) {
+            columnWidths[i] = Math.max(items.get(i).width(), shiftItems.get(i).width());
+        }
+
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1, 1);
             var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
@@ -875,20 +880,21 @@ public class ListCommand implements Runnable {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            renderKeyItems(frame, rows.get(1), shiftItems);
-            renderKeyItems(frame, rows.get(2), items);
+            renderKeyItems(frame, rows.get(1), shiftItems, columnWidths);
+            renderKeyItems(frame, rows.get(2), items, columnWidths);
         } else {
             var rows = splitVertical(area, 1, 1);
-            renderKeyItems(frame, rows.get(0), shiftItems);
-            renderKeyItems(frame, rows.get(1), items);
+            renderKeyItems(frame, rows.get(0), shiftItems, columnWidths);
+            renderKeyItems(frame, rows.get(1), items, columnWidths);
         }
     }
 
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
-                                 List<KeyItem> items) {
-        var constraints = items.stream()
-                .map(item -> Constraint.length(item.width()))
-                .toArray(Constraint[]::new);
+                                 List<KeyItem> items, int[] columnWidths) {
+        var constraints = new Constraint[columnWidths.length];
+        for (int i = 0; i < columnWidths.length; i++) {
+            constraints[i] = Constraint.length(columnWidths[i]);
+        }
         var cells = Layout.horizontal()
                 .flex(Flex.SPACE_BETWEEN)
                 .constraints(constraints)
