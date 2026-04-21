@@ -54,7 +54,7 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INFO, ERROR }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -79,6 +79,8 @@ public class ListCommand implements Runnable {
     // Template detail modal state
     private boolean detailViewCompact = true;
     private int detailScrollOffset;
+    // Instance detail modal state
+    private int instanceDetailScrollOffset;
 
     private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE }
     private PendingAction pendingAction = PendingAction.NONE;
@@ -270,6 +272,7 @@ public class ListCommand implements Runnable {
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
+            case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> { if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F1)) { mode = Mode.BROWSE; } yield true; }
             case ERROR -> { mode = Mode.BROWSE; yield true; }
         };
@@ -435,11 +438,16 @@ public class ListCommand implements Runnable {
             mode = Mode.CONFIRM_DELETE;
             return true;
         }
-        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F3)) {
+        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F2)) {
             if (showProxyErrorIfNeeded(selected.name)) return true;
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = selected.name;
             tui.quit();
+            return true;
+        }
+        if (key.isKey(KeyCode.F3)) {
+            instanceDetailScrollOffset = 0;
+            mode = Mode.INSTANCE_DETAIL;
             return true;
         }
         if (key.isKey(KeyCode.F4)) {
@@ -843,7 +851,8 @@ public class ListCommand implements Runnable {
             var selected = selectedEntry(tableState);
             boolean hasSelection = selected != null;
             boolean running = hasSelection && isRunning(selected);
-            items.add(makeKey("F3", "Shell", !hasSelection));
+            items.add(makeKey("F2", "Shell", !hasSelection));
+            items.add(makeKey("F3", "Details", !hasSelection));
             items.add(makeKey("F4", "Branch\u2026", !hasSelection));
             items.add(makeKey("F6", "Rename\u2026", !hasSelection));
             items.add(makeKey("F7", "Stop", !running));
@@ -920,6 +929,7 @@ public class ListCommand implements Runnable {
             case RENAME -> ModalRenderer.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
+            case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
             case ERROR -> ModalRenderer.renderErrorModal(frame, screen, errorMessage);
             default -> {}
@@ -1071,6 +1081,43 @@ public class ListCommand implements Runnable {
         return false;
     }
 
+    // --- Instance detail modal ---
+
+    private boolean handleInstanceDetailEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F3)) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.F2) || key.isKey(KeyCode.ENTER)) {
+            var selected = selectedEntry(instanceTableState);
+            if (selected != null) {
+                if (showProxyErrorIfNeeded(selected.name)) return true;
+                pendingAction = PendingAction.SHELL;
+                pendingActionTarget = selected.name;
+                mode = Mode.BROWSE;
+                tui.quit();
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            instanceDetailScrollOffset++;
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            if (instanceDetailScrollOffset > 0) instanceDetailScrollOffset--;
+            return true;
+        }
+        if (key.isKey(KeyCode.HOME)) {
+            instanceDetailScrollOffset = 0;
+            return true;
+        }
+        if (key.isKey(KeyCode.END)) {
+            instanceDetailScrollOffset = Integer.MAX_VALUE; // capped during render
+            return true;
+        }
+        return false;
+    }
+
     private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var info = dev.incusspawn.BuildInfo.instance();
         var lines = List.of(
@@ -1171,6 +1218,134 @@ public class ListCommand implements Runnable {
         }
         ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+    }
+
+    private void renderInstanceDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var selected = selectedEntry(instanceTableState);
+        if (selected == null) return;
+
+        var contentLines = buildInstanceDetailLines(selected);
+
+        int maxLineWidth = 0;
+        for (var line : contentLines) {
+            int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
+            if (w > maxLineWidth) maxLineWidth = w;
+        }
+        int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4);
+        int maxHeight = screen.height() - 2;
+        int modalHeight = Math.min(contentLines.size() + 4, maxHeight);
+
+        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" " + selected.name + " ")
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .build();
+        ModalRenderer.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = Layout.vertical()
+                .constraints(Constraint.fill(), Constraint.length(1))
+                .split(inner);
+
+        int visibleHeight = rows.get(0).height();
+        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
+        instanceDetailScrollOffset = Math.min(instanceDetailScrollOffset, maxScroll);
+
+        var visibleLines = contentLines.subList(
+                instanceDetailScrollOffset,
+                Math.min(instanceDetailScrollOffset + visibleHeight, contentLines.size()));
+        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), rows.get(0));
+
+        var hintSpans = new ArrayList<Span>();
+        ModalRenderer.addKey(hintSpans, "F2", "Shell");
+        if (contentLines.size() > visibleHeight) {
+            ModalRenderer.addKey(hintSpans, "↑↓", "Scroll");
+        }
+        ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+    }
+
+    private List<Line> buildInstanceDetailLines(InstanceInfo info) {
+        var lines = new ArrayList<Line>();
+        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
+        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+
+        var statusColor = isRunning(info) ? Color.GREEN : Color.GRAY;
+        lines.add(Line.from(List.of(
+                Span.styled("Status:         ", labelStyle),
+                Span.styled(info.status, Style.EMPTY.fg(statusColor).bg(ModalRenderer.BG)))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("Type:           ", labelStyle),
+                Span.styled(info.runtime, lineStyle))));
+
+        if (!info.architecture.isEmpty()) {
+            lines.add(Line.from(List.of(
+                    Span.styled("Architecture:   ", labelStyle),
+                    Span.styled(info.architecture, lineStyle))));
+        }
+
+        lines.add(Line.from(List.of(
+                Span.styled("Parent:         ", labelStyle),
+                Span.styled(info.parent.isEmpty() ? "-" : info.parent, lineStyle))));
+
+        if (!info.created.isEmpty()) {
+            var age = Metadata.ageDescription(info.created);
+            lines.add(Line.from(List.of(
+                    Span.styled("Created:        ", labelStyle),
+                    Span.styled(info.created, lineStyle),
+                    Span.styled("  (" + age + ")", dimStyle))));
+        }
+
+        lines.add(Line.styled("", lineStyle));
+
+        var networkLabel = info.networkMode.isEmpty() ? "Full internet"
+                : formatNetworkMode(info.networkMode);
+        lines.add(Line.from(List.of(
+                Span.styled("Network:        ", labelStyle),
+                Span.styled(networkLabel, lineStyle))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("IP address:     ", labelStyle),
+                Span.styled(info.ipv4.isEmpty() ? "-" : info.ipv4, lineStyle))));
+
+        lines.add(Line.styled("", lineStyle));
+        lines.add(Line.from(List.of(Span.styled("Resource limits:", labelStyle))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("  CPU:          ", labelStyle),
+                Span.styled(info.limitsCpu.isEmpty() ? "-" : info.limitsCpu, lineStyle))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("  Memory:       ", labelStyle),
+                Span.styled(info.limitsMemory.isEmpty() ? "-" : info.limitsMemory, lineStyle))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("  Disk:         ", labelStyle),
+                Span.styled(info.rootSize.isEmpty() ? "-" : info.rootSize, lineStyle))));
+
+        lines.add(Line.styled("", lineStyle));
+
+        lines.add(Line.from(List.of(
+                Span.styled("Project:        ", labelStyle),
+                Span.styled(info.project, lineStyle))));
+
+        lines.add(Line.from(List.of(
+                Span.styled("Profile:        ", labelStyle),
+                Span.styled(info.profile, lineStyle))));
+
+        return lines;
+    }
+
+    private static String formatNetworkMode(String mode) {
+        try {
+            return NetworkMode.valueOf(mode).label();
+        } catch (IllegalArgumentException e) {
+            return mode;
+        }
     }
 
     private List<dev.incusspawn.config.ImageDef> getInheritanceChain(String templateName) {
@@ -1737,7 +1912,9 @@ public class ListCommand implements Runnable {
                         configVal(config, "limits.cpu", ""),
                         configVal(config, "limits.memory", ""),
                         rootSize,
-                        ipv4));
+                        ipv4,
+                        configVal(config, Metadata.NETWORK_MODE, ""),
+                        node.path("architecture").asText("")));
             }
             return entryList;
         } catch (Exception e) {
@@ -1773,5 +1950,5 @@ public class ListCommand implements Runnable {
                                 String project, String profile, String created,
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize,
-                                String ipv4) {}
+                                String ipv4, String networkMode, String architecture) {}
 }
