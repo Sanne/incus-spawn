@@ -542,7 +542,7 @@ public class InitCommand implements Runnable {
                     var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
                             .matcher(response.body());
                     if (loginMatch.find()) {
-                        System.out.println("  Token verified. Authenticated as: " + loginMatch.group(1));
+                        System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + loginMatch.group(1) + "\u001B[0m");
                     } else {
                         System.out.println("  Token verified (could not determine username).");
                     }
