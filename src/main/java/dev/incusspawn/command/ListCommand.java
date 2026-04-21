@@ -720,7 +720,7 @@ public class ListCommand implements Runnable {
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
-        int footerHeight = hasStatus ? 2 : 1;
+        int footerHeight = hasStatus ? 3 : 2;
         // Template panel height: rows + header + 2 borders, capped
         int templatePanelHeight = Math.min(templateEntries.size() + 3, Math.max(5, area.height() / 3));
         var chunks = Layout.vertical()
@@ -834,36 +834,32 @@ public class ListCommand implements Runnable {
                                 TableState tableState, boolean hasStatus) {
         fillBackground(frame, area, BAR_BG);
 
+        var template = selectedTemplate();
+        boolean hasTemplate = template != null;
+        boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
+        var selected = selectedEntry(tableState);
+        boolean hasInstance = selected != null;
+        boolean running = hasInstance && isRunning(selected);
+        boolean onTemplates = focusedPanel == Panel.TEMPLATES;
+
         var items = new ArrayList<KeyItem>();
         items.add(makeKey("F1", "Info", false));
-
-        if (focusedPanel == Panel.TEMPLATES) {
-            var template = selectedTemplate();
-            boolean hasTemplate = template != null;
-            boolean isBuilt = hasTemplate && !"not built".equals(template.buildStatus);
-            items.add(makeKey("F3", "Details", !hasTemplate));
-            items.add(makeKey("F4", "Branch\u2026", !isBuilt));
-            items.add(makeKey("F5", "Build", !hasTemplate));
-            items.add(makeKey("\u21e7F5", "Build all", false));
-            items.add(makeKey("F8", "Destroy\u2026", !isBuilt));
-            items.add(makeKey("\u21e7F8", "Destroy all", false));
-        } else {
-            var selected = selectedEntry(tableState);
-            boolean hasSelection = selected != null;
-            boolean running = hasSelection && isRunning(selected);
-            items.add(makeKey("F2", "Shell", !hasSelection));
-            items.add(makeKey("F3", "Details", !hasSelection));
-            items.add(makeKey("F4", "Branch\u2026", !hasSelection));
-            items.add(makeKey("F6", "Rename\u2026", !hasSelection));
-            items.add(makeKey("F7", "Stop", !running));
-            items.add(makeKey("\u21e7F7", "Restart", !running));
-            items.add(makeKey("F8", "Destroy\u2026", !hasSelection));
-            items.add(makeKey("\u21e7F8", "Destroy all", entries.isEmpty()));
-        }
+        items.add(makeKey("F2", "Shell", !hasInstance || onTemplates));
+        items.add(makeKey("F3", "Details", onTemplates ? !hasTemplate : !hasInstance));
+        items.add(makeKey("F4", "Branch\u2026", onTemplates ? !isBuilt : !hasInstance));
+        items.add(makeKey("F5", "Build", !hasTemplate || !onTemplates));
+        items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
+        items.add(makeKey("F7", "Stop", !running || onTemplates));
+        items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
         items.add(makeKey("F10", "Quit", false));
 
+        var shiftItems = new ArrayList<KeyItem>();
+        shiftItems.add(makeKey("\u21e7F5", "Build all", !onTemplates));
+        shiftItems.add(makeKey("\u21e7F7", "Restart", !running || onTemplates));
+        shiftItems.add(makeKey("\u21e7F8", "Destroy all", onTemplates ? false : entries.isEmpty()));
+
         if (hasStatus) {
-            var rows = splitVertical(area, 1, 1);
+            var rows = splitVertical(area, 1, 1, 1);
             var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
                     || statusMessage.startsWith("Template");
             var statusBg = Color.rgb(0, 0, 80);
@@ -874,9 +870,12 @@ public class ListCommand implements Runnable {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            renderKeyItems(frame, rows.get(1), items);
+            renderKeyItems(frame, rows.get(1), shiftItems);
+            renderKeyItems(frame, rows.get(2), items);
         } else {
-            renderKeyItems(frame, area, items);
+            var rows = splitVertical(area, 1, 1);
+            renderKeyItems(frame, rows.get(0), shiftItems);
+            renderKeyItems(frame, rows.get(1), items);
         }
     }
 
@@ -1143,7 +1142,10 @@ public class ListCommand implements Runnable {
                         Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
                 Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
                 Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                Line.styled("Use Tab to switch panels, F-keys for actions.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+                Line.styled("", Style.EMPTY),
+                Line.styled("Use Tab to switch panels, F-keys for actions.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("Hold Shift with F5/F7/F8 for bulk variants", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("(Build all, Restart, Destroy all).", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
 
         int width = 52;
         int height = lines.size() + 5;
