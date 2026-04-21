@@ -6,7 +6,24 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="isx"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [ "$1" = "--native" ]; then
+NATIVE=false
+COMPLETIONS_SHELL=""
+for arg in "$@"; do
+    case "$arg" in
+        --native) NATIVE=true ;;
+        --completions=*) COMPLETIONS_SHELL="${arg#--completions=}" ;;
+        --completions) echo "Error: --completions requires a value (bash, zsh, or fish)"; exit 1 ;;
+    esac
+done
+
+if [ -n "$COMPLETIONS_SHELL" ]; then
+    case "$COMPLETIONS_SHELL" in
+        bash|zsh|fish) ;;
+        *) echo "Error: unsupported shell '$COMPLETIONS_SHELL'. Use bash, zsh, or fish."; exit 1 ;;
+    esac
+fi
+
+if $NATIVE; then
     echo "Building native image (this may take a minute)..."
     "$SCRIPT_DIR/mvnw" package -Dnative -Dquarkus.native.container-build=true -DskipTests -q
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
@@ -34,6 +51,28 @@ else
 exec java -jar "$JARFILE" "\$@"
 WRAPPER
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
+fi
+
+# ── Install shell completions (if requested) ──────────────────────────────
+if [ -n "$COMPLETIONS_SHELL" ]; then
+    case "$COMPLETIONS_SHELL" in
+        zsh)
+            COMP_DIR="$HOME/.zsh/completions"
+            COMP_FILE="$COMP_DIR/_isx"
+            ;;
+        bash)
+            COMP_DIR="$HOME/.local/share/bash-completion/completions"
+            COMP_FILE="$COMP_DIR/isx"
+            ;;
+        fish)
+            COMP_DIR="$HOME/.config/fish/completions"
+            COMP_FILE="$COMP_DIR/isx.fish"
+            ;;
+    esac
+    echo "Installing $COMPLETIONS_SHELL completions to $COMP_FILE..."
+    mkdir -p "$COMP_DIR"
+    "$INSTALL_DIR/$BINARY_NAME" completion "$COMPLETIONS_SHELL" > "$COMP_FILE"
+    echo "Completions installed. Restart your shell or source the file to activate."
 fi
 
 echo "Installed. Run 'isx' to get started."
