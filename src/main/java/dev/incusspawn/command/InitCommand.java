@@ -292,6 +292,19 @@ public class InitCommand implements Runnable {
         // Clean up old sysctl config from previous installs (no longer needed)
         runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
 
+        // Ensure openssl is available (needed for CA and domain cert generation)
+        if (!commandExists("openssl")) {
+            System.out.println("  Installing openssl...");
+            var installCmd = detectInstallCommand();
+            if (installCmd != null) {
+                var cmd = new String[installCmd.length + 2];
+                cmd[0] = "sudo";
+                System.arraycopy(installCmd, 0, cmd, 1, installCmd.length);
+                cmd[cmd.length - 1] = "openssl";
+                runHostQuiet(cmd);
+            }
+        }
+
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
             System.out.println("  MITM CA certificate already exists.");

@@ -10,6 +10,7 @@ ExclusiveArch:  x86_64
 
 %global debug_package %{nil}
 
+Requires:       openssl
 Recommends:     incus
 Recommends:     btrfs-progs
 
