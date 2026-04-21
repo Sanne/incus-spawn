@@ -189,11 +189,7 @@ public class InitCommand implements Runnable {
             if (!groups.contains("incus-admin")) {
                 System.out.println("  Adding user to incus-admin group...");
                 runHost("sudo", "usermod", "-aG", "incus-admin", System.getProperty("user.name"));
-                System.out.println();
-                System.out.println("  IMPORTANT: Group membership has been updated but is not active in this shell.");
-                System.out.println("  Please run: newgrp incus-admin");
-                System.out.println("  Then re-run 'isx init' to continue.");
-                System.exit(0);
+                System.out.println("  Group membership updated (active after next login).");
             }
         } catch (Exception e) {
             System.err.println("  Warning: could not check group membership: " + e.getMessage());
