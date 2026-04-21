@@ -382,6 +382,15 @@ public class InitCommand implements Runnable {
 
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
+            if (commandExists("dnf")) {
+                runHostQuiet("sudo", "dnf", "install", "-y", "-q", "btrfs-progs");
+            } else if (commandExists("apt")) {
+                runHostQuiet("sudo", "apt", "install", "-y", "-qq", "btrfs-progs");
+            } else if (commandExists("zypper")) {
+                runHostQuiet("sudo", "zypper", "install", "-y", "btrfsprogs");
+            } else if (commandExists("pacman")) {
+                runHostQuiet("sudo", "pacman", "-S", "--noconfirm", "btrfs-progs");
+            }
             var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs");
             if (createResult == 0) {
                 System.out.println("  Created btrfs storage pool 'cow'.");

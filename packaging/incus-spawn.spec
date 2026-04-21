@@ -11,6 +11,7 @@ ExclusiveArch:  x86_64
 %global debug_package %{nil}
 
 Recommends:     incus
+Recommends:     btrfs-progs
 
 %description
 incus-spawn (isx) creates isolated Linux development environments using
