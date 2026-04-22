@@ -2,6 +2,10 @@ package dev.incusspawn;
 
 import java.nio.file.Path;
 
+// WARNING: This class is configured with --initialize-at-run-time for native image.
+// Do NOT reference its non-constant fields from static field initializers in other classes —
+// that forces this class to initialize at build time (where user.home=/), silently baking
+// wrong paths into the native binary. Access these fields from methods or constructors only.
 public final class RuntimeConstants {
     private RuntimeConstants() {}
 
