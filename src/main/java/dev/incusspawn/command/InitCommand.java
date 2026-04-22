@@ -201,6 +201,15 @@ public class InitCommand implements Runnable {
             System.out.println("  Alternatively, run: newgrp incus-admin");
         } else {
             System.out.println("  Incus is installed.");
+            var serviceActive = runHost("systemctl", "is-active", "--quiet", "incus");
+            if (serviceActive != 0) {
+                System.out.println("  Incus service is not running. Enabling and starting it (sudo required)...");
+                var enableResult = runHost("sudo", "systemctl", "enable", "--now", "incus");
+                if (enableResult != 0) {
+                    System.err.println("  Failed to start the Incus service. Run 'sudo systemctl enable --now incus' manually, then re-run 'isx init'.");
+                    System.exit(1);
+                }
+            }
         }
 
         // Always ensure current user is in incus-admin group
@@ -355,7 +364,18 @@ public class InitCommand implements Runnable {
         var canConnect = incus.exec("version");
         if (!canConnect.success()) {
             var stderr = canConnect.stderr().strip();
-            if (stderr.contains("permissions") || stderr.contains("socket")) {
+            var daemonNotRunning = stderr.contains("connection refused") || stderr.contains("no such file")
+                    || stderr.contains("cannot connect") || stderr.contains("failed to connect");
+            var permissionDenied = stderr.contains("permissions") || stderr.contains("socket")
+                    || stderr.contains("permission denied");
+            if (daemonNotRunning) {
+                System.out.println();
+                System.out.println("  Cannot connect to the Incus daemon — it does not appear to be running.");
+                System.out.println("  Enable and start it with:");
+                System.out.println("    sudo systemctl enable --now incus");
+                System.out.println("  Then re-run 'isx init' to continue.");
+                System.exit(1);
+            } else if (permissionDenied) {
                 System.out.println();
                 System.out.println("  Cannot connect to the Incus daemon.");
                 System.out.println("  This usually means the 'incus-admin' group membership is not active in this shell.");
@@ -363,7 +383,7 @@ public class InitCommand implements Runnable {
                 System.out.println("  Please do one of the following:");
                 System.out.println("    - Run: newgrp incus-admin");
                 System.out.println("    - Or log out and log back in");
-                System.out.println("  Then re-run 'incus-spawn init' to continue.");
+                System.out.println("  Then re-run 'isx init' to continue.");
                 System.exit(1);
             }
         }
@@ -524,7 +544,7 @@ public class InitCommand implements Runnable {
             System.out.print("  GitHub PAT (or press Enter to skip): ");
             var token = new String(console.readPassword());
             if (token.isBlank()) {
-                System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'incus-spawn init'.");
+                System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                 break;
             }
 
@@ -564,7 +584,7 @@ public class InitCommand implements Runnable {
                 System.out.print("  Try again? (Y/n): ");
                 var retry = console.readLine().strip();
                 if (retry.equalsIgnoreCase("n")) {
-                    System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'incus-spawn init'.");
+                    System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                     break;
                 }
             }
