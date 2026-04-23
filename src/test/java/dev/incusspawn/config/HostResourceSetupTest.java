@@ -79,6 +79,21 @@ class HostResourceSetupTest {
     }
 
     @Test
+    void deviceNameTruncatesLongPaths() {
+        var longPath = "/home/agentuser/.local/share/containers/storage/overlay-images/very-long-path";
+        var name = HostResourceSetup.deviceName(longPath);
+        assertTrue(name.length() <= 64, "device name must fit 64-char limit, got: " + name.length() + " (" + name + ")");
+        assertTrue(name.startsWith("hr-"));
+    }
+
+    @Test
+    void overlayDeviceNameFitsIncusLimit() {
+        var name = HostResourceSetup.overlayDeviceName("/home/agentuser/.m2/repository");
+        assertTrue(name.length() <= 64, "overlay device name must fit Incus 64-char limit, got: " + name.length());
+        assertEquals("hr-home-agentuser--m2-repository-lo", name);
+    }
+
+    @Test
     void deviceNameDiffersForDifferentPaths() {
         var name1 = HostResourceSetup.deviceName("/home/agentuser/.m2/repository");
         var name2 = HostResourceSetup.deviceName("/home/agentuser/.gitconfig");
