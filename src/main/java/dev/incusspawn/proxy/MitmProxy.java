@@ -123,7 +123,7 @@ public class MitmProxy {
     private static final Set<String> VERTEX_ALLOWED_FIELDS = Set.of(
             "anthropic_version", "messages", "system", "max_tokens",
             "temperature", "top_p", "top_k", "stop_sequences", "stream",
-            "metadata", "tools", "tool_choice"
+            "metadata", "tools", "tool_choice", "thinking", "output_config"
     );
 
     // Track which stripped fields have already been logged (avoid spam)
@@ -143,6 +143,9 @@ public class MitmProxy {
     // Pre-generated per-domain TLS material
     private SSLContext serverSslContext;
 
+    // Optional debug traffic logger
+    private ApiTrafficLog debugLog;
+
     public MitmProxy(String bindAddress, int mitmPort, int healthPort,
                      String anthropicApiKey, String ghToken,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
@@ -154,6 +157,23 @@ public class MitmProxy {
         this.useVertex = useVertex;
         this.vertexRegion = vertexRegion != null ? vertexRegion : "";
         this.vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
+    }
+
+    /**
+     * Resolve the Vertex AI hostname for a region. Some regions use special hostnames
+     * instead of the standard {@code {region}-aiplatform.googleapis.com} pattern.
+     */
+    private String vertexHost() {
+        return switch (vertexRegion) {
+            case "global" -> "aiplatform.googleapis.com";
+            case "us" -> "aiplatform.us.rep.googleapis.com";
+            case "eu" -> "aiplatform.eu.rep.googleapis.com";
+            default -> vertexRegion + "-aiplatform.googleapis.com";
+        };
+    }
+
+    public void setDebugLog(ApiTrafficLog debugLog) {
+        this.debugLog = debugLog;
     }
 
     /**
@@ -252,8 +272,8 @@ public class MitmProxy {
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
-                    " to " + vertexRegion + "-aiplatform.googleapis.com" +
-                    " (project: " + vertexProjectId + ")");
+                    " to " + vertexHost() +
+                    " (region: " + vertexRegion + ", project: " + vertexProjectId + ")");
         }
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
@@ -359,13 +379,30 @@ public class MitmProxy {
     private void handleApiRequest(HttpMessage request, InputStream clientIn,
                                   OutputStream clientOut, String domain) throws Exception {
         String upstreamHost;
-        byte[] rewrittenBody = null;
+        byte[] bodyBytes = null;
+        String originalDump = null;
+        byte[] originalBody = null;
+        boolean bodyRewritten = false;
 
-        if (useVertex && ANTHROPIC_DOMAINS.contains(domain)) {
-            upstreamHost = vertexRegion + "-aiplatform.googleapis.com";
-            var bodyBytes = request.readRequestBody(clientIn);
-            rewrittenBody = translateToVertex(request, bodyBytes, upstreamHost);
+        if (debugLog != null) {
+            bodyBytes = request.readRequestBody(clientIn);
+            originalDump = request.dump();
+            originalBody = bodyBytes;
+        }
+
+        var path = request.path();
+        if (useVertex && ANTHROPIC_DOMAINS.contains(domain)
+                && path != null && path.startsWith("/v1/messages")) {
+            // Messages API: translate to Vertex AI rawPredict
+            upstreamHost = vertexHost();
+            if (bodyBytes == null) {
+                bodyBytes = request.readRequestBody(clientIn);
+            }
+            bodyBytes = translateToVertex(request, bodyBytes, upstreamHost);
+            bodyRewritten = true;
         } else {
+            // Non-messages endpoints (settings, bootstrap, feature flags, etc.)
+            // and all non-Vertex traffic: forward directly to the real host
             upstreamHost = domain;
             injectHeaders(request, domain);
         }
@@ -380,14 +417,37 @@ public class MitmProxy {
             var upstreamIn = upstreamSocket.getInputStream();
 
             request.writeTo(upstreamOut);
-            if (rewrittenBody != null) {
-                upstreamOut.write(rewrittenBody);
+            if (bodyBytes != null) {
+                upstreamOut.write(bodyBytes);
                 upstreamOut.flush();
             } else {
                 request.relayRequestBody(clientIn, upstreamOut);
             }
 
-            relayResponseStrippingConnectionHeader(upstreamIn, clientOut);
+            if (debugLog != null) {
+                var response = HttpMessage.readResponse(upstreamIn);
+                if (response == null) return;
+                response.removeHeader("Connection");
+
+                var responseBody = ApiTrafficLog.captureSmallResponseBody(response, upstreamIn);
+
+                var forwardedDump = request.dump();
+                debugLog.logExchange(
+                        originalDump, originalBody,
+                        forwardedDump.equals(originalDump) ? null : forwardedDump,
+                        bodyRewritten ? bodyBytes : null,
+                        response.dump(), responseBody);
+
+                response.writeTo(clientOut);
+                if (responseBody != null) {
+                    clientOut.write(responseBody);
+                    clientOut.flush();
+                } else {
+                    response.relayResponseBody(upstreamIn, clientOut);
+                }
+            } else {
+                relayResponseStrippingConnectionHeader(upstreamIn, clientOut);
+            }
         }
     }
 
@@ -429,7 +489,7 @@ public class MitmProxy {
      *   <li>Body: only {@link #VERTEX_ALLOWED_FIELDS} are kept; everything else is stripped</li>
      *   <li>Body: "model" replaced with "anthropic_version": "vertex-2023-10-16"</li>
      *   <li>Body: "scope" removed from nested cache_control objects (beta feature)</li>
-     *   <li>Header: anthropic-beta removed (Vertex rejects unsupported beta flags)</li>
+     *   <li>Header: anthropic-beta removed (Vertex features are enabled via anthropic_version)</li>
      *   <li>Streaming: :rawPredict → :streamRawPredict when stream=true</li>
      * </ul>
      *
@@ -444,14 +504,15 @@ public class MitmProxy {
                 request.setHeader("Host", upstreamHost);
                 request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
                 request.removeHeader("x-api-key");
-                request.removeHeader("anthropic-beta");
                 return bodyBytes;
             }
 
             var root = (ObjectNode) tree;
 
-            // Extract model (goes into URL, not body)
+            // Extract model (goes into URL, not body). The global Vertex endpoint
+            // only accepts short aliases, so strip date suffixes like -20251001.
             var model = root.has("model") ? root.get("model").asText() : "claude-sonnet-4-6";
+            model = model.replaceFirst("-\\d{8}$", "");
             var streaming = root.has("stream") && root.get("stream").asBoolean();
 
             // Strip all top-level fields Vertex doesn't support (beta features, etc.)
@@ -472,6 +533,10 @@ public class MitmProxy {
             // Add Vertex API version
             root.put("anthropic_version", "vertex-2023-10-16");
 
+            // Vertex rawPredict doesn't use the anthropic-beta header — features are
+            // available via anthropic_version directly
+            request.removeHeader("anthropic-beta");
+
             // Strip "scope" from cache_control objects deep in the tree (beta feature)
             stripCacheControlScope(root);
 
@@ -487,7 +552,6 @@ public class MitmProxy {
             request.setHeader("Host", upstreamHost);
             request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
             request.removeHeader("x-api-key");
-            request.removeHeader("anthropic-beta");
             request.setHeader("Content-Length", String.valueOf(rewrittenBytes.length));
 
             return rewrittenBytes;
@@ -519,6 +583,10 @@ public class MitmProxy {
         if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (anthropicApiKey != null && !anthropicApiKey.isBlank()) {
                 request.setHeader("x-api-key", anthropicApiKey);
+            } else {
+                // No real key — strip the container's placeholder so the request
+                // looks the same as a no-auth request from the host
+                request.removeHeader("x-api-key");
             }
         } else if (GITHUB_DOMAINS.contains(domain)) {
             if (ghToken != null && !ghToken.isBlank()) {

@@ -155,6 +155,20 @@ public class HttpMessage {
     }
 
     /**
+     * Format the request/status line and all headers as a string (for debug logging).
+     */
+    public String dump() {
+        var sb = new StringBuilder();
+        sb.append(requestLine).append('\n');
+        for (var entry : headers.entrySet()) {
+            for (var value : entry.getValue()) {
+                sb.append(entry.getKey()).append(": ").append(value).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * Write the request line and headers to the output stream.
      * Does NOT write the body.
      */
@@ -218,49 +232,6 @@ public class HttpMessage {
         if (firstSpace > 0 && lastSpace > firstSpace) {
             requestLine = requestLine.substring(0, firstSpace + 1) + newPath +
                     requestLine.substring(lastSpace);
-        }
-    }
-
-    /**
-     * Read the full HTTP response (status line + headers + body) from upstream
-     * and relay it to the client, preserving streaming behavior.
-     */
-    public static void relayResponse(InputStream upstreamIn, OutputStream clientOut) throws IOException {
-        // Read and forward status line
-        var statusLine = readLine(upstreamIn);
-        if (statusLine == null) return;
-        write(clientOut, statusLine + "\r\n");
-
-        // Read and forward headers, capturing Content-Length and Transfer-Encoding
-        String contentLength = null;
-        String transferEncoding = null;
-        String line;
-        while ((line = readLine(upstreamIn)) != null) {
-            write(clientOut, line + "\r\n");
-            if (line.isEmpty()) break;
-
-            var colon = line.indexOf(':');
-            if (colon > 0) {
-                var name = line.substring(0, colon).trim();
-                var value = line.substring(colon + 1).trim();
-                if (name.equalsIgnoreCase("Content-Length")) {
-                    contentLength = value;
-                } else if (name.equalsIgnoreCase("Transfer-Encoding")) {
-                    transferEncoding = value;
-                }
-            }
-        }
-        clientOut.flush();
-
-        // Relay body
-        if (contentLength != null) {
-            relayFixedLength(upstreamIn, clientOut, Long.parseLong(contentLength.trim()));
-        } else if (transferEncoding != null && transferEncoding.toLowerCase().contains("chunked")) {
-            relayChunked(upstreamIn, clientOut);
-        } else {
-            // No Content-Length and not chunked — relay until EOF (connection close).
-            // This handles SSE and other streaming responses.
-            relayUntilEof(upstreamIn, clientOut);
         }
     }
 

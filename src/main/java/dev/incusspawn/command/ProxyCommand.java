@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.proxy.ApiTrafficLog;
+import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
@@ -26,7 +28,8 @@ import java.nio.file.Path;
                 ProxyCommand.Status.class,
                 ProxyCommand.Install.class,
                 ProxyCommand.Uninstall.class,
-                ProxyCommand.Logs.class
+                ProxyCommand.Logs.class,
+                ProxyCommand.Dump.class
         }
 )
 public class ProxyCommand {
@@ -47,6 +50,9 @@ public class ProxyCommand {
         @Option(names = "--health-port", description = "Health check HTTP port (default: ${DEFAULT-VALUE})",
                 defaultValue = "18080")
         int healthPort;
+
+        @Option(names = "--debug", description = "Log full API request/response details for traffic inspection")
+        boolean debug;
 
         @Inject
         IncusClient incus;
@@ -103,6 +109,16 @@ public class ProxyCommand {
 
             var proxy = new MitmProxy(gatewayIp, port, healthPort, apiKey, ghToken,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
+
+            if (debug) {
+                try {
+                    var debugLog = new ApiTrafficLog(RuntimeConstants.API_DEBUG_DIR.resolve("proxy"));
+                    proxy.setDebugLog(debugLog);
+                    System.out.println("  Debug logs:    " + debugLog.logDir());
+                } catch (IOException e) {
+                    System.err.println("Warning: could not create debug log directory: " + e.getMessage());
+                }
+            }
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.out.println("\nStopping proxy...");
@@ -262,6 +278,29 @@ public class ProxyCommand {
                 process.waitFor();
             } catch (IOException | InterruptedException e) {
                 System.err.println("Failed to tail log file: " + e.getMessage());
+            }
+        }
+    }
+
+    @Command(
+            name = "dump",
+            description = "Run a local pass-through proxy to capture host-side API traffic for debugging",
+            mixinStandardHelpOptions = true
+    )
+    public static class Dump implements Runnable {
+
+        @Option(names = "--port", description = "Local HTTP port (default: ${DEFAULT-VALUE})",
+                defaultValue = "19080")
+        int port;
+
+        @Override
+        public void run() {
+            try {
+                var debugLog = new ApiTrafficLog(RuntimeConstants.API_DEBUG_DIR.resolve("host"));
+                var proxy = new DumpProxy(port, debugLog);
+                proxy.start();
+            } catch (IOException e) {
+                System.err.println("Failed to start dump proxy: " + e.getMessage());
             }
         }
     }

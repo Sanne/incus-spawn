@@ -193,6 +193,7 @@ public class CompletionCommand implements Runnable {
                 'install:install the proxy as a systemd user service'
                 'uninstall:stop and remove the systemd proxy service'
                 'logs:follow the proxy log file in real time'
+                'dump:run a local pass-through proxy to capture host-side API traffic'
               )
 
               case $state in
@@ -203,7 +204,12 @@ public class CompletionCommand implements Runnable {
                       _arguments \\
                         '(-h --help)'{-h,--help}'[Show help]' \\
                         '--port=[MITM TLS proxy port]:port' \\
-                        '--health-port=[Health check HTTP port]:port' ;;
+                        '--health-port=[Health check HTTP port]:port' \\
+                        '--debug[Log full API request/response details for traffic inspection]' ;;
+                    dump)
+                      _arguments \\
+                        '(-h --help)'{-h,--help}'[Show help]' \\
+                        '--port=[Local HTTP port]:port' ;;
                     stop|status|install|uninstall|logs)
                       _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                   esac ;;
@@ -376,19 +382,20 @@ public class CompletionCommand implements Runnable {
                   fi
                   ;;
                 proxy)
-                  local proxy_subcmds="start stop status install uninstall logs"
+                  local proxy_subcmds="start stop status install uninstall logs dump"
                   local proxy_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      start|stop|status|install|uninstall|logs) proxy_cmd="${words[j]}"; break ;;
+                      start|stop|status|install|uninstall|logs|dump) proxy_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$proxy_cmd" ]]; then
                     COMPREPLY=( $(compgen -W "$proxy_subcmds --help" -- "$cur") )
                   else
                     case "$proxy_cmd" in
-                      start) COMPREPLY=( $(compgen -W "--help --port --health-port" -- "$cur") ) ;;
+                      start) COMPREPLY=( $(compgen -W "--help --port --health-port --debug" -- "$cur") ) ;;
+                      dump) COMPREPLY=( $(compgen -W "--help --port" -- "$cur") ) ;;
                       *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
                     esac
                   fi
@@ -532,15 +539,18 @@ public class CompletionCommand implements Runnable {
 
             # ── proxy ────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a dump      -d 'Run a local pass-through proxy for API traffic capture'
 
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l debug       -d 'Log full API request/response details'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand dump'  -l port        -d 'Local HTTP port'
 
             # ── completion ───────────────────────────────────────────────────────────────
 
