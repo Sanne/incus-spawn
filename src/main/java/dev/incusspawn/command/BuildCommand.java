@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
@@ -273,12 +274,21 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         mountDnfCache(targetName);
         var container = new Container(incus, targetName);
+
+        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
+        if (!hostResources.isEmpty()) {
+            System.out.println("Applying host-resources...");
+            HostResourceSetup.applyForBuild(incus, container, hostResources);
+        }
+
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
+
+        HostResourceSetup.removeBuildDevices(incus, targetName, hostResources);
         unmountDnfCache(targetName);
 
         // Clean up caches to minimize image size (important for CoW clones)
@@ -290,6 +300,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.PARENT, parentName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
         stampBuildVersion(targetName);
+        if (!hostResources.isEmpty()) {
+            incus.configSet(targetName, Metadata.HOST_RESOURCES,
+                    HostResourceSetup.serialize(hostResources));
+        }
 
         System.out.println("Stopping image...");
         incus.stop(targetName);
@@ -399,6 +413,13 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         // Install packages and tools from image definition
         var container = new Container(incus, targetName);
+
+        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
+        if (!hostResources.isEmpty()) {
+            System.out.println("Applying host-resources...");
+            HostResourceSetup.applyForBuild(incus, container, hostResources);
+        }
+
         var tools = resolveTools(imageDef);
         installAllPackages(container, imageDef, tools, defs);
         runToolSetup(container, tools);
@@ -406,6 +427,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
+        HostResourceSetup.removeBuildDevices(incus, targetName, hostResources);
         // Unmount host-side DNF cache before cleanup — keeps images clean
         unmountDnfCache(targetName);
 
@@ -417,6 +439,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
         stampBuildVersion(targetName);
+        if (!hostResources.isEmpty()) {
+            incus.configSet(targetName, Metadata.HOST_RESOURCES,
+                    HostResourceSetup.serialize(hostResources));
+        }
 
         // Stop the template (it's a stopped snapshot you branch from, not a running instance)
         System.out.println("Stopping image...");

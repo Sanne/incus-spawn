@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -88,6 +89,8 @@ public class BranchCommand implements Runnable {
         // Tag with metadata
         incus.configSet(name, Metadata.PARENT, resolvedSource);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
+
+        applyHostResourceDevices(name);
 
         if (noStart) {
             System.out.println("Branch '" + name + "' created (not started).");
@@ -272,6 +275,15 @@ public class BranchCommand implements Runnable {
             return output;
         } catch (Exception e) {
             return "1000";
+        }
+    }
+
+    private void applyHostResourceDevices(String containerName) {
+        var hrJson = incus.configGet(containerName, Metadata.HOST_RESOURCES);
+        var resources = HostResourceSetup.deserialize(hrJson);
+        if (!resources.isEmpty()) {
+            System.out.println("Applying host-resource devices...");
+            HostResourceSetup.applyForInstance(incus, containerName, resources);
         }
     }
 

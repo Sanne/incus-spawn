@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -1488,6 +1489,16 @@ public class ListCommand implements Runnable {
         }
         addDetailSection(lines, "Repos", allRepos, labelStyle, lineStyle, dimStyle);
 
+        // Collect all host-resources
+        var allHostResources = new ArrayList<String>();
+        for (var def : chain) {
+            for (var hr : def.getHostResources()) {
+                var containerPath = HostResourceSetup.resolveContainerPath(hr.getSource(), hr.getPath());
+                allHostResources.add(hr.getSource() + " → " + containerPath + "  (" + hr.getMode() + ")");
+            }
+        }
+        addDetailSection(lines, "Host Resources", allHostResources, labelStyle, lineStyle, dimStyle);
+
         return lines;
     }
 
@@ -1565,6 +1576,17 @@ public class ListCommand implements Runnable {
                         repoSpans.add(Span.styled("  (prime: " + repo.getPrime() + ")", dimStyle));
                     }
                     lines.add(Line.from(repoSpans));
+                }
+            }
+
+            // Host Resources
+            if (!def.getHostResources().isEmpty()) {
+                for (var hr : def.getHostResources()) {
+                    var containerPath = HostResourceSetup.resolveContainerPath(hr.getSource(), hr.getPath());
+                    lines.add(Line.from(List.of(
+                            Span.styled(contentIndent + "Host: ", labelStyle),
+                            Span.styled(hr.getSource() + " \u2192 " + containerPath, lineStyle),
+                            Span.styled("  (" + hr.getMode() + ")", dimStyle))));
                 }
             }
 
@@ -1789,6 +1811,13 @@ public class ListCommand implements Runnable {
             case PROXY_ONLY -> configureProxyOnly(name);
             case AIRGAP -> configureAirgap(name);
             case FULL -> {}
+        }
+
+        var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
+        var hostResources = HostResourceSetup.deserialize(hrJson);
+        if (!hostResources.isEmpty()) {
+            System.out.println("Applying host-resource devices...");
+            HostResourceSetup.applyForInstance(incus, name, hostResources);
         }
 
         incus.start(name);

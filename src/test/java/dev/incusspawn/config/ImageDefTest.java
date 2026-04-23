@@ -248,6 +248,52 @@ class ImageDefTest {
     }
 
     @Test
+    void parseImageWithHostResources(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("custom.yaml"), """
+                name: tpl-custom
+                parent: tpl-dev
+                host-resources:
+                  - source: ~/.m2/repository
+                    path: /home/agentuser/.m2/repository
+                    mode: overlay
+                  - source: ~/.gitconfig
+                  - source: https://example.com/gitconfig
+                    path: /home/agentuser/.gitconfig-remote
+                    mode: copy
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var custom = defs.get("tpl-custom");
+        assertNotNull(custom);
+        assertEquals(3, custom.getHostResources().size());
+
+        var hr0 = custom.getHostResources().get(0);
+        assertEquals("~/.m2/repository", hr0.getSource());
+        assertEquals("/home/agentuser/.m2/repository", hr0.getPath());
+        assertEquals("overlay", hr0.getMode());
+
+        var hr1 = custom.getHostResources().get(1);
+        assertEquals("~/.gitconfig", hr1.getSource());
+        assertNull(hr1.getPath());
+        assertEquals("readonly", hr1.getMode());
+
+        var hr2 = custom.getHostResources().get(2);
+        assertEquals("https://example.com/gitconfig", hr2.getSource());
+        assertEquals("/home/agentuser/.gitconfig-remote", hr2.getPath());
+        assertEquals("copy", hr2.getMode());
+    }
+
+    @Test
+    void imageWithoutHostResourcesDefaultsToEmpty() {
+        var defs = ImageDef.loadAll();
+        var minimal = defs.get("tpl-minimal");
+        assertNotNull(minimal);
+        assertTrue(minimal.getHostResources().isEmpty());
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

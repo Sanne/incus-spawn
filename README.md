@@ -124,6 +124,7 @@ Image schema fields (all optional except `name`):
 - `tools` -- tool names to run (resolved from YAML or Java)
 - `repos` -- git repositories to clone as agentuser (see below)
 - `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
+- `host-resources` -- host files/directories to share with containers (see below)
 - `description` -- human-readable description for the TUI
 
 ```shell
@@ -204,6 +205,58 @@ Skills are deduplicated across the parent chain: if a parent already declares a 
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
+### Host Resources
+
+Template images can declare host files and directories to make available inside containers. This is useful for sharing configuration files, pre-populating caches, or providing large datasets without copying them into every template.
+
+```yaml
+name: tpl-java
+parent: tpl-dev
+packages:
+  - java-25-openjdk-devel
+tools:
+  - maven-3
+host-resources:
+  - source: ~/.m2/repository
+    mode: overlay
+  - source: ~/.gitconfig
+```
+
+The `~/.m2/repository` entry shares your host Maven cache with the container. With `mode: overlay`, the container sees a normal read-write directory pre-populated with your cached artifacts, but writes go to a container-local layer -- your host cache is never modified. Maven builds that would normally download hundreds of megabytes of dependencies can instead resolve them instantly from the shared cache.
+
+The `~/.gitconfig` entry mounts your git configuration read-only (the default mode), so `git` inside the container picks up your name, email, aliases, and other settings.
+
+Three modes are available:
+
+| Mode | Default? | Description |
+|------|----------|-------------|
+| `readonly` | Yes | Read-only bind mount. Simple, safe. |
+| `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. |
+| `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
+
+If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. For example, `source: ~/.m2/repository` maps to `/home/agentuser/.m2/repository` inside the container.
+
+More examples:
+
+```yaml
+host-resources:
+  # Share SSH config (read-only)
+  - source: ~/.ssh/config
+
+  # Copy a custom gitconfig from a URL
+  - source: https://example.com/team-gitconfig
+    path: /home/agentuser/.gitconfig
+    mode: copy
+
+  # Share Gradle cache with overlay (writable inside container, host protected)
+  - source: ~/.gradle/caches
+    mode: overlay
+```
+
+If a host path doesn't exist at build or branch time, the entry is skipped with a warning -- the build proceeds without it. This means templates with host-resources remain portable: they work on machines that have the declared paths and gracefully degrade on machines that don't.
+
+Host resources compose across the parent chain: a child image inherits its parent's host-resources and can override individual entries (matched by container path) to change the mode.
+
 ## Custom Tools
 
 Template inheritance forms a single chain -- a template has exactly one parent. Tools provide composition: reusable capabilities that any template can mix in independently. A `gradle` tool can be added to a Java template, a Kotlin template, or a project-local template without duplicating definitions or creating diamond inheritance.
@@ -257,6 +310,7 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel (optional)
 - **Interactive TUI**: Midnight Commander-style interface for managing environments
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
+- **Host resources**: share host files and directories with containers (read-only, overlay, or copy)
 - **Inbox mount**: share a host directory read-only into the container
 - **MITM TLS proxy**: transparent auth injection — credentials never enter containers in any form
 - **Proxy caching**: OCI registry blobs and Maven/Gradle artifacts cached on the host, shared across all branches

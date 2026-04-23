@@ -45,6 +45,10 @@ Templates are YAML definitions (`src/main/resources/images/`) with optional pare
 
 Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.
 
+### Host Resources
+
+`HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container.
+
 ### Tool System
 
 `ToolSetup` interface with two implementations:
