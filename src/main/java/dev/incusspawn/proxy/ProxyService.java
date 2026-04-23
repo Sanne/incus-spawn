@@ -98,6 +98,17 @@ public final class ProxyService {
         return true;
     }
 
+    public static boolean restart() {
+        System.err.println("Restarting proxy service...");
+        runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+        if (isActive()) {
+            System.err.println("Proxy service restarted.");
+            return true;
+        }
+        System.err.println("Warning: proxy service did not restart.");
+        return false;
+    }
+
     public static void stop() {
         if (isActive()) {
             System.out.println("Stopping proxy service...");

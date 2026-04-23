@@ -175,6 +175,16 @@ public class ProxyCommand {
             switch (status) {
                 case RUNNING -> {
                     System.out.println("Proxy is running.");
+                    var proxyInfo = ProxyHealthCheck.fetchProxyInfo(gatewayIp);
+                    if (proxyInfo != null) {
+                        if (!proxyInfo.isLegacy()) {
+                            System.out.println("  Version:         " + proxyInfo.version() + " (" + proxyInfo.gitSha() + ")");
+                        }
+                        var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
+                        if (!drift.isEmpty()) {
+                            System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
+                        }
+                    }
                     System.out.println("  Health endpoint: http://" + gatewayIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + MitmProxy.DEFAULT_MITM_PORT);
                     if (serviceActive) {

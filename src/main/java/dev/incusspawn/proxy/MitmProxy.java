@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeConstants;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -146,6 +147,9 @@ public class MitmProxy {
     // Optional debug traffic logger
     private ApiTrafficLog debugLog;
 
+    // CA fingerprint computed at startup for the health endpoint
+    private String caFingerprint = "";
+
     public MitmProxy(String bindAddress, int mitmPort, int healthPort,
                      String anthropicApiKey, String ghToken,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
@@ -253,6 +257,7 @@ public class MitmProxy {
 
         // Load or create CA, generate per-domain certs
         var ca = CertificateAuthority.loadOrCreate();
+        caFingerprint = ca.caFingerprint();
         serverSslContext = buildServerSslContext(ca);
 
         // Start health check HTTP server
@@ -1230,7 +1235,12 @@ public class MitmProxy {
     // --- Health check ---
 
     private void handleHealthCheck(HttpExchange exchange) throws IOException {
-        var response = "{\"status\":\"ok\"}".getBytes();
+        var info = BuildInfo.instance();
+        var response = ("{\"status\":\"ok\""
+                + ",\"version\":\"" + info.version() + "\""
+                + ",\"gitSha\":\"" + info.gitSha() + "\""
+                + ",\"caFingerprint\":\"" + caFingerprint + "\"}")
+                .getBytes();
         exchange.getResponseHeaders().add("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, response.length);
         exchange.getResponseBody().write(response);

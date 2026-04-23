@@ -1,9 +1,11 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.tamboui.layout.Constraint;
@@ -246,11 +248,12 @@ public class ListCommand implements Runnable {
                 }
             }
             if (match != null) {
+                var buildVer = incus.configGet(name, Metadata.BUILD_VERSION);
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
-                        match.created.isEmpty() ? "built" : match.created, match.runtime));
+                        match.created.isEmpty() ? "built" : match.created, match.runtime, buildVer));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", ""));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", ""));
             }
         }
         buildTemplateRowData();
@@ -1710,11 +1713,21 @@ public class ListCommand implements Runnable {
 
     private void buildTemplateRowData() {
         templateRows = new ArrayList<>();
+        var currentVersion = BuildInfo.instance().version();
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
             var statusStyle = "not built".equals(t.buildStatus)
                     ? Style.EMPTY.fg(Color.GRAY)
                     : Style.EMPTY.fg(Color.GREEN);
+            if (!"not built".equals(t.buildStatus)) {
+                if (!t.buildVersion.isEmpty() && !t.buildVersion.equals(currentVersion)) {
+                    statusDisplay += " (v" + t.buildVersion + ")";
+                    statusStyle = Style.EMPTY.fg(Color.YELLOW);
+                } else if (t.buildVersion.isEmpty()) {
+                    statusDisplay += " (pre-versioning)";
+                    statusStyle = Style.EMPTY.fg(Color.YELLOW);
+                }
+            }
             var desc = t.description == null ? "" : t.description;
             templateRows.add(Row.from(t.name, statusDisplay, desc).style(statusStyle));
         }
@@ -1912,7 +1925,28 @@ public class ListCommand implements Runnable {
     private boolean showProxyErrorIfNeeded(String containerName) {
         var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
         if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
-        return showProxyError();
+        if (showProxyError()) return true;
+        fixCaMismatchIfNeeded(containerName);
+        return false;
+    }
+
+    private void fixCaMismatchIfNeeded(String containerName) {
+        var imageCaFp = incus.configGet(containerName, Metadata.CA_FINGERPRINT);
+        if (imageCaFp.isEmpty()) return;
+        var ca = CertificateAuthority.loadOrCreate();
+        if (imageCaFp.equals(ca.caFingerprint())) return;
+
+        var info = incus.exec("list", containerName, "--format=csv", "--columns=s");
+        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+            incus.start(containerName);
+            waitForReady(containerName);
+        }
+        incus.shellExec(containerName, "sh", "-c",
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
+                ca.caCertPem() +
+                "CERTEOF");
+        incus.shellExec(containerName, "update-ca-trust");
+        incus.configSet(containerName, Metadata.CA_FINGERPRINT, ca.caFingerprint());
     }
 
     private void shellInto(String name) {
@@ -2012,7 +2046,7 @@ public class ListCommand implements Runnable {
     }
 
     private record TemplateInfo(String name, String description,
-                                String buildStatus, String runtime) {}
+                                String buildStatus, String runtime, String buildVersion) {}
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,

@@ -123,6 +123,21 @@ public class CertificateAuthority {
         }
     }
 
+    public String caFingerprint() {
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            var digest = md.digest(caCert.getEncoded());
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute CA fingerprint", e);
+        }
+    }
+
+    public static String currentCaFingerprint() {
+        if (!exists()) return "";
+        return loadOrCreate().caFingerprint();
+    }
+
     public PrivateKey caKey() {
         return caKey;
     }

@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
@@ -32,6 +33,7 @@ public class ShellCommand implements Runnable {
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return;
+            fixCaMismatch(name);
         }
 
         // Start if stopped
@@ -44,6 +46,42 @@ public class ShellCommand implements Runnable {
 
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
+    }
+
+    private void fixCaMismatch(String container) {
+        var imageCaFp = incus.configGet(container, Metadata.CA_FINGERPRINT);
+        if (imageCaFp.isEmpty()) return;
+        var ca = CertificateAuthority.loadOrCreate();
+        if (imageCaFp.equals(ca.caFingerprint())) return;
+
+        var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+        System.err.println(sep);
+        System.err.println("\033[1;33mCA certificate mismatch\033[0m");
+        System.err.println("This container was built with a different CA certificate.");
+        System.err.println("Updating CA certificate in the container...");
+
+        // Ensure the container is running so we can push the cert
+        var info = incus.exec("list", container, "--format=csv", "--columns=s");
+        boolean wasStarted = false;
+        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+            incus.start(container);
+            waitForReady(container);
+            wasStarted = true;
+        }
+
+        incus.shellExec(container, "sh", "-c",
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
+                ca.caCertPem() +
+                "CERTEOF");
+        incus.shellExec(container, "update-ca-trust");
+        incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+
+        if (wasStarted) {
+            // Leave it running — we'll connect to it next
+        }
+
+        System.err.println("CA certificate updated.");
+        System.err.println(sep);
     }
 
     private void waitForReady(String container) {
