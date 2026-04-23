@@ -16,6 +16,12 @@ class HostResourceSetupTest {
     }
 
     @Test
+    void resolveContainerPathExpandsTildeInExplicitPath() {
+        assertEquals("/home/agentuser/.gitconfig",
+                HostResourceSetup.resolveContainerPath("~/sources/templates/.gitconfig", "~/.gitconfig"));
+    }
+
+    @Test
     void resolveContainerPathDefaultsFromTilde() {
         assertEquals("/home/agentuser/.m2/repository",
                 HostResourceSetup.resolveContainerPath("~/.m2/repository", null));

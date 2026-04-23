@@ -26,13 +26,13 @@ public final class HostResourceSetup {
     private HostResourceSetup() {}
 
     public static String resolveContainerPath(String source, String path) {
-        if (path != null && !path.isBlank()) return path;
-        if (source.startsWith("http://") || source.startsWith("https://")) {
+        var resolved = (path != null && !path.isBlank()) ? path : source;
+        if (resolved.startsWith("~/")) return "/home/agentuser/" + resolved.substring(2);
+        if (resolved.equals("~")) return "/home/agentuser";
+        if (resolved.startsWith("http://") || resolved.startsWith("https://")) {
             throw new IllegalArgumentException("'path' is required for URL sources: " + source);
         }
-        if (source.startsWith("~/")) return "/home/agentuser/" + source.substring(2);
-        if (source.equals("~")) return "/home/agentuser";
-        return source;
+        return resolved;
     }
 
     public static String expandHostTilde(String source) {
