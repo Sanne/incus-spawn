@@ -240,6 +240,47 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 
 **Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth application-default login` completed.
 
+### Host Resources
+
+Template images can declare host files and directories to share with containers via the `host-resources` YAML key. Three modes control how the resource is made available:
+
+**Readonly** (default): a read-only Incus disk device bind mount. The container can read the host file/directory but cannot modify it. Simple and safe for config files like `~/.gitconfig`.
+
+**Overlay**: the host directory is attached as a read-only lower layer, with an ephemeral writable upper layer inside the container, combined via Linux overlayfs. The container sees a normal read-write directory, but writes go to the container-local upper layer — the host is fully protected. This is the right mode for caches (Maven, OCI) where tools expect to write but you don't need writes to persist back to the host.
+
+**Copy**: the file or directory is copied into the container at build time and becomes part of the template. Supports local paths and URLs. No runtime dependency on the host.
+
+#### Overlay internals
+
+For a host-resource with `mode: overlay` targeting `/home/agentuser/.m2/repository`:
+
+1. **Build time**: the host directory is attached as a read-only Incus disk device at `/var/lib/incus-spawn/overlays/home/agentuser/.m2/repository/lower`. The container creates `upper` and `work` siblings, then runs `mount -t overlay` to present the merged view at the target path. A systemd service (`incus-spawn-overlays.service`) is installed and enabled to re-apply the overlay mount on boot.
+
+2. **After build**: the overlay is unmounted and the disk device is removed from the stopped template. The upper and work directories remain as container-local files. The full host-resource configuration is stored as JSON in `user.incus-spawn.host-resources` metadata.
+
+3. **At branch time**: `BranchCommand` reads the stored metadata and re-attaches the disk device to the stopped instance before starting it. On boot, the systemd service re-mounts the overlay. The upper layer — now containing build artifacts — was copied via CoW when the instance was branched, so each instance has its own independent writable layer.
+
+4. **On reboot**: the systemd service fires on every boot and re-mounts overlays. This works even if the container is started directly via `incus start` rather than through `isx`.
+
+The overlay directory structure mirrors the container path directly under `/var/lib/incus-spawn/overlays/`, so the layout is self-documenting:
+
+```
+/var/lib/incus-spawn/overlays/home/agentuser/.m2/repository/
+  ├── lower/    ← read-only disk device mount (host directory)
+  ├── upper/    ← container-local writable layer (follows CoW branching)
+  └── work/     ← overlayfs internal bookkeeping
+```
+
+Incus disk device names are derived from the container path for readability (e.g. `hr-home-agentuser--m2-repository`). They are removed from stopped templates to avoid host-path dependencies and re-attached at branch time.
+
+#### Missing sources
+
+If a host path doesn't exist at build or branch time, the entry is skipped with a warning. The build/branch proceeds without it.
+
+#### Inheritance
+
+Host resources compose additively across the parent chain, with override-by-container-path. If a parent declares `~/.gitconfig` as `readonly` and a child declares `~/.gitconfig` as `copy`, the child's mode wins. This follows the same last-write-wins pattern as package deduplication.
+
 ### Metadata Tracking
 
 Containers tagged via Incus `user.*` config keys:
@@ -251,6 +292,7 @@ user.incus-spawn.parent=tpl-dev
 user.incus-spawn.created=2026-04-07
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
 user.incus-spawn.proxy-gateway=10.166.11.1    # (proxy-only branches only)
+user.incus-spawn.host-resources=[...]         # (JSON, when host-resources declared)
 ```
 
 ### Storage and COW
@@ -325,5 +367,5 @@ The MITM TLS proxy provides credential isolation:
 
 ### Filesystem Isolation
 - Inbox mount is strictly read-only
-- No host filesystem access beyond the inbox
+- Host resources default to read-only; overlay mode provides an ephemeral writable layer but the host directory is never modified
 - Clone filesystems are independent CoW copies — changes in one clone don't affect others or the template image

@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationContext;
@@ -70,6 +71,8 @@ public class ImageDef {
     private List<RepoEntry> repos = List.of();
     @JsonDeserialize(using = SkillsDef.Deserializer.class)
     private SkillsDef skills = SkillsDef.EMPTY;
+    @JsonProperty("host-resources")
+    private List<HostResource> hostResources = List.of();
 
     @JsonIgnore
     private String source = "unknown";
@@ -90,6 +93,8 @@ public class ImageDef {
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
     public SkillsDef getSkills() { return skills; }
     public void setSkills(SkillsDef skills) { this.skills = skills; }
+    public List<HostResource> getHostResources() { return hostResources; }
+    public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
 
@@ -179,6 +184,28 @@ public class ImageDef {
         public void setBranch(String branch) { this.branch = branch; }
         public String getPrime() { return prime; }
         public void setPrime(String prime) { this.prime = prime; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class HostResource {
+        private String source;
+        private String path;
+        private String mode = "readonly";
+
+        public HostResource() {}
+
+        public HostResource(String source, String path, String mode) {
+            this.source = source;
+            this.path = path;
+            this.mode = mode != null ? mode : "readonly";
+        }
+
+        public String getSource() { return source; }
+        public void setSource(String source) { this.source = source; }
+        public String getPath() { return path; }
+        public void setPath(String path) { this.path = path; }
+        public String getMode() { return mode; }
+        public void setMode(String mode) { this.mode = mode; }
     }
 
     /** Whether this image is built from scratch (no parent). */
