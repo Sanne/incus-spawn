@@ -1931,22 +1931,12 @@ public class ListCommand implements Runnable {
     }
 
     private void fixCaMismatchIfNeeded(String containerName) {
-        var imageCaFp = incus.configGet(containerName, Metadata.CA_FINGERPRINT);
-        if (imageCaFp.isEmpty()) return;
-        var ca = CertificateAuthority.loadOrCreate();
-        if (imageCaFp.equals(ca.caFingerprint())) return;
-
         var info = incus.exec("list", containerName, "--format=csv", "--columns=s");
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             incus.start(containerName);
             waitForReady(containerName);
         }
-        incus.shellExec(containerName, "sh", "-c",
-                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
-                ca.caCertPem() +
-                "CERTEOF");
-        incus.shellExec(containerName, "update-ca-trust");
-        incus.configSet(containerName, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+        CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }
 
     private void shellInto(String name) {
