@@ -43,7 +43,22 @@ public final class HostResourceSetup {
 
     static String deviceName(String containerPath) {
         var stripped = containerPath.startsWith("/") ? containerPath.substring(1) : containerPath;
-        return "hr-" + stripped.replaceAll("[^a-zA-Z0-9]", "-");
+        var name = "hr-" + stripped.replaceAll("[^a-zA-Z0-9]", "-");
+        if (name.length() > 64) {
+            var hash = Integer.toHexString(containerPath.hashCode() & 0x7fffffff);
+            name = name.substring(0, 55) + "-" + hash;
+        }
+        return name;
+    }
+
+    static String overlayDeviceName(String containerPath) {
+        var base = deviceName(containerPath);
+        var name = base + "-lo";
+        if (name.length() > 64) {
+            var hash = Integer.toHexString(containerPath.hashCode() & 0x7fffffff);
+            name = base.substring(0, 55) + "-" + hash + "-lo";
+        }
+        return name;
     }
 
     private static String overlayDir(String containerPath) {
@@ -104,8 +119,7 @@ public final class HostResourceSetup {
             try {
                 if ("overlay".equals(hr.getMode())) {
                     incus.shellExec(container, "umount", containerPath);
-                    var lowerDir = overlayDir(containerPath) + "/lower";
-                    incus.deviceRemove(container, deviceName(lowerDir));
+                    incus.deviceRemove(container, overlayDeviceName(containerPath));
                 } else {
                     incus.deviceRemove(container, deviceName(containerPath));
                 }
@@ -199,7 +213,7 @@ public final class HostResourceSetup {
             return;
         }
 
-        incus.deviceAdd(container.name(), deviceName(lowerDir), "disk",
+        incus.deviceAdd(container.name(), overlayDeviceName(containerPath), "disk",
                 "source=" + expandedSource,
                 "path=" + lowerDir,
                 "readonly=true",
@@ -223,7 +237,7 @@ public final class HostResourceSetup {
             return;
         }
 
-        incus.deviceAdd(container, deviceName(lowerDir), "disk",
+        incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
                 "source=" + expandedSource,
                 "path=" + lowerDir,
                 "readonly=true",
