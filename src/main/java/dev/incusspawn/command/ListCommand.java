@@ -730,7 +730,7 @@ public class ListCommand implements Runnable {
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
-        int footerHeight = hasStatus ? 2 : 1;
+        int footerHeight = hasStatus ? 3 : 2;
         // Template panel height: rows + header + 2 borders, capped
         int templatePanelHeight = Math.min(templateEntries.size() + 3, Math.max(5, area.height() / 3));
         var chunks = Layout.vertical()
@@ -820,8 +820,8 @@ public class ListCommand implements Runnable {
                 .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE")
                         .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
                 .rows(tableRows)
-                .widths(Constraint.fill(), Constraint.length(12),
-                        Constraint.length(16), Constraint.length(20),
+                .widths(Constraint.fill(), Constraint.length(9),
+                        Constraint.length(16), Constraint.length(14),
                         Constraint.length(12), Constraint.length(10))
                 .highlightSymbol(focused ? "\u25b8 " : "  ")
                 .block(Block.builder()
@@ -863,8 +863,10 @@ public class ListCommand implements Runnable {
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
         items.add(makeKey("F10", "Quit", false));
 
+        var contextLine = buildContextLine(template, selected, onTemplates);
+
         if (hasStatus) {
-            var rows = splitVertical(area, 1, 1);
+            var rows = splitVertical(area, 1, 1, 1);
             var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
                     || statusMessage.startsWith("Template");
             var statusBg = Color.rgb(0, 0, 80);
@@ -875,10 +877,44 @@ public class ListCommand implements Runnable {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            renderKeyItems(frame, rows.get(1), items);
+            renderContextLine(frame, rows.get(1), contextLine);
+            renderKeyItems(frame, rows.get(2), items);
         } else {
-            renderKeyItems(frame, area, items);
+            var rows = splitVertical(area, 1, 1);
+            renderContextLine(frame, rows.get(0), contextLine);
+            renderKeyItems(frame, rows.get(1), items);
         }
+    }
+
+    private Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
+        if (onTemplates && template != null) {
+            var spans = new ArrayList<Span>();
+            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(Color.WHITE)));
+            if (template.description != null && !template.description.isEmpty()) {
+                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(Color.GRAY)));
+            }
+            return Line.from(spans);
+        }
+        if (!onTemplates && instance != null) {
+            var spans = new ArrayList<Span>();
+            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(Color.WHITE)));
+            if (!instance.parent.isEmpty() && !"-".equals(instance.parent)) {
+                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(Color.GRAY)));
+            }
+            if (!instance.ipv4.isEmpty()) {
+                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(Color.CYAN)));
+            }
+            if (!instance.networkMode.isEmpty()) {
+                spans.add(Span.styled("  [" + instance.networkMode.toLowerCase() + "]", Style.EMPTY.fg(Color.GRAY)));
+            }
+            return Line.from(spans);
+        }
+        return Line.styled("", Style.EMPTY);
+    }
+
+    private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
+        fillBackground(frame, area, BAR_BG);
+        frame.renderWidget(Paragraph.from(line), area);
     }
 
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
