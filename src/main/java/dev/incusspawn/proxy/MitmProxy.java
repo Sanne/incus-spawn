@@ -391,18 +391,32 @@ public class MitmProxy {
         }
 
         var path = request.path();
-        if (useVertex && ANTHROPIC_DOMAINS.contains(domain)
-                && path != null && path.startsWith("/v1/messages")) {
-            // Messages API: translate to Vertex AI rawPredict
-            upstreamHost = vertexHost();
-            if (bodyBytes == null) {
-                bodyBytes = request.readRequestBody(clientIn);
+        if (useVertex && ANTHROPIC_DOMAINS.contains(domain) && path != null) {
+            if (path.startsWith("/v1/projects/")) {
+                // Already Vertex-formatted (container running in Vertex mode with
+                // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
+                // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
+                // which the global endpoint rejects — strip them.
+                upstreamHost = vertexHost();
+                request.setPath(path.replaceFirst("@\\d{8}(?=:)", ""));
+                request.setHeader("Host", upstreamHost);
+                request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
+                request.removeHeader("x-api-key");
+                request.removeHeader("anthropic-beta");
+            } else if (path.startsWith("/v1/messages")) {
+                // Standard API format: translate to Vertex AI rawPredict
+                upstreamHost = vertexHost();
+                if (bodyBytes == null) {
+                    bodyBytes = request.readRequestBody(clientIn);
+                }
+                bodyBytes = translateToVertex(request, bodyBytes, upstreamHost);
+                bodyRewritten = true;
+            } else {
+                // Non-messages endpoints (settings, bootstrap, feature flags, etc.)
+                upstreamHost = domain;
+                injectHeaders(request, domain);
             }
-            bodyBytes = translateToVertex(request, bodyBytes, upstreamHost);
-            bodyRewritten = true;
         } else {
-            // Non-messages endpoints (settings, bootstrap, feature flags, etc.)
-            // and all non-Vertex traffic: forward directly to the real host
             upstreamHost = domain;
             injectHeaders(request, domain);
         }

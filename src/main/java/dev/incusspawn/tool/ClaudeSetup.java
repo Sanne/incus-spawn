@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import jakarta.enterprise.context.Dependent;
 
@@ -52,16 +53,23 @@ public class ClaudeSetup implements ToolSetup {
                   "skipDangerousModePermissionPrompt": true
                 }
                 """;
-        var claudeJson = """
+        var claudeJsonBuilder = new StringBuilder();
+        claudeJsonBuilder.append("""
                 {
                   "hasCompletedOnboarding": true,
                   "hasSeenTasksHint": true,
                   "numStartups": 1,
                   "autoUpdates": false,
+                """);
+        if (!SpawnConfig.load().getClaude().isUseVertex()) {
+            claudeJsonBuilder.append("""
                   "customApiKeyResponses": {
                     "approved": ["sk-ant-placeholder"],
                     "rejected": []
                   },
+                """);
+        }
+        claudeJsonBuilder.append("""
                   "projects": {
                     "/home/agentuser": {
                       "allowedTools": [],
@@ -69,7 +77,8 @@ public class ClaudeSetup implements ToolSetup {
                     }
                   }
                 }
-                """;
+                """);
+        var claudeJson = claudeJsonBuilder.toString();
         c.sh("mkdir -p /home/agentuser/.claude");
         c.writeFile("/home/agentuser/.claude/settings.json", settingsJson);
         c.writeFile("/home/agentuser/.claude.json", claudeJson);
@@ -83,11 +92,25 @@ public class ClaudeSetup implements ToolSetup {
      * Configure auth env vars so Claude Code skips login and makes API requests.
      * The MITM proxy handles actual credential injection — no real secrets enter the container.
      * <p>
-     * Always uses standard (non-Vertex) mode with a placeholder API key. When the host
-     * is configured for Vertex AI, the proxy transparently translates standard API
-     * requests to Vertex AI rawPredict format. The container has zero knowledge of Vertex.
+     * When the host uses Vertex AI, the container also runs in Vertex mode (with auth
+     * skipped) so it gets the same model list and features. Requests go to
+     * api.anthropic.com via ANTHROPIC_VERTEX_BASE_URL, where the proxy intercepts them
+     * and forwards to the real Vertex endpoint with GCP credentials.
+     * <p>
+     * When the host uses a direct API key, the container gets a placeholder API key
+     * and the proxy injects the real key.
      */
     private void configureAuth(Container c) {
-        c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
+        var config = SpawnConfig.load();
+        var claude = config.getClaude();
+        if (claude.isUseVertex()) {
+            c.appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
+            c.appendToProfile("export CLAUDE_CODE_SKIP_VERTEX_AUTH=1");
+            c.appendToProfile("export CLOUD_ML_REGION=" + claude.getCloudMlRegion());
+            c.appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + claude.getVertexProjectId());
+            c.appendToProfile("export ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1");
+        } else {
+            c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
+        }
     }
 }
