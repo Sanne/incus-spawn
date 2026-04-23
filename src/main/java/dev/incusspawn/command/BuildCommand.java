@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -288,6 +289,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.PARENT, parentName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
+        stampBuildVersion(targetName);
 
         System.out.println("Stopping image...");
         incus.stop(targetName);
@@ -414,6 +416,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
+        stampBuildVersion(targetName);
 
         // Stop the template (it's a stopped snapshot you branch from, not a running instance)
         System.out.println("Stopping image...");
@@ -535,6 +538,13 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
         }
         System.err.println("Warning: container " + container + " may not be fully ready.");
+    }
+
+    private void stampBuildVersion(String container) {
+        var info = BuildInfo.instance();
+        incus.configSet(container, Metadata.BUILD_VERSION, info.version());
+        incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
+        incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
     }
 
     private void requireSuccess(int exitCode, String message) {

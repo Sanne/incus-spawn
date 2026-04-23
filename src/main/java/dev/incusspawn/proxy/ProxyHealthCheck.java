@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
 
 import java.net.HttpURLConnection;
@@ -11,6 +12,10 @@ public final class ProxyHealthCheck {
         RUNNING,
         NOT_RUNNING,
         STALE_DNS
+    }
+
+    public record ProxyInfo(String version, String gitSha, String caFingerprint) {
+        public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
 
     private ProxyHealthCheck() {}
@@ -42,6 +47,38 @@ public final class ProxyHealthCheck {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    public static ProxyInfo fetchProxyInfo(String gatewayIp) {
+        try {
+            var url = URI.create("http://" + gatewayIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health").toURL();
+            var conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(2000);
+            conn.setReadTimeout(2000);
+            conn.setRequestMethod("GET");
+            if (conn.getResponseCode() != 200) return null;
+            var body = new String(conn.getInputStream().readAllBytes());
+            return new ProxyInfo(
+                    extractJsonString(body, "version"),
+                    extractJsonString(body, "gitSha"),
+                    extractJsonString(body, "caFingerprint"));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String checkVersionDrift(ProxyInfo proxyInfo) {
+        if (proxyInfo == null) return "";
+        if (proxyInfo.isLegacy()) {
+            return "The proxy is running a pre-versioning build. Restart recommended.";
+        }
+        var cliInfo = BuildInfo.instance();
+        if (!cliInfo.version().equals(proxyInfo.version())
+                || !cliInfo.gitSha().equals(proxyInfo.gitSha())) {
+            return "Proxy is " + proxyInfo.version() + " (" + shortSha(proxyInfo.gitSha()) + ")"
+                    + ", CLI is " + cliInfo.version() + " (" + shortSha(cliInfo.gitSha()) + ").";
+        }
+        return "";
     }
 
     public static void clearStaleDns(IncusClient incus) {
@@ -77,7 +114,10 @@ public final class ProxyHealthCheck {
 
     public static void requireProxy(IncusClient incus) {
         var status = check(incus);
-        if (status == ProxyStatus.RUNNING) return;
+        if (status == ProxyStatus.RUNNING) {
+            warnIfDrifted(incus);
+            return;
+        }
         if (status == ProxyStatus.STALE_DNS) {
             clearStaleDns(incus);
         }
@@ -87,11 +127,49 @@ public final class ProxyHealthCheck {
 
     public static boolean checkOrWarn(IncusClient incus) {
         var status = check(incus);
-        if (status == ProxyStatus.RUNNING) return true;
+        if (status == ProxyStatus.RUNNING) {
+            warnIfDrifted(incus);
+            return true;
+        }
         if (status == ProxyStatus.STALE_DNS) {
             clearStaleDns(incus);
         }
         System.err.println(formatError(status));
         return false;
+    }
+
+    static void warnIfDrifted(IncusClient incus) {
+        try {
+            var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+            var info = fetchProxyInfo(gatewayIp);
+            var drift = checkVersionDrift(info);
+            if (drift.isEmpty()) return;
+            var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+            if (ProxyService.isActive()) {
+                System.err.println(sep);
+                System.err.println("\033[1;33mProxy version drift detected:\033[0m " + drift);
+                ProxyService.restart();
+                System.err.println(sep);
+            } else {
+                System.err.println(sep);
+                System.err.println("\033[1;33mProxy version drift detected:\033[0m " + drift);
+                System.err.println("Restart the proxy to use the current version:");
+                System.err.println("  \033[1misx proxy stop && isx proxy start\033[0m");
+                System.err.println(sep);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static String extractJsonString(String json, String key) {
+        var pattern = "\"" + key + "\":\"";
+        var idx = json.indexOf(pattern);
+        if (idx < 0) return "";
+        var start = idx + pattern.length();
+        var end = json.indexOf('"', start);
+        return end > start ? json.substring(start, end) : "";
+    }
+
+    private static String shortSha(String sha) {
+        return sha != null && sha.length() > 7 ? sha.substring(0, 7) : (sha != null ? sha : "");
     }
 }

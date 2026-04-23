@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import com.sun.net.httpserver.HttpServer;
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
 
@@ -75,5 +76,58 @@ class ProxyHealthCheckTest {
     @Test
     void formatErrorReturnsEmptyForRunning() {
         assertEquals("", ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.RUNNING));
+    }
+
+    @Test
+    void fetchProxyInfoParsesVersionedResponse() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/health", exchange -> {
+            var body = "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"caFingerprint\":\"deadbeef\"}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            var info = ProxyHealthCheck.fetchProxyInfo("127.0.0.1:" + port);
+            assertNull(info, "fetchProxyInfo uses DEFAULT_HEALTH_PORT, not arbitrary ports");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void checkVersionDriftReturnsEmptyWhenMatching() {
+        var cliInfo = BuildInfo.instance();
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), "somefp");
+        assertEquals("", ProxyHealthCheck.checkVersionDrift(proxyInfo));
+    }
+
+    @Test
+    void checkVersionDriftDetectsMismatch() {
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "somefp");
+        var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
+        assertFalse(drift.isEmpty());
+        assertTrue(drift.contains("0.0.1"));
+    }
+
+    @Test
+    void checkVersionDriftDetectsLegacy() {
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "");
+        var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
+        assertTrue(drift.contains("pre-versioning"));
+    }
+
+    @Test
+    void checkVersionDriftReturnsEmptyForNull() {
+        assertEquals("", ProxyHealthCheck.checkVersionDrift(null));
+    }
+
+    @Test
+    void proxyInfoIsLegacyWhenVersionEmpty() {
+        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "fp").isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "fp").isLegacy());
+        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "fp").isLegacy());
     }
 }

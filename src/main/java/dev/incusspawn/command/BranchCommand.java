@@ -5,6 +5,7 @@ import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
@@ -66,6 +67,7 @@ public class BranchCommand implements Runnable {
         var networkMode = resolveNetworkMode();
         if (networkMode != NetworkMode.AIRGAP) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return;
+            if (checkCaMismatch(resolvedSource)) return;
         }
 
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
@@ -271,6 +273,24 @@ public class BranchCommand implements Runnable {
         } catch (Exception e) {
             return "1000";
         }
+    }
+
+    private boolean checkCaMismatch(String source) {
+        var imageCaFp = incus.configGet(source, Metadata.CA_FINGERPRINT);
+        if (imageCaFp.isEmpty()) return false;
+        var localCaFp = CertificateAuthority.currentCaFingerprint();
+        if (localCaFp.isEmpty() || imageCaFp.equals(localCaFp)) return false;
+        var profile = incus.configGet(source, Metadata.PROFILE);
+        var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+        System.err.println(sep);
+        System.err.println("\033[1;33mCA certificate mismatch\033[0m");
+        System.err.println("Template '" + source + "' was built with a different CA certificate.");
+        System.err.println("TLS connections through the proxy will fail in branches.");
+        if (!profile.isEmpty()) {
+            System.err.println("Rebuild the template to fix: \033[1misx build " + profile + "\033[0m");
+        }
+        System.err.println(sep);
+        return true;
     }
 
     private void waitForReady(String container) {
