@@ -49,39 +49,19 @@ public class ShellCommand implements Runnable {
     }
 
     private void fixCaMismatch(String container) {
-        var imageCaFp = incus.configGet(container, Metadata.CA_FINGERPRINT);
-        if (imageCaFp.isEmpty()) return;
-        var ca = CertificateAuthority.loadOrCreate();
-        if (imageCaFp.equals(ca.caFingerprint())) return;
-
-        var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
-        System.err.println(sep);
-        System.err.println("\033[1;33mCA certificate mismatch\033[0m");
-        System.err.println("This container was built with a different CA certificate.");
-        System.err.println("Updating CA certificate in the container...");
-
         // Ensure the container is running so we can push the cert
         var info = incus.exec("list", container, "--format=csv", "--columns=s");
-        boolean wasStarted = false;
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             incus.start(container);
             waitForReady(container);
-            wasStarted = true;
         }
 
-        incus.shellExec(container, "sh", "-c",
-                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
-                ca.caCertPem() +
-                "CERTEOF");
-        incus.shellExec(container, "update-ca-trust");
-        incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
-
-        if (wasStarted) {
-            // Leave it running — we'll connect to it next
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {
+            var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+            System.err.println(sep);
+            System.err.println("\033[1;33mCA certificate mismatch\033[0m — updated automatically.");
+            System.err.println(sep);
         }
-
-        System.err.println("CA certificate updated.");
-        System.err.println(sep);
     }
 
     private void waitForReady(String container) {

@@ -1,6 +1,8 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -136,6 +138,27 @@ public class CertificateAuthority {
     public static String currentCaFingerprint() {
         if (!exists()) return "";
         return loadOrCreate().caFingerprint();
+    }
+
+    /**
+     * Check whether a container's stored CA fingerprint matches the current CA.
+     * If mismatched, push the current cert into the container and update metadata.
+     * Returns true if a fix was applied, false if no action was needed.
+     * Containers without a stored fingerprint (pre-versioning) are skipped.
+     */
+    public static boolean fixContainerCaIfNeeded(IncusClient incus, String container) {
+        var imageCaFp = incus.configGet(container, Metadata.CA_FINGERPRINT);
+        if (imageCaFp.isEmpty()) return false;
+        var ca = loadOrCreate();
+        if (imageCaFp.equals(ca.caFingerprint())) return false;
+
+        incus.shellExec(container, "sh", "-c",
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
+                ca.caCertPem() +
+                "CERTEOF");
+        incus.shellExec(container, "update-ca-trust");
+        incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
+        return true;
     }
 
     public PrivateKey caKey() {

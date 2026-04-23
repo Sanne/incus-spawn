@@ -82,8 +82,12 @@ if systemctl --user is-active --quiet incus-spawn-proxy 2>/dev/null; then
     echo ""
     echo "  The proxy service (incus-spawn-proxy) is running."
     echo "  It may be running the previous version of isx."
-    read -p "  Restart proxy service now? (Y/n): " ANSWER
-    ANSWER="${ANSWER:-y}"
+    if [ -t 0 ]; then
+        read -p "  Restart proxy service now? (Y/n): " ANSWER
+        ANSWER="${ANSWER:-y}"
+    else
+        ANSWER="n"
+    fi
     if [ "$ANSWER" = "y" ] || [ "$ANSWER" = "Y" ]; then
         systemctl --user restart incus-spawn-proxy
         echo "  Proxy service restarted."

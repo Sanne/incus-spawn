@@ -1,5 +1,7 @@
 package dev.incusspawn.proxy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
 
@@ -17,6 +19,8 @@ public final class ProxyHealthCheck {
     public record ProxyInfo(String version, String gitSha, String caFingerprint) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private ProxyHealthCheck() {}
 
@@ -58,12 +62,21 @@ public final class ProxyHealthCheck {
             conn.setRequestMethod("GET");
             if (conn.getResponseCode() != 200) return null;
             var body = new String(conn.getInputStream().readAllBytes());
-            return new ProxyInfo(
-                    extractJsonString(body, "version"),
-                    extractJsonString(body, "gitSha"),
-                    extractJsonString(body, "caFingerprint"));
+            return parseProxyInfo(body);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    static ProxyInfo parseProxyInfo(String json) {
+        try {
+            var node = JSON.readTree(json);
+            return new ProxyInfo(
+                    textOrEmpty(node, "version"),
+                    textOrEmpty(node, "gitSha"),
+                    textOrEmpty(node, "caFingerprint"));
+        } catch (Exception e) {
+            return new ProxyInfo("", "", "");
         }
     }
 
@@ -160,13 +173,9 @@ public final class ProxyHealthCheck {
         } catch (Exception ignored) {}
     }
 
-    private static String extractJsonString(String json, String key) {
-        var pattern = "\"" + key + "\":\"";
-        var idx = json.indexOf(pattern);
-        if (idx < 0) return "";
-        var start = idx + pattern.length();
-        var end = json.indexOf('"', start);
-        return end > start ? json.substring(start, end) : "";
+    private static String textOrEmpty(JsonNode node, String field) {
+        var child = node.get(field);
+        return child != null && child.isTextual() ? child.asText() : "";
     }
 
     private static String shortSha(String sha) {

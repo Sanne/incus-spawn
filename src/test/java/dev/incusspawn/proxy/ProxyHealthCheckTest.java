@@ -79,22 +79,27 @@ class ProxyHealthCheckTest {
     }
 
     @Test
-    void fetchProxyInfoParsesVersionedResponse() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/health", exchange -> {
-            var body = "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"caFingerprint\":\"deadbeef\"}".getBytes();
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
-        server.start();
-        try {
-            int port = server.getAddress().getPort();
-            var info = ProxyHealthCheck.fetchProxyInfo("127.0.0.1:" + port);
-            assertNull(info, "fetchProxyInfo uses DEFAULT_HEALTH_PORT, not arbitrary ports");
-        } finally {
-            server.stop(0);
-        }
+    void parseProxyInfoExtractsAllFields() {
+        var info = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"caFingerprint\":\"deadbeef\"}");
+        assertEquals("0.1.10", info.version());
+        assertEquals("abc1234", info.gitSha());
+        assertEquals("deadbeef", info.caFingerprint());
+        assertFalse(info.isLegacy());
+    }
+
+    @Test
+    void parseProxyInfoHandlesOldFormat() {
+        var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\"}");
+        assertEquals("", info.version());
+        assertEquals("", info.gitSha());
+        assertTrue(info.isLegacy());
+    }
+
+    @Test
+    void parseProxyInfoHandlesMalformedJson() {
+        var info = ProxyHealthCheck.parseProxyInfo("not json at all");
+        assertTrue(info.isLegacy());
     }
 
     @Test
