@@ -188,32 +188,49 @@ iptables -P OUTPUT DROP
 2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
 3. The proxy listens on port 18443 on the gateway IP. An iptables PREROUTING redirect rule (installed by `isx init` via `firewall-cmd --permanent --direct`) transparently redirects traffic arriving on `incusbr0` destined for port 443 to port 18443, avoiding conflicts with the Incus daemon on port 443. The proxy terminates TLS using per-domain certificates signed by the custom CA
 4. Based on the target domain, the proxy injects authentication headers:
-   - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (or Vertex AI translation, see below)
+   - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (direct mode) or Vertex AI passthrough/translation with GCP Bearer token (Vertex mode, see below)
    - `github.com` (git HTTP) — `Authorization: Basic <base64(x-access-token:token)>`
    - Other GitHub domains (API, CDN) — `Authorization: Bearer <github-token>`
+   - Container registry and Maven domains — relayed transparently with caching (no auth injection)
 5. The proxy re-encrypts and forwards to the real upstream over TLS
 
-**Vertex AI support (proxy-side API translation):** When the host is configured for Vertex AI (`useVertex=true` in config), containers still run Claude Code in **standard (non-Vertex) mode** with `ANTHROPIC_API_KEY=sk-ant-placeholder`. The container has zero knowledge of Vertex AI — no GCP credentials, no Vertex env vars, no special SDK configuration. The proxy transparently translates standard Anthropic API requests to Vertex AI format:
+**Vertex AI support:** When the host is configured for Vertex AI (`useVertex=true` in config), containers run Claude Code in **Vertex mode** with `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, and `ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1`. This causes the Vertex SDK inside the container to send already-formatted Vertex requests (`/v1/projects/.../models/...:streamRawPredict`) to `api.anthropic.com`, which resolves to the proxy via dnsmasq. The proxy then forwards to the real Vertex endpoint with GCP credentials. No GCP credentials enter the container.
 
-1. Container sends `POST /v1/messages` to `api.anthropic.com` (resolves to gateway via dnsmasq)
-2. Proxy intercepts and buffers the request body
-3. Extracts the `model` field from the JSON body (e.g. `claude-sonnet-4-6`)
-4. Rewrites the request to Vertex AI `rawPredict` format:
-   - URL: `/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` (or `:streamRawPredict` for streaming requests)
-   - Auth: replaces `x-api-key` with `Authorization: Bearer <gcp-token>` (obtained via `gcloud auth print-access-token`, cached ~50 minutes)
-   - Body: replaces the `model` field with `"anthropic_version":"vertex-2023-10-16"` (required by Vertex)
-   - Body: strips all top-level fields not in the Vertex allowlist (beta features like `context_management` cause "Extra inputs" rejections)
-   - Body: strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex)
-   - Header: removes `anthropic-beta` (Vertex rejects unsupported beta feature flags)
-   - Host: rewrites to `{region}-aiplatform.googleapis.com`
-5. Forwards to the real Vertex AI endpoint over TLS
-6. Response format is identical — Vertex `rawPredict` returns standard Anthropic response format
+Running containers in Vertex mode (rather than standard mode) is required because Claude Code's model list depends on the provider: standard mode ("firstParty") shows a hardcoded subset that may omit newer models, while Vertex mode shows the full model catalogue. Using Vertex mode in the container ensures the `/model` picker matches what's available on the host.
 
-The body translation uses an allowlist approach: only known-good fields (`messages`, `system`, `max_tokens`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `stream`, `metadata`, `tools`, `tool_choice`, `anthropic_version`) are kept. Everything else is dropped. This is more robust than blocklisting individual beta fields, since new Claude Code beta features are automatically stripped without proxy changes.
+**Three-way routing for Anthropic traffic:**
 
-This approach was chosen over running Claude Code in native Vertex mode inside containers because Vertex mode requires GCP authentication for client-side model validation, which conflicts with the goal of keeping all credentials outside containers.
+The proxy routes requests to `api.anthropic.com` through one of three paths based on the URL:
 
-**Intercepted domains:** `api.anthropic.com`, `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`
+1. **Vertex passthrough** (`/v1/projects/...`): Requests already in Vertex format (from the container's Vertex SDK). The proxy strips `@date` model version suffixes from the URL (the global endpoint rejects them), removes the `anthropic-beta` header, injects a GCP Bearer token, and forwards to the real Vertex endpoint. The body is passed through unmodified — the Vertex SDK already formats it correctly.
+
+2. **Standard-to-Vertex translation** (`/v1/messages`): Requests in standard Anthropic API format. The proxy buffers the body and translates to Vertex `rawPredict` format (see translation details below). This path is used if a container happens to send standard-format requests (e.g. from curl).
+
+3. **Direct forwarding** (all other paths): Non-messages endpoints (settings, bootstrap, feature flags, MCP registry) are forwarded to the real `api.anthropic.com` with credential injection. These endpoints don't exist on the Vertex API.
+
+**Standard-to-Vertex translation details** (path 2):
+
+- URL: `/v1/messages` → `/v1/projects/{projectId}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` (or `:streamRawPredict` when `stream=true`)
+- Auth: replaces `x-api-key` with `Authorization: Bearer <gcp-token>` (obtained via `gcloud auth print-access-token`, cached ~50 minutes)
+- Body: extracts `model` field and moves it into the URL path, stripping date suffixes (e.g. `claude-sonnet-4-6-20251001` → `claude-sonnet-4-6`)
+- Body: adds `"anthropic_version": "vertex-2023-10-16"` (required by Vertex rawPredict)
+- Body: strips all top-level fields not in the Vertex allowlist (beta features like `context_management` cause "Extra inputs" rejections)
+- Body: recursively strips `scope` from nested `cache_control` objects (beta feature unsupported by Vertex)
+- Header: removes `anthropic-beta` (Vertex rejects beta feature flags; features are enabled via `anthropic_version`)
+- Host: rewrites to the Vertex endpoint hostname for the configured region
+
+The body translation uses an allowlist approach: only known-good fields (`messages`, `system`, `max_tokens`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `stream`, `metadata`, `tools`, `tool_choice`, `thinking`, `output_config`, `anthropic_version`) are kept. Everything else is dropped. This is more robust than blocklisting individual beta fields, since new Claude Code beta features are automatically stripped without proxy changes.
+
+**Vertex AI protocol details** (learned from testing):
+
+- **Hostname resolution by region**: The standard pattern is `{region}-aiplatform.googleapis.com` (e.g. `us-east5-aiplatform.googleapis.com`), but some meta-regions use special hostnames: `global` → `aiplatform.googleapis.com`, `us` → `aiplatform.us.rep.googleapis.com`, `eu` → `aiplatform.eu.rep.googleapis.com`
+- **Model naming**: The Vertex SDK uses `@` for model version suffixes in URL paths (e.g. `claude-haiku-4-5@20251001`), while the standard API uses `-` (e.g. `claude-haiku-4-5-20251001`). The global Vertex endpoint only accepts short model aliases without any version suffix — both `@20251001` and `-20251001` forms are rejected. The proxy strips both forms.
+- **Beta features**: The `anthropic-beta` header is rejected by Vertex rawPredict with "Unexpected value(s) for anthropic-beta header". This includes common beta flags like `claude-code-20250219`, `interleaved-thinking-2025-05-14`, `web-search-2025-03-05`, and `prompt-caching-scope-2026-01-05`. Features like extended thinking work without any beta flags on Vertex — they're enabled via `anthropic_version`. The Vertex SDK moves `anthropic-beta` header values into the body as an `anthropic_beta` array, but even that is rejected ("invalid beta flag"). The proxy strips the header entirely without adding it to the body.
+- **Auth skipping**: `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` causes the Vertex SDK to skip GCP authentication and return stub credentials that produce empty auth headers. The proxy then replaces these with real GCP tokens.
+- **Base URL override**: `ANTHROPIC_VERTEX_BASE_URL` redirects all Vertex SDK requests to a custom endpoint. Setting it to `https://api.anthropic.com/v1` causes the container's Vertex SDK to send requests to `api.anthropic.com`, which resolves to the proxy via dnsmasq.
+- **Response format**: Vertex `rawPredict` returns standard Anthropic response format — no response translation is needed.
+
+**Intercepted domains:** `api.anthropic.com`, `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`, `registry-1.docker.io`, `auth.docker.io`, `ghcr.io`, `quay.io`, `repo.maven.apache.org`, `repo1.maven.org`, `plugins.gradle.org`
 
 **HTTPS only:** The proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`.
 
@@ -273,10 +290,12 @@ systemd-resolved (127.0.0.53) doesn't work reliably inside Incus containers beca
 ### Credential isolation via MITM TLS proxy
 A TLS-terminating MITM proxy intercepts HTTPS connections to specific domains (Anthropic API, GitHub), injects authentication headers server-side, and forwards to the real upstream. Containers resolve these domains to the gateway IP via bridge-level dnsmasq overrides (configured when `isx proxy` starts) and trust the proxy's certificates via a custom CA installed in the template image. This approach was chosen over simpler alternatives (reverse proxy with `ANTHROPIC_BASE_URL`, credential helpers, shell wrappers) because those approaches still expose credentials to code running inside the container — either as environment variables, in process memory via `curl` calls, or through accessible endpoints. The MITM proxy provides complete isolation: there is no API, endpoint, environment variable, or file that container code can access to obtain credentials.
 
-### Vertex AI: proxy-side API translation vs native Vertex mode
-We evaluated two approaches for Vertex AI support: (1) running Claude Code in native Vertex mode inside containers with `CLAUDE_CODE_USE_VERTEX=1` and a fictitious proxy domain, or (2) running Claude Code in standard mode and translating requests proxy-side. We chose proxy-side translation because native Vertex mode requires GCP authentication for client-side model availability validation — even with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`, Claude Code rejects models that aren't in its internal Vertex allowlist, which lags behind actual Vertex availability. Proxy-side translation means the container has zero knowledge of Vertex AI: it sends standard Anthropic API requests, and the proxy rewrites them to Vertex `rawPredict` format (URL path rewrite, `model` field → URL, `anthropic_version` body field, Bearer token injection). The `anthropic_version: "vertex-2023-10-16"` value is hardcoded — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched.
+### Vertex AI: container in Vertex mode vs standard mode
+We initially ran containers in standard (non-Vertex) mode with proxy-side API translation — the container sent `/v1/messages` and the proxy rewrote to Vertex `rawPredict`. This had a critical flaw: Claude Code's model list is provider-dependent. In standard "firstParty" mode the model picker is a hardcoded subset that omits newer models (e.g. Opus 4.6 was missing). In Vertex mode the full catalogue is shown.
 
-**Fragility and mitigation:** The allowlist of body fields accepted by Vertex may drift as Anthropic adds new standard (non-beta) fields. If a new field is added to the standard Messages API and becomes required or functionally important, requests will silently succeed but with degraded behavior until the allowlist is updated. The allowlist is defined as `VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`. Beta features are automatically stripped and are not a concern — the allowlist only needs updating when the *standard* API schema changes.
+The solution: containers now run in Vertex mode with `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` (skips GCP auth — the SDK uses stub credentials that produce empty auth headers), and `ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1` (redirects the Vertex SDK to the proxy). The Vertex SDK formats requests in Vertex URL format (`/v1/projects/.../models/...:streamRawPredict`), sends them to the proxy, and the proxy injects real GCP credentials before forwarding to the actual Vertex endpoint. The proxy also retains the standard-to-Vertex translation path for any `/v1/messages` requests (e.g. from manual `curl` calls inside the container).
+
+**Fragility and mitigation:** The standard-to-Vertex translation path uses an allowlist (`VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`) that may drift as Anthropic adds new standard fields. However, the primary traffic flow (Vertex passthrough) doesn't use the allowlist — the Vertex SDK already formats the body correctly. The allowlist only affects the fallback translation path. The `anthropic_version: "vertex-2023-10-16"` value is hardcoded in the translation path — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched. The Vertex passthrough path doesn't set this value; the SDK does it itself.
 
 ### Fedora-specific
 The base image and package management are Fedora-specific (`dnf`, `images:fedora/43`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
@@ -293,8 +312,8 @@ Real API keys and tokens never enter containers, regardless of network mode. Con
 
 | Credential | Container has | How it works |
 |-----------|--------------|--------------|
-| Claude API key | Placeholder `sk-ant-placeholder` | Proxy replaces `x-api-key` header with real key (direct API) or translates to Vertex AI rawPredict with GCP Bearer token (Vertex mode) |
-| GCP credentials (Vertex AI) | **Nothing** | Container runs Claude Code in standard mode. Proxy translates requests to Vertex AI format and injects GCP Bearer token from `gcloud` on the host |
+| Claude API key (direct mode) | Placeholder `sk-ant-placeholder` | Proxy replaces `x-api-key` header with real key |
+| GCP credentials (Vertex mode) | **Nothing** | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 The MITM TLS proxy provides credential isolation:

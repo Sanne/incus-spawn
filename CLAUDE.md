@@ -64,7 +64,7 @@ Resolution via `ToolDefLoader`: user YAML -> built-in YAML -> Java CDI. First ma
 `MitmProxy` (in `proxy/`) is a TLS-terminating proxy that intercepts HTTPS to specific domains and injects real auth credentials, so containers only hold placeholder values. Key design:
 - Listens on gateway IP:18443 (iptables redirects 443->18443 on the bridge)
 - Per-domain certs signed by a custom CA (installed in templates during build)
-- Vertex AI support: translates standard Anthropic API requests to Vertex `rawPredict` format proxy-side, using an allowlist of body fields (`VERTEX_ALLOWED_FIELDS`)
+- Vertex AI support: three-way routing — passthrough for Vertex-formatted requests from containers running in Vertex mode, standard-to-Vertex translation for `/v1/messages` requests (using `VERTEX_ALLOWED_FIELDS` body allowlist), and direct forwarding for non-messages endpoints
 - Caches OCI blobs by SHA256 and Maven artifacts by coordinate
 
 ### TUI
