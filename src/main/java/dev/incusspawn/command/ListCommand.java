@@ -886,26 +886,30 @@ public class ListCommand implements Runnable {
         }
     }
 
+    private static final Color CONTEXT_BG = Color.rgb(30, 30, 50);
+
     private Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
+        var bg = CONTEXT_BG;
         if (onTemplates && template != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(Color.WHITE)));
+            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(Color.WHITE).bg(bg)));
             if (template.description != null && !template.description.isEmpty()) {
-                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(Color.GRAY)));
+                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(Color.GRAY).bg(bg)));
             }
             return Line.from(spans);
         }
         if (!onTemplates && instance != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(Color.WHITE)));
+            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(Color.WHITE).bg(bg)));
             if (!instance.parent.isEmpty() && !"-".equals(instance.parent)) {
-                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(Color.GRAY)));
+                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(Color.GRAY).bg(bg)));
             }
             if (!instance.ipv4.isEmpty()) {
-                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(Color.CYAN)));
+                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(Color.LIGHT_CYAN).bg(bg)));
             }
             if (!instance.networkMode.isEmpty()) {
-                spans.add(Span.styled("  [" + instance.networkMode.toLowerCase() + "]", Style.EMPTY.fg(Color.GRAY)));
+                spans.add(Span.styled("  [" + instance.networkMode.toLowerCase() + "]",
+                        Style.EMPTY.fg(Color.GRAY).bg(bg)));
             }
             return Line.from(spans);
         }
@@ -913,7 +917,7 @@ public class ListCommand implements Runnable {
     }
 
     private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
-        fillBackground(frame, area, BAR_BG);
+        fillBackground(frame, area, CONTEXT_BG);
         frame.renderWidget(Paragraph.from(line), area);
     }
 
