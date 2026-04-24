@@ -1,14 +1,14 @@
 name: maven-3
-description: Apache Maven 3.9.14
+description: Apache Maven 3.9.15
 
 downloads:
-  - url: https://dlcdn.apache.org/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz
-    sha256: 126ed3233e569bd0add9e889d226139acd3de9005876a01fe6108fbf4246f515
+  - url: https://archive.apache.org/dist/maven/maven-3/3.9.15/binaries/apache-maven-3.9.15-bin.tar.gz
+    sha256: 36182f85e91128cd5c4608462ac92194e7a30638f65034de66f4e1b00600a6fc
     extract: /opt
     links:
-      /opt/apache-maven-3.9.14/bin/mvn: /usr/local/bin/mvn
+      /opt/apache-maven-3.9.15/bin/mvn: /usr/local/bin/mvn
 
 env:
-  - export MAVEN_HOME=/opt/apache-maven-3.9.14
+  - export MAVEN_HOME=/opt/apache-maven-3.9.15
 
 verify: mvn --version
