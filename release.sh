@@ -1,20 +1,21 @@
 #!/bin/bash
-# Create and push a release tag from the current POM snapshot version.
+# Create and push a release tag.
 # Usage: ./release.sh [version]
-#   version  optional, e.g. "0.1.9" or "v0.1.9" (derived from POM if omitted)
+#   version  optional, e.g. "0.1.9" or "v0.1.9" (derived from latest git tag if omitted)
 set -e
-
-pom_version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
 
 if [ -n "$1" ]; then
     version="${1#v}"
 else
-    if [[ "$pom_version" != *-SNAPSHOT ]]; then
-        echo "ERROR: POM version ($pom_version) is not a SNAPSHOT — cannot derive release version." >&2
+    latest_tag=$(git tag --sort=-v:refname --list 'v*' | head -1)
+    if [ -z "$latest_tag" ]; then
+        echo "ERROR: No existing v* tags found — cannot derive next version." >&2
         echo "Pass the version explicitly: ./release.sh 0.1.9" >&2
         exit 1
     fi
-    version="${pom_version%-SNAPSHOT}"
+    latest="${latest_tag#v}"
+    IFS='.' read -r major minor patch <<< "$latest"
+    version="${major}.${minor}.$((patch + 1))"
 fi
 
 tag="v$version"
@@ -48,15 +49,7 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Validate: POM version is consistent
-expected_pom="${version}-SNAPSHOT"
-if [ "$pom_version" != "$expected_pom" ] && [ "$pom_version" != "$version" ]; then
-    echo "ERROR: POM version ($pom_version) doesn't match release version ($version)." >&2
-    echo "Expected $expected_pom or $version." >&2
-    exit 1
-fi
-
-echo "Releasing $tag (POM: $pom_version)"
+echo "Releasing $tag"
 echo ""
 
 git tag "$tag"
@@ -67,4 +60,3 @@ echo "Tag $tag pushed. GitHub Actions will handle the rest:"
 echo "  - Build uber-jar and native binary"
 echo "  - Create GitHub Release"
 echo "  - Publish RPM to COPR"
-echo "  - Bump POM to next snapshot"
