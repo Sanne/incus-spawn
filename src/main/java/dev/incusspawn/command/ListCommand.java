@@ -1823,6 +1823,8 @@ public class ListCommand implements Runnable {
         incus.configSet(name, Metadata.PARENT, source);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 
+        BranchCommand.injectSshKeyIfAvailable(incus, name);
+
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");

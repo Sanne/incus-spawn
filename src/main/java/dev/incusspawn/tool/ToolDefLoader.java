@@ -24,7 +24,9 @@ public class ToolDefLoader {
     private static final String RESOURCE_DIR = "tools/";
     private static final List<String> BUILTIN_TOOLS = List.of(
             "podman.yaml",
-            "maven-3.yaml"
+            "maven-3.yaml",
+            "sshd.yaml",
+            "idea-backend.yaml"
     );
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");

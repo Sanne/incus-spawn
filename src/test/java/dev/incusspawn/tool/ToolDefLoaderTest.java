@@ -27,6 +27,22 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void findsBuiltinSshd() {
+        var loader = new ToolDefLoader();
+        var tool = loader.find("sshd");
+        assertNotNull(tool, "sshd should be found as a built-in YAML tool");
+        assertEquals("sshd", tool.name());
+    }
+
+    @Test
+    void findsBuiltinIdeaBackend() {
+        var loader = new ToolDefLoader();
+        var tool = loader.find("idea-backend");
+        assertNotNull(tool, "idea-backend should be found as a built-in YAML tool");
+        assertEquals("idea-backend", tool.name());
+    }
+
+    @Test
     void unknownToolReturnsNull() {
         var loader = new ToolDefLoader();
         assertNull(loader.find("nonexistent-tool"));

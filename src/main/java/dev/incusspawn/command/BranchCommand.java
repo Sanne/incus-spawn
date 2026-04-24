@@ -13,7 +13,10 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 @Command(
         name = "branch",
         description = "Create a new instance from an existing one",
@@ -121,6 +124,8 @@ public class BranchCommand implements Runnable {
         // have correct ownership from the template, and -R would be very slow on
         // large images with many pre-built dependencies)
         incus.shellExec(name, "chown", getUid() + ":" + getUid(), "/home/agentuser");
+
+        injectSshKeyIfAvailable(incus, name);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");
@@ -300,5 +305,47 @@ public class BranchCommand implements Runnable {
             try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
         }
         System.err.println("Warning: instance " + container + " may not be fully ready.");
+    }
+
+    static void injectSshKeyIfAvailable(IncusClient incus, String name) {
+        var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
+        if (!check.success()) return;
+
+        var home = System.getProperty("user.home");
+        Path pubKey = null;
+        for (var keyName : List.of("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")) {
+            var candidate = Path.of(home, ".ssh", keyName);
+            if (Files.exists(candidate)) {
+                pubKey = candidate;
+                break;
+            }
+        }
+        if (pubKey == null) {
+            System.out.println("  SSH is available but no public key found in ~/.ssh/");
+            System.out.println("  Add your key manually: ssh-copy-id agentuser@<container-ip>");
+            return;
+        }
+
+        try {
+            var keyContent = Files.readString(pubKey).strip();
+            var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
+            try {
+                Files.writeString(tmpKey, keyContent + "\n");
+                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys");
+                incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/.ssh/authorized_keys");
+                incus.shellExec(name, "chmod", "600", "/home/agentuser/.ssh/authorized_keys");
+            } finally {
+                Files.deleteIfExists(tmpKey);
+            }
+        } catch (IOException e) {
+            System.err.println("  Warning: failed to inject SSH key: " + e.getMessage());
+            return;
+        }
+
+        var ipResult = incus.shellExec(name, "hostname", "-I");
+        if (ipResult.success()) {
+            var ip = ipResult.stdout().strip().split("\\s+")[0];
+            System.out.println("  SSH access: ssh agentuser@" + ip);
+        }
     }
 }
