@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -652,6 +653,7 @@ public class ListCommand implements Runnable {
                         tui.draw(frame -> render(frame, tableState));
                         try {
                             incus.delete(name, true);
+                            AutoRemoteService.removeRemotes(name, msg -> statusMessage = msg);
                             destroyed++;
                         } catch (Exception e) {
                             statusMessage = "Failed to destroy " + name + ": " + e.getMessage();
@@ -670,6 +672,7 @@ public class ListCommand implements Runnable {
                     tui.draw(frame -> render(frame, tableState));
                     try {
                         incus.delete(entry.name(), true);
+                        AutoRemoteService.removeRemotes(entry.name(), msg -> statusMessage = msg);
                         destroyed++;
                     } catch (Exception e) {
                         statusMessage = "Failed to destroy " + entry.name() + ": " + e.getMessage();
@@ -684,6 +687,7 @@ public class ListCommand implements Runnable {
                 tui.draw(frame -> render(frame, tableState));
                 try {
                     incus.delete(pendingDeleteName, true);
+                    AutoRemoteService.removeRemotes(pendingDeleteName, msg -> statusMessage = msg);
                     statusMessage = "Destroyed " + pendingDeleteName;
                 } catch (Exception e) {
                     statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
@@ -1929,6 +1933,7 @@ public class ListCommand implements Runnable {
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 
         BranchCommand.injectSshKeyIfAvailable(incus, name);
+        AutoRemoteService.addRemotes(incus, name);
 
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");

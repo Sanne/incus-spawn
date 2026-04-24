@@ -30,6 +30,7 @@ echo "======================="
 echo ""
 echo "This will remove:"
 echo "  - Binary:            $INSTALL_DIR/$BINARY_NAME"
+echo "  - Git remote helper: $INSTALL_DIR/git-remote-isx"
 echo "  - State:             $STATE_DIR/"
 echo "  - Systemd service:   $SYSTEMD_SERVICE"
 echo "  - Shell completions: (if installed)"
@@ -73,6 +74,11 @@ if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
     rm -f "$INSTALL_DIR/$BINARY_NAME"
 else
     echo "Binary not found at $INSTALL_DIR/$BINARY_NAME (skipping)"
+fi
+
+if [ -f "$INSTALL_DIR/git-remote-isx" ]; then
+    echo "Removing $INSTALL_DIR/git-remote-isx..."
+    rm -f "$INSTALL_DIR/git-remote-isx"
 fi
 
 # ── Remove shell completions ────────────────────────────────────────────────

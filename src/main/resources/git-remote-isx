@@ -1,0 +1,15 @@
+#!/bin/bash
+# Git remote helper for isx:// URLs — delegates to isx git-remote-helper
+# Installed alongside the isx binary; git discovers it via PATH.
+url="$2"
+[[ "$url" == isx://* ]] || { echo "error: not an isx:// URL: $url" >&2; exit 1; }
+instance="${url#isx://}"
+path="/${instance#*/}"
+instance="${instance%%/*}"
+while IFS= read -r line; do
+    case "$line" in
+        capabilities) printf 'connect\n\n' ;;
+        connect\ *) printf '\n'; exec isx git-remote-helper "$instance" "${line#connect }" "$path" ;;
+        '') exit 0 ;;
+    esac
+done

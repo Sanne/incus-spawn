@@ -133,6 +133,44 @@ public class IncusClient {
     }
 
     /**
+     * Build the full command list for running a shell command inside a container as a given user,
+     * without executing it. Useful when the caller needs to manage the process directly
+     * (e.g., for stdin/stdout piping in the git remote helper).
+     */
+    public List<String> buildExecCommand(String instance, String user, String shellCommand) {
+        var args = new ArrayList<String>();
+        args.add("exec");
+        args.add(instance);
+        args.add("--");
+        args.add("su");
+        args.add("-l");
+        args.add(user);
+        args.add("-c");
+        args.add(shellCommand);
+        return buildCommand(args);
+    }
+
+    /**
+     * Build a command list for running a program directly inside a container, without a login
+     * shell. Uses incus exec --user/--env flags to set the user and home directory.
+     * This avoids shell init scripts that may produce stdout output, which is critical for
+     * binary protocols like the git pack protocol.
+     */
+    public List<String> buildDirectExecCommand(String instance, int uid, String home,
+                                                String... command) {
+        var args = new ArrayList<String>();
+        args.add("exec");
+        args.add(instance);
+        args.add("--user");
+        args.add(String.valueOf(uid));
+        args.add("--env");
+        args.add("HOME=" + home);
+        args.add("--");
+        args.addAll(List.of(command));
+        return buildCommand(args);
+    }
+
+    /**
      * Execute a command inside a container as a given user.
      */
     public ExecResult execInContainer(String container, String user, String... command) {

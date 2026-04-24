@@ -79,6 +79,78 @@ In all non-airgapped modes, credentials are injected transparently by the MITM p
 - **Proxy only**: iptables OUTPUT rules restrict all outbound traffic to the MITM proxy port (443) and DNS — the container cannot reach any external endpoint directly
 - **Airgapped**: no network device, no traffic at all
 
+## Git Remotes
+
+Containers created with `isx branch` are isolated environments, but you need a way to get your changes back. incus-spawn integrates with git's native remote helper protocol so you can use standard `git fetch`, `git push`, and `git pull` between host repos and container repos:
+
+```shell
+# Inside the container, you make some commits...
+# Back on the host:
+git fetch fix-auth
+git cherry-pick fix-auth/main
+```
+
+### isx:// URLs
+
+The remote uses the `isx://` URL scheme:
+
+```
+isx://<instance-name>/<path-to-repo>
+```
+
+For example:
+
+```shell
+# Tilde expands to /home/agentuser
+git remote add fix-auth isx://fix-auth/~/quarkus
+
+# Absolute paths work too
+git remote add fix-auth isx://fix-auth/home/agentuser/quarkus
+
+# Then use standard git commands
+git fetch fix-auth
+git log fix-auth/main
+git diff main..fix-auth/main
+git pull fix-auth main
+git push fix-auth main
+```
+
+The instance must be running for git operations to work. If you specify a wrong path, the error message lists known repositories from the image definition.
+
+### Automatic remotes
+
+If you configure `host-path` in `~/.config/incus-spawn/config.yaml`, remotes are managed automatically:
+
+```yaml
+# Base directory where your repos live on the host
+host-path: ~/projects
+
+# Optional: explicit overrides for repos in non-standard locations
+repo-paths:
+  quarkus: ~/work/quarkus
+  hibernate: /opt/hibernate
+```
+
+With this configuration:
+
+- **`isx branch`** adds a git remote named after the instance in each matching host repo. A host repo matches when its `origin` URL corresponds to a repo declared in the template's image definition (protocol-lenient — SSH and HTTPS URLs for the same repo are treated as equal).
+- **`isx destroy`** removes the remote from host repos.
+
+```shell
+# Branch from a template that declares a quarkus repo
+isx branch fix-auth tpl-quarkus
+
+# The remote is automatically added in ~/work/quarkus:
+#   git remote add fix-auth isx://fix-auth/home/agentuser/quarkus
+cd ~/work/quarkus
+git fetch fix-auth
+
+# When done, destroy the instance — the remote is cleaned up
+isx destroy fix-auth
+```
+
+If a remote with the instance name already exists, a warning is printed with instructions to add it under a different name.
+
 ## Template Images
 
 Template images are reusable base environments defined in YAML. They can inherit from each other -- building an image automatically builds any missing parents:
@@ -320,6 +392,7 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **Claude Code integration**: auth via MITM proxy — API key never enters containers
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
+- **Git remotes**: `git fetch`/`git push` between host and container repos via `isx://` URLs, with automatic remote management
 - **Shell completions**: bash, zsh, and fish via `isx completion {bash,zsh,fish}`
 
 ## CLI Commands
@@ -431,7 +504,7 @@ Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get
 - `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions
 
-The `config.yaml` supports a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions:
+The `config.yaml` also supports git remote auto-management via `host-path` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions:
 
 ```yaml
 searchPaths:

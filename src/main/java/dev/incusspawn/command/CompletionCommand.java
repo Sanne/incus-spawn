@@ -249,6 +249,7 @@ public class CompletionCommand implements Runnable {
                     'completion:print shell completion script'
                     'templates:manage template definitions'
                     'instances:list connectable instance names'
+                    'git-remote-helper:git remote helper for isx:// URLs (used by git)'
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
@@ -266,6 +267,7 @@ public class CompletionCommand implements Runnable {
                     completion) _isx_completion ;;
                     templates)  _isx_templates ;;
                     instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
+                    git-remote-helper) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance' '2:service' '3:path' ;;
                   esac ;;
               esac
             }
@@ -290,14 +292,14 @@ public class CompletionCommand implements Runnable {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build project branch shell list destroy update-all proxy completion templates instances"
+              local commands="init build project branch shell list destroy update-all proxy completion templates instances git-remote-helper"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances)
+                  init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -434,7 +436,7 @@ public class CompletionCommand implements Runnable {
                     esac
                   fi
                   ;;
-                init|update-all|instances)
+                init|update-all|instances|git-remote-helper)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
               esac
@@ -460,7 +462,7 @@ public class CompletionCommand implements Runnable {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -482,6 +484,7 @@ public class CompletionCommand implements Runnable {
             complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
+            complete -c isx -f -n __isx_no_subcommand -a git-remote-helper -d 'Git remote helper for isx:// URLs (used by git)'
 
             # ── branch ───────────────────────────────────────────────────────────────────
 

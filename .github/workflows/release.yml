@@ -60,6 +60,7 @@ jobs:
           sed -e "s/@VERSION@/$VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
           mkdir -p ~/rpmbuild/{SOURCES,SPECS}
           cp target/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
+          cp src/main/resources/git-remote-isx ~/rpmbuild/SOURCES/
           cp /tmp/incus-spawn.spec ~/rpmbuild/SPECS/
           rpmbuild -bs ~/rpmbuild/SPECS/incus-spawn.spec
           copr-cli build incus-spawn ~/rpmbuild/SRPMS/incus-spawn-*.src.rpm

@@ -93,6 +93,8 @@ public class InitCommand implements Runnable {
         setupGitHubAuth();
         setupSearchPaths();
 
+        installGitRemoteShim();
+
         boolean proxyServiceInstalled = offerProxyService();
 
         System.out.println("\n=== Init complete! ===");
@@ -662,6 +664,30 @@ public class InitCommand implements Runnable {
             return false;
         }
         return ProxyService.install();
+    }
+
+    private void installGitRemoteShim() {
+        if (System.getProperty("org.graalvm.version") != null) return;
+
+        try {
+            var pb = new ProcessBuilder("which", "isx");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var isxPath = new String(process.getInputStream().readAllBytes()).strip();
+            if (process.waitFor() != 0 || isxPath.isEmpty()) return;
+
+            var shimPath = java.nio.file.Path.of(isxPath).getParent().resolve("git-remote-isx");
+            if (Files.exists(shimPath)) return;
+
+            try (var is = getClass().getClassLoader().getResourceAsStream("git-remote-isx")) {
+                if (is == null) return;
+                Files.write(shimPath, is.readAllBytes());
+                shimPath.toFile().setExecutable(true, false);
+                System.out.println("  Installed git remote helper: " + shimPath);
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not install git-remote-isx shim: " + e.getMessage());
+        }
     }
 
     private int runHost(String... command) {
