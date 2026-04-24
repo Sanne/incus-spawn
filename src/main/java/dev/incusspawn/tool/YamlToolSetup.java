@@ -35,6 +35,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<String> requires() {
+        return def.getRequires();
+    }
+
+    @Override
     public void install(Container container) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
         System.out.println("Installing " + label + "...");

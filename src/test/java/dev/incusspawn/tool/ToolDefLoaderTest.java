@@ -43,6 +43,53 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void ideaBackendRequiresSshd() {
+        var loader = new ToolDefLoader();
+        var tool = loader.find("idea-backend");
+        assertNotNull(tool);
+        assertTrue(tool.requires().contains("sshd"),
+                "idea-backend should declare sshd as a dependency");
+    }
+
+    @Test
+    void transitiveDependencies(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("tool-a.yaml"), """
+                name: tool-a
+                requires:
+                  - tool-b
+                run:
+                  - echo a
+                """);
+        Files.writeString(tempDir.resolve("tool-b.yaml"), """
+                name: tool-b
+                requires:
+                  - tool-c
+                run:
+                  - echo b
+                """);
+        Files.writeString(tempDir.resolve("tool-c.yaml"), """
+                name: tool-c
+                run:
+                  - echo c
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        var a = loader.find("tool-a");
+        assertNotNull(a);
+        assertEquals(java.util.List.of("tool-b"), a.requires());
+
+        var b = loader.find("tool-b");
+        assertNotNull(b);
+        assertEquals(java.util.List.of("tool-c"), b.requires());
+
+        var c = loader.find("tool-c");
+        assertNotNull(c);
+        assertTrue(c.requires().isEmpty());
+    }
+
+    @Test
     void unknownToolReturnsNull() {
         var loader = new ToolDefLoader();
         assertNull(loader.find("nonexistent-tool"));

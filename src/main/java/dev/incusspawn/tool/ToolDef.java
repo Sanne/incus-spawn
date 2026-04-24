@@ -31,6 +31,7 @@ public class ToolDef {
     private List<String> runAsUser = List.of();
     private List<FileEntry> files = List.of();
     private List<String> env = List.of();
+    private List<String> requires = List.of();
     private String verify;
 
     public String getName() { return name; }
@@ -49,6 +50,8 @@ public class ToolDef {
     public void setFiles(List<FileEntry> files) { this.files = files; }
     public List<String> getEnv() { return env; }
     public void setEnv(List<String> env) { this.env = env; }
+    public List<String> getRequires() { return requires; }
+    public void setRequires(List<String> requires) { this.requires = requires; }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
 
