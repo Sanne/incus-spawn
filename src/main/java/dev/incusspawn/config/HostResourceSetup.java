@@ -220,6 +220,7 @@ public final class HostResourceSetup {
                 "shift=true");
 
         container.exec("mkdir", "-p", upperDir, workDir, containerPath);
+        container.exec("chown", "agentuser:agentuser", upperDir);
         container.exec("mount", "-t", "overlay", "overlay",
                 "-o", "lowerdir=" + lowerDir + ",upperdir=" + upperDir + ",workdir=" + workDir,
                 containerPath);
@@ -263,6 +264,7 @@ public final class HostResourceSetup {
                 "while IFS='|' read -r lower upper work target; do\n" +
                 "    [ -d \"$lower\" ] || continue\n" +
                 "    mkdir -p \"$upper\" \"$work\" \"$target\"\n" +
+                "    chown agentuser:agentuser \"$upper\"\n" +
                 "    mount -t overlay overlay -o \"lowerdir=$lower,upperdir=$upper,workdir=$work\" \"$target\"\n" +
                 "done < " + OVERLAY_CONF);
         container.exec("chmod", "+x", OVERLAY_SCRIPT);
