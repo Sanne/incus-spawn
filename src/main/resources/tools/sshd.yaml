@@ -1,0 +1,18 @@
+name: sshd
+description: OpenSSH server for remote access
+
+packages:
+  - openssh-server
+
+run:
+  - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+  - ssh-keygen -A
+  - systemctl enable sshd
+  - mkdir -p /home/agentuser/.ssh
+  - touch /home/agentuser/.ssh/authorized_keys
+  - chown -R agentuser:agentuser /home/agentuser/.ssh
+  - chmod 700 /home/agentuser/.ssh
+  - chmod 600 /home/agentuser/.ssh/authorized_keys
+
+verify: sshd -t
