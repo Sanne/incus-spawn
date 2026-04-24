@@ -388,6 +388,7 @@ public class MitmProxy {
         String originalDump = null;
         byte[] originalBody = null;
         boolean bodyRewritten = false;
+        boolean isVertexRequest = false;
 
         if (debugLog != null) {
             bodyBytes = request.readRequestBody(clientIn);
@@ -403,14 +404,19 @@ public class MitmProxy {
                 // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
                 // which the global endpoint rejects — strip them.
                 upstreamHost = vertexHost();
+                isVertexRequest = true;
                 request.setPath(path.replaceFirst("@\\d{8}(?=:)", ""));
                 request.setHeader("Host", upstreamHost);
                 request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
                 request.removeHeader("x-api-key");
                 request.removeHeader("anthropic-beta");
+                if (bodyBytes == null) {
+                    bodyBytes = request.readRequestBody(clientIn);
+                }
             } else if (path.startsWith("/v1/messages")) {
                 // Standard API format: translate to Vertex AI rawPredict
                 upstreamHost = vertexHost();
+                isVertexRequest = true;
                 if (bodyBytes == null) {
                     bodyBytes = request.readRequestBody(clientIn);
                 }
@@ -426,48 +432,80 @@ public class MitmProxy {
             injectHeaders(request, domain);
         }
 
-        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
-                .createSocket(upstreamHost, 443);
-        upstreamSocket.setSoTimeout(300_000);
+        var firstResponse = sendUpstream(request, clientIn, upstreamHost, bodyBytes);
 
-        try (upstreamSocket) {
-            upstreamSocket.startHandshake();
-            var upstreamOut = upstreamSocket.getOutputStream();
-            var upstreamIn = upstreamSocket.getInputStream();
+        UpstreamResponse retryResponse = null;
+        if (isVertexRequest && firstResponse.message().statusCode() == 401) {
+            firstResponse.close();
+            System.err.println("Vertex 401: invalidating cached token and retrying");
+            invalidateVertexToken();
+            request.setHeader("Authorization", "Bearer " + getVertexAccessToken());
+            retryResponse = sendUpstream(request, clientIn, upstreamHost, bodyBytes);
+        }
 
-            request.writeTo(upstreamOut);
-            if (bodyBytes != null) {
-                upstreamOut.write(bodyBytes);
-                upstreamOut.flush();
-            } else {
-                request.relayRequestBody(clientIn, upstreamOut);
-            }
+        var response = retryResponse != null ? retryResponse : firstResponse;
+        try (response) {
+            var upstreamIn = response.inputStream();
+            var responseMsg = response.message();
+            responseMsg.removeHeader("Connection");
 
             if (debugLog != null) {
-                var response = HttpMessage.readResponse(upstreamIn);
-                if (response == null) return;
-                response.removeHeader("Connection");
-
-                var responseBody = ApiTrafficLog.captureSmallResponseBody(response, upstreamIn);
+                var responseBody = ApiTrafficLog.captureSmallResponseBody(responseMsg, upstreamIn);
 
                 var forwardedDump = request.dump();
                 debugLog.logExchange(
                         originalDump, originalBody,
                         forwardedDump.equals(originalDump) ? null : forwardedDump,
                         bodyRewritten ? bodyBytes : null,
-                        response.dump(), responseBody);
+                        responseMsg.dump(), responseBody);
 
-                response.writeTo(clientOut);
+                responseMsg.writeTo(clientOut);
                 if (responseBody != null) {
                     clientOut.write(responseBody);
                     clientOut.flush();
                 } else {
-                    response.relayResponseBody(upstreamIn, clientOut);
+                    responseMsg.relayResponseBody(upstreamIn, clientOut);
                 }
             } else {
-                relayResponseStrippingConnectionHeader(upstreamIn, clientOut);
+                responseMsg.writeTo(clientOut);
+                responseMsg.relayResponseBody(upstreamIn, clientOut);
             }
         }
+    }
+
+    private record UpstreamResponse(HttpMessage message, InputStream inputStream,
+                                    SSLSocket socket) implements AutoCloseable {
+        @Override
+        public void close() throws Exception {
+            socket.close();
+        }
+    }
+
+    private UpstreamResponse sendUpstream(HttpMessage request, InputStream clientIn,
+                                          String upstreamHost, byte[] bodyBytes) throws Exception {
+        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
+                .createSocket(upstreamHost, 443);
+        upstreamSocket.setSoTimeout(300_000);
+        upstreamSocket.startHandshake();
+
+        var upstreamOut = upstreamSocket.getOutputStream();
+        var upstreamIn = upstreamSocket.getInputStream();
+
+        request.writeTo(upstreamOut);
+        if (bodyBytes != null) {
+            upstreamOut.write(bodyBytes);
+            upstreamOut.flush();
+        } else {
+            request.relayRequestBody(clientIn, upstreamOut);
+        }
+
+        var response = HttpMessage.readResponse(upstreamIn);
+        if (response == null) {
+            upstreamSocket.close();
+            throw new IOException("No response from upstream");
+        }
+
+        return new UpstreamResponse(response, upstreamIn, upstreamSocket);
     }
 
     /**
@@ -496,6 +534,11 @@ public class MitmProxy {
             throw new RuntimeException("Failed to obtain GCP access token: " + e.getMessage() +
                     ". Ensure 'gcloud' is installed and 'gcloud auth application-default login' has been run.", e);
         }
+    }
+
+    private synchronized void invalidateVertexToken() {
+        cachedVertexToken = null;
+        vertexTokenExpiryMs = 0;
     }
 
     /**
