@@ -1,11 +1,13 @@
 package dev.incusspawn.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
+import java.util.Map;
 import dev.incusspawn.RuntimeConstants;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +24,10 @@ public class SpawnConfig {
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
     private java.util.List<String> searchPaths = java.util.List.of();
+    @JsonProperty("host-path")
+    private String hostPath = "";
+    @JsonProperty("repo-paths")
+    private Map<String, String> repoPaths = Map.of();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
@@ -54,6 +60,10 @@ public class SpawnConfig {
     public void setGithub(GitHubConfig github) { this.github = github; }
     public java.util.List<String> getSearchPaths() { return searchPaths; }
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
+    public String getHostPath() { return hostPath; }
+    public void setHostPath(String hostPath) { this.hostPath = hostPath == null ? "" : hostPath; }
+    public Map<String, String> getRepoPaths() { return repoPaths; }
+    public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
 
     public static Path configDir() {
         return RuntimeConstants.CONFIG_DIR;

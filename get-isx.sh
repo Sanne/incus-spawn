@@ -27,6 +27,10 @@ mkdir -p "$INSTALL_DIR"
 curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$ASSET" -o "$INSTALL_DIR/isx"
 chmod +x "$INSTALL_DIR/isx"
 
+# Install git remote helper shim for isx:// URLs
+curl -fsSL "https://raw.githubusercontent.com/$REPO/$VERSION/src/main/resources/git-remote-isx" -o "$INSTALL_DIR/git-remote-isx"
+chmod +x "$INSTALL_DIR/git-remote-isx"
+
 echo "Installed incus-spawn $VERSION to $INSTALL_DIR/isx"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;

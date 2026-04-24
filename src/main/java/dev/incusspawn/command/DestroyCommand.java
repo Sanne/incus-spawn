@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import jakarta.inject.Inject;
@@ -41,6 +42,7 @@ public class DestroyCommand implements Runnable {
 
         System.out.println("Destroying " + name + "...");
         incus.delete(name, true);
+        AutoRemoteService.removeRemotes(name);
         System.out.println("Destroyed " + name + ".");
     }
 

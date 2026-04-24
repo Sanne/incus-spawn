@@ -46,9 +46,16 @@ else
         echo "Error: quarkus-run.jar not found in target/quarkus-app/"
         exit 1
     fi
+    # Resolve the Java binary so the wrapper always uses the JDK it was built with,
+    # even if a different version is the default at runtime.
+    if [ -n "$JAVA_HOME" ]; then
+        JAVA_BIN="$JAVA_HOME/bin/java"
+    else
+        JAVA_BIN="$(command -v java)"
+    fi
     cat > "$INSTALL_DIR/$BINARY_NAME" <<WRAPPER
 #!/bin/bash
-exec java -jar "$JARFILE" "\$@"
+exec "$JAVA_BIN" -jar "$JARFILE" "\$@"
 WRAPPER
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 fi
@@ -74,6 +81,9 @@ if [ -n "$COMPLETIONS_SHELL" ]; then
     "$INSTALL_DIR/$BINARY_NAME" completion "$COMPLETIONS_SHELL" > "$COMP_FILE"
     echo "Completions installed. Restart your shell or source the file to activate."
 fi
+
+# Install git remote helper shim for isx:// URLs
+install -m 755 "$SCRIPT_DIR/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
 echo "Installed. Run 'isx' to get started."
 

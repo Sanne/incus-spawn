@@ -5,6 +5,7 @@ Summary:        CLI tool for managing isolated Incus development environments
 License:        Apache-2.0
 URL:            https://github.com/Sanne/incus-spawn
 Source0:        incus-spawn-linux-amd64
+Source1:        git-remote-isx
 
 ExclusiveArch:  x86_64
 
@@ -27,6 +28,8 @@ for credential isolation, and an interactive TUI.
 mkdir -p %{buildroot}%{_bindir}
 install -m 755 %{SOURCE0} %{buildroot}%{_bindir}/isx
 
+install -m 755 %{SOURCE1} %{buildroot}%{_bindir}/git-remote-isx
+
 mkdir -p %{buildroot}%{_datadir}/bash-completion/completions
 mkdir -p %{buildroot}%{_datadir}/zsh/site-functions
 mkdir -p %{buildroot}%{_datadir}/fish/vendor_completions.d
@@ -36,6 +39,7 @@ mkdir -p %{buildroot}%{_datadir}/fish/vendor_completions.d
 
 %files
 %{_bindir}/isx
+%{_bindir}/git-remote-isx
 %{_datadir}/bash-completion/completions/isx
 %{_datadir}/zsh/site-functions/_isx
 %{_datadir}/fish/vendor_completions.d/isx.fish

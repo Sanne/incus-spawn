@@ -301,6 +301,39 @@ Copy-on-write storage is essential for efficient branching. `isx init` automatic
 
 Supported CoW drivers: **btrfs**, **zfs**, **lvm**. If btrfs pool creation fails during init (e.g. unsupported filesystem), the user is warned and can continue with the `dir` driver, but clones will be full copies.
 
+### Git Remote Helper
+
+Containers cloned via `isx branch` are isolated development environments, but developers need a way to get their changes back to the host. Rather than inventing a custom sync mechanism, incus-spawn integrates with git's native remote helper protocol so standard `git fetch`/`git push`/`git pull` work between host repos and container repos.
+
+**Architecture: bash shim + Java command**
+
+The git remote helper is split into two processes:
+
+1. **`git-remote-isx`** (bash script): installed alongside `isx` in `$PATH`. Git discovers it automatically when a remote URL uses the `isx://` scheme. The script handles the text-based git remote helper protocol (advertising the `connect` capability), then `exec`s `isx git-remote-helper` to handle the actual transport.
+
+2. **`isx git-remote-helper`** (Java/picocli command): validates the instance is running, validates the requested service against an allowlist, and launches `incus exec <instance> -- su -l agentuser -c "<service> '<path>'"` with inherited stdin/stdout so the git pack protocol flows directly between the host git process and the container git process.
+
+The bash `exec` replaces the shell process with the Java process before any data flows through stdin. This is critical: Java's `BufferedInputStream` would consume bytes from the stdin pipe that are meant for the git pack protocol, corrupting the stream. By having bash handle only the text protocol exchange (a few short lines) and then `exec`-replacing itself, the Java process inherits the raw file descriptors with no buffered-ahead data.
+
+Stderr is captured in a virtual thread so the command can detect "not a git repository" errors and print hints listing known repos from the image definition chain.
+
+**URL scheme**
+
+`isx://<instance-name>/<path-to-repo>` — for example, `isx://fix-auth/home/agentuser/quarkus` or `isx://fix-auth/~/quarkus` (tilde expands to `/home/agentuser`).
+
+**Auto-remote management**
+
+When the user configures `host-path` (and optionally `repo-paths`) in `config.yaml`, incus-spawn automatically adds and removes git remotes in host repositories:
+
+- **On `isx branch`**: for each repo declared in the image definition chain, resolve the corresponding host repo via `repo-paths` (exact match) or `host-path` (base directory + repo name). Verify the host repo's `origin` URL matches the container repo's URL (protocol-lenient comparison). If it matches, add a remote named after the instance.
+- **On `isx destroy`**: scan candidate host repos for any remote with a URL matching `isx://<instance-name>/` and remove it.
+
+The removal is stateless — rather than tracking which remotes were added, we scan for `isx://` URLs matching the instance name. This avoids a class of bugs where state gets out of sync (e.g., the user manually removes a remote, or the add failed silently).
+
+**Protocol-lenient URL matching**
+
+Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repos use HTTPS (`https://github.com/org/repo.git`). The URL matcher normalizes both formats by stripping the scheme, `user@` prefix, SSH `:` separator, trailing `.git`, `www.` prefix, and lowercasing. The result is a canonical form like `github.com/org/repo` that matches regardless of protocol.
+
 ## Testing
 
 **Unit tests** (`mvn test`, no Incus needed):
@@ -338,6 +371,17 @@ We initially ran containers in standard (non-Vertex) mode with proxy-side API tr
 The solution: containers now run in Vertex mode with `CLAUDE_CODE_USE_VERTEX=1`, `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` (skips GCP auth — the SDK uses stub credentials that produce empty auth headers), and `ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1` (redirects the Vertex SDK to the proxy). The Vertex SDK formats requests in Vertex URL format (`/v1/projects/.../models/...:streamRawPredict`), sends them to the proxy, and the proxy injects real GCP credentials before forwarding to the actual Vertex endpoint. The proxy also retains the standard-to-Vertex translation path for any `/v1/messages` requests (e.g. from manual `curl` calls inside the container).
 
 **Fragility and mitigation:** The standard-to-Vertex translation path uses an allowlist (`VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`) that may drift as Anthropic adds new standard fields. However, the primary traffic flow (Vertex passthrough) doesn't use the allowlist — the Vertex SDK already formats the body correctly. The allowlist only affects the fallback translation path. The `anthropic_version: "vertex-2023-10-16"` value is hardcoded in the translation path — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched. The Vertex passthrough path doesn't set this value; the SDK does it itself.
+
+### Git remote helper: bash + Java split
+The git remote helper is split into a bash shim and a Java command rather than implementing the full protocol in Java. The reason is stdin buffering: Java's `BufferedInputStream` (used by `System.in` and `ProcessBuilder`) reads ahead into an internal buffer. In the git remote helper protocol, the initial text exchange ("capabilities", "connect git-upload-pack") is followed by a binary pack protocol stream on the same stdin pipe. If Java reads even one byte too many during the text phase, the binary stream is corrupted. The bash shim handles only the text protocol (a few short lines via `read`), then `exec`-replaces itself with the Java process. The Java process inherits raw file descriptors with no buffered-ahead data and can safely pipe stdin/stdout through `incus exec` to the container's git process.
+
+The alternative — implementing the full protocol in Java with careful single-byte reads — is fragile and would need to be re-validated with every JDK update that touches `System.in` buffering behaviour.
+
+### Auto-remote: stateless cleanup vs state tracking
+When an instance is destroyed, its git remotes need to be removed from host repos. Two approaches: (1) track which remotes were added in metadata and remove exactly those, or (2) scan host repos for `isx://` URLs matching the instance name. We chose stateless scanning because it's simpler and eliminates a class of state-sync bugs (user manually removes a remote, add failed silently, metadata gets corrupted). The cost is scanning a few git repos on every destroy, which takes milliseconds.
+
+### Auto-remote: opt-in via configuration
+Auto-remote management requires explicit `host-path` or `repo-paths` configuration. We don't attempt to auto-discover host repos because there's no reliable heuristic — the same repo name could exist in multiple directories, and scanning the filesystem would be slow and surprising. The user knows where their repos live.
 
 ### Fedora-specific
 The base image and package management are Fedora-specific (`dnf`, `images:fedora/43`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.

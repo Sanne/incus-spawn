@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
+import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -129,6 +130,7 @@ public class BranchCommand implements Runnable {
         incus.shellExec(name, "chown", getUid() + ":" + getUid(), "/home/agentuser");
 
         injectSshKeyIfAvailable(incus, name);
+        AutoRemoteService.addRemotes(incus, name);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");
