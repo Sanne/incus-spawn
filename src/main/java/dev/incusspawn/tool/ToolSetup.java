@@ -14,6 +14,9 @@ public interface ToolSetup {
     /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
     default java.util.List<String> packages() { return java.util.List.of(); }
 
+    /** Other tools that must be installed before this one. */
+    default java.util.List<String> requires() { return java.util.List.of(); }
+
     /** Install and configure this tool inside the given container. Packages are already installed. */
     void install(Container container);
 }

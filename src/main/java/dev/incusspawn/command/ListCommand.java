@@ -9,6 +9,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.tool.ToolDefLoader;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -56,6 +57,9 @@ public class ListCommand implements Runnable {
 
     @Inject
     IncusClient incus;
+
+    @Inject
+    ToolDefLoader toolDefLoader;
 
     @Inject
     picocli.CommandLine.IFactory factory;
@@ -1516,6 +1520,12 @@ public class ListCommand implements Runnable {
         for (var def : chain) allTools.addAll(def.getTools());
         addDetailSection(lines, "Tools", allTools, labelStyle, lineStyle, dimStyle);
 
+        // Collect auto-added dependencies (transitive requires not already in explicit list)
+        var autoDeps = collectAutoDeps(allTools);
+        if (!autoDeps.isEmpty()) {
+            addDetailSection(lines, "Dependencies (auto)", autoDeps, labelStyle, lineStyle, dimStyle);
+        }
+
         // Collect all repos
         var allRepos = new ArrayList<String>();
         for (var def : chain) {
@@ -1555,6 +1565,27 @@ public class ListCommand implements Runnable {
             }
         }
         lines.add(Line.styled("", lineStyle));
+    }
+
+    private List<String> collectAutoDeps(List<String> explicitTools) {
+        var explicit = new java.util.LinkedHashSet<>(explicitTools);
+        var allDeps = new java.util.LinkedHashSet<String>();
+        for (var toolName : explicitTools) {
+            collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
+        }
+        allDeps.removeAll(explicit);
+        return new ArrayList<>(allDeps);
+    }
+
+    private void collectTransitiveDeps(String name, java.util.Set<String> collected, java.util.Set<String> visiting) {
+        if (collected.contains(name) || !visiting.add(name)) return;
+        var tool = toolDefLoader.find(name);
+        if (tool == null) return;
+        for (var dep : tool.requires()) {
+            collectTransitiveDeps(dep, collected, visiting);
+            collected.add(dep);
+        }
+        visiting.remove(name);
     }
 
     private List<Line> buildTreeDetailLines(String templateName) {
@@ -1601,9 +1632,14 @@ public class ListCommand implements Runnable {
 
             // Tools
             if (!def.getTools().isEmpty()) {
-                lines.add(Line.from(List.of(
-                        Span.styled(contentIndent + "Tools: ", labelStyle),
-                        Span.styled(String.join(", ", def.getTools()), lineStyle))));
+                var toolSpans = new ArrayList<Span>();
+                toolSpans.add(Span.styled(contentIndent + "Tools: ", labelStyle));
+                toolSpans.add(Span.styled(String.join(", ", def.getTools()), lineStyle));
+                var levelAutoDeps = collectAutoDeps(def.getTools());
+                if (!levelAutoDeps.isEmpty()) {
+                    toolSpans.add(Span.styled("  (+" + String.join(", ", levelAutoDeps) + ")", dimStyle));
+                }
+                lines.add(Line.from(toolSpans));
             }
 
             // Repos

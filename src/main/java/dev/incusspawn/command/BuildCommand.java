@@ -452,19 +452,41 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     /**
-     * Resolve all tools referenced by the image definition.
+     * Resolve all tools referenced by the image definition, including
+     * transitive dependencies declared via {@code requires}.
      */
     private java.util.List<ToolSetup> resolveTools(ImageDef imageDef) {
-        var resolved = new java.util.ArrayList<ToolSetup>();
+        var explicit = new java.util.LinkedHashSet<String>(imageDef.getTools());
+        var resolved = new java.util.LinkedHashMap<String, ToolSetup>();
+
         for (var toolName : imageDef.getTools()) {
-            var tool = findTool(toolName);
-            if (tool == null) {
-                System.err.println("Warning: unknown tool '" + toolName + "', skipping.");
-            } else {
-                resolved.add(tool);
-            }
+            resolveWithDeps(toolName, resolved, new java.util.LinkedHashSet<>(), explicit);
         }
-        return resolved;
+        return new java.util.ArrayList<>(resolved.values());
+    }
+
+    private void resolveWithDeps(String name, java.util.LinkedHashMap<String, ToolSetup> resolved,
+                                  java.util.LinkedHashSet<String> visiting, java.util.Set<String> explicit) {
+        if (resolved.containsKey(name)) return;
+        if (!visiting.add(name)) {
+            System.err.println("Warning: dependency cycle detected: " +
+                    String.join(" -> ", visiting) + " -> " + name + ", skipping.");
+            return;
+        }
+        var tool = findTool(name);
+        if (tool == null) {
+            System.err.println("Warning: unknown tool '" + name + "', skipping.");
+            visiting.remove(name);
+            return;
+        }
+        for (var dep : tool.requires()) {
+            if (!explicit.contains(dep)) {
+                System.out.println("  Auto-adding dependency: " + dep + " (required by " + name + ")");
+            }
+            resolveWithDeps(dep, resolved, visiting, explicit);
+        }
+        resolved.put(name, tool);
+        visiting.remove(name);
     }
 
     /**

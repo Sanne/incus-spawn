@@ -106,7 +106,24 @@ class ToolDefTest {
         assertTrue(def.getRunAsUser().isEmpty());
         assertTrue(def.getFiles().isEmpty());
         assertTrue(def.getEnv().isEmpty());
+        assertTrue(def.getRequires().isEmpty());
         assertNull(def.getVerify());
+    }
+
+    @Test
+    void parseRequiresField() throws Exception {
+        var yaml = """
+                name: idea-backend
+                requires:
+                  - sshd
+                  - other-tool
+                run:
+                  - echo hello
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+        assertEquals(2, def.getRequires().size());
+        assertEquals("sshd", def.getRequires().get(0));
+        assertEquals("other-tool", def.getRequires().get(1));
     }
 
     @Test

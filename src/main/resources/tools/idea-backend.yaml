@@ -1,5 +1,7 @@
 name: idea-backend
 description: JetBrains IntelliJ IDEA Remote Development backend 2026.1.1
+requires:
+  - sshd
 
 downloads:
   - url: https://download.jetbrains.com/idea/idea-2026.1.1.tar.gz
