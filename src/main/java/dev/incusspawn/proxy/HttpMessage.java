@@ -18,6 +18,8 @@ import java.util.Map;
  */
 public class HttpMessage {
 
+    static final int BUFFER_SIZE = 65536;
+
     private String requestLine;
     private final Map<String, List<String>> headers = new LinkedHashMap<>();
 
@@ -238,7 +240,7 @@ public class HttpMessage {
     // --- Relay helpers ---
 
     private static void relayFixedLength(InputStream in, OutputStream out, long length) throws IOException {
-        var buffer = new byte[8192];
+        var buffer = new byte[BUFFER_SIZE];
         long remaining = length;
         while (remaining > 0) {
             int toRead = (int) Math.min(buffer.length, remaining);
@@ -287,7 +289,7 @@ public class HttpMessage {
     }
 
     static void relayUntilEof(InputStream in, OutputStream out) throws IOException {
-        var buffer = new byte[8192];
+        var buffer = new byte[BUFFER_SIZE];
         int n;
         while ((n = in.read(buffer)) != -1) {
             out.write(buffer, 0, n);
