@@ -14,7 +14,14 @@ else
         exit 1
     fi
     latest="${latest_tag#v}"
-    IFS='.' read -r major minor patch <<< "$latest"
+    if [[ ! "$latest" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        echo "ERROR: Latest tag '$latest_tag' is not in supported format vMAJOR.MINOR.PATCH." >&2
+        echo "Pass the version explicitly: ./release.sh 0.1.9" >&2
+        exit 1
+    fi
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
     version="${major}.${minor}.$((patch + 1))"
 fi
 
