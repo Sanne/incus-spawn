@@ -1209,7 +1209,8 @@ public class ListCommand implements Runnable {
                 Line.styled("Licensed under the Apache License 2.0",
                         Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
                 Line.styled("github.com/Sanne/incus-spawn",
-                        Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG))
+                        .hyperlink("https://github.com/Sanne/incus-spawn"),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Manage isolated Incus development environments.",
                         Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
