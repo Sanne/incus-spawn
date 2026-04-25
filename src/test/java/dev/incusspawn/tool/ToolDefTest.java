@@ -151,6 +151,155 @@ class ToolDefTest {
         assertNull(def.getFiles().get(0).getOwner());
     }
 
+    // --- contentFingerprint tests ---
+
+    @Test
+    void fingerprintStableForSameInput() throws Exception {
+        var yaml = """
+                name: test
+                packages:
+                  - alpha
+                  - beta
+                env:
+                  - FOO=1
+                  - BAR=2
+                """;
+        var def1 = ToolDef.loadFromStream(toStream(yaml));
+        var def2 = ToolDef.loadFromStream(toStream(yaml));
+        assertEquals(def1.contentFingerprint(), def2.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresPackageOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - alpha
+                  - beta
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - beta
+                  - alpha
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresEnvOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                env:
+                  - FOO=1
+                  - BAR=2
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                env:
+                  - BAR=2
+                  - FOO=1
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresNameAndDescription() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: tool-a
+                description: First tool
+                packages:
+                  - pkg
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: tool-b
+                description: Second tool
+                packages:
+                  - pkg
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenPackageAdded() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - alpha
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - alpha
+                  - beta
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenRunCommandChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                run:
+                  - echo hello
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                run:
+                  - echo world
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenVerifyChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                verify: cmd --version
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                verify: cmd --help
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenDownloadUrlChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/v1.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/v2.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintStableForLinkMapOrder() throws Exception {
+        var yaml = """
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc
+                    extract: /opt
+                    links:
+                      /opt/bin/a: /usr/local/bin/a
+                      /opt/bin/b: /usr/local/bin/b
+                """;
+        var def1 = ToolDef.loadFromStream(toStream(yaml));
+        var def2 = ToolDef.loadFromStream(toStream(yaml));
+        assertEquals(def1.contentFingerprint(), def2.contentFingerprint());
+    }
+
     private static ByteArrayInputStream toStream(String yaml) {
         return new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8));
     }

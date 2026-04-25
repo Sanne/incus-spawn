@@ -16,6 +16,7 @@ import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.YamlToolSetup;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
@@ -299,7 +300,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.PARENT, parentName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName);
+        stampBuildVersion(targetName, imageDef);
         if (!hostResources.isEmpty()) {
             incus.configSet(targetName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
@@ -438,7 +439,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(targetName, Metadata.PROFILE, targetName);
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName);
+        stampBuildVersion(targetName, imageDef);
         if (!hostResources.isEmpty()) {
             incus.configSet(targetName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
@@ -588,11 +589,23 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         System.err.println("Warning: container " + container + " may not be fully ready.");
     }
 
-    private void stampBuildVersion(String container) {
+    private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
+        incus.configSet(container, Metadata.DEFINITION_SHA,
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef)));
+    }
+
+    private java.util.Map<String, String> computeToolFingerprints(dev.incusspawn.config.ImageDef imageDef) {
+        var fps = new java.util.TreeMap<String, String>();
+        for (var tool : resolveTools(imageDef)) {
+            if (tool instanceof YamlToolSetup yts) {
+                fps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
+            }
+        }
+        return fps;
     }
 
     private void requireSuccess(int exitCode, String message) {
