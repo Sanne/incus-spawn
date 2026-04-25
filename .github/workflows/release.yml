@@ -16,12 +16,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install JDK 25
-        run: |
-          curl -sL https://api.adoptium.net/v3/binary/latest/25/ea/linux/x64/jdk/hotspot/normal/eclipse -o jdk.tar.gz
-          mkdir -p $HOME/jdk && tar xzf jdk.tar.gz -C $HOME/jdk --strip-components=1
-          echo "$HOME/jdk/bin" >> $GITHUB_PATH
-          echo "JAVA_HOME=$HOME/jdk" >> $GITHUB_ENV
+      - name: Install Oracle GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
 
       - name: Set version from tag
         run: |
@@ -35,7 +34,7 @@ jobs:
 
       - name: Build native image
         run: |
-          mvn package -Dnative -Dquarkus.native.container-build=true -DskipTests
+          mvn package -Dnative -DskipTests
           cp target/incus-spawn-*-runner target/incus-spawn-linux-amd64
 
       - name: Create GitHub Release
