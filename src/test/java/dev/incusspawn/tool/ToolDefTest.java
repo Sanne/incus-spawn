@@ -4,6 +4,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -500,6 +503,51 @@ class ToolDefTest {
                       /opt/bin/tool: /usr/local/bin/tool
                 """));
         assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    // --- compositeFingerprints tests ---
+
+    @Test
+    void compositeNoDepsMatchesRaw() {
+        var raw = new TreeMap<>(Map.of("toolA", "fp-a", "toolB", "fp-b"));
+        var deps = new TreeMap<String, List<String>>();
+        var result = ToolDef.compositeFingerprints(raw, deps);
+        assertEquals("fp-a", result.get("toolA"));
+        assertEquals("fp-b", result.get("toolB"));
+    }
+
+    @Test
+    void compositeIncludesTransitiveDep() {
+        var raw = new TreeMap<>(Map.of("parent", "fp-parent", "child", "fp-child"));
+        var deps = new TreeMap<>(Map.of("parent", List.of("child")));
+        var result = ToolDef.compositeFingerprints(raw, deps);
+        assertEquals("fp-child", result.get("child"), "Leaf tool should keep raw fp");
+        assertNotEquals("fp-parent", result.get("parent"), "Tool with deps should get composite fp");
+    }
+
+    @Test
+    void compositeChangesWhenDepChanges() {
+        var deps = new TreeMap<>(Map.of("parent", List.of("child")));
+        var r1 = ToolDef.compositeFingerprints(new TreeMap<>(Map.of("parent", "fp-p", "child", "v1")), deps);
+        var r2 = ToolDef.compositeFingerprints(new TreeMap<>(Map.of("parent", "fp-p", "child", "v2")), deps);
+        assertNotEquals(r1.get("parent"), r2.get("parent"), "Dep change should propagate to parent");
+    }
+
+    @Test
+    void compositeHandlesCycle() {
+        var raw = new TreeMap<>(Map.of("a", "fp-a", "b", "fp-b"));
+        var deps = new TreeMap<>(Map.of("a", List.of("b"), "b", List.of("a")));
+        assertDoesNotThrow(() -> ToolDef.compositeFingerprints(raw, deps));
+    }
+
+    @Test
+    void compositeStableForDepOrder() {
+        var raw = new TreeMap<>(Map.of("parent", "fp-p", "depA", "fp-a", "depB", "fp-b"));
+        var deps1 = new TreeMap<>(Map.of("parent", List.of("depA", "depB")));
+        var deps2 = new TreeMap<>(Map.of("parent", List.of("depB", "depA")));
+        var r1 = ToolDef.compositeFingerprints(raw, deps1);
+        var r2 = ToolDef.compositeFingerprints(raw, deps2);
+        assertEquals(r1.get("parent"), r2.get("parent"), "Dep order should not affect composite fp");
     }
 
     private static ByteArrayInputStream toStream(String yaml) {

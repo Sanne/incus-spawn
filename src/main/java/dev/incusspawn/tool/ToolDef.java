@@ -118,7 +118,43 @@ public class ToolDef {
         return result;
     }
 
-    static String sha256hex(String input) {
+    /**
+     * Compute composite fingerprints that incorporate transitive deps.
+     * Each tool's entry in the result includes the fingerprints of all its
+     * transitive dependencies, so a change in any dep propagates upward.
+     *
+     * @param rawFingerprints  tool name → own contentFingerprint()
+     * @param depMap           tool name → list of required tool names
+     * @return tool name → composite fingerprint (includes dep tree)
+     */
+    public static Map<String, String> compositeFingerprints(
+            Map<String, String> rawFingerprints, Map<String, java.util.List<String>> depMap) {
+        var cache = new TreeMap<String, String>();
+        for (var name : rawFingerprints.keySet()) {
+            resolveComposite(name, rawFingerprints, depMap, cache, new java.util.LinkedHashSet<>());
+        }
+        return cache;
+    }
+
+    private static String resolveComposite(String name, Map<String, String> rawFps,
+                                            Map<String, java.util.List<String>> depMap,
+                                            Map<String, String> cache,
+                                            java.util.Set<String> resolving) {
+        if (cache.containsKey(name)) return cache.get(name);
+        if (!resolving.add(name)) return rawFps.getOrDefault(name, "");
+        var sb = new StringBuilder(rawFps.getOrDefault(name, ""));
+        var deps = depMap.getOrDefault(name, java.util.List.of());
+        for (var dep : deps.stream().sorted().toList()) {
+            sb.append("+dep=").append(dep).append(':')
+                    .append(resolveComposite(dep, rawFps, depMap, cache, resolving));
+        }
+        var result = deps.isEmpty() ? sb.toString() : sha256hex(sb.toString());
+        cache.put(name, result);
+        resolving.remove(name);
+        return result;
+    }
+
+    public static String sha256hex(String input) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
             var hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));

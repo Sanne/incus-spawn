@@ -1998,25 +1998,28 @@ public class ListCommand implements Runnable {
     }
 
     private java.util.Map<String, String> computeAllToolFingerprints() {
-        var fps = new java.util.TreeMap<String, String>();
+        var rawFps = new java.util.TreeMap<String, String>();
+        var depMap = new java.util.TreeMap<String, java.util.List<String>>();
         var visited = new java.util.HashSet<String>();
         for (var def : imageDefs.values()) {
             for (var toolName : def.getTools()) {
-                resolveToolFp(toolName, fps, visited);
+                collectToolFps(toolName, rawFps, depMap, visited);
             }
         }
-        return fps;
+        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
     }
 
-    private void resolveToolFp(String name, java.util.Map<String, String> fps,
-                                java.util.Set<String> visited) {
+    private void collectToolFps(String name, java.util.Map<String, String> rawFps,
+                                 java.util.Map<String, java.util.List<String>> depMap,
+                                 java.util.Set<String> visited) {
         if (!visited.add(name)) return;
         var tool = toolDefLoader.find(name);
         if (tool instanceof YamlToolSetup yts) {
             for (var dep : yts.toolDef().getRequires()) {
-                resolveToolFp(dep, fps, visited);
+                collectToolFps(dep, rawFps, depMap, visited);
             }
-            fps.put(name, yts.toolDef().contentFingerprint());
+            rawFps.put(name, yts.toolDef().contentFingerprint());
+            depMap.put(name, yts.toolDef().getRequires());
         }
     }
 
