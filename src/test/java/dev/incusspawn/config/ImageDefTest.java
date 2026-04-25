@@ -365,12 +365,122 @@ class ImageDefTest {
     }
 
     @Test
+    void fingerprintIncludesTransitiveToolFingerprints() {
+        var def = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        var fp1 = def.contentFingerprint(Map.of("maven", "v1", "sshd", "dep-v1"));
+        var fp2 = def.contentFingerprint(Map.of("maven", "v1", "sshd", "dep-v2"));
+        assertNotEquals(fp1, fp2, "Transitive dep fingerprint change should affect image fingerprint");
+    }
+
+    @Test
     void fingerprintNotEmpty() {
         var def = makeDef("images:fedora/43", null, List.of(), List.of());
         var fp = def.contentFingerprint(Map.of());
         assertNotNull(fp);
         assertFalse(fp.isEmpty());
         assertEquals(64, fp.length(), "SHA-256 hex should be 64 characters");
+    }
+
+    @Test
+    void fingerprintIgnoresNameAndDescription() {
+        var a = makeDef("images:fedora/43", null, List.of("pkg"), List.of());
+        a.setName("tpl-alpha");
+        a.setDescription("First template");
+        var b = makeDef("images:fedora/43", null, List.of("pkg"), List.of());
+        b.setName("tpl-beta");
+        b.setDescription("Second template");
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenRepoAdded() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/example/repo.git");
+        repo.setPath("~/repo");
+        b.setRepos(List.of(repo));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenRepoUrlChanges() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var r1 = new ImageDef.RepoEntry();
+        r1.setUrl("https://github.com/example/repo-a.git");
+        r1.setPath("~/repo");
+        a.setRepos(List.of(r1));
+        var r2 = new ImageDef.RepoEntry();
+        r2.setUrl("https://github.com/example/repo-b.git");
+        r2.setPath("~/repo");
+        b.setRepos(List.of(r2));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIgnoresRepoOrder() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var r1 = new ImageDef.RepoEntry();
+        r1.setUrl("https://github.com/alpha.git");
+        r1.setPath("~/alpha");
+        var r2 = new ImageDef.RepoEntry();
+        r2.setUrl("https://github.com/beta.git");
+        r2.setPath("~/beta");
+        a.setRepos(List.of(r1, r2));
+        b.setRepos(List.of(r2, r1));
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenSkillAdded() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        b.setSkills(new ImageDef.SkillsDef(null, List.of("security-review")));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIgnoresSkillOrder() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        a.setSkills(new ImageDef.SkillsDef(null, List.of("alpha", "beta")));
+        b.setSkills(new ImageDef.SkillsDef(null, List.of("beta", "alpha")));
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenSkillsRepoChanges() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        a.setSkills(new ImageDef.SkillsDef("org/catalog-a", List.of()));
+        b.setSkills(new ImageDef.SkillsDef("org/catalog-b", List.of()));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenHostResourceAdded() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        b.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "readonly")));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenHostResourceModeChanges() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "readonly")));
+        b.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "overlay")));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenToolAdded() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     private static ImageDef makeDef(String image, String parent, List<String> packages, List<String> tools) {
