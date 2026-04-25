@@ -18,7 +18,7 @@ import java.util.Map;
  */
 public class HttpMessage {
 
-    static final int BUFFER_SIZE = 65536;
+    static final int BUFFER_SIZE = 64 * 1024;
 
     private String requestLine;
     private final Map<String, List<String>> headers = new LinkedHashMap<>();

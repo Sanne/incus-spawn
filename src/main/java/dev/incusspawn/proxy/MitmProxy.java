@@ -344,34 +344,34 @@ public class MitmProxy {
 
             var sniDomain = sniByThread.remove(Thread.currentThread().getId());
             var in = new BufferedInputStream(clientSocket.getInputStream(), HttpMessage.BUFFER_SIZE);
-            var out = new BufferedOutputStream(clientSocket.getOutputStream(), HttpMessage.BUFFER_SIZE);
+            try (var out = new BufferedOutputStream(clientSocket.getOutputStream(), HttpMessage.BUFFER_SIZE)) {
+                // HTTP/1.1 keep-alive: loop reading requests until client disconnects
+                while (true) {
+                    var request = HttpMessage.readRequest(in);
+                    if (request == null) return;
 
-            // HTTP/1.1 keep-alive: loop reading requests until client disconnects
-            while (true) {
-                var request = HttpMessage.readRequest(in);
-                if (request == null) return;
+                    var domain = request.host();
+                    if (domain == null) domain = sniDomain;
 
-                var domain = request.host();
-                if (domain == null) domain = sniDomain;
+                    if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
+                        System.err.println("MITM: unknown domain: " + domain);
+                        out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
+                        out.flush();
+                        return;
+                    }
 
-                if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
-                    System.err.println("MITM: unknown domain: " + domain);
-                    out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
-                    out.flush();
-                    return;
-                }
+                    // Force Connection: close on upstream requests so each upstream
+                    // socket closes after responding (EOF arrives for tee streaming).
+                    // The client connection stays open for keep-alive.
+                    request.setHeader("Connection", "close");
 
-                // Force Connection: close on upstream requests so each upstream
-                // socket closes after responding (EOF arrives for tee streaming).
-                // The client connection stays open for keep-alive.
-                request.setHeader("Connection", "close");
-
-                if (REGISTRY_DOMAINS.contains(domain)) {
-                    handleRegistryRequest(request, in, out, domain);
-                } else if (MAVEN_DOMAINS.contains(domain)) {
-                    handleMavenRequest(request, in, out, domain);
-                } else {
-                    handleApiRequest(request, in, out, domain);
+                    if (REGISTRY_DOMAINS.contains(domain)) {
+                        handleRegistryRequest(request, in, out, domain);
+                    } else if (MAVEN_DOMAINS.contains(domain)) {
+                        handleMavenRequest(request, in, out, domain);
+                    } else {
+                        handleApiRequest(request, in, out, domain);
+                    }
                 }
             }
         } catch (java.net.SocketTimeoutException e) {
