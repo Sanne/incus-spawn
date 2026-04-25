@@ -14,9 +14,13 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -206,6 +210,51 @@ public class ImageDef {
         public void setPath(String path) { this.path = path; }
         public String getMode() { return mode; }
         public void setMode(String mode) { this.mode = mode; }
+    }
+
+    public String contentFingerprint(Map<String, String> toolFingerprints) {
+        var sb = new StringBuilder();
+        sb.append("image=").append(image).append('\n');
+        sb.append("parent=").append(parent != null ? parent : "").append('\n');
+        packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
+        var explicitTools = tools.stream().sorted().toList();
+        for (var t : explicitTools) {
+            sb.append("tool=").append(t);
+            var fp = toolFingerprints.get(t);
+            if (fp != null && !fp.isEmpty()) sb.append(':').append(fp);
+            sb.append('\n');
+        }
+        var explicit = new java.util.HashSet<>(explicitTools);
+        toolFingerprints.entrySet().stream()
+                .filter(e -> !explicit.contains(e.getKey()))
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(e -> {
+                    sb.append("dep-tool=").append(e.getKey());
+                    if (e.getValue() != null && !e.getValue().isEmpty()) sb.append(':').append(e.getValue());
+                    sb.append('\n');
+                });
+        repos.stream()
+                .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
+                        .thenComparing(r -> String.valueOf(r.getPath())))
+                .forEach(r -> sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
+                        .append(',').append(r.getBranch()).append(',').append(r.getPrime()).append('\n'));
+        if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
+        skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
+        for (var hr : hostResources) {
+            sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
+                    .append(',').append(hr.getMode()).append('\n');
+        }
+        return sha256hex(sb.toString());
+    }
+
+    private static String sha256hex(String input) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            var hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /** Whether this image is built from scratch (no parent). */

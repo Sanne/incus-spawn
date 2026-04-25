@@ -11,6 +11,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.YamlToolSetup;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -110,6 +111,11 @@ public class ListCommand implements Runnable {
     private Map<String, dev.incusspawn.config.ImageDef> imageDefs;
     private List<TemplateInfo> templateEntries;
     private List<Row> templateRows;
+    private boolean anyTemplateOutdated;
+    private boolean anyDefinitionChanged;
+    private boolean anyParentRebuilt;
+    private java.util.Set<String> templatesDefChanged = java.util.Set.of();
+    private java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
     private TableState templateTableState;
 
     // Instance panel data (bottom)
@@ -254,12 +260,12 @@ public class ListCommand implements Runnable {
                 }
             }
             if (match != null) {
-                var buildVer = incus.configGet(name, Metadata.BUILD_VERSION);
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
-                        match.created.isEmpty() ? "built" : match.created, match.runtime, buildVer));
+                        match.created.isEmpty() ? "built" : match.created, match.runtime,
+                        match.buildVersion, match.definitionSha));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", ""));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", ""));
             }
         }
         buildTemplateRowData();
@@ -739,8 +745,20 @@ public class ListCommand implements Runnable {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
         int footerHeight = hasStatus ? 3 : 2;
-        // Template panel height: rows + header + 2 borders, capped
-        int templatePanelHeight = Math.min(templateEntries.size() + 3, Math.max(5, area.height() / 3));
+        boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
+        int legendHeight = showLegend ? 1 : 0;
+        int templateIdeal = templateEntries.size() + 3 + legendHeight;
+        int instanceIdeal = entries.size() + 3;
+        int available = area.height() - footerHeight;
+        int templatePanelHeight;
+        if (templateIdeal + instanceIdeal <= available) {
+            templatePanelHeight = templateIdeal;
+        } else {
+            int minPanel = 5;
+            int templateShare = Math.max(minPanel, available * templateIdeal / (templateIdeal + instanceIdeal));
+            templatePanelHeight = Math.min(templateIdeal, templateShare);
+            templatePanelHeight = Math.max(templatePanelHeight, minPanel);
+        }
         var chunks = Layout.vertical()
                 .constraints(
                         Constraint.length(templatePanelHeight),
@@ -781,16 +799,44 @@ public class ListCommand implements Runnable {
             return;
         }
 
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" Templates ")
+                .borderStyle(Style.EMPTY.fg(borderColor)).build();
+        frame.renderWidget(block, area);
+        var inner = block.inner(area);
+
+        boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
+        dev.tamboui.layout.Rect tableArea;
+        if (showLegend && inner.height() > 2) {
+            var parts = splitVertical(inner, inner.height() - 1, 1);
+            tableArea = parts.get(0);
+            renderLegend(frame, parts.get(1));
+        } else {
+            tableArea = inner;
+        }
+
+        int visibleRows = Math.max(tableArea.height() - 1, 1);
+        boolean needsScroll = templateRows.size() > visibleRows;
+        dev.tamboui.layout.Rect actualTableArea;
+        dev.tamboui.layout.Rect scrollArea;
+        if (needsScroll) {
+            var cols = Layout.horizontal()
+                    .constraints(Constraint.fill(), Constraint.length(1))
+                    .split(tableArea);
+            actualTableArea = cols.get(0);
+            scrollArea = cols.get(1);
+        } else {
+            actualTableArea = tableArea;
+            scrollArea = null;
+        }
+
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "BUILT", "DESCRIPTION")
                         .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
                 .rows(templateRows)
-                .widths(Constraint.length(20), Constraint.length(18), Constraint.fill())
-                .highlightSymbol(focused ? "\u25b8 " : "  ")
-                .block(Block.builder()
-                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" Templates ")
-                        .borderStyle(Style.EMPTY.fg(borderColor)).build());
+                .widths(Constraint.length(20), Constraint.length(20), Constraint.fill())
+                .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
             tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
@@ -798,7 +844,28 @@ public class ListCommand implements Runnable {
             tableBuilder.highlightStyle(Style.EMPTY);
         }
 
-        frame.renderStatefulWidget(tableBuilder.build(), area, templateTableState);
+        frame.renderStatefulWidget(tableBuilder.build(), actualTableArea, templateTableState);
+
+        if (scrollArea != null) {
+            var scrollbar = Scrollbar.builder()
+                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
+                    .thumbStyle(Style.EMPTY.fg(borderColor))
+                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
+                    .build();
+            var scrollState = new ScrollbarState()
+                    .contentLength(templateRows.size())
+                    .viewportContentLength(visibleRows)
+                    .position(templateTableState.offset());
+            frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
+        }
+    }
+
+    private void renderLegend(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt ";
+        var padding = Math.max(0, area.width() - text.length());
+        var style = Style.EMPTY.fg(Color.GRAY);
+        frame.renderWidget(Paragraph.from(Line.from(
+                Span.styled(" ".repeat(padding) + text, style))), area);
     }
 
     private void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
@@ -824,6 +891,28 @@ public class ListCommand implements Runnable {
             return;
         }
 
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .title(" Instances ")
+                .borderStyle(Style.EMPTY.fg(borderColor)).build();
+        frame.renderWidget(block, area);
+        var inner = block.inner(area);
+
+        int visibleRows = Math.max(inner.height() - 1, 1);
+        boolean needsScroll = tableRows.size() > visibleRows;
+        dev.tamboui.layout.Rect actualArea;
+        dev.tamboui.layout.Rect scrollArea;
+        if (needsScroll) {
+            var cols = Layout.horizontal()
+                    .constraints(Constraint.fill(), Constraint.length(1))
+                    .split(inner);
+            actualArea = cols.get(0);
+            scrollArea = cols.get(1);
+        } else {
+            actualArea = inner;
+            scrollArea = null;
+        }
+
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE")
                         .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
@@ -831,11 +920,7 @@ public class ListCommand implements Runnable {
                 .widths(Constraint.fill(), Constraint.length(9),
                         Constraint.length(16), Constraint.length(14),
                         Constraint.length(12), Constraint.length(10))
-                .highlightSymbol(focused ? "\u25b8 " : "  ")
-                .block(Block.builder()
-                        .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                        .title(" Instances ")
-                        .borderStyle(Style.EMPTY.fg(borderColor)).build());
+                .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
             tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
@@ -843,7 +928,20 @@ public class ListCommand implements Runnable {
             tableBuilder.highlightStyle(Style.EMPTY);
         }
 
-        frame.renderStatefulWidget(tableBuilder.build(), area, tableState);
+        frame.renderStatefulWidget(tableBuilder.build(), actualArea, tableState);
+
+        if (scrollArea != null) {
+            var scrollbar = Scrollbar.builder()
+                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
+                    .thumbStyle(Style.EMPTY.fg(borderColor))
+                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
+                    .build();
+            var scrollState = new ScrollbarState()
+                    .contentLength(tableRows.size())
+                    .viewportContentLength(visibleRows)
+                    .position(tableState.offset());
+            frame.renderStatefulWidget(scrollbar, scrollArea, scrollState);
+        }
     }
 
     private record KeyItem(Line line, int width) {}
@@ -901,7 +999,29 @@ public class ListCommand implements Runnable {
         if (onTemplates && template != null) {
             var spans = new ArrayList<Span>();
             spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(Color.WHITE).bg(bg)));
-            if (template.description != null && !template.description.isEmpty()) {
+            boolean hasWarning = false;
+            if (!"not built".equals(template.buildStatus)) {
+                var warnStyle = Style.EMPTY.fg(Color.YELLOW).bg(bg);
+                var currentVersion = BuildInfo.instance().version();
+                if (!template.buildVersion.isEmpty() && !template.buildVersion.equals(currentVersion)) {
+                    spans.add(Span.styled("  ! built with isx v" + template.buildVersion
+                            + " (current: v" + currentVersion + ")", warnStyle));
+                    hasWarning = true;
+                } else if (template.buildVersion.isEmpty()) {
+                    spans.add(Span.styled("  ! built before isx version tracking", warnStyle));
+                    hasWarning = true;
+                }
+                if (templatesDefChanged.contains(template.name)) {
+                    spans.add(Span.styled("  △ definition changed since last build", warnStyle));
+                    hasWarning = true;
+                }
+                if (templatesParentRebuilt.contains(template.name)) {
+                    var parentName = imageDefs.get(template.name).getParent();
+                    spans.add(Span.styled("  ↑ parent " + parentName + " was rebuilt since last build", warnStyle));
+                    hasWarning = true;
+                }
+            }
+            if (!hasWarning && template.description != null && !template.description.isEmpty()) {
                 spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(Color.GRAY).bg(bg)));
             }
             return Line.from(spans);
@@ -1816,23 +1936,98 @@ public class ListCommand implements Runnable {
 
     private void buildTemplateRowData() {
         templateRows = new ArrayList<>();
+        anyTemplateOutdated = false;
+        anyDefinitionChanged = false;
+        anyParentRebuilt = false;
+        var defChanged = new java.util.HashSet<String>();
+        var parentRebuilt = new java.util.HashSet<String>();
+
         var currentVersion = BuildInfo.instance().version();
+        var toolFpCache = computeAllToolFingerprints();
+
+        var timestamps = new java.util.HashMap<String, java.time.LocalDateTime>();
+        for (var t : templateEntries) {
+            if (!"not built".equals(t.buildStatus)) {
+                var ts = parseTimestamp(t.buildStatus);
+                if (ts != null) timestamps.put(t.name, ts);
+            }
+        }
+
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
             var statusStyle = "not built".equals(t.buildStatus)
                     ? Style.EMPTY.fg(Color.GRAY)
                     : Style.EMPTY.fg(Color.GREEN);
             if (!"not built".equals(t.buildStatus)) {
+                var symbols = new StringBuilder();
                 if (!t.buildVersion.isEmpty() && !t.buildVersion.equals(currentVersion)) {
-                    statusDisplay += " (v" + t.buildVersion + ")";
-                    statusStyle = Style.EMPTY.fg(Color.YELLOW);
+                    symbols.append('!');
+                    anyTemplateOutdated = true;
                 } else if (t.buildVersion.isEmpty()) {
-                    statusDisplay += " (pre-versioning)";
+                    symbols.append('!');
+                    anyTemplateOutdated = true;
+                }
+                if (!t.definitionSha.isEmpty()) {
+                    var def = imageDefs.get(t.name);
+                    if (def != null && !t.definitionSha.equals(def.contentFingerprint(toolFpCache))) {
+                        symbols.append('△');
+                        anyDefinitionChanged = true;
+                        defChanged.add(t.name);
+                    }
+                }
+                var def = imageDefs.get(t.name);
+                if (def != null && !def.isRoot()) {
+                    var parentTs = timestamps.get(def.getParent());
+                    var childTs = timestamps.get(t.name);
+                    if (parentTs != null && childTs != null && parentTs.isAfter(childTs)) {
+                        symbols.append('↑');
+                        anyParentRebuilt = true;
+                        parentRebuilt.add(t.name);
+                    }
+                }
+                if (!symbols.isEmpty()) {
+                    statusDisplay += " " + symbols;
                     statusStyle = Style.EMPTY.fg(Color.YELLOW);
                 }
             }
             var desc = t.description == null ? "" : t.description;
             templateRows.add(Row.from(t.name, statusDisplay, desc).style(statusStyle));
+        }
+        templatesDefChanged = defChanged;
+        templatesParentRebuilt = parentRebuilt;
+    }
+
+    private java.util.Map<String, String> computeAllToolFingerprints() {
+        var fps = new java.util.TreeMap<String, String>();
+        var visited = new java.util.HashSet<String>();
+        for (var def : imageDefs.values()) {
+            for (var toolName : def.getTools()) {
+                resolveToolFp(toolName, fps, visited);
+            }
+        }
+        return fps;
+    }
+
+    private void resolveToolFp(String name, java.util.Map<String, String> fps,
+                                java.util.Set<String> visited) {
+        if (!visited.add(name)) return;
+        var tool = toolDefLoader.find(name);
+        if (tool instanceof YamlToolSetup yts) {
+            for (var dep : yts.toolDef().getRequires()) {
+                resolveToolFp(dep, fps, visited);
+            }
+            fps.put(name, yts.toolDef().contentFingerprint());
+        }
+    }
+
+    private static java.time.LocalDateTime parseTimestamp(String ts) {
+        try {
+            if (ts.contains("T")) {
+                return java.time.LocalDateTime.parse(ts, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            }
+            return java.time.LocalDate.parse(ts, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE).atStartOfDay();
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -2119,7 +2314,9 @@ public class ListCommand implements Runnable {
                         rootSize,
                         ipv4,
                         configVal(config, Metadata.NETWORK_MODE, ""),
-                        node.path("architecture").asText("")));
+                        node.path("architecture").asText(""),
+                        configVal(config, Metadata.BUILD_VERSION, ""),
+                        configVal(config, Metadata.DEFINITION_SHA, "")));
             }
             return entryList;
         } catch (Exception e) {
@@ -2149,11 +2346,13 @@ public class ListCommand implements Runnable {
     }
 
     private record TemplateInfo(String name, String description,
-                                String buildStatus, String runtime, String buildVersion) {}
+                                String buildStatus, String runtime, String buildVersion,
+                                String definitionSha) {}
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize,
-                                String ipv4, String networkMode, String architecture) {}
+                                String ipv4, String networkMode, String architecture,
+                                String buildVersion, String definitionSha) {}
 }

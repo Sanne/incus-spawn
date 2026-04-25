@@ -24,6 +24,8 @@ public class YamlToolSetup implements ToolSetup {
         this.downloadCache = downloadCache;
     }
 
+    public ToolDef toolDef() { return def; }
+
     @Override
     public String name() {
         return def.getName();

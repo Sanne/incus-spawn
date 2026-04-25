@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -307,5 +308,77 @@ class ImageDefTest {
         // Should still load builtins without error
         assertTrue(defs.size() >= 3);
         assertNotNull(defs.get("tpl-minimal"));
+    }
+
+    // --- contentFingerprint tests ---
+
+    @Test
+    void fingerprintStableForSameInput() {
+        var def = makeDef("images:fedora/43", null, List.of("pkg-a", "pkg-b"), List.of("tool-x"));
+        var fp1 = def.contentFingerprint(Map.of("tool-x", "abc"));
+        var fp2 = def.contentFingerprint(Map.of("tool-x", "abc"));
+        assertEquals(fp1, fp2);
+    }
+
+    @Test
+    void fingerprintIgnoresPackageOrder() {
+        var a = makeDef("images:fedora/43", null, List.of("alpha", "beta"), List.of());
+        var b = makeDef("images:fedora/43", null, List.of("beta", "alpha"), List.of());
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIgnoresToolOrder() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of("maven", "podman"));
+        var b = makeDef("images:fedora/43", null, List.of(), List.of("podman", "maven"));
+        var toolFps = Map.of("maven", "fp1", "podman", "fp2");
+        assertEquals(a.contentFingerprint(toolFps), b.contentFingerprint(toolFps));
+    }
+
+    @Test
+    void fingerprintChangesWhenPackageAdded() {
+        var a = makeDef("images:fedora/43", null, List.of("alpha"), List.of());
+        var b = makeDef("images:fedora/43", null, List.of("alpha", "beta"), List.of());
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenImageChanges() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenParentChanges() {
+        var a = makeDef("images:fedora/43", "tpl-dev", List.of(), List.of());
+        var b = makeDef("images:fedora/43", "tpl-minimal", List.of(), List.of());
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIncludesToolFingerprints() {
+        var def = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        var fp1 = def.contentFingerprint(Map.of("maven", "version-1"));
+        var fp2 = def.contentFingerprint(Map.of("maven", "version-2"));
+        assertNotEquals(fp1, fp2);
+    }
+
+    @Test
+    void fingerprintNotEmpty() {
+        var def = makeDef("images:fedora/43", null, List.of(), List.of());
+        var fp = def.contentFingerprint(Map.of());
+        assertNotNull(fp);
+        assertFalse(fp.isEmpty());
+        assertEquals(64, fp.length(), "SHA-256 hex should be 64 characters");
+    }
+
+    private static ImageDef makeDef(String image, String parent, List<String> packages, List<String> tools) {
+        var def = new ImageDef();
+        def.setImage(image);
+        def.setParent(parent);
+        def.setPackages(packages);
+        def.setTools(tools);
+        return def;
     }
 }

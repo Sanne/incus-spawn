@@ -8,8 +8,13 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * A tool installation defined in YAML. Each definition declares
@@ -33,6 +38,8 @@ public class ToolDef {
     private List<String> env = List.of();
     private List<String> requires = List.of();
     private String verify;
+
+    private transient volatile String cachedFingerprint;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -84,6 +91,41 @@ public class ToolDef {
         public void setContent(String content) { this.content = content; }
         public String getOwner() { return owner; }
         public void setOwner(String owner) { this.owner = owner; }
+    }
+
+    public String contentFingerprint() {
+        var result = cachedFingerprint;
+        if (result != null) return result;
+        var sb = new StringBuilder();
+        for (var d : downloads) {
+            sb.append("dl=").append(d.url).append(',').append(d.sha256)
+                    .append(',').append(d.extract);
+            new TreeMap<>(d.links).forEach((k, v) -> sb.append(',').append(k).append('=').append(v));
+            sb.append('\n');
+        }
+        packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
+        run.forEach(r -> sb.append("run=").append(r).append('\n'));
+        runAsUser.forEach(r -> sb.append("run_as_user=").append(r).append('\n'));
+        for (var f : files) {
+            sb.append("file=").append(f.path).append(',').append(f.content)
+                    .append(',').append(f.owner).append('\n');
+        }
+        env.stream().sorted().forEach(e -> sb.append("env=").append(e).append('\n'));
+        requires.stream().sorted().forEach(r -> sb.append("requires=").append(r).append('\n'));
+        if (verify != null) sb.append("verify=").append(verify).append('\n');
+        result = sha256hex(sb.toString());
+        cachedFingerprint = result;
+        return result;
+    }
+
+    static String sha256hex(String input) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            var hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     static ToolDef loadFromStream(InputStream is) throws IOException {
