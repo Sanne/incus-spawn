@@ -86,6 +86,7 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
 
         c.appendToProfile("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1");
+        c.appendToProfile("export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1");
     }
 
     /**
