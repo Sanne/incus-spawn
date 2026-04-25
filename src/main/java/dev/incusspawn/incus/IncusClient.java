@@ -216,7 +216,7 @@ public class IncusClient {
      * Open an interactive shell in a container, inheriting stdio.
      */
     public int interactiveShell(String container, String user) {
-        System.out.print("\033]0;" + container + "\007");
+        System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
         try {
             var args = List.of("exec", container, "--", "su", "-", user);

@@ -406,6 +406,11 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.shellExec(targetName, "sh", "-c",
                 "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser");
 
+        // Override Fedora's default PROMPT_COMMAND which sets the terminal title
+        // to "user@host:path" — we want "isx:containername".
+        incus.shellExec(targetName, "sh", "-c",
+                "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc");
+
         // Install base packages needed by most tools
         System.out.println("Installing base packages...");
         requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y",
