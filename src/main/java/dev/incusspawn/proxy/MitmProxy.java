@@ -8,6 +8,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
 import javax.net.ssl.*;
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -342,8 +343,8 @@ public class MitmProxy {
             clientSocket.startHandshake();
 
             var sniDomain = sniByThread.remove(Thread.currentThread().getId());
-            var in = clientSocket.getInputStream();
-            var out = clientSocket.getOutputStream();
+            var in = new BufferedInputStream(clientSocket.getInputStream(), HttpMessage.BUFFER_SIZE);
+            var out = new BufferedOutputStream(clientSocket.getOutputStream(), HttpMessage.BUFFER_SIZE);
 
             // HTTP/1.1 keep-alive: loop reading requests until client disconnects
             while (true) {
@@ -356,6 +357,7 @@ public class MitmProxy {
                 if (domain == null || !INTERCEPTED_DOMAIN_SET.contains(domain)) {
                     System.err.println("MITM: unknown domain: " + domain);
                     out.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n".getBytes());
+                    out.flush();
                     return;
                 }
 
@@ -988,7 +990,7 @@ public class MitmProxy {
     static String computeSha1(Path file) throws Exception {
         var md = MessageDigest.getInstance("SHA-1");
         try (var in = Files.newInputStream(file)) {
-            var buffer = new byte[8192];
+            var buffer = new byte[HttpMessage.BUFFER_SIZE];
             int n;
             while ((n = in.read(buffer)) != -1) {
                 md.update(buffer, 0, n);
@@ -1085,29 +1087,29 @@ public class MitmProxy {
 
     private static void teeStream(InputStream in, OutputStream out1,
                                   OutputStream out2, long length) throws IOException {
-        var buffer = new byte[8192];
+        var buffer = new byte[HttpMessage.BUFFER_SIZE];
         long remaining = length;
         while (remaining > 0) {
             int toRead = (int) Math.min(buffer.length, remaining);
             int n = in.read(buffer, 0, toRead);
             if (n == -1) break;
             out1.write(buffer, 0, n);
-            out1.flush();
             out2.write(buffer, 0, n);
             remaining -= n;
         }
+        out1.flush();
         out2.flush();
     }
 
     private static void teeUntilEof(InputStream in, OutputStream out1,
                                     OutputStream out2) throws IOException {
-        var buffer = new byte[8192];
+        var buffer = new byte[HttpMessage.BUFFER_SIZE];
         int n;
         while ((n = in.read(buffer)) != -1) {
             out1.write(buffer, 0, n);
-            out1.flush();
             out2.write(buffer, 0, n);
         }
+        out1.flush();
         out2.flush();
     }
 
@@ -1118,11 +1120,11 @@ public class MitmProxy {
      */
     private static void teeChunked(InputStream in, OutputStream clientOut,
                                    OutputStream cacheOut) throws IOException {
+        var buffer = new byte[HttpMessage.BUFFER_SIZE];
         while (true) {
             var chunkHeader = HttpMessage.readLine(in);
             if (chunkHeader == null) break;
             clientOut.write((chunkHeader + "\r\n").getBytes());
-            clientOut.flush();
 
             int chunkSize;
             try {
@@ -1134,11 +1136,9 @@ public class MitmProxy {
             if (chunkSize == 0) {
                 var trailer = HttpMessage.readLine(in);
                 if (trailer != null) clientOut.write((trailer + "\r\n").getBytes());
-                clientOut.flush();
                 break;
             }
 
-            var buffer = new byte[8192];
             long remaining = chunkSize;
             while (remaining > 0) {
                 int toRead = (int) Math.min(buffer.length, remaining);
@@ -1148,12 +1148,11 @@ public class MitmProxy {
                 cacheOut.write(buffer, 0, n);
                 remaining -= n;
             }
-            clientOut.flush();
 
             var crlf = HttpMessage.readLine(in);
             if (crlf != null) clientOut.write((crlf + "\r\n").getBytes());
-            clientOut.flush();
         }
+        clientOut.flush();
         cacheOut.flush();
     }
 
@@ -1163,7 +1162,7 @@ public class MitmProxy {
 
         var md = MessageDigest.getInstance("SHA-256");
         try (var in = Files.newInputStream(file)) {
-            var buffer = new byte[8192];
+            var buffer = new byte[HttpMessage.BUFFER_SIZE];
             int n;
             while ((n = in.read(buffer)) != -1) {
                 md.update(buffer, 0, n);
