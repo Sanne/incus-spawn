@@ -216,8 +216,15 @@ public class IncusClient {
      * Open an interactive shell in a container, inheriting stdio.
      */
     public int interactiveShell(String container, String user) {
-        var args = List.of("exec", container, "--", "su", "-", user);
-        return execInteractive(args);
+        System.out.print("\033]0;" + container + "\007");
+        System.out.flush();
+        try {
+            var args = List.of("exec", container, "--", "su", "-", user);
+            return execInteractive(args);
+        } finally {
+            System.out.print("\033]0;\007");
+            System.out.flush();
+        }
     }
 
     private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
