@@ -217,22 +217,12 @@ public class ImageDef {
         sb.append("image=").append(image).append('\n');
         sb.append("parent=").append(parent != null ? parent : "").append('\n');
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
-        var explicitTools = tools.stream().sorted().toList();
-        for (var t : explicitTools) {
+        for (var t : tools.stream().sorted().toList()) {
             sb.append("tool=").append(t);
             var fp = toolFingerprints.get(t);
             if (fp != null && !fp.isEmpty()) sb.append(':').append(fp);
             sb.append('\n');
         }
-        var explicit = new java.util.HashSet<>(explicitTools);
-        toolFingerprints.entrySet().stream()
-                .filter(e -> !explicit.contains(e.getKey()))
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(e -> {
-                    sb.append("dep-tool=").append(e.getKey());
-                    if (e.getValue() != null && !e.getValue().isEmpty()) sb.append(':').append(e.getValue());
-                    sb.append('\n');
-                });
         repos.stream()
                 .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
                         .thenComparing(r -> String.valueOf(r.getPath())))

@@ -365,11 +365,11 @@ class ImageDefTest {
     }
 
     @Test
-    void fingerprintIncludesTransitiveToolFingerprints() {
+    void fingerprintIgnoresUnrelatedToolsInMap() {
         var def = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
-        var fp1 = def.contentFingerprint(Map.of("maven", "v1", "sshd", "dep-v1"));
-        var fp2 = def.contentFingerprint(Map.of("maven", "v1", "sshd", "dep-v2"));
-        assertNotEquals(fp1, fp2, "Transitive dep fingerprint change should affect image fingerprint");
+        var fp1 = def.contentFingerprint(Map.of("maven", "v1"));
+        var fp2 = def.contentFingerprint(Map.of("maven", "v1", "unrelated-tool", "xyz"));
+        assertEquals(fp1, fp2, "Tools not in the image's explicit list should not affect fingerprint");
     }
 
     @Test

@@ -599,13 +599,15 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private java.util.Map<String, String> computeToolFingerprints(dev.incusspawn.config.ImageDef imageDef) {
-        var fps = new java.util.TreeMap<String, String>();
+        var rawFps = new java.util.TreeMap<String, String>();
+        var depMap = new java.util.TreeMap<String, java.util.List<String>>();
         for (var tool : resolveTools(imageDef)) {
             if (tool instanceof YamlToolSetup yts) {
-                fps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
+                rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
+                depMap.put(yts.toolDef().getName(), yts.toolDef().getRequires());
             }
         }
-        return fps;
+        return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
     }
 
     private void requireSuccess(int exitCode, String message) {
