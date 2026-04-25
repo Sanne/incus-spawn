@@ -285,7 +285,7 @@ class ToolDefTest {
 
     @Test
     void fingerprintStableForLinkMapOrder() throws Exception {
-        var yaml = """
+        var a = ToolDef.loadFromStream(toStream("""
                 name: test
                 downloads:
                   - url: https://example.com/tool.tar.gz
@@ -294,10 +294,212 @@ class ToolDefTest {
                     links:
                       /opt/bin/a: /usr/local/bin/a
                       /opt/bin/b: /usr/local/bin/b
-                """;
-        var def1 = ToolDef.loadFromStream(toStream(yaml));
-        var def2 = ToolDef.loadFromStream(toStream(yaml));
-        assertEquals(def1.contentFingerprint(), def2.contentFingerprint());
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc
+                    extract: /opt
+                    links:
+                      /opt/bin/b: /usr/local/bin/b
+                      /opt/bin/a: /usr/local/bin/a
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenRunAsUserChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                run_as_user:
+                  - echo hello
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                run_as_user:
+                  - echo world
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintSensitiveToRunOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                run:
+                  - step-one
+                  - step-two
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                run:
+                  - step-two
+                  - step-one
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintSensitiveToRunAsUserOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                run_as_user:
+                  - step-one
+                  - step-two
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                run_as_user:
+                  - step-two
+                  - step-one
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenFileChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/test.conf
+                    content: old
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/test.conf
+                    content: new
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenFilePathChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/a.conf
+                    content: same
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/b.conf
+                    content: same
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenFileOwnerChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/test.conf
+                    content: data
+                    owner: root:root
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                files:
+                  - path: /etc/test.conf
+                    content: data
+                    owner: user:user
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenRequiresChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                requires:
+                  - sshd
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                requires:
+                  - sshd
+                  - other-tool
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresRequiresOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                requires:
+                  - alpha
+                  - beta
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                requires:
+                  - beta
+                  - alpha
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenDownloadSha256Changes() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: def456
+                    extract: /opt
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenDownloadExtractChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /usr/local
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenDownloadLinkAdded() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc
+                    extract: /opt
+                    links:
+                      /opt/bin/tool: /usr/local/bin/tool
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
     }
 
     private static ByteArrayInputStream toStream(String yaml) {
