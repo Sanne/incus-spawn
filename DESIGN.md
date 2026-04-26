@@ -301,6 +301,14 @@ Copy-on-write storage is essential for efficient branching. `isx init` automatic
 
 Supported CoW drivers: **btrfs**, **zfs**, **lvm**. If btrfs pool creation fails during init (e.g. unsupported filesystem), the user is warned and can continue with the `dir` driver, but clones will be full copies.
 
+### Repo Cloning and Reference Optimization
+
+Repos declared in an image definition are cloned into the container during build as `agentuser`. Clones use `--single-branch` to fetch only the target branch (or the default branch when none is specified), avoiding the download of hundreds of release/PR branches and thousands of tags that are present on large upstream repos but rarely needed in a dev container. After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one. Other branches populate lazily on first `git fetch` or `git checkout`.
+
+**Reference clone optimization**: When `host-path` or `repo-paths` is configured in `~/.config/incus-spawn/config.yaml`, the build checks whether a matching host-side checkout exists before cloning. Matching uses URL normalization (strips scheme, `user@`, SSH colon separator, trailing `.git`, `www.`, then lowercases) and checks **all** git remotes, not just `origin` — this handles the common case where the user's fork is `origin` and the canonical upstream is `upstream`. If a match is found, the host directory is temporarily mounted into the container as a read-only Incus disk device (`readonly=true shift=true`) at a fixed path under `/var/lib/incus-spawn/repo-ref/` and passed to `git clone --single-branch --reference <path> --dissociate`. Git satisfies most objects from the local copy (typically 70–90% for large repos with a reasonably current checkout), reducing network traffic from hundreds of megabytes to a small delta of commits added since the last `git fetch`. The `--dissociate` flag makes the resulting clone fully self-contained so the device can be immediately removed. If the reference mount or clone fails for any reason the build falls back transparently to a plain clone.
+
+**TUI visibility**: The F3 template detail view shows the host repo link status for each declared repo — the resolved host path when matched, or "No matching host checkout found" when not. This lets users verify their `host-path`/`repo-paths` configuration without running a build.
+
 ### Git Remote Helper
 
 Containers cloned via `isx branch` are isolated development environments, but developers need a way to get their changes back to the host. Rather than inventing a custom sync mechanism, incus-spawn integrates with git's native remote helper protocol so standard `git fetch`/`git push`/`git pull` work between host repos and container repos.
@@ -379,6 +387,11 @@ The alternative — implementing the full protocol in Java with careful single-b
 
 ### Auto-remote: stateless cleanup vs state tracking
 When an instance is destroyed, its git remotes need to be removed from host repos. Two approaches: (1) track which remotes were added in metadata and remove exactly those, or (2) scan host repos for `isx://` URLs matching the instance name. We chose stateless scanning because it's simpler and eliminates a class of state-sync bugs (user manually removes a remote, add failed silently, metadata gets corrupted). The cost is scanning a few git repos on every destroy, which takes milliseconds.
+
+### Single-branch clone with lazy refspec restoration
+Template builds clone repos with `--single-branch` to avoid fetching objects for all remote branches and tags — on a large project like Quarkus this is the difference between ~3 MiB and ~100 MiB of network traffic even with a current host reference. The fetch refspec is immediately widened with `git remote set-branches origin '*'`, which costs nothing (no network, no object transfer) and makes the clone behave like a regular one. Users never need to know they received a single-branch clone; `git fetch`, `git branch -r`, and `git checkout other-branch` all work as expected — other branches just populate on first access.
+
+The alternative — a full clone — would download objects for hundreds of branches and thousands of tags that most container workflows never touch. Post-hoc pruning is not straightforward because git doesn't garbage-collect fetched objects unless explicitly told to. The single-branch + refspec-restore approach gets the performance benefit without any user-visible limitation.
 
 ### Auto-remote: opt-in via configuration
 Auto-remote management requires explicit `host-path` or `repo-paths` configuration. We don't attempt to auto-discover host repos because there's no reliable heuristic — the same repo name could exist in multiple directories, and scanning the filesystem would be slow and surprising. The user knows where their repos live.

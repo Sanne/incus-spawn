@@ -4,7 +4,9 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
+import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -1676,17 +1678,29 @@ public class ListCommand implements Runnable {
         }
 
         // Collect all repos
-        var allRepos = new ArrayList<String>();
-        for (var def : chain) {
-            for (var repo : def.getRepos()) {
-                var repoDesc = repo.getUrl() + " \u2192 " + repo.getPath();
+        var spawnConfig = SpawnConfig.load();
+        var allRepos = new ArrayList<dev.incusspawn.config.ImageDef.RepoEntry>();
+        for (var def : chain) allRepos.addAll(def.getRepos());
+        if (allRepos.isEmpty()) {
+            lines.add(Line.from(List.of(
+                    Span.styled("Repos: ", labelStyle),
+                    Span.styled("(none)", dimStyle))));
+        } else {
+            lines.add(Line.styled("Repos:", labelStyle));
+            for (var repo : allRepos) {
+                lines.add(Line.styled("  " + repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle));
                 if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
-                    repoDesc += "  (prime: " + repo.getPrime() + ")";
+                    lines.add(Line.from(List.of(
+                            Span.styled("    prime: ", labelStyle),
+                            Span.styled(repo.getPrime(), lineStyle))));
                 }
-                allRepos.add(repoDesc);
+                var hostMatch = resolveHostRepoMatch(repo.getUrl(), spawnConfig);
+                lines.add(Line.styled(hostMatch != null
+                        ? "    Linked to host repository at " + hostMatch
+                        : "    No matching host checkout found", dimStyle));
             }
         }
-        addDetailSection(lines, "Repos", allRepos, labelStyle, lineStyle, dimStyle);
+        lines.add(Line.styled("", lineStyle));
 
         // Collect all host-resources
         var allHostResources = new ArrayList<String>();
@@ -1726,6 +1740,15 @@ public class ListCommand implements Runnable {
         return new ArrayList<>(allDeps);
     }
 
+    private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
+        var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
+        if (repoName.isEmpty()) return null;
+        var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+        if (hostPath == null || !java.nio.file.Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath))
+            return null;
+        return GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl) ? hostPath : null;
+    }
+
     private void collectTransitiveDeps(String name, java.util.Set<String> collected, java.util.Set<String> visiting) {
         if (collected.contains(name) || !visiting.add(name)) return;
         var tool = toolDefLoader.find(name);
@@ -1746,6 +1769,7 @@ public class ListCommand implements Runnable {
         var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
         var nameStyle = Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
         var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+        var spawnConfig = SpawnConfig.load();
 
         for (int i = 0; i < chain.size(); i++) {
             var def = chain.get(i);
@@ -1794,13 +1818,18 @@ public class ListCommand implements Runnable {
             // Repos
             if (!def.getRepos().isEmpty()) {
                 for (var repo : def.getRepos()) {
-                    var repoSpans = new ArrayList<Span>();
-                    repoSpans.add(Span.styled(contentIndent + "Repo: ", labelStyle));
-                    repoSpans.add(Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle));
+                    lines.add(Line.from(List.of(
+                            Span.styled(contentIndent + "Repo: ", labelStyle),
+                            Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle))));
                     if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
-                        repoSpans.add(Span.styled("  (prime: " + repo.getPrime() + ")", dimStyle));
+                        lines.add(Line.from(List.of(
+                                Span.styled(contentIndent + "  prime: ", labelStyle),
+                                Span.styled(repo.getPrime(), lineStyle))));
                     }
-                    lines.add(Line.from(repoSpans));
+                    var hostMatch = resolveHostRepoMatch(repo.getUrl(), spawnConfig);
+                    lines.add(Line.styled(contentIndent + (hostMatch != null
+                            ? "  Linked to host repository at " + hostMatch
+                            : "  No matching host checkout found"), dimStyle));
                 }
             }
 

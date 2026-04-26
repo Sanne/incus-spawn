@@ -200,12 +200,15 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef);
 
-        // Verify clone call
         verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c", "git clone https://github.com/quarkusio/quarkus.git ~/quarkus");
-        // Verify prime call runs in the repo directory
+                "su", "-l", "agentuser", "-c",
+                "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
         verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c", "cd /home/agentuser/quarkus && mvn -B dependency:go-offline");
+                "su", "-l", "agentuser", "-c",
+                "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "cd '/home/agentuser/quarkus' && mvn -B dependency:go-offline");
     }
 
     // --- resolveSkillSource ---
@@ -325,6 +328,47 @@ class BuildCommandTest {
     }
 
     @Test
+    void shellQuoteWrapsInSingleQuotes() {
+        assertEquals("'hello'", BuildCommand.shellQuote("hello"));
+    }
+
+    @Test
+    void shellQuoteEscapesSingleQuotes() {
+        assertEquals("'it'\"'\"'s'", BuildCommand.shellQuote("it's"));
+    }
+
+    @Test
+    void shellQuoteHandlesEmpty() {
+        assertEquals("''", BuildCommand.shellQuote(""));
+    }
+
+    @Test
+    void cloneReposWithBranch() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        repo.setBranch("feature/my branch");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.cloneRepos(container, imageDef);
+
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "git -C '/home/agentuser/repo' remote set-branches origin '*'");
+    }
+
+    @Test
     void cloneReposSkipsPrimeWhenNotSet() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -343,7 +387,7 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef);
 
-        // Only the clone call, no prime
-        verify(incus, times(1)).shellExecInteractive(eq("test"), any(String[].class));
+        // Clone call + refspec restore, but no prime
+        verify(incus, times(2)).shellExecInteractive(eq("test"), any(String[].class));
     }
 }

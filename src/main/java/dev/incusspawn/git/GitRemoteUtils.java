@@ -6,6 +6,8 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -126,5 +128,67 @@ public final class GitRemoteUtils {
 
     public static boolean isGitRepo(Path dir) {
         return Files.exists(dir.resolve(".git"));
+    }
+
+    public static String getHostRepoRemoteUrl(Path repoDir, String remoteName) {
+        return hostGitExec(repoDir, "remote", "get-url", remoteName);
+    }
+
+    public static boolean anyRemoteMatches(Path repoDir, String cloneUrl) {
+        var output = hostGitExec(repoDir, "remote", "-v");
+        if (output == null) return false;
+        return output.lines()
+                .filter(line -> line.endsWith("(fetch)"))
+                .map(line -> line.split("\t", 2))
+                .filter(parts -> parts.length == 2)
+                .map(parts -> parts[1].replace(" (fetch)", "").strip())
+                .anyMatch(url -> urlsMatch(url, cloneUrl));
+    }
+
+    static String hostGitExec(Path repoDir, String... gitArgs) {
+        var command = new ArrayList<String>();
+        command.add("git");
+        command.add("-C");
+        command.add(repoDir.toString());
+        command.addAll(List.of(gitArgs));
+        Process process = null;
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            process = pb.start();
+            var stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+            int exitCode = process.waitFor();
+            return exitCode == 0 ? stdout : null;
+        } catch (IOException e) {
+            return null;
+        } catch (InterruptedException e) {
+            if (process != null) process.destroyForcibly();
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    private static final String REPO_REF_BASE = "/var/lib/incus-spawn/repo-ref";
+
+    public static String referenceDeviceName(String repoName, String cloneUrl) {
+        if (repoName == null || repoName.isBlank()) {
+            throw new IllegalArgumentException("Repo name must not be blank");
+        }
+        var urlHash = Integer.toHexString(normalizeGitUrl(cloneUrl).hashCode() & 0x7fffffff);
+        var base = "ref-" + repoName.replaceAll("[^a-zA-Z0-9]", "-");
+        var suffix = "-" + urlHash;
+        if (base.length() + suffix.length() > 64) {
+            base = base.substring(0, 64 - suffix.length());
+        }
+        return base + suffix;
+    }
+
+    public static String referenceContainerPath(String repoName, String cloneUrl) {
+        if (repoName == null || repoName.isBlank()
+                || repoName.contains("/") || repoName.equals(".") || repoName.equals("..")) {
+            throw new IllegalArgumentException("Invalid repo name for container path: " + repoName);
+        }
+        var urlHash = Integer.toHexString(normalizeGitUrl(cloneUrl).hashCode() & 0x7fffffff);
+        return REPO_REF_BASE + "/" + repoName + "-" + urlHash;
     }
 }
