@@ -54,6 +54,21 @@ public class ToolDefLoader {
         return loadAll().get(name);
     }
 
+    /**
+     * Register stored tool definitions as fallbacks. Tools already
+     * in scope (from the normal resolution chain) are not overridden.
+     */
+    public void addFallbacks(Map<String, ToolDef> fallbacks) {
+        if (fallbacks == null || fallbacks.isEmpty()) return;
+        var map = loadAll();
+        for (var entry : fallbacks.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null) continue;
+            if (!map.containsKey(entry.getKey())) {
+                map.put(entry.getKey(), new YamlToolSetup(entry.getValue()));
+            }
+        }
+    }
+
     private Map<String, YamlToolSetup> loadAll() {
         if (tools == null) {
             tools = new LinkedHashMap<>();

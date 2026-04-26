@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
@@ -116,6 +117,7 @@ public class ListCommand implements Runnable {
     private boolean anyParentRebuilt;
     private java.util.Set<String> templatesDefChanged = java.util.Set.of();
     private java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
+    private java.util.Set<String> storedSourceTemplates = java.util.Set.of();
     private TableState templateTableState;
 
     // Instance panel data (bottom)
@@ -268,6 +270,28 @@ public class ListCommand implements Runnable {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", ""));
             }
         }
+        // Add out-of-scope templates (built but not in current definition scope)
+        var storedNames = new java.util.HashSet<String>();
+        for (var inst : allInstances) {
+            if (templateNames.contains(inst.name)) continue;
+            if (!Metadata.TYPE_BASE.equals(inst.type)) continue;
+
+            var buildSource = BuildSource.fromJson(inst.buildSourceJson);
+            if (buildSource == null) continue;
+
+            for (var entry : buildSource.getDefinitions().entrySet()) {
+                imageDefs.putIfAbsent(entry.getKey(), entry.getValue());
+            }
+            toolDefLoader.addFallbacks(buildSource.getTools());
+
+            templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
+                    inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
+                    inst.buildVersion, inst.definitionSha));
+            templateNames.add(inst.name);
+            storedNames.add(inst.name);
+        }
+        storedSourceTemplates = storedNames;
+
         buildTemplateRowData();
 
         // Instance panel: exclude template instances (they're shown in the template panel)
@@ -1967,7 +1991,7 @@ public class ListCommand implements Runnable {
                     symbols.append('!');
                     anyTemplateOutdated = true;
                 }
-                if (!t.definitionSha.isEmpty()) {
+                if (!t.definitionSha.isEmpty() && !storedSourceTemplates.contains(t.name)) {
                     var def = imageDefs.get(t.name);
                     if (def != null && !t.definitionSha.equals(def.contentFingerprint(toolFpCache))) {
                         symbols.append('△');
@@ -2319,7 +2343,10 @@ public class ListCommand implements Runnable {
                         configVal(config, Metadata.NETWORK_MODE, ""),
                         node.path("architecture").asText(""),
                         configVal(config, Metadata.BUILD_VERSION, ""),
-                        configVal(config, Metadata.DEFINITION_SHA, "")));
+                        configVal(config, Metadata.DEFINITION_SHA, ""),
+                        type,
+                        Metadata.TYPE_BASE.equals(type)
+                                ? configVal(config, Metadata.BUILD_SOURCE, "") : ""));
             }
             return entryList;
         } catch (Exception e) {
@@ -2357,5 +2384,6 @@ public class ListCommand implements Runnable {
                                 String runtime, String parent,
                                 String limitsCpu, String limitsMemory, String rootSize,
                                 String ipv4, String networkMode, String architecture,
-                                String buildVersion, String definitionSha) {}
+                                String buildVersion, String definitionSha,
+                                String type, String buildSourceJson) {}
 }
