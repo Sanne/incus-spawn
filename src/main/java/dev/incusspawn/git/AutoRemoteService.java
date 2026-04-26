@@ -3,9 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -47,7 +45,7 @@ public final class AutoRemoteService {
         if (hostPath == null || !Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)) return;
 
         // Verify the host repo's origin matches the container repo's URL
-        var originUrl = gitGetRemoteUrl(hostPath, "origin");
+        var originUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, "origin");
         if (originUrl == null || !GitRemoteUtils.urlsMatch(originUrl, repoUrl)) return;
 
         var isxUrl = containerPath.startsWith("/")
@@ -55,14 +53,14 @@ public final class AutoRemoteService {
                 : "isx://" + instanceName + "/" + containerPath;
 
         // Check for name collision
-        var existingUrl = gitGetRemoteUrl(hostPath, instanceName);
+        var existingUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, instanceName);
         if (existingUrl != null) {
             System.err.println("Warning: remote '" + instanceName + "' already exists in " + hostPath);
             System.err.println("  To add manually: git -C " + hostPath + " remote add <name> " + isxUrl);
             return;
         }
 
-        if (gitRemoteAdd(hostPath, instanceName, isxUrl)) {
+        if (GitRemoteUtils.hostGitExec(hostPath, "remote", "add", instanceName, isxUrl) != null) {
             output.accept("Added git remote '" + instanceName + "' in " + hostPath);
         }
     }
@@ -116,7 +114,7 @@ public final class AutoRemoteService {
     }
 
     private static void removeMatchingRemotes(Path repoDir, String isxUrlPrefix, Consumer<String> output) {
-        var remoteList = gitExec(repoDir, "remote", "-v");
+        var remoteList = GitRemoteUtils.hostGitExec(repoDir, "remote", "-v");
         if (remoteList == null) return;
 
         for (var line : remoteList.lines().toList()) {
@@ -129,37 +127,11 @@ public final class AutoRemoteService {
             var url = urlAndType[0];
 
             if (url.startsWith(isxUrlPrefix)) {
-                gitExec(repoDir, "remote", "remove", remoteName);
+                GitRemoteUtils.hostGitExec(repoDir, "remote", "remove", remoteName);
                 output.accept("Removed git remote '" + remoteName + "' from " + repoDir);
                 break; // One remote per instance per repo
             }
         }
     }
 
-    private static String gitGetRemoteUrl(Path repoDir, String remoteName) {
-        return gitExec(repoDir, "remote", "get-url", remoteName);
-    }
-
-    private static boolean gitRemoteAdd(Path repoDir, String name, String url) {
-        var result = gitExec(repoDir, "remote", "add", name, url);
-        return result != null;
-    }
-
-    private static String gitExec(Path repoDir, String... gitArgs) {
-        var command = new ArrayList<String>();
-        command.add("git");
-        command.add("-C");
-        command.add(repoDir.toString());
-        command.addAll(List.of(gitArgs));
-        try {
-            var pb = new ProcessBuilder(command);
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var stdout = new String(process.getInputStream().readAllBytes()).strip();
-            int exitCode = process.waitFor();
-            return exitCode == 0 ? stdout : null;
-        } catch (IOException | InterruptedException e) {
-            return null;
-        }
-    }
 }

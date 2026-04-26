@@ -8,6 +8,7 @@ import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -839,27 +840,123 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         return skillsRepo + "@" + skill;
     }
 
+    record RepoReference(String deviceName, String containerPath) {}
+
     /**
      * Clone git repos declared in the image definition as agentuser.
+     * When a matching host-side checkout is available (via SpawnConfig host-path/repo-paths),
+     * uses --reference --dissociate to speed up cloning from local objects.
      */
     void cloneRepos(Container container, ImageDef imageDef) {
+        var config = SpawnConfig.load();
+
         for (var repo : imageDef.getRepos()) {
             System.out.println("Cloning " + repo.getUrl() + "...");
-            var cmd = new StringBuilder("git clone");
-            if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-                cmd.append(" --branch ").append(repo.getBranch());
+
+            boolean cloned = false;
+            RepoReference ref = null;
+
+            try {
+                ref = tryMountReference(container, repo.getUrl(), config);
+                if (ref != null) {
+                    System.out.println("  \033[1;32mUsing local host reference to speed up clone...\033[0m");
+                    try {
+                        container.runAsUser("agentuser",
+                                buildCloneCommand(repo, ref.containerPath()),
+                                "Failed to clone " + repo.getUrl() + " with reference");
+                        cloned = true;
+                        System.out.println("  Done.");
+                    } catch (Exception e) {
+                        System.out.println("  Reference clone failed, falling back to normal clone...");
+                        container.runAsUser("agentuser",
+                                "rm -rf " + shellQuote(expandHome(repo.getPath())),
+                                "Failed to clean up partial clone");
+                    }
+                }
+            } finally {
+                if (ref != null) {
+                    try {
+                        incus.deviceRemove(container.name(), ref.deviceName());
+                    } catch (Exception e) {
+                        System.err.println("Warning: failed to remove reference device: " + e.getMessage());
+                    }
+                }
             }
-            cmd.append(" ").append(repo.getUrl());
-            cmd.append(" ").append(repo.getPath());
-            container.runAsUser("agentuser", cmd.toString(),
-                    "Failed to clone " + repo.getUrl());
+
+            if (!cloned) {
+                container.runAsUser("agentuser",
+                        buildCloneCommand(repo, null),
+                        "Failed to clone " + repo.getUrl());
+            }
+
+            // Restore full fetch refspec so the clone behaves like a regular clone.
+            // --single-branch narrows it to one branch; this undoes that without
+            // downloading anything — other branches are fetched lazily on demand.
+            var repoPath = shellQuote(expandHome(repo.getPath()));
+            container.runAsUser("agentuser",
+                    "git -C " + repoPath + " remote set-branches origin '*'",
+                    "Failed to restore fetch refspec for " + repo.getUrl());
+
             if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
                 System.out.println("Priming " + repo.getPath() + "...");
                 var expanded = expandHome(repo.getPath());
                 container.runAsUser("agentuser",
-                        "cd " + expanded + " && " + repo.getPrime(),
+                        "cd " + shellQuote(expanded) + " && " + repo.getPrime(),
                         "Failed to prime " + repo.getPath());
             }
+        }
+    }
+
+    static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
+        var cmd = new StringBuilder("git clone --single-branch");
+        if (referencePath != null) {
+            cmd.append(" --reference ").append(shellQuote(referencePath));
+            cmd.append(" --dissociate");
+        }
+        if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
+            cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
+        }
+        cmd.append(" -- ").append(shellQuote(repo.getUrl()));
+        cmd.append(" ").append(shellQuote(expandHome(repo.getPath())));
+        return cmd.toString();
+    }
+
+    private RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config) {
+        try {
+            var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
+            if (repoName.isEmpty()) return null;
+
+            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            if (hostPath == null) return null;
+            if (!Files.isDirectory(hostPath)) {
+                System.out.println("  Host repo path " + hostPath + " not found, skipping reference clone");
+                return null;
+            }
+            if (!GitRemoteUtils.isGitRepo(hostPath)) {
+                System.out.println("  Host path " + hostPath + " is not a git repo, skipping reference clone");
+                return null;
+            }
+
+            if (!GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
+                System.out.println("  No remote in " + hostPath + " matches " + cloneUrl + ", skipping reference clone");
+                return null;
+            }
+
+            var containerPath = GitRemoteUtils.referenceContainerPath(repoName, cloneUrl);
+            var deviceName = GitRemoteUtils.referenceDeviceName(repoName, cloneUrl);
+            container.exec("mkdir", "-p", containerPath);
+            incus.deviceAdd(container.name(), deviceName, "disk",
+                    "source=" + hostPath, "path=" + containerPath,
+                    "readonly=true", "shift=true");
+
+            return new RepoReference(deviceName, containerPath);
+        } catch (Exception e) {
+            System.err.println("Warning: could not set up repo reference: " + e.getMessage());
+            return null;
         }
     }
 

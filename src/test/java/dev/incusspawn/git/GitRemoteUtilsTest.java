@@ -2,7 +2,11 @@ package dev.incusspawn.git;
 
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -170,5 +174,146 @@ class GitRemoteUtilsTest {
         var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
         assertNotNull(result);
         assertEquals("/custom/quarkus", result.toString());
+    }
+
+    // ── referenceDeviceName ───────────────────────────────────────────────
+
+    private static final String QUARKUS_URL = "https://github.com/quarkusio/quarkus.git";
+    private static final String INCUS_SPAWN_URL = "https://github.com/Sanne/incus-spawn.git";
+
+    @Test
+    void referenceDeviceNameHasRefPrefixAndHash() {
+        var result = GitRemoteUtils.referenceDeviceName("quarkus", QUARKUS_URL);
+        assertTrue(result.startsWith("ref-quarkus-"), result);
+        assertTrue(result.length() <= 64, result);
+    }
+
+    @Test
+    void referenceDeviceNameSanitizesSpecialChars() {
+        var result = GitRemoteUtils.referenceDeviceName("my-repo.name", QUARKUS_URL);
+        assertTrue(result.startsWith("ref-my-repo-name-"), result);
+    }
+
+    @Test
+    void referenceDeviceNamePreservesDashes() {
+        var result = GitRemoteUtils.referenceDeviceName("incus-spawn", INCUS_SPAWN_URL);
+        assertTrue(result.startsWith("ref-incus-spawn-"), result);
+    }
+
+    @Test
+    void referenceDeviceNameTruncatesLongNames() {
+        var longName = "a".repeat(100);
+        var result = GitRemoteUtils.referenceDeviceName(longName, QUARKUS_URL);
+        assertTrue(result.length() <= 64);
+        assertTrue(result.startsWith("ref-"));
+    }
+
+    @Test
+    void referenceDeviceNameRejectsBlank() {
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceDeviceName("", QUARKUS_URL));
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceDeviceName("  ", QUARKUS_URL));
+    }
+
+    @Test
+    void referenceDeviceNameDistinguishesSameNameDifferentOrg() {
+        var nameA = GitRemoteUtils.referenceDeviceName("common", "https://github.com/orgA/common.git");
+        var nameB = GitRemoteUtils.referenceDeviceName("common", "https://github.com/orgB/common.git");
+        assertNotEquals(nameA, nameB);
+    }
+
+    // ── referenceContainerPath ────────────────────────────────────────────
+
+    @Test
+    void referenceContainerPathIsUnderVarLib() {
+        var result = GitRemoteUtils.referenceContainerPath("quarkus", QUARKUS_URL);
+        assertTrue(result.startsWith("/var/lib/incus-spawn/repo-ref/quarkus-"), result);
+    }
+
+    @Test
+    void referenceContainerPathPreservesRepoName() {
+        var result = GitRemoteUtils.referenceContainerPath("incus-spawn", INCUS_SPAWN_URL);
+        assertTrue(result.startsWith("/var/lib/incus-spawn/repo-ref/incus-spawn-"), result);
+    }
+
+    @Test
+    void referenceContainerPathRejectsDotDot() {
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceContainerPath("..", QUARKUS_URL));
+    }
+
+    @Test
+    void referenceContainerPathRejectsDot() {
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceContainerPath(".", QUARKUS_URL));
+    }
+
+    @Test
+    void referenceContainerPathRejectsBlank() {
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceContainerPath("", QUARKUS_URL));
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceContainerPath("  ", QUARKUS_URL));
+    }
+
+    @Test
+    void referenceContainerPathRejectsSlashes() {
+        assertThrows(IllegalArgumentException.class,
+                () -> GitRemoteUtils.referenceContainerPath("foo/bar", QUARKUS_URL));
+    }
+
+    @Test
+    void referenceContainerPathDistinguishesSameNameDifferentOrg() {
+        var pathA = GitRemoteUtils.referenceContainerPath("common", "https://github.com/orgA/common.git");
+        var pathB = GitRemoteUtils.referenceContainerPath("common", "https://github.com/orgB/common.git");
+        assertNotEquals(pathA, pathB);
+    }
+
+    // ── anyRemoteMatches ──────────────────────────────────────────────────
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void anyRemoteMatchesFindsOrigin() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "https://github.com/quarkusio/quarkus.git");
+        assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
+    }
+
+    @Test
+    void anyRemoteMatchesFindsFork() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "git@github.com:Sanne/quarkus.git");
+        runGit(tempDir, "remote", "add", "upstream", "https://github.com/quarkusio/quarkus.git");
+        assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
+    }
+
+    @Test
+    void anyRemoteMatchesReturnsFalseWhenNoMatch() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "https://github.com/other/repo.git");
+        assertFalse(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
+    }
+
+    @Test
+    void anyRemoteMatchesHandlesSshVsHttps() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "git@github.com:quarkusio/quarkus.git");
+        assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
+    }
+
+    private void initGitRepoWithRemote(Path dir, String remoteName, String remoteUrl)
+            throws IOException, InterruptedException {
+        runGit(dir, "init");
+        runGit(dir, "remote", "add", remoteName, remoteUrl);
+    }
+
+    private void runGit(Path dir, String... args) throws IOException, InterruptedException {
+        var cmd = new java.util.ArrayList<String>();
+        cmd.add("git");
+        cmd.addAll(java.util.List.of(args));
+        var process = new ProcessBuilder(cmd).directory(dir.toFile())
+                .redirectErrorStream(true).start();
+        var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        assertEquals(0, exit, "git " + String.join(" ", args) + " failed in " + dir + ": " + output);
     }
 }
