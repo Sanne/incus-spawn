@@ -106,6 +106,8 @@ public class ListCommand implements Runnable {
     private String returnToInstance;
     private String returnToTemplate;
 
+    private static final int PAGE_SIZE = 10;
+
     // Two-panel focus
     private enum Panel { TEMPLATES, INSTANCES }
     private Panel focusedPanel = Panel.TEMPLATES;
@@ -364,6 +366,16 @@ public class ListCommand implements Runnable {
             if (idx != null && idx > 0) templateTableState.select(idx - 1);
             return true;
         }
+        if (key.isKey(KeyCode.PAGE_DOWN)) {
+            var idx = templateTableState.selected();
+            if (idx != null) templateTableState.select(Math.min(idx + PAGE_SIZE, templateEntries.size() - 1));
+            return true;
+        }
+        if (key.isKey(KeyCode.PAGE_UP)) {
+            var idx = templateTableState.selected();
+            if (idx != null) templateTableState.select(Math.max(idx - PAGE_SIZE, 0));
+            return true;
+        }
         if (key.isKey(KeyCode.HOME)) {
             if (!templateEntries.isEmpty()) templateTableState.select(0);
             return true;
@@ -464,6 +476,8 @@ public class ListCommand implements Runnable {
         // Navigation within instance panel
         if (key.isKey(KeyCode.DOWN) || key.isChar('j')) { selectNextDataRow(tableState, 1); return true; }
         if (key.isKey(KeyCode.UP) || key.isChar('k'))   { selectNextDataRow(tableState, -1); return true; }
+        if (key.isKey(KeyCode.PAGE_DOWN))                { for (int n = 0; n < PAGE_SIZE; n++) selectNextDataRow(tableState, 1); return true; }
+        if (key.isKey(KeyCode.PAGE_UP))                  { for (int n = 0; n < PAGE_SIZE; n++) selectNextDataRow(tableState, -1); return true; }
         if (key.isKey(KeyCode.HOME))                     { selectFirstDataRow(tableState); return true; }
         if (key.isKey(KeyCode.END))                      { selectLastDataRow(tableState); return true; }
 
