@@ -56,8 +56,8 @@ public class Container {
 
     /** Write content to a file inside the container. */
     public void writeFile(String path, String content) {
-        // Use a heredoc with a unique delimiter to avoid escaping issues
-        sh("cat > " + path + " << 'INCUS_EOF'\n" + content.strip() + "\nINCUS_EOF");
+        sh("cat > " + shellQuote(path) + " << 'INCUS_EOF'\n" + content.strip() + "\nINCUS_EOF")
+                .assertSuccess("Failed to write file in container: " + path);
     }
 
     /** Set ownership recursively. */
@@ -77,6 +77,11 @@ public class Container {
 
     /** Append a line to agentuser's .bashrc. */
     public void appendToProfile(String line) {
-        sh("echo '" + line + "' >> /home/agentuser/.bashrc");
+        sh("printf '%s\\n' " + shellQuote(line) + " >> /home/agentuser/.bashrc")
+                .assertSuccess("Failed to append to /home/agentuser/.bashrc");
+    }
+
+    public static String shellQuote(String value) {
+        return "'" + java.util.Objects.requireNonNull(value, "value").replace("'", "'\"'\"'") + "'";
     }
 }
