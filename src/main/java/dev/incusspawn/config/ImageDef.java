@@ -312,7 +312,7 @@ public class ImageDef {
                         try (var is = Files.newInputStream(path)) {
                             var def = YAML.readValue(is, ImageDef.class);
                             if (def.getName() != null) {
-                                def.setSource(path.toString());
+                                def.setSource(path.toAbsolutePath().normalize().toString());
                                 defs.put(def.getName(), def);
                             }
                         } catch (IOException e) {

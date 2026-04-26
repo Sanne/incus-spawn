@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -96,6 +97,17 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
 
             var imageDef = defs.get(name);
+            if (imageDef == null && incus.exists(name)) {
+                var buildSource = BuildSource.fromJson(
+                        incus.configGet(name, Metadata.BUILD_SOURCE));
+                if (buildSource != null) {
+                    for (var entry : buildSource.getDefinitions().entrySet()) {
+                        defs.putIfAbsent(entry.getKey(), entry.getValue());
+                    }
+                    toolDefLoader.addFallbacks(buildSource.getTools());
+                    imageDef = defs.get(name);
+                }
+            }
             if (imageDef == null) {
                 System.err.println("Unknown image: " + name);
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
@@ -305,6 +317,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             incus.configSet(targetName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
         }
+        incus.configSet(targetName, Metadata.BUILD_SOURCE,
+                collectBuildSource(imageDef, defs).toJson());
 
         System.out.println("Stopping image...");
         incus.stop(targetName);
@@ -444,6 +458,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             incus.configSet(targetName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
         }
+        incus.configSet(targetName, Metadata.BUILD_SOURCE,
+                collectBuildSource(imageDef, defs).toJson());
 
         // Stop the template (it's a stopped snapshot you branch from, not a running instance)
         System.out.println("Stopping image...");
@@ -608,6 +624,48 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
         }
         return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
+    }
+
+    private BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var definitions = new java.util.LinkedHashMap<String, ImageDef>();
+        var tools = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolDef>();
+        var sources = new java.util.LinkedHashMap<String, String>();
+
+        var visited = new java.util.HashSet<String>();
+        var current = imageDef;
+        while (current != null) {
+            definitions.put(current.getName(), current);
+            sources.put(current.getName(), current.getSource());
+            collectToolDefs(current, tools, visited);
+            if (current.isRoot()) break;
+            current = defs.get(current.getParent());
+        }
+
+        return new BuildSource(definitions, tools, sources);
+    }
+
+    private void collectToolDefs(ImageDef imageDef, Map<String, dev.incusspawn.tool.ToolDef> tools,
+                                  java.util.Set<String> visited) {
+        var toolNames = imageDef.getTools();
+        if (toolNames == null) return;
+        for (var toolName : toolNames) {
+            collectToolDefRecursive(toolName, tools, visited);
+        }
+    }
+
+    private void collectToolDefRecursive(String name, Map<String, dev.incusspawn.tool.ToolDef> tools,
+                                          java.util.Set<String> visited) {
+        if (!visited.add(name)) return;
+        var setup = toolDefLoader.find(name);
+        if (setup instanceof YamlToolSetup yts) {
+            tools.put(name, yts.toolDef());
+            var deps = yts.toolDef().getRequires();
+            if (deps != null) {
+                for (var dep : deps) {
+                    collectToolDefRecursive(dep, tools, visited);
+                }
+            }
+        }
     }
 
     private void requireSuccess(int exitCode, String message) {

@@ -218,4 +218,44 @@ class ToolDefLoaderTest {
         // Should still find builtins without error
         assertNotNull(loader.find("podman"));
     }
+
+    @Test
+    void addFallbacksDoesNotOverrideExisting() {
+        var loader = new ToolDefLoader();
+        assertNotNull(loader.find("podman"));
+
+        var fallbackDef = new ToolDef();
+        fallbackDef.setName("podman");
+        fallbackDef.setDescription("should not replace built-in");
+
+        loader.addFallbacks(java.util.Map.of("podman", fallbackDef));
+
+        var tool = loader.find("podman");
+        assertNotNull(tool);
+        assertNotEquals("should not replace built-in",
+                ((YamlToolSetup) tool).toolDef().getDescription());
+    }
+
+    @Test
+    void addFallbacksAddsNewTool() {
+        var loader = new ToolDefLoader();
+        assertNull(loader.find("my-fallback"));
+
+        var fallbackDef = new ToolDef();
+        fallbackDef.setName("my-fallback");
+        fallbackDef.setDescription("A fallback tool");
+
+        loader.addFallbacks(java.util.Map.of("my-fallback", fallbackDef));
+
+        var tool = loader.find("my-fallback");
+        assertNotNull(tool);
+        assertEquals("my-fallback", tool.name());
+    }
+
+    @Test
+    void addFallbacksHandlesNull() {
+        var loader = new ToolDefLoader();
+        assertDoesNotThrow(() -> loader.addFallbacks(null));
+        assertNotNull(loader.find("podman"));
+    }
 }
