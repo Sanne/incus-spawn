@@ -61,7 +61,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
-The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots. Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy --logs`.
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots. Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`.
 
 ### Network Modes
 
@@ -357,6 +357,7 @@ Extraction happens on the host -- the container doesn't need `tar`, `unzip`, or 
 Tool schema fields (all optional except `name`):
 - `packages` -- dnf packages to install
 - `downloads` -- artifacts to download, cache on the host, and extract into the container
+- `requires` -- list of other tool names that must be installed first (resolved transitively; circular dependencies are detected and rejected)
 - `run` -- shell commands as root
 - `run_as_user` -- shell commands as agentuser
 - `files` -- files to write (with optional `owner`)
@@ -375,12 +376,25 @@ Execution order during `install()`: packages → downloads → `run` → `run_as
 
 Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → search paths → `.incus-spawn/tools/` (project-local) → Java plugins.
 
+### Remote IDE Access
+
+The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend, allowing you to connect from JetBrains Gateway on the host. It declares `requires: [sshd]`, so the SSH server is installed automatically:
+
+```yaml
+name: tpl-java-ide
+parent: tpl-java
+tools:
+  - idea-backend    # auto-installs sshd via requires
+```
+
+After branching, connect from JetBrains Gateway using the container's IP (visible in the TUI via F3) over SSH as `agentuser`. Add your SSH public key to the template's `~/.ssh/authorized_keys` (e.g. via a host-resource or a custom tool) so authentication works automatically in every branch.
+
 ## Features
 
 - **Instant branching**: copy-on-write clones that share storage with the parent image
 - **System containers**: full init, real networking, bare-metal-like developer experience
 - **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel (optional)
-- **Interactive TUI**: Midnight Commander-style interface for managing environments
+- **Interactive TUI**: Midnight Commander-style interface with F3 detail views, template staleness indicators, and modal dialogs for branching, renaming, and building
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Host resources**: share host files and directories with containers (read-only, overlay, or copy)
 - **Inbox mount**: share a host directory read-only into the container
@@ -393,6 +407,9 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 - **Git remotes**: `git fetch`/`git push` between host and container repos via `isx://` URLs, with automatic remote management
+- **Remote IDE**: JetBrains Gateway support via built-in `idea-backend` tool with transitive `sshd` dependency
+- **Tool dependencies**: tools can declare `requires` for automatic transitive dependency resolution
+- **Version drift detection**: warns when templates were built with a different isx version or when definitions have changed since the last build
 - **Shell completions**: bash, zsh, and fish via `isx completion {bash,zsh,fish}`
 
 ## CLI Commands
@@ -412,13 +429,16 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 | `isx templates list -v` | List templates with source and description |
 | `isx templates new <name>` | Create a new template definition |
 | `isx templates edit <name>` | Edit a template in `$EDITOR` |
+| `isx instances` | List connectable instance names (excludes templates) |
 | `isx project create <name>` | Create a project template from `incus-spawn.yaml` |
 | `isx project update <name>` | Update an existing project template |
 | `isx proxy start` | Start the MITM auth proxy |
 | `isx proxy stop` | Stop the proxy |
 | `isx proxy status` | Show proxy status |
 | `isx proxy install` | Install proxy as a systemd user service |
+| `isx proxy uninstall` | Stop and remove the systemd proxy service |
 | `isx proxy logs` | View proxy logs |
+| `isx proxy dump` | Run a local pass-through proxy for API traffic capture |
 | `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
 
 Use `isx <command> --help` for detailed options on any command.
@@ -434,6 +454,11 @@ Details that save time and avoid frustration:
 - **Sudo ready**: your agents and scripts can invoke sudo at will, no password will be required.
 - **Failed build inspection**: if a template build fails, the container is promoted to an inspectable instance so you can shell in and debug.
 - **Proxy health check**: builds, branches, and shell access verify the proxy is reachable before proceeding, so you get a clear error instead of mysterious connection failures.
+- **Template staleness indicators**: the TUI marks templates with `!` when they were built with a different isx version, and `△` when the image or tool definition has changed since the last build. This tells you at a glance which templates need rebuilding.
+- **Version drift remediation**: if the running proxy version doesn't match the CLI, the proxy is automatically restarted (when no containers are running) or a warning is shown.
+- **CA certificate mismatch warning**: branching from a template built with a different CA certificate warns you before you hit TLS failures.
+- **Claude Code auto-trust**: when templates declare repos, the build pre-trusts those directories in `.claude.json` so Claude Code doesn't prompt for trust on first use.
+- **Terminal title**: shell sessions set the terminal title to `isx:<containername>`, and the container prompt maintains it. Easy to identify which terminal belongs to which container.
 
 ## Installation
 
@@ -453,7 +478,7 @@ Updates automatically with `sudo dnf upgrade`.
 curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
 ```
 
-Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location. To update, re-run the same command.
+Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location. To update, re-run the same command. To uninstall, run `uninstall.sh` (caches at `~/.cache/incus-spawn/` are preserved unless you pass `--purge`).
 
 ### JVM via JBang
 

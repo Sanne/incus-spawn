@@ -61,7 +61,7 @@ Each image definition specifies:
 
 Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch.
 
-**Resolution order**: built-in YAML (classpath) first, then user-defined YAML (`~/.config/incus-spawn/images/`). User definitions with the same name override built-ins.
+**Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones.
 
 ### Tool System
 
@@ -81,20 +81,24 @@ verify: mvn --version
 
 Schema fields (all optional except `name`):
 - `packages` — dnf install
+- `downloads` — artifacts to download, cache on the host, and extract into the container (with optional SHA256 verification and symlink creation)
+- `requires` — list of other tool names that must be installed first (resolved transitively)
 - `run` — shell commands as root
 - `run_as_user` — shell commands as agentuser
 - `files` — files to write (path, content, optional owner)
 - `env` — lines appended to agentuser's `.bashrc`
 - `verify` — verification command (logged, non-fatal)
 
-Execution order: packages → run → run_as_user → files → env → verify.
+Execution order: packages → downloads → run → run_as_user → files → env → verify.
+
+**Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools. During build, `resolveWithDeps()` performs a recursive depth-first traversal to build the full dependency graph. Circular dependencies are detected and reported. Auto-added dependencies are logged: "Auto-adding dependency: sshd (required by idea-backend)". Dependencies are installed before the tools that require them.
 
 **Java tools** (fallback) — for tools needing programmatic logic beyond what YAML supports:
 - Implement `ToolSetup` interface (`name()` + `install(Container)`)
 - Discovered via CDI (`@Dependent`)
 - Currently used by: `claude` (binary install + settings), `gh` (dnf install)
 
-**Resolution order**: user-defined YAML (`.incus-spawn/tools/`) → built-in YAML (`resources/tools/`) → Java CDI implementations. First match by name wins.
+**Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`) → Java CDI implementations. First match by name wins.
 
 ### Build Flow
 
@@ -108,15 +112,20 @@ Execution order: packages → run → run_as_user → files → env → verify.
 7. Install base packages (git, curl, which, procps-ng, findutils)
 8. Install image-defined packages via dnf
 9. Install image-defined tools (resolved from YAML/Java)
-10. Clean caches (dnf, /tmp)
-11. Tag metadata, stop
+10. Clone declared repos (with reference optimization — see below)
+11. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
+12. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
+13. Clean caches (dnf, /tmp)
+14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
 
 **`buildFromParent` (derived image):**
 1. Copy parent image, start, wait for network
-2. Install image-defined packages via dnf
-3. Install image-defined tools
+2. Install image-defined packages via dnf (deduplicated — see below)
+3. Install image-defined tools (with transitive `requires` resolution)
 4. Clean caches
 5. Tag metadata, stop
+
+**Package deduplication**: Before installing packages, the build walks the parent chain and collects all packages from ancestor images and their tools. These are subtracted from the current image's package list so derived images only install what's new. The build logs both the count being installed and the count already present in ancestors.
 
 ### Branching
 
@@ -150,6 +159,12 @@ Overridable via TUI branch modal (for VMs, all three fields are shown).
 - `kernel.yama.ptrace_scope = 0` — strace/debuggers
 
 **DNS**: systemd-resolved disabled, `/etc/resolv.conf` points at Incus bridge gateway (`incusbr0`), immutable via `chattr +i`.
+
+**Terminal title**: The host terminal title is set to `isx:<containername>` during `isx shell` sessions (via OSC escape sequences) and restored on exit. Inside containers, `PROMPT_COMMAND` in `.bashrc` overrides Fedora's default title-setting to maintain the `isx:<hostname>` title. Claude Code's built-in terminal title override is also suppressed so the container name stays visible.
+
+### Remote IDE Access
+
+The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend and registers the container for JetBrains Gateway discovery. It uses the `requires` field to automatically pull in the `sshd` tool, which configures an OpenSSH server with pubkey-only authentication. This enables IDE-based development inside containers: Gateway connects over SSH and runs the IntelliJ backend process inside the container, with the full project available.
 
 ### GUI and Audio Passthrough
 
@@ -238,6 +253,14 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 
 **Credential validation**: Building a template image that includes `claude` or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing.
 
+**Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version. If they differ: when no containers are running, the proxy is automatically restarted; when containers are running, a warning is shown with instructions to restart manually. This prevents subtle failures from CA certificate or protocol mismatches.
+
+**CA certificate mismatch**: At branch time, `BranchCommand` compares the template's `ca-fingerprint` metadata against the current CA certificate. If they differ (e.g. after `isx init` regenerated the CA), a warning is shown suggesting to rebuild the template. This prevents TLS failures in branches where the container's trusted CA doesn't match the proxy's signing CA.
+
+**Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated). This handles token expiry during long-running sessions without user intervention.
+
+**Buffered I/O**: The proxy uses 64KB `BufferedInputStream`/`BufferedOutputStream` on both client and upstream connections for throughput. SSE and chunked streaming responses are flushed after each line/chunk to avoid buffering delays.
+
 **Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth application-default login` completed.
 
 ### Host Resources
@@ -290,10 +313,22 @@ user.incus-spawn.type=base
 user.incus-spawn.profile=tpl-java
 user.incus-spawn.parent=tpl-dev
 user.incus-spawn.created=2026-04-07
+user.incus-spawn.build-version=0.1.11        # isx version that built the template
+user.incus-spawn.build-sha=c434ef9           # git commit SHA of isx at build time
+user.incus-spawn.definition-sha=a1b2c3d4     # fingerprint of image def + tool defs
+user.incus-spawn.ca-fingerprint=AB:CD:EF:... # CA certificate fingerprint
+user.incus-spawn.build-source={...}          # (JSON, full image + tool defs for out-of-scope visibility)
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
-user.incus-spawn.proxy-gateway=10.166.11.1    # (proxy-only branches only)
-user.incus-spawn.host-resources=[...]         # (JSON, when host-resources declared)
+user.incus-spawn.proxy-gateway=10.166.11.1   # (proxy-only branches only)
+user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declared)
 ```
+
+**Staleness detection**: The TUI uses `build-version` and `definition-sha` to display staleness indicators next to template names:
+- `!` — template was built with a different isx version than the running CLI
+- `△` — the image definition or its tool definitions have changed since the last build (fingerprint mismatch)
+- `↑` — a parent template was rebuilt more recently than this template
+
+**Build source storage**: `build-source` stores the full image definition hierarchy and tool definitions as JSON. This allows templates built from definitions that are no longer in scope (e.g. project-local definitions from a different working directory) to still be displayed and rebuilt in the TUI.
 
 ### Storage and COW
 
@@ -333,7 +368,7 @@ Stderr is captured in a virtual thread so the command can detect "not a git repo
 
 When the user configures `host-path` (and optionally `repo-paths`) in `config.yaml`, incus-spawn automatically adds and removes git remotes in host repositories:
 
-- **On `isx branch`**: for each repo declared in the image definition chain, resolve the corresponding host repo via `repo-paths` (exact match) or `host-path` (base directory + repo name). Verify the host repo's `origin` URL matches the container repo's URL (protocol-lenient comparison). If it matches, add a remote named after the instance.
+- **On `isx branch`**: for each repo declared in the image definition chain, resolve the corresponding host repo via `repo-paths` (exact match) or `host-path` (base directory + repo name). Verify that any of the host repo's remotes (not just `origin`) match the container repo's URL (protocol-lenient comparison). If a match is found, add a remote named after the instance.
 - **On `isx destroy`**: scan candidate host repos for any remote with a URL matching `isx://<instance-name>/` and remove it.
 
 The removal is stateless — rather than tracking which remotes were added, we scan for `isx://` URLs matching the instance name. This avoids a class of bugs where state gets out of sync (e.g., the user manually removes a remote, or the add failed silently).
@@ -345,10 +380,12 @@ Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repo
 ## Testing
 
 **Unit tests** (`mvn test`, no Incus needed):
-- `ToolDefTest` — YAML tool parsing (all fields, defaults, unknown fields)
+- `ToolDefTest` — YAML tool parsing, fingerprinting, composite fingerprints with transitive dependencies
 - `ToolDefLoaderTest` — resolution order (builtins, user overrides, unknown tools)
 - `YamlToolSetupTest` — execution order with mocked Container
-- `ImageDefTest` — image definition loading, parent chain, descriptions
+- `ImageDefTest` — image definition loading, parent chain, descriptions, fingerprinting
+- `BuildCommandTest` — `.claude.json` trust configuration, skill deduplication across inheritance chains, shell quoting, GitHub URL parsing
+- `GitRemoteUtilsTest` — URL normalization (SSH/HTTPS/case), protocol-lenient matching, reference device naming (hash-based, truncation, collision resistance), host repo matching across multiple remotes
 
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata and agentuser
