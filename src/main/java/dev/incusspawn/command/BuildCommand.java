@@ -971,7 +971,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     static String shellQuote(String value) {
-        return "'" + value.replace("'", "'\"'\"'") + "'";
+        return Container.shellQuote(value);
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
