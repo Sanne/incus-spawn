@@ -701,8 +701,7 @@ public class MitmProxy {
         if (digest != null) {
             clientResp.putHeader("Docker-Content-Digest", digest);
         }
-        var te = upResp.getHeader("Transfer-Encoding");
-        if (te != null && te.toLowerCase().contains("chunked") && clHeader == null) {
+        if (clHeader == null) {
             clientResp.setChunked(true);
         }
 
@@ -1275,8 +1274,7 @@ public class MitmProxy {
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        var te = upResp.getHeader("Transfer-Encoding");
-        if (te != null && te.toLowerCase().contains("chunked")) {
+        if (upResp.getHeader("Content-Length") == null) {
             clientResp.setChunked(true);
         }
         upResp.handler(chunk -> {
