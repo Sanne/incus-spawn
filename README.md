@@ -529,11 +529,12 @@ Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get
 - `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions
 
-The `config.yaml` also supports git remote auto-management via `host-path` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions:
+The `config.yaml` also supports git remote auto-management via `host-path` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
 ```yaml
 searchPaths:
-  - /home/user/my-templates
+  - ~/my-templates
+  - /absolute/path/to/templates
 ```
 
 ```

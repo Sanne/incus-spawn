@@ -1,0 +1,4 @@
+name: tilde-tool
+description: Test tilde expansion
+run:
+  - echo test
