@@ -1274,7 +1274,9 @@ public class MitmProxy {
     }
 
     private void pipeResponse(HttpClientResponse upResp, HttpServerResponse clientResp) {
-        if (upResp.getHeader("Content-Length") == null) {
+        int status = clientResp.getStatusCode();
+        if (upResp.getHeader("Content-Length") == null
+                && status != 204 && status != 304 && (status < 100 || status >= 200)) {
             clientResp.setChunked(true);
         }
         upResp.handler(chunk -> {
