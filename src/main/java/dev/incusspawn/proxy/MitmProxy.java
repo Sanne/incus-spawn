@@ -931,6 +931,7 @@ public class MitmProxy {
      *   <li>Body: only {@link #VERTEX_ALLOWED_FIELDS} are kept; everything else is stripped</li>
      *   <li>Body: "model" replaced with "anthropic_version": "vertex-2023-10-16"</li>
      *   <li>Body: "scope" removed from nested cache_control objects (beta feature)</li>
+     *   <li>Body: thinking.type "adaptive" mapped to "enabled" (Vertex doesn't support adaptive)</li>
      *   <li>Header: anthropic-beta removed (Vertex features are enabled via anthropic_version)</li>
      *   <li>Streaming: :rawPredict → :streamRawPredict when stream=true</li>
      * </ul>
@@ -971,6 +972,13 @@ public class MitmProxy {
             root.put("anthropic_version", "vertex-2023-10-16");
             // Strip "scope" from cache_control objects deep in the tree (beta feature)
             stripCacheControlScope(root);
+            // Vertex only accepts thinking.type "enabled"/"disabled", not "adaptive"
+            if (root.has("thinking") && root.get("thinking").isObject()) {
+                var thinking = (ObjectNode) root.get("thinking");
+                if ("adaptive".equals(thinking.path("type").asText())) {
+                    thinking.put("type", "enabled");
+                }
+            }
 
             var rewrittenBytes = JSON.writeValueAsBytes(root);
 
