@@ -90,7 +90,8 @@ public class BranchCommand implements Runnable {
 
         configureNetwork(networkMode);
 
-        // Tag with metadata
+        // Tag with metadata — override inherited type so the TUI shows this as an instance, not a template
+        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
         incus.configSet(name, Metadata.PARENT, resolvedSource);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 

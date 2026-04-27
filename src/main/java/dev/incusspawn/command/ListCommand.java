@@ -2208,6 +2208,7 @@ public class ListCommand implements Runnable {
         // large images with many pre-built dependencies)
         incus.shellExec(name, "chown", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
 
+        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
         incus.configSet(name, Metadata.PARENT, source);
         incus.configSet(name, Metadata.CREATED, Metadata.today());
 
