@@ -131,6 +131,9 @@ public class SpawnConfig {
         } catch (IOException e) {
             System.err.println("Warning: could not read config: " + e.getMessage());
             return new SpawnConfig();
+        } catch (IllegalStateException e) {
+            System.err.println("Error: invalid config: " + e.getMessage());
+            return new SpawnConfig();
         }
     }
 
