@@ -12,8 +12,14 @@ import picocli.CommandLine.Command;
 
 import java.io.Console;
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 
 @Command(
         name = "init",
@@ -473,45 +479,233 @@ public class InitCommand implements Runnable {
             return;
         }
 
-        // Detect existing Vertex env vars
-        var useVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
-        if ("1".equals(useVertex)) {
-            System.out.println("  Detected Vertex AI configuration from environment.");
-            config.getClaude().setUseVertex(true);
-            config.getClaude().setCloudMlRegion(
-                    System.getenv().getOrDefault("CLOUD_ML_REGION", ""));
-            config.getClaude().setVertexProjectId(
-                    System.getenv().getOrDefault("ANTHROPIC_VERTEX_PROJECT_ID", ""));
-            System.out.println("  Region: " + config.getClaude().getCloudMlRegion());
-            System.out.println("  Project: " + config.getClaude().getVertexProjectId());
-        } else {
-            System.out.print("  Do you use Vertex AI for Claude? (y/N): ");
-            var answer = console.readLine().strip();
-            if (answer.equalsIgnoreCase("y")) {
-                config.getClaude().setUseVertex(true);
-                System.out.print("  CLOUD_ML_REGION: ");
-                config.getClaude().setCloudMlRegion(console.readLine().strip());
-                System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
-                config.getClaude().setVertexProjectId(console.readLine().strip());
+        // Detect existing env vars
+        var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
+        var envApiKey = System.getenv("ANTHROPIC_API_KEY");
+
+        if ("1".equals(envVertex)) {
+            var region = System.getenv().getOrDefault("CLOUD_ML_REGION", "");
+            var projectId = System.getenv().getOrDefault("ANTHROPIC_VERTEX_PROJECT_ID", "");
+            System.out.println("  Detected Vertex AI configuration from environment:");
+            System.out.println("    Region:  " + (region.isBlank() ? "(not set)" : region));
+            System.out.println("    Project: " + (projectId.isBlank() ? "(not set)" : projectId));
+
+            System.out.println("  Verifying Vertex AI configuration...");
+            var result = verifyVertexConfig(region, projectId);
+            if (result.verified()) {
+                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                System.out.print("  Use this configuration? (Y/n): ");
+                var accept = console.readLine().strip();
+                if (!accept.equalsIgnoreCase("n")) {
+                    saveVertexConfig(config, region, projectId);
+                    System.out.println("  Claude auth configuration saved.");
+                    return;
+                }
+                System.out.println("  Skipping environment config. Continuing with manual setup...");
             } else {
-                config.getClaude().setUseVertex(false);
-                System.out.print("  ANTHROPIC_API_KEY: ");
-                var key = new String(console.readPassword());
-                config.getClaude().setApiKey(key);
+                System.out.println("  " + result.message());
+                System.out.print("  Save anyway? (y/N) or press Enter to configure manually: ");
+                var answer = console.readLine().strip();
+                if (answer.equalsIgnoreCase("y")) {
+                    saveVertexConfig(config, region, projectId);
+                    System.out.println("  Claude auth configuration saved (unverified).");
+                    return;
+                }
+            }
+        } else if (envApiKey != null && !envApiKey.isBlank()) {
+            System.out.println("  Detected ANTHROPIC_API_KEY from environment.");
+            System.out.println("  Verifying API key...");
+            var result = verifyAnthropicApiKey(envApiKey);
+            if (result.verified()) {
+                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                System.out.print("  Use this key? (Y/n): ");
+                var accept = console.readLine().strip();
+                if (!accept.equalsIgnoreCase("n")) {
+                    saveDirectConfig(config, envApiKey);
+                    System.out.println("  Claude auth configuration saved.");
+                    return;
+                }
+                System.out.println("  Skipping environment key. Continuing with manual setup...");
+            } else {
+                System.out.println("  " + result.message());
+                System.out.println("  Continuing with manual setup...");
             }
         }
 
-        // Test connectivity
-        System.out.println("  Testing Claude Code availability...");
-        var testResult = runHost("which", "claude");
-        if (testResult == 0) {
-            System.out.println("  Claude Code is available on the host.");
+        System.out.print("  Do you use Vertex AI for Claude? (y/N): ");
+        var vertexAnswer = console.readLine().strip();
+
+        if (vertexAnswer.equalsIgnoreCase("y")) {
+            while (true) {
+                System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
+                var region = console.readLine().strip();
+                if (region.isBlank()) {
+                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    return;
+                }
+                System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
+                var projectId = console.readLine().strip();
+                if (projectId.isBlank()) {
+                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    return;
+                }
+
+                System.out.println("  Verifying Vertex AI configuration...");
+                var result = verifyVertexConfig(region, projectId);
+                if (result.verified()) {
+                    System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
+                    saveVertexConfig(config, region, projectId);
+                    System.out.println("  Claude auth configuration saved.");
+                    break;
+                } else {
+                    System.out.println("  " + result.message());
+                    System.out.print("  Try again? (Y/n/s to save anyway): ");
+                    var retry = console.readLine().strip();
+                    if (retry.equalsIgnoreCase("n")) {
+                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                        break;
+                    } else if (retry.equalsIgnoreCase("s")) {
+                        saveVertexConfig(config, region, projectId);
+                        System.out.println("  Claude auth configuration saved (unverified).");
+                        break;
+                    }
+                }
+            }
         } else {
-            System.out.println("  Warning: 'claude' command not found on host. It will need to be installed in template images.");
+            while (true) {
+                System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
+                var key = new String(console.readPassword());
+                if (key.isBlank()) {
+                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    break;
+                }
+
+                System.out.println("  Verifying API key...");
+                var result = verifyAnthropicApiKey(key);
+                if (result.verified()) {
+                    System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
+                    saveDirectConfig(config, key);
+                    System.out.println("  Claude auth configuration saved.");
+                    break;
+                } else {
+                    System.out.println("  " + result.message());
+                    System.out.print("  Try again? (Y/n/s to save anyway): ");
+                    var retry = console.readLine().strip();
+                    if (retry.equalsIgnoreCase("n")) {
+                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                        break;
+                    } else if (retry.equalsIgnoreCase("s")) {
+                        saveDirectConfig(config, key);
+                        System.out.println("  Claude auth configuration saved (unverified).");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private record AuthResult(boolean verified, String message) {}
+
+    private static void saveVertexConfig(SpawnConfig config, String region, String projectId) {
+        config.getClaude().setUseVertex(true);
+        config.getClaude().setCloudMlRegion(region);
+        config.getClaude().setVertexProjectId(projectId);
+        config.save();
+    }
+
+    private static void saveDirectConfig(SpawnConfig config, String apiKey) {
+        config.getClaude().setUseVertex(false);
+        config.getClaude().setApiKey(apiKey);
+        config.save();
+    }
+
+    private AuthResult verifyAnthropicApiKey(String key) {
+        if (!key.startsWith("sk-ant-")) {
+            System.out.println("  Note: key does not start with 'sk-ant-' (unexpected format).");
         }
 
-        config.save();
-        System.out.println("  Claude auth configuration saved.");
+        try {
+            var client = HttpClient.newHttpClient();
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.anthropic.com/v1/messages"))
+                    .header("x-api-key", key)
+                    .header("Content-Type", "application/json")
+                    .header("anthropic-version", "2023-06-01")
+                    .timeout(Duration.ofSeconds(10))
+                    .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                    .build();
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            return switch (response.statusCode()) {
+                case 400 -> new AuthResult(true, "API key verified.");
+                case 401 -> new AuthResult(false, "Invalid API key (HTTP 401). Check that the key is correct and not expired.");
+                case 403 -> new AuthResult(true, "API key accepted (HTTP 403). It may have restricted permissions.");
+                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The key may be invalid.");
+            };
+        } catch (Exception e) {
+            return new AuthResult(false, "Could not reach api.anthropic.com: " + e.getMessage());
+        }
+    }
+
+    private AuthResult verifyVertexConfig(String region, String projectId) {
+        if (!commandExists("gcloud")) {
+            return new AuthResult(false,
+                    "gcloud CLI not found. Install it from https://cloud.google.com/sdk/docs/install\n"
+                    + "  Then run: gcloud auth application-default login");
+        }
+
+        String accessToken;
+        try {
+            var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            if (!process.waitFor(15, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return new AuthResult(false, "gcloud timed out. Check your gcloud configuration.");
+            }
+            if (process.exitValue() != 0 || output.isBlank()) {
+                return new AuthResult(false,
+                        "gcloud auth failed" + (output.isBlank() ? "" : ": " + output)
+                        + "\n  Run: gcloud auth application-default login");
+            }
+            accessToken = output;
+        } catch (Exception e) {
+            return new AuthResult(false, "Failed to run gcloud: " + e.getMessage());
+        }
+
+        try {
+            var host = MitmProxy.vertexHost(region);
+            var url = "https://" + host + "/v1/projects/" + projectId
+                    + "/locations/" + region
+                    + "/publishers/anthropic/models/claude-sonnet-4-20250514:rawPredict";
+            var client = HttpClient.newHttpClient();
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                    .build();
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            return switch (response.statusCode()) {
+                case 400 -> new AuthResult(true,
+                        "Vertex AI verified (region: " + region + ", project: " + projectId + ").");
+                case 401 -> new AuthResult(false,
+                        "Vertex AI authentication failed (HTTP 401). Run: gcloud auth application-default login");
+                case 403 -> new AuthResult(false,
+                        "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled\n"
+                        + "  for project '" + projectId + "' and your account has the required permissions.");
+                case 404 -> new AuthResult(false,
+                        "Vertex AI endpoint not found (HTTP 404). Check region '" + region
+                        + "' and project '" + projectId + "' are correct.");
+                default -> new AuthResult(false,
+                        "Unexpected Vertex AI response (HTTP " + response.statusCode() + ").");
+            };
+        } catch (Exception e) {
+            return new AuthResult(false, "Could not reach Vertex AI endpoint: " + e.getMessage());
+        }
     }
 
     private void setupGitHubAuth() {
@@ -554,13 +748,13 @@ public class InitCommand implements Runnable {
             System.out.println("  Testing GitHub token...");
             boolean verified = false;
             try {
-                var client = java.net.http.HttpClient.newHttpClient();
-                var request = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create("https://api.github.com/user"))
+                var client = HttpClient.newHttpClient();
+                var request = HttpRequest.newBuilder()
+                        .uri(URI.create("https://api.github.com/user"))
                         .header("Authorization", "token " + token)
                         .header("Accept", "application/vnd.github+json")
                         .GET().build();
-                var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+                var response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 200) {
                     var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
                             .matcher(response.body());
