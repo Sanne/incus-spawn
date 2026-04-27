@@ -57,7 +57,6 @@ class SpawnConfigTest {
         var config = YAML.readValue(yaml, SpawnConfig.class);
         assertEquals("", config.getHostPath());
         assertTrue(config.getHostPaths().isEmpty());
-        assertTrue(config.getHostPaths().isEmpty());
         assertTrue(config.getRepoPaths().isEmpty());
         assertEquals("test-key", config.getClaude().getApiKey());
         assertEquals("gh-token", config.getGithub().getToken());
@@ -67,7 +66,6 @@ class SpawnConfigTest {
     void deserializeEmptyYaml() throws Exception {
         var config = YAML.readValue("{}", SpawnConfig.class);
         assertEquals("", config.getHostPath());
-        assertTrue(config.getHostPaths().isEmpty());
         assertTrue(config.getHostPaths().isEmpty());
         assertTrue(config.getRepoPaths().isEmpty());
     }
