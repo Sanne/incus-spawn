@@ -21,7 +21,7 @@ public final class AutoRemoteService {
 
     public static void addRemotes(IncusClient incus, String instanceName, Consumer<String> output) {
         var config = SpawnConfig.load();
-        if (config.getHostPath().isEmpty() && config.getRepoPaths().isEmpty()) return;
+        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
         var repos = GitRemoteUtils.collectReposForInstance(instanceName, incus);
         if (repos.isEmpty()) return;
@@ -71,7 +71,7 @@ public final class AutoRemoteService {
 
     public static void removeRemotes(String instanceName, Consumer<String> output) {
         var config = SpawnConfig.load();
-        if (config.getHostPath().isEmpty() && config.getRepoPaths().isEmpty()) return;
+        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
         var candidates = collectCandidateRepoDirs(config);
         var isxPrefix = "isx://" + instanceName + "/";
@@ -97,9 +97,9 @@ public final class AutoRemoteService {
             }
         }
 
-        // Scan host-path base directory
-        if (!config.getHostPath().isEmpty()) {
-            var basePath = Path.of(dev.incusspawn.config.HostResourceSetup.expandHostTilde(config.getHostPath()));
+        // Scan all host-paths base directories
+        for (var hostPath : config.getHostPaths()) {
+            var basePath = Path.of(dev.incusspawn.config.HostResourceSetup.expandHostTilde(hostPath));
             if (Files.isDirectory(basePath)) {
                 try (var stream = Files.list(basePath)) {
                     stream.filter(Files::isDirectory)

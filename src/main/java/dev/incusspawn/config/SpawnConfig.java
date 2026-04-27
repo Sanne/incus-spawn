@@ -26,6 +26,8 @@ public class SpawnConfig {
     private java.util.List<String> searchPaths = java.util.List.of();
     @JsonProperty("host-path")
     private String hostPath = "";
+    @JsonProperty("host-paths")
+    private java.util.List<String> hostPaths = java.util.List.of();
     @JsonProperty("repo-paths")
     private Map<String, String> repoPaths = Map.of();
 
@@ -62,6 +64,16 @@ public class SpawnConfig {
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
     public String getHostPath() { return hostPath; }
     public void setHostPath(String hostPath) { this.hostPath = hostPath == null ? "" : hostPath; }
+    public java.util.List<String> getHostPaths() {
+        if (!hostPaths.isEmpty()) {
+            return hostPaths;
+        }
+        if (!hostPath.isEmpty()) {
+            return java.util.List.of(hostPath);
+        }
+        return java.util.List.of();
+    }
+    public void setHostPaths(java.util.List<String> hostPaths) { this.hostPaths = hostPaths == null ? java.util.List.of() : hostPaths; }
     public Map<String, String> getRepoPaths() { return repoPaths; }
     public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
 
@@ -113,10 +125,18 @@ public class SpawnConfig {
             return new SpawnConfig();
         }
         try {
-            return YAML.readValue(configFile.toFile(), SpawnConfig.class);
+            var config = YAML.readValue(configFile.toFile(), SpawnConfig.class);
+            config.validate();
+            return config;
         } catch (IOException e) {
             System.err.println("Warning: could not read config: " + e.getMessage());
             return new SpawnConfig();
+        }
+    }
+
+    void validate() {
+        if (!hostPath.isEmpty() && !hostPaths.isEmpty()) {
+            throw new IllegalStateException("Cannot specify both 'host-path' and 'host-paths' in config.yaml");
         }
     }
 

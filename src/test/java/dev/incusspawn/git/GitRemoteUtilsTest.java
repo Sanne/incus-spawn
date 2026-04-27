@@ -176,6 +176,23 @@ class GitRemoteUtilsTest {
         assertEquals("/custom/quarkus", result.toString());
     }
 
+    @Test
+    void resolveThrowsOnAmbiguousHostPaths() throws IOException {
+        // Create two directories with the same repo subdirectory
+        var path1 = tempDir.resolve("projects");
+        var path2 = tempDir.resolve("workspace");
+        Files.createDirectories(path1.resolve("quarkus"));
+        Files.createDirectories(path2.resolve("quarkus"));
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(path1.toString(), path2.toString()));
+
+        var exception = assertThrows(IllegalStateException.class,
+            () -> GitRemoteUtils.resolveHostRepoPath("quarkus", config));
+        assertTrue(exception.getMessage().contains("Found multiple host directories"));
+        assertTrue(exception.getMessage().contains("repo-paths"));
+    }
+
     // ── referenceDeviceName ───────────────────────────────────────────────
 
     private static final String QUARKUS_URL = "https://github.com/quarkusio/quarkus.git";
