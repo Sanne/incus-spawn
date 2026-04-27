@@ -258,4 +258,22 @@ class ToolDefLoaderTest {
         assertDoesNotThrow(() -> loader.addFallbacks(null));
         assertNotNull(loader.find("podman"));
     }
+
+    @Test
+    void searchPathExpandsTilde() {
+        var originalHome = System.getProperty("user.home");
+        try {
+            var testResources = Path.of("src/test/resources").toAbsolutePath();
+            System.setProperty("user.home", testResources.toString());
+
+            var loader = new ToolDefLoader();
+            loader.setSearchPaths(java.util.List.of("~/searchpaths-test"));
+
+            var tool = loader.find("tilde-tool");
+            assertNotNull(tool, "Should load tool from ~/searchpaths-test");
+            assertEquals("tilde-tool", tool.name());
+        } finally {
+            System.setProperty("user.home", originalHome);
+        }
+    }
 }

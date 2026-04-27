@@ -268,7 +268,8 @@ public class ImageDef {
         loadBuiltins(defs);
         loadUserDefined(defs);
         for (var searchPath : searchPaths) {
-            loadFromDirectory(Path.of(searchPath).resolve("images"), defs);
+            var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
+            loadFromDirectory(Path.of(expandedPath).resolve("images"), defs);
         }
         loadFromDirectory(PROJECT_IMAGES_DIR, defs);
         return defs;

@@ -55,4 +55,18 @@ class SpawnConfigTest {
         config.setRepoPaths(null);
         assertTrue(config.getRepoPaths().isEmpty());
     }
+
+    @Test
+    void deserializeSearchPaths() throws Exception {
+        var yaml = """
+                searchPaths:
+                  - ~/my-templates
+                  - /absolute/path
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        var paths = config.getSearchPaths();
+        assertEquals(2, paths.size());
+        assertEquals("~/my-templates", paths.get(0));
+        assertEquals("/absolute/path", paths.get(1));
+    }
 }

@@ -310,6 +310,22 @@ class ImageDefTest {
         assertNotNull(defs.get("tpl-minimal"));
     }
 
+    @Test
+    void searchPathExpandsTilde() {
+        var originalHome = System.getProperty("user.home");
+        try {
+            var testResources = Path.of("src/test/resources").toAbsolutePath();
+            System.setProperty("user.home", testResources.toString());
+
+            var defs = ImageDef.loadAll(List.of("~/searchpaths-test"));
+
+            assertNotNull(defs.get("tpl-tilde-test"), "Should load image from ~/searchpaths-test");
+            assertEquals("Test tilde expansion", defs.get("tpl-tilde-test").getDescription());
+        } finally {
+            System.setProperty("user.home", originalHome);
+        }
+    }
+
     // --- contentFingerprint tests ---
 
     @Test

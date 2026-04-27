@@ -1,0 +1,5 @@
+name: tpl-tilde-test
+description: Test tilde expansion
+parent: tpl-dev
+tools:
+  - gradle

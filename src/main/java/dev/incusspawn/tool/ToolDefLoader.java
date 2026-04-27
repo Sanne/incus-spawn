@@ -76,7 +76,8 @@ public class ToolDefLoader {
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
             for (var searchPath : paths) {
-                loadFromDirectory(Path.of(searchPath).resolve("tools"));
+                var expandedPath = dev.incusspawn.config.HostResourceSetup.expandHostTilde(searchPath);
+                loadFromDirectory(Path.of(expandedPath).resolve("tools"));
             }
             loadFromDirectory(projectToolsDir);
         }
