@@ -1,15 +1,17 @@
 package dev.incusspawn.proxy;
 
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientOptions;
+import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.http.RequestOptions;
+
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Plain HTTP pass-through proxy for host-side API traffic capture.
@@ -25,15 +27,41 @@ public class DumpProxy {
 
     private final int port;
     private final ApiTrafficLog log;
-    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public DumpProxy(int port, ApiTrafficLog log) {
         this.port = port;
         this.log = log;
     }
 
-    public void start() throws IOException {
-        var server = new ServerSocket(port, 50, InetAddress.getLoopbackAddress());
+    public void start() throws Exception {
+        var vertx = Vertx.vertx();
+
+        var clientOptions = new HttpClientOptions()
+                .setSsl(true)
+                .setVerifyHost(true)
+                .setTrustAll(false)
+                .setDefaultHost(UPSTREAM_HOST)
+                .setDefaultPort(443)
+                .setMaxPoolSize(10)
+                .setKeepAliveTimeout(30)
+                .setConnectTimeout(30_000)
+                .setReadIdleTimeout(300);
+        var systemCaBundle = MitmProxy.findSystemCaBundle();
+        if (systemCaBundle != null) {
+            clientOptions.setTrustOptions(
+                    new io.vertx.core.net.PemTrustOptions().addCertPath(systemCaBundle));
+        }
+        var upstreamClient = vertx.createHttpClient(clientOptions);
+
+        var serverOptions = new HttpServerOptions()
+                .setHost("127.0.0.1")
+                .setPort(port)
+                .setIdleTimeout(120)
+                .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS);
+        var server = vertx.createHttpServer(serverOptions);
+        server.requestHandler(req -> handleRequest(req, upstreamClient));
+        server.listen().toCompletionStage().toCompletableFuture().get();
+
         System.out.println("API dump proxy listening on http://localhost:" + port);
         System.out.println("Logs: " + log.logDir());
         System.out.println();
@@ -43,79 +71,96 @@ public class DumpProxy {
         System.out.println("Press Ctrl+C to stop.");
         System.out.println();
 
-        while (true) {
-            try {
-                var client = server.accept();
-                executor.submit(() -> handleConnection(client));
-            } catch (IOException e) {
-                System.err.println("Accept error: " + e.getMessage());
+        new CountDownLatch(1).await();
+    }
+
+    private void handleRequest(HttpServerRequest clientReq, HttpClient upstreamClient) {
+        var originalDump = dumpRequest(clientReq);
+
+        clientReq.body()
+                .compose(body -> forwardToUpstream(clientReq, upstreamClient, body)
+                        .compose(upResp -> upResp.body().map(rb -> new Exchange(upResp, body, rb))))
+                .onSuccess(ex -> {
+                    log.logExchange(originalDump, ex.reqBytes,
+                            null, null,
+                            dumpResponse(ex.response), ex.respBytes);
+                    relay(ex.response, ex.respBytes, clientReq.response());
+                })
+                .onFailure(err -> {
+                    System.err.println("Dump proxy error: " + err.getMessage());
+                    sendError(clientReq.response(), 502);
+                });
+    }
+
+    private Future<HttpClientResponse> forwardToUpstream(HttpServerRequest clientReq,
+                                                         HttpClient upstreamClient,
+                                                         Buffer bodyBuffer) {
+        var options = new RequestOptions()
+                .setMethod(clientReq.method())
+                .setHost(UPSTREAM_HOST)
+                .setPort(443)
+                .setURI(clientReq.uri());
+
+        return upstreamClient.request(options).compose(upReq -> {
+            for (var entry : clientReq.headers()) {
+                var key = entry.getKey();
+                if ("Host".equalsIgnoreCase(key) || "Connection".equalsIgnoreCase(key)
+                        || "Transfer-Encoding".equalsIgnoreCase(key)) continue;
+                upReq.putHeader(key, entry.getValue());
             }
+            upReq.putHeader("Host", UPSTREAM_HOST);
+            return upReq.send(bodyBuffer);
+        });
+    }
+
+    private record Exchange(HttpClientResponse response, byte[] reqBytes, byte[] respBytes) {
+        Exchange(HttpClientResponse response, Buffer reqBody, Buffer respBody) {
+            this(response,
+                    reqBody != null && reqBody.length() > 0 ? reqBody.getBytes() : null,
+                    respBody != null && respBody.length() > 0 ? respBody.getBytes() : null);
         }
     }
 
-    private void handleConnection(Socket client) {
-        try (client) {
-            client.setSoTimeout(120_000);
-            var clientIn = client.getInputStream();
-            var clientOut = client.getOutputStream();
-
-            while (true) {
-                var request = HttpMessage.readRequest(clientIn);
-                if (request == null) return;
-
-                var bodyBytes = request.readRequestBody(clientIn);
-                var originalDump = request.dump();
-
-                // Rewrite Host to upstream (client sends Host: localhost:PORT)
-                request.setHeader("Host", UPSTREAM_HOST);
-                request.setHeader("Connection", "close");
-
-                handleExchange(request, bodyBytes, originalDump, clientOut);
-            }
-        } catch (java.net.SocketTimeoutException e) {
-            // Keep-alive timeout
-        } catch (IOException e) {
-            // Connection closed
-        } catch (Exception e) {
-            System.err.println("Dump proxy error: " + e.getMessage());
+    private static void relay(HttpClientResponse upResp, byte[] body, HttpServerResponse clientResp) {
+        clientResp.setStatusCode(upResp.statusCode());
+        clientResp.setStatusMessage(upResp.statusMessage());
+        for (var entry : upResp.headers()) {
+            var key = entry.getKey();
+            if ("Connection".equalsIgnoreCase(key)
+                    || "Transfer-Encoding".equalsIgnoreCase(key)) continue;
+            clientResp.putHeader(key, entry.getValue());
+        }
+        if (body != null) {
+            clientResp.putHeader("Content-Length", String.valueOf(body.length));
+            clientResp.end(Buffer.buffer(body));
+        } else {
+            clientResp.end();
         }
     }
 
-    private void handleExchange(HttpMessage request, byte[] bodyBytes,
-                                String originalDump, OutputStream clientOut) throws Exception {
-        var upstreamSocket = (SSLSocket) SSLSocketFactory.getDefault()
-                .createSocket(UPSTREAM_HOST, 443);
-        upstreamSocket.setSoTimeout(300_000);
+    private static String dumpRequest(HttpServerRequest req) {
+        var sb = new StringBuilder();
+        sb.append(req.method()).append(' ').append(req.uri()).append(' ')
+                .append(req.version().alpnName()).append('\n');
+        for (var entry : req.headers()) {
+            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append('\n');
+        }
+        return sb.toString();
+    }
 
-        try (upstreamSocket) {
-            upstreamSocket.startHandshake();
-            var upstreamOut = upstreamSocket.getOutputStream();
-            var upstreamIn = upstreamSocket.getInputStream();
+    private static String dumpResponse(HttpClientResponse resp) {
+        var sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(resp.statusCode()).append(' ')
+                .append(resp.statusMessage()).append('\n');
+        for (var entry : resp.headers()) {
+            sb.append(entry.getKey()).append(": ").append(entry.getValue()).append('\n');
+        }
+        return sb.toString();
+    }
 
-            request.writeTo(upstreamOut);
-            if (bodyBytes != null && bodyBytes.length > 0) {
-                upstreamOut.write(bodyBytes);
-                upstreamOut.flush();
-            }
-
-            var response = HttpMessage.readResponse(upstreamIn);
-            if (response == null) return;
-            response.removeHeader("Connection");
-
-            var responseBody = ApiTrafficLog.captureSmallResponseBody(response, upstreamIn);
-
-            log.logExchange(
-                    originalDump, bodyBytes,
-                    null, null,
-                    response.dump(), responseBody);
-
-            response.writeTo(clientOut);
-            if (responseBody != null) {
-                clientOut.write(responseBody);
-                clientOut.flush();
-            } else {
-                response.relayResponseBody(upstreamIn, clientOut);
-            }
+    private static void sendError(HttpServerResponse resp, int statusCode) {
+        if (!resp.ended() && !resp.closed()) {
+            resp.setStatusCode(statusCode).end();
         }
     }
 }
