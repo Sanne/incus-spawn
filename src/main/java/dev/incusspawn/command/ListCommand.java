@@ -592,7 +592,14 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.TAB)) {
-            branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
+            if (key.hasShift()) {
+                // Shift+Tab: cycle backward
+                int max = maxBranchField();
+                branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
+            } else {
+                // Tab: cycle forward
+                branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
+            }
             return true;
         }
 
@@ -1379,7 +1386,7 @@ public class ListCommand implements Runnable {
                 Line.styled("", Style.EMPTY),
                 Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
                 Line.styled("", Style.EMPTY),
-                shortcutRow("Tab", "Switch panels", null, null),
+                shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
                 shortcutRow("F1", "This dialog", null, null),
                 shortcutRow("F2", "Shell into instance", null, null),
                 shortcutRow("F3", "View details", null, null),
