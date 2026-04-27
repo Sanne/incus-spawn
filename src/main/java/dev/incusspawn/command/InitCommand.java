@@ -620,7 +620,8 @@ public class InitCommand implements Runnable {
             var input = console.readLine().strip();
             if (input.isEmpty()) break;
 
-            var path = java.nio.file.Path.of(input);
+            var expanded = dev.incusspawn.config.HostResourceSetup.expandHostTilde(input);
+            var path = java.nio.file.Path.of(expanded);
             if (!java.nio.file.Files.isDirectory(path)) {
                 System.out.println("  Warning: '" + input + "' is not an existing directory. Adding anyway.");
             }
