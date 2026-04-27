@@ -445,8 +445,8 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // Shift+F8: Destroy all built templates
-        if (key.isKey(KeyCode.F8) && key.hasShift()) {
+        // Shift+F8 or Shift+Delete: Destroy all built templates
+        if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
             var anyBuilt = templateEntries.stream()
                     .anyMatch(t -> !"not built".equals(t.buildStatus));
             if (!anyBuilt) {
@@ -458,8 +458,8 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // F8: Destroy template
-        if (key.isKey(KeyCode.F8)) {
+        // F8 or Delete: Destroy template
+        if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
             if ("not built".equals(template.buildStatus)) {
                 statusMessage = "Template is not built.";
                 return true;
@@ -484,8 +484,8 @@ public class ListCommand implements Runnable {
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
 
-        // Shift+F8: Destroy all instances
-        if (key.isKey(KeyCode.F8) && key.hasShift()) {
+        // Shift+F8 or Shift+Delete: Destroy all instances
+        if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
             if (entries.isEmpty()) {
                 statusMessage = "No instances to destroy.";
                 return true;
@@ -494,7 +494,8 @@ public class ListCommand implements Runnable {
             mode = Mode.CONFIRM_DELETE;
             return true;
         }
-        if (key.isKey(KeyCode.F8)) {
+        // F8 or Delete: Destroy instance
+        if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
             pendingDeleteName = selected.name;
             mode = Mode.CONFIRM_DELETE;
             return true;
@@ -1394,7 +1395,7 @@ public class ListCommand implements Runnable {
                 shortcutRow("F5", "Build template", "⇧F5", "Build all"),
                 shortcutRow("F6", "Rename instance", null, null),
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
-                shortcutRow("F8", "Destroy", "⇧F8", "Destroy all"),
+                shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F10", "Quit", null, null));
 
         int width = 52;
