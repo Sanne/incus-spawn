@@ -1,6 +1,6 @@
 package dev.incusspawn.proxy;
 
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -8,12 +8,12 @@ import java.nio.file.Path;
 
 public final class ProxyService {
 
-    private static final String SERVICE_NAME = RuntimeConstants.PROXY_SERVICE_NAME;
+    private static final String SERVICE_NAME = Environment.PROXY_SERVICE_NAME;
 
     private ProxyService() {}
 
     public static boolean isInstalled() {
-        return Files.exists(RuntimeConstants.PROXY_SERVICE_FILE);
+        return Files.exists(Environment.proxyServiceFile());
     }
 
     public static boolean isActive() {
@@ -51,14 +51,14 @@ public final class ProxyService {
                 """.formatted(isxPath);
 
         try {
-            Files.createDirectories(RuntimeConstants.PROXY_SERVICE_FILE.getParent());
-            Files.writeString(RuntimeConstants.PROXY_SERVICE_FILE, serviceContent);
+            Files.createDirectories(Environment.proxyServiceFile().getParent());
+            Files.writeString(Environment.proxyServiceFile(), serviceContent);
         } catch (IOException e) {
             System.err.println("Failed to write service file: " + e.getMessage());
             return false;
         }
 
-        System.out.println("Service file written to " + RuntimeConstants.PROXY_SERVICE_FILE);
+        System.out.println("Service file written to " + Environment.proxyServiceFile());
         System.out.println("Enabling and starting proxy service...");
         runQuiet("systemctl", "--user", "daemon-reload");
         runQuiet("systemctl", "--user", "enable", "--now", SERVICE_NAME);
@@ -87,7 +87,7 @@ public final class ProxyService {
         runQuiet("systemctl", "--user", "disable", SERVICE_NAME);
 
         try {
-            Files.deleteIfExists(RuntimeConstants.PROXY_SERVICE_FILE);
+            Files.deleteIfExists(Environment.proxyServiceFile());
         } catch (IOException e) {
             System.err.println("Failed to remove service file: " + e.getMessage());
             return false;
@@ -129,16 +129,16 @@ public final class ProxyService {
     }
 
     public static void upgradeIfNeeded() {
-        if (!Files.exists(RuntimeConstants.PROXY_SERVICE_FILE)) return;
+        if (!Files.exists(Environment.proxyServiceFile())) return;
         try {
-            var content = Files.readString(RuntimeConstants.PROXY_SERVICE_FILE);
+            var content = Files.readString(Environment.proxyServiceFile());
             if (content.contains("proxy start")) return;
             if (!content.contains("ExecStart=")) return;
             var updated = content.replaceFirst(
                     "ExecStart=(\\S+)\\s+proxy\\b(?!\\s+start)",
                     "ExecStart=$1 proxy start");
             if (updated.equals(content)) return;
-            Files.writeString(RuntimeConstants.PROXY_SERVICE_FILE, updated);
+            Files.writeString(Environment.proxyServiceFile(), updated);
             System.out.println("Updated proxy service to use 'isx proxy start'.");
             runQuiet("systemctl", "--user", "daemon-reload");
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
@@ -172,7 +172,7 @@ public final class ProxyService {
                 return output;
             }
         } catch (Exception ignored) {}
-        var fallback = RuntimeConstants.LOCAL_BIN_ISX;
+        var fallback = Environment.localBinIsx();
         if (java.nio.file.Files.isExecutable(fallback)) {
             return fallback.toString();
         }

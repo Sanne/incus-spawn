@@ -1,7 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.BuildInfo;
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
@@ -93,15 +93,15 @@ public class MitmProxy {
             "/v2/(.+)/blobs/(sha256:[a-f0-9]{64})");
 
     private static Path registryCacheDir() {
-        return RuntimeConstants.REGISTRY_CACHE_DIR;
+        return Environment.registryCacheDir();
     }
 
     private static Path mavenCacheDir() {
-        return RuntimeConstants.MAVEN_CACHE_DIR;
+        return Environment.mavenCacheDir();
     }
 
     private static Path m2Repository() {
-        return RuntimeConstants.M2_REPOSITORY;
+        return Environment.m2Repository();
     }
 
     // URL path prefix preceding Maven coordinates on each domain

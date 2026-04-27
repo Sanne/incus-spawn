@@ -1,7 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.ApiTrafficLog;
 import dev.incusspawn.proxy.DumpProxy;
@@ -35,7 +35,7 @@ import java.nio.file.Path;
 )
 public class ProxyCommand {
 
-    static Path logFile() { return RuntimeConstants.PROXY_LOG_FILE; }
+    static Path logFile() { return Environment.proxyLogFile(); }
 
     @Command(
             name = "start",
@@ -117,7 +117,7 @@ public class ProxyCommand {
 
             if (debug) {
                 try {
-                    var debugLog = new ApiTrafficLog(RuntimeConstants.API_DEBUG_DIR.resolve("proxy"));
+                    var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("proxy"));
                     proxy.setDebugLog(debugLog);
                     System.out.println("  Debug logs:    " + debugLog.logDir());
                 } catch (IOException e) {
@@ -311,7 +311,7 @@ public class ProxyCommand {
         @Override
         public void run() {
             try {
-                var debugLog = new ApiTrafficLog(RuntimeConstants.API_DEBUG_DIR.resolve("host"));
+                var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("host"));
                 var proxy = new DumpProxy(port, debugLog);
                 proxy.start();
             } catch (IOException e) {
