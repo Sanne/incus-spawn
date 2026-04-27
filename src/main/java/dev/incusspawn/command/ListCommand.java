@@ -1764,12 +1764,16 @@ public class ListCommand implements Runnable {
     }
 
     private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
-        var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
-        if (repoName.isEmpty()) return null;
-        var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-        if (hostPath == null || !java.nio.file.Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath))
+        try {
+            var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
+            if (repoName.isEmpty()) return null;
+            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            if (hostPath == null || !java.nio.file.Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath))
+                return null;
+            return GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl) ? hostPath : null;
+        } catch (IllegalStateException e) {
             return null;
-        return GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl) ? hostPath : null;
+        }
     }
 
     private void collectTransitiveDeps(String name, java.util.Set<String> collected, java.util.Set<String> visiting) {
