@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
+import static dev.incusspawn.git.GitTestUtils.runGit;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GitRemoteUtilsTest {
@@ -304,16 +305,5 @@ class GitRemoteUtilsTest {
             throws IOException, InterruptedException {
         runGit(dir, "init");
         runGit(dir, "remote", "add", remoteName, remoteUrl);
-    }
-
-    private void runGit(Path dir, String... args) throws IOException, InterruptedException {
-        var cmd = new java.util.ArrayList<String>();
-        cmd.add("git");
-        cmd.addAll(java.util.List.of(args));
-        var process = new ProcessBuilder(cmd).directory(dir.toFile())
-                .redirectErrorStream(true).start();
-        var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        int exit = process.waitFor();
-        assertEquals(0, exit, "git " + String.join(" ", args) + " failed in " + dir + ": " + output);
     }
 }
