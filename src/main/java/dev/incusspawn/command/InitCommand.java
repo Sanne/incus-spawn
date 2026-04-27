@@ -490,26 +490,31 @@ public class InitCommand implements Runnable {
             System.out.println("    Region:  " + (region.isBlank() ? "(not set)" : region));
             System.out.println("    Project: " + (projectId.isBlank() ? "(not set)" : projectId));
 
-            System.out.println("  Verifying Vertex AI configuration...");
-            var result = verifyVertexConfig(region, projectId);
-            if (result.verified()) {
-                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                System.out.print("  Use this configuration? (Y/n): ");
-                var accept = console.readLine().strip();
-                if (!accept.equalsIgnoreCase("n")) {
-                    saveVertexConfig(config, region, projectId);
-                    System.out.println("  Claude auth configuration saved.");
-                    return;
-                }
-                System.out.println("  Skipping environment config. Continuing with manual setup...");
+            if (region.isBlank() || projectId.isBlank()) {
+                System.out.println("  CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must both be set for verification.");
+                System.out.println("  Continuing with manual setup...");
             } else {
-                System.out.println("  " + result.message());
-                System.out.print("  Save anyway? (y/N) or press Enter to configure manually: ");
-                var answer = console.readLine().strip();
-                if (answer.equalsIgnoreCase("y")) {
-                    saveVertexConfig(config, region, projectId);
-                    System.out.println("  Claude auth configuration saved (unverified).");
-                    return;
+                System.out.println("  Verifying Vertex AI configuration...");
+                var result = verifyVertexConfig(region, projectId);
+                if (result.verified()) {
+                    System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                    System.out.print("  Use this configuration? (Y/n): ");
+                    var accept = console.readLine().strip();
+                    if (!accept.equalsIgnoreCase("n")) {
+                        saveVertexConfig(config, region, projectId);
+                        System.out.println("  Claude auth configuration saved.");
+                        return;
+                    }
+                    System.out.println("  Skipping environment config. Continuing with manual setup...");
+                } else {
+                    System.out.println("  " + result.message());
+                    System.out.print("  Save anyway? (y/N) or press Enter to configure manually: ");
+                    var answer = console.readLine().strip();
+                    if (answer.equalsIgnoreCase("y")) {
+                        saveVertexConfig(config, region, projectId);
+                        System.out.println("  Claude auth configuration saved (unverified).");
+                        return;
+                    }
                 }
             }
         } else if (envApiKey != null && !envApiKey.isBlank()) {
@@ -657,19 +662,20 @@ public class InitCommand implements Runnable {
         String accessToken;
         try {
             var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
-            pb.redirectErrorStream(true);
             var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
             if (!process.waitFor(15, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 return new AuthResult(false, "gcloud timed out. Check your gcloud configuration.");
             }
-            if (process.exitValue() != 0 || output.isBlank()) {
+            var stdout = new String(process.getInputStream().readAllBytes()).strip();
+            var stderr = new String(process.getErrorStream().readAllBytes()).strip();
+            if (process.exitValue() != 0 || stdout.isBlank()) {
+                var detail = !stderr.isBlank() ? stderr : stdout;
                 return new AuthResult(false,
-                        "gcloud auth failed" + (output.isBlank() ? "" : ": " + output)
+                        "gcloud auth failed" + (detail.isBlank() ? "" : ": " + detail)
                         + "\n  Run: gcloud auth application-default login");
             }
-            accessToken = output;
+            accessToken = stdout;
         } catch (Exception e) {
             return new AuthResult(false, "Failed to run gcloud: " + e.getMessage());
         }
@@ -678,7 +684,7 @@ public class InitCommand implements Runnable {
             var host = MitmProxy.vertexHost(region);
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
-                    + "/publishers/anthropic/models/claude-sonnet-4-20250514:rawPredict";
+                    + "/publishers/anthropic/models/claude-sonnet-4:rawPredict";
             var client = HttpClient.newHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
