@@ -119,13 +119,16 @@ The instance must be running for git operations to work. If you specify a wrong 
 
 ### Automatic remotes
 
-If you configure `host-path` in `~/.config/incus-spawn/config.yaml`, remotes are managed automatically:
+If you configure `host-paths` in `~/.config/incus-spawn/config.yaml`, remotes are managed automatically:
 
 ```yaml
-# Base directory where your repos live on the host
-host-path: ~/projects
+# Base directories where your repos live on the host
+# If a repo exists in multiple host-paths, you must add an explicit repo-paths entry
+host-paths:
+  - ~/projects
+  - ~/workspace
 
-# Optional: explicit overrides for repos in non-standard locations
+# Explicit overrides for repos in non-standard locations or to resolve ambiguity
 repo-paths:
   quarkus: ~/work/quarkus
   hibernate: /opt/hibernate
@@ -529,7 +532,7 @@ Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get
 - `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions
 
-The `config.yaml` also supports git remote auto-management via `host-path` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
+The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
 ```yaml
 searchPaths:

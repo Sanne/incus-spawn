@@ -101,10 +101,37 @@ public final class GitRemoteUtils {
         if (override != null && !override.isEmpty()) {
             return Path.of(HostResourceSetup.expandHostTilde(override));
         }
-        // Fall back to host-path base directory
-        if (config.getHostPath().isEmpty()) return null;
-        var basePath = HostResourceSetup.expandHostTilde(config.getHostPath());
-        return Path.of(basePath, repoName);
+        // For single host-path (backwards compat), return the path even if it doesn't exist
+        // For multiple host-paths, ensure exactly one match exists
+        var hostPaths = config.getHostPaths();
+        if (hostPaths.isEmpty()) return null;
+
+        if (hostPaths.size() == 1) {
+            // Backwards compatibility: return path even if it doesn't exist
+            var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
+            return Path.of(basePath, repoName);
+        } else {
+            // Multiple paths: find all matches and fail if ambiguous
+            var matches = new ArrayList<Path>();
+            for (var hostPath : hostPaths) {
+                var basePath = HostResourceSetup.expandHostTilde(hostPath);
+                var candidatePath = Path.of(basePath, repoName);
+                if (Files.isDirectory(candidatePath)) {
+                    matches.add(candidatePath);
+                }
+            }
+            if (matches.isEmpty()) {
+                return null;
+            } else if (matches.size() == 1) {
+                return matches.get(0);
+            } else {
+                throw new IllegalStateException(
+                    "Found multiple host directories for repo '" + repoName + "': " +
+                    matches.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(", ")) +
+                    ". Add an explicit 'repo-paths' entry to disambiguate."
+                );
+            }
+        }
     }
 
     public static List<ImageDef.RepoEntry> collectReposForInstance(String instanceName, IncusClient incus) {
