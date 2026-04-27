@@ -105,11 +105,21 @@ public final class HostResourceSetup {
     public static void applyForInstance(IncusClient incus, String container, List<ImageDef.HostResource> resources) {
         for (var hr : resources) {
             switch (hr.getMode()) {
-                case "readonly" -> applyReadonly(incus, container, hr);
-                case "overlay" -> applyOverlayDevice(incus, container, hr);
+                case "readonly" -> {
+                    removeExistingDevice(incus, container, deviceName(resolveContainerPath(hr.getSource(), hr.getPath())));
+                    applyReadonly(incus, container, hr);
+                }
+                case "overlay" -> {
+                    removeExistingDevice(incus, container, overlayDeviceName(resolveContainerPath(hr.getSource(), hr.getPath())));
+                    applyOverlayDevice(incus, container, hr);
+                }
                 case "copy" -> {} // already baked into the template
             }
         }
+    }
+
+    private static void removeExistingDevice(IncusClient incus, String container, String devName) {
+        incus.exec("config", "device", "remove", container, devName);
     }
 
     public static void removeBuildDevices(IncusClient incus, String container, List<ImageDef.HostResource> resources) {
