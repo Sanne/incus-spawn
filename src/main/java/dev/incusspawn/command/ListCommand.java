@@ -1236,6 +1236,7 @@ public class ListCommand implements Runnable {
         ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
         if (branchSourceIsVm || branchEnableInbox) {
             ModalRenderer.addKey(hintSpans, "Tab", "Next field");
+            ModalRenderer.addKey(hintSpans, "Shift+Tab", "Previous field");
         }
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
@@ -1398,7 +1399,7 @@ public class ListCommand implements Runnable {
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F10", "Quit", null, null));
 
-        int width = 52;
+        int width = 60;
         int maxHeight = screen.height() - 2;
         int modalHeight = Math.min(lines.size() + 4, maxHeight);
 
@@ -1467,10 +1468,10 @@ public class ListCommand implements Runnable {
 
     private static Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled(String.format("  %-5s", key), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+        spans.add(Span.styled(String.format("  %-8s", key), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
         spans.add(Span.styled(String.format("%-18s", desc), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
         if (shiftKey != null) {
-            spans.add(Span.styled(String.format("%-5s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+            spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
         }
         return Line.from(spans);
