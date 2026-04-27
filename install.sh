@@ -33,6 +33,7 @@ if $NATIVE; then
         echo "Error: no native runner found in target/"
         exit 1
     fi
+    rm -f "$INSTALL_DIR/$BINARY_NAME"
     cp "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 else
@@ -53,6 +54,7 @@ else
     else
         JAVA_BIN="$(command -v java)"
     fi
+    rm -f "$INSTALL_DIR/$BINARY_NAME"
     cat > "$INSTALL_DIR/$BINARY_NAME" <<WRAPPER
 #!/bin/bash
 exec "$JAVA_BIN" -jar "$JARFILE" "\$@"
