@@ -44,9 +44,8 @@ public final class AutoRemoteService {
         var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
         if (hostPath == null || !Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)) return;
 
-        // Verify the host repo's origin matches the container repo's URL
-        var originUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, "origin");
-        if (originUrl == null || !GitRemoteUtils.urlsMatch(originUrl, repoUrl)) return;
+        // Verify at least one of the host repo's remotes matches the container repo's URL
+        if (!GitRemoteUtils.anyRemoteMatches(hostPath, repoUrl)) return;
 
         var isxUrl = containerPath.startsWith("/")
                 ? "isx://" + instanceName + containerPath
