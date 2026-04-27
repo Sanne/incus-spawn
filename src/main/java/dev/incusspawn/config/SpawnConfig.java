@@ -8,7 +8,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.util.Map;
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -66,7 +66,7 @@ public class SpawnConfig {
     public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
 
     public static Path configDir() {
-        return RuntimeConstants.CONFIG_DIR;
+        return Environment.configDir();
     }
 
     /**

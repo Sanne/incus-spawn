@@ -11,8 +11,8 @@ public record BuildInfo(String version, String gitSha, String runtime) {
 
     public static BuildInfo instance() { return INSTANCE; }
 
-    public String incusClient() { return RuntimeConstants.INCUS_CLIENT; }
-    public String incusServer() { return RuntimeConstants.INCUS_SERVER; }
+    public String incusClient() { return Environment.INCUS_CLIENT; }
+    public String incusServer() { return Environment.INCUS_SERVER; }
 
     private static String readProperty(String resource, String key, String fallback) {
         try (var is = BuildInfo.class.getClassLoader().getResourceAsStream(resource)) {

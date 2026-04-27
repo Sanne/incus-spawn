@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
@@ -73,7 +73,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private static Path dnfCacheDir() { return RuntimeConstants.DNF_CACHE_DIR; }
+    private static Path dnfCacheDir() { return Environment.dnfCacheDir(); }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
 
     @Override

@@ -1,6 +1,6 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,7 +20,7 @@ import java.time.Duration;
 public class SkillsCache {
 
     private static Path defaultCacheDir() {
-        return RuntimeConstants.SKILLS_CACHE_DIR;
+        return Environment.skillsCacheDir();
     }
 
     private final Path cacheDir;

@@ -1,6 +1,6 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Environment;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -23,7 +23,7 @@ import java.util.HexFormat;
 public class DownloadCache {
 
     private static Path defaultCacheDir() {
-        return RuntimeConstants.DOWNLOAD_CACHE_DIR;
+        return Environment.downloadCacheDir();
     }
 
     private final Path cacheDir;
