@@ -168,13 +168,17 @@ public class MitmProxy {
      * Resolve the Vertex AI hostname for a region. Some regions use special hostnames
      * instead of the standard {@code {region}-aiplatform.googleapis.com} pattern.
      */
-    private String vertexHost() {
-        return switch (vertexRegion) {
+    public static String vertexHost(String region) {
+        return switch (region) {
             case "global" -> "aiplatform.googleapis.com";
             case "us" -> "aiplatform.us.rep.googleapis.com";
             case "eu" -> "aiplatform.eu.rep.googleapis.com";
-            default -> vertexRegion + "-aiplatform.googleapis.com";
+            default -> region + "-aiplatform.googleapis.com";
         };
+    }
+
+    private String vertexHost() {
+        return vertexHost(vertexRegion);
     }
 
     public void setDebugLog(ApiTrafficLog debugLog) {
