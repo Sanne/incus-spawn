@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.ApiTrafficLog;
@@ -93,7 +94,11 @@ public class ProxyCommand {
 
             MitmProxy.configureBridgeDns(incus);
 
+            var build = BuildInfo.instance();
             System.out.println("Starting MITM authentication proxy...");
+            System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
+            System.out.println("  Runtime:       " + build.runtime());
+            System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
             System.out.println("  Gateway IP:    " + gatewayIp);
             System.out.println("  MITM port:     " + port);
             System.out.println("  Health port:   " + healthPort);
