@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import jakarta.enterprise.context.Dependent;
 
@@ -76,7 +77,7 @@ public class ToolDefLoader {
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
             for (var searchPath : paths) {
-                var expandedPath = dev.incusspawn.config.HostResourceSetup.expandHostTilde(searchPath);
+                var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
                 loadFromDirectory(Path.of(expandedPath).resolve("tools"));
             }
             loadFromDirectory(projectToolsDir);
