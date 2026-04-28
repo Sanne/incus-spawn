@@ -265,13 +265,15 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 
 ### Host Resources
 
-Template images can declare host files and directories to share with containers via the `host-resources` YAML key. Three modes control how the resource is made available:
+Template images can declare host files and directories to share with containers via the `host-resources` YAML key. Four modes control how the resource is made available:
 
 **Readonly** (default): a read-only Incus disk device bind mount. The container can read the host file/directory but cannot modify it. Simple and safe for config files like `~/.gitconfig`.
 
 **Overlay**: the host directory is attached as a read-only lower layer, with an ephemeral writable upper layer inside the container, combined via Linux overlayfs. The container sees a normal read-write directory, but writes go to the container-local upper layer — the host is fully protected. This is the right mode for caches (Maven, OCI) where tools expect to write but you don't need writes to persist back to the host.
 
 **Copy**: the file or directory is copied into the container at build time and becomes part of the template. Supports local paths and URLs. No runtime dependency on the host.
+
+**Merge**: deep-merges JSON files from the host with existing JSON files in the container at build time. The merged result becomes part of the template (like copy mode). For objects, keys are recursively merged with host values taking precedence on conflicts. For arrays, the host array completely replaces the container array. For primitives, the host value wins. If the container file doesn't exist, merge behaves like copy. When the source is a directory, all `.json` files are merged recursively while non-JSON files are copied as-is. This mode is designed for customizing JSON config files created by parent templates without losing other settings or files.
 
 #### Overlay internals
 
