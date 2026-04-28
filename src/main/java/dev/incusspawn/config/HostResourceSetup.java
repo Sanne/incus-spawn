@@ -231,6 +231,7 @@ public final class HostResourceSetup {
 
         container.exec("mkdir", "-p", upperDir, workDir, containerPath);
         container.exec("chown", "agentuser:agentuser", upperDir);
+        chownHomeParents(container, containerPath);
         container.exec("mount", "-t", "overlay", "overlay",
                 "-o", "lowerdir=" + lowerDir + ",upperdir=" + upperDir + ",workdir=" + workDir,
                 containerPath);
@@ -253,6 +254,17 @@ public final class HostResourceSetup {
                 "path=" + lowerDir,
                 "readonly=true",
                 "shift=true");
+    }
+
+    private static void chownHomeParents(Container container, String containerPath) {
+        var home = "/home/agentuser";
+        if (!containerPath.startsWith(home + "/")) return;
+        var path = Path.of(containerPath).getParent();
+        var homePath = Path.of(home);
+        while (path != null && path.startsWith(homePath) && !path.equals(homePath)) {
+            container.exec("chown", "agentuser:agentuser", path.toString());
+            path = path.getParent();
+        }
     }
 
     private static void installOverlayService(Container container, List<ImageDef.HostResource> overlayResources) {
