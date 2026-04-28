@@ -213,7 +213,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     /**
-     * Collect all templates to rebuild from a list of leaves.
+     * Collect templates to rebuild from a list of leaves, in build order (parents before children).
      * @param outdatedOnly if true, only collect outdated/missing templates; if false, collect all
      */
     private static void collectTemplatesToRebuild(java.util.List<ImageDef> leaves,
@@ -223,52 +223,63 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                                                    IncusClient incus,
                                                    ToolDefLoader toolDefLoader,
                                                    boolean outdatedOnly) {
-        // Always quiet during collection - messages will be shown during actual build
-        for (var leaf : leaves) {
-            if (outdatedOnly) {
-                // Only process outdated or missing leaves
-                if (!incus.exists(leaf.getName()) || isImageOutdated(leaf.getName(), leaf, incus, toolDefLoader, defs, true)) {
-                    collectTemplatesToRebuildRecursive(leaf, defs, result, seen, incus, toolDefLoader, true);
+        if (outdatedOnly) {
+            for (var template : defs.values()) {
+                if (seen.contains(template.getName())) continue;
+                if (!incus.exists(template.getName())
+                        || isImageOutdated(template.getName(), template, incus, toolDefLoader, defs, true)) {
+                    collectAncestors(template, defs, result, seen, incus, toolDefLoader, true);
+                    if (seen.add(template.getName())) {
+                        result.add(template.getName());
+                    }
+                    collectDescendants(template.getName(), defs, result, seen);
                 }
-            } else {
-                // Collect all
-                collectTemplatesToRebuildRecursive(leaf, defs, result, seen, incus, toolDefLoader, true);
+            }
+        } else {
+            for (var leaf : leaves) {
+                collectAllRecursive(leaf, defs, result, seen);
             }
         }
     }
 
-    /**
-     * Recursively collect a template and its outdated ancestors in build order (parents before children).
-     * Uses a seen set to avoid duplicates while maintaining insertion order in the result list.
-     */
-    private static void collectTemplatesToRebuildRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
-                                            java.util.List<String> result,
-                                            java.util.Set<String> seen,
-                                            IncusClient incus,
-                                            ToolDefLoader toolDefLoader,
-                                            boolean quiet) {
+    private static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
+                                             java.util.List<String> result, java.util.Set<String> seen) {
         var name = imageDef.getName();
-        if (seen.contains(name)) {
-            return; // Already processed this template
-        }
-
-        // First collect outdated ancestors (parents before children)
+        if (seen.contains(name)) return;
         if (!imageDef.isRoot()) {
-            var parentName = imageDef.getParent();
-            var parentDef = defs.get(parentName);
+            var parentDef = defs.get(imageDef.getParent());
             if (parentDef != null) {
-                boolean parentMissing = !incus.exists(parentName);
-                boolean needsRebuild = parentMissing
-                        || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, quiet);
-                if (needsRebuild) {
-                    collectTemplatesToRebuildRecursive(parentDef, defs, result, seen, incus, toolDefLoader, quiet);
-                }
+                collectAllRecursive(parentDef, defs, result, seen);
             }
         }
-
-        // Then add this template
         seen.add(name);
         result.add(name);
+    }
+
+    private static void collectAncestors(ImageDef imageDef, Map<String, ImageDef> defs,
+                                          java.util.List<String> result, java.util.Set<String> seen,
+                                          IncusClient incus, ToolDefLoader toolDefLoader, boolean quiet) {
+        if (imageDef.isRoot()) return;
+        var parentName = imageDef.getParent();
+        if (seen.contains(parentName)) return;
+        var parentDef = defs.get(parentName);
+        if (parentDef == null) return;
+        if (!incus.exists(parentName)
+                || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, quiet)) {
+            collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader, quiet);
+            seen.add(parentName);
+            result.add(parentName);
+        }
+    }
+
+    private static void collectDescendants(String parentName, Map<String, ImageDef> defs,
+                                            java.util.List<String> result, java.util.Set<String> seen) {
+        for (var def : defs.values()) {
+            if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
+                result.add(def.getName());
+                collectDescendants(def.getName(), defs, result, seen);
+            }
+        }
     }
 
     /**
@@ -278,18 +289,9 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             Map<String, ImageDef> defs,
             IncusClient incus,
             ToolDefLoader toolDefLoader) {
-        var parentNames = defs.values().stream()
-                .filter(d -> !d.isRoot())
-                .map(ImageDef::getParent)
-                .collect(java.util.stream.Collectors.toSet());
-
-        var leaves = defs.values().stream()
-                .filter(d -> !parentNames.contains(d.getName()))
-                .toList();
-
         var result = new java.util.ArrayList<String>();
         var seen = new java.util.LinkedHashSet<String>();
-        collectTemplatesToRebuild(leaves, defs, result, seen, incus, toolDefLoader, true);
+        collectTemplatesToRebuild(java.util.List.of(), defs, result, seen, incus, toolDefLoader, true);
         return result;
     }
 
@@ -774,16 +776,16 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private ToolSetup findTool(String name) {
-        return findTool(name, toolDefLoader);
+        var tool = findTool(name, toolDefLoader);
+        if (tool != null) return tool;
+        for (var t : toolSetups) {
+            if (t.name().equals(name)) return t;
+        }
+        return null;
     }
 
     private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader) {
-        // YAML tools (user-defined, then built-in) take priority
-        var yamlTool = toolDefLoader.find(name);
-        if (yamlTool != null) return yamlTool;
-        // Note: Java CDI implementations are not available in static context
-        // This is OK for the static path (TUI) since it only needs YAML tools for fingerprinting
-        return null;
+        return toolDefLoader.find(name);
     }
 
     private void cleanCaches(String container) {

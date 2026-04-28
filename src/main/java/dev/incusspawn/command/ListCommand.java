@@ -74,6 +74,7 @@ public class ListCommand implements Runnable {
     private String errorMessage;
     private String pendingDeleteName;
     private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
+    private String pendingBuildMessage; // pre-computed message for CONFIRM_BUILD modal
     // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
@@ -400,6 +401,7 @@ public class ListCommand implements Runnable {
         if (key.isKey(KeyCode.F5) && key.hasShift() && key.hasCtrl()) {
             if (showProxyError()) return true;
             pendingBuildName = "--all";
+            pendingBuildMessage = "This will delete and rebuild all templates.";
             mode = Mode.CONFIRM_BUILD;
             return true;
         }
@@ -408,6 +410,11 @@ public class ListCommand implements Runnable {
         if (key.isKey(KeyCode.F5) && key.hasShift()) {
             if (showProxyError()) return true;
             pendingBuildName = "--outdated";
+            var templatesToRebuild = BuildCommand.collectOutdatedTemplates(
+                    imageDefs, incus, toolDefLoader);
+            pendingBuildMessage = templatesToRebuild.isEmpty()
+                    ? "All templates are up to date."
+                    : "This will delete and rebuild:\n" + String.join(", ", templatesToRebuild);
             mode = Mode.CONFIRM_BUILD;
             return true;
         }
@@ -425,6 +432,7 @@ public class ListCommand implements Runnable {
             if (!"not built".equals(template.buildStatus)) {
                 // Already built — confirm rebuild
                 pendingBuildName = template.name;
+                pendingBuildMessage = "This will delete and rebuild " + template.name + ".";
                 mode = Mode.CONFIRM_BUILD;
             } else {
                 if (showProxyError()) return true;
@@ -1133,20 +1141,7 @@ public class ListCommand implements Runnable {
                     case "--outdated" -> " Rebuild outdated templates ";
                     default -> " Rebuild '" + pendingBuildName + "' ";
                 };
-                var message = switch (pendingBuildName) {
-                    case "--all" -> "This will delete and rebuild all templates.";
-                    case "--outdated" -> {
-                        var templatesToRebuild = BuildCommand.collectOutdatedTemplates(
-                                imageDefs, incus, toolDefLoader);
-                        if (templatesToRebuild.isEmpty()) {
-                            yield "All templates are up to date.";
-                        } else {
-                            yield "This will delete and rebuild:\n" + String.join(", ", templatesToRebuild);
-                        }
-                    }
-                    default -> "This will delete and rebuild " + pendingBuildName + ".";
-                };
-                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
+                ModalRenderer.renderConfirmModal(frame, screen, title, pendingBuildMessage, ModalRenderer.WARN);
             }
             case CONFIRM_STOP_FOR_RENAME -> {
                 ModalRenderer.renderConfirmModal(frame, screen,
