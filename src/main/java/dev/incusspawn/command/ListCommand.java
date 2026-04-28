@@ -1135,7 +1135,15 @@ public class ListCommand implements Runnable {
                 };
                 var message = switch (pendingBuildName) {
                     case "--all" -> "This will delete and rebuild all templates.";
-                    case "--outdated" -> "This will delete and rebuild templates that are outdated or missing.";
+                    case "--outdated" -> {
+                        var templatesToRebuild = BuildCommand.collectOutdatedTemplates(
+                                imageDefs, incus, toolDefLoader);
+                        if (templatesToRebuild.isEmpty()) {
+                            yield "All templates are up to date.";
+                        } else {
+                            yield "This will delete and rebuild:\n" + String.join(", ", templatesToRebuild);
+                        }
+                    }
                     default -> "This will delete and rebuild " + pendingBuildName + ".";
                 };
                 ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
