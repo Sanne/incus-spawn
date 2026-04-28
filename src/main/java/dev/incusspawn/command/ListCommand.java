@@ -190,7 +190,9 @@ public class ListCommand implements Runnable {
                 focusedPanel = Panel.TEMPLATES;
             }
 
-            try (var runner = TuiRunner.create()) {
+            try (var runner = TuiRunner.create(dev.tamboui.tui.TuiConfig.builder()
+                    .bindings(dev.incusspawn.tui.ShiftTabBindings.createWithBacktab())
+                    .build())) {
                 runner.run(
                         (event, tui) -> handleEvent(event, tui, instanceTableState),
                         frame -> render(frame, instanceTableState));
@@ -340,7 +342,8 @@ public class ListCommand implements Runnable {
             mode = Mode.INFO;
             return true;
         }
-        if (key.isKey(KeyCode.TAB)) {
+        // Tab or Shift+Tab: switch panels
+        if (key.isKey(KeyCode.TAB) || dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
         }
@@ -592,15 +595,15 @@ public class ListCommand implements Runnable {
             }
             return true;
         }
+        // Shift+Tab: cycle backward (check before Tab to avoid matching TAB+Shift)
+        if (dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
+            int max = maxBranchField();
+            branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
+            return true;
+        }
+        // Tab: cycle forward
         if (key.isKey(KeyCode.TAB)) {
-            if (key.hasShift()) {
-                // Shift+Tab: cycle backward
-                int max = maxBranchField();
-                branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
-            } else {
-                // Tab: cycle forward
-                branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
-            }
+            branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
             return true;
         }
 
@@ -1274,7 +1277,8 @@ public class ListCommand implements Runnable {
             }
             return true;
         }
-        if (key.isKey(KeyCode.TAB)) {
+        // Tab or Shift+Tab: toggle view mode
+        if (key.isKey(KeyCode.TAB) || dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
             detailViewCompact = !detailViewCompact;
             detailScrollOffset = 0;
             return true;
