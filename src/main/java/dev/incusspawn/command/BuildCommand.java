@@ -52,6 +52,9 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     @Option(names = "--all", description = "Rebuild all defined templates")
     boolean all;
 
+    @Option(names = "--outdated", description = "Rebuild outdated templates")
+    boolean outdated;
+
     @Option(names = "--missing", description = "Build only templates that don't exist yet")
     boolean missing;
 
@@ -86,8 +89,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 buildMissing(defs);
                 return 0;
             }
+            if (outdated) {
+                buildAll(defs, true);
+                return 0;
+            }
             if (all) {
-                buildAll(defs);
+                buildAll(defs, false);
                 return 0;
             }
 
@@ -122,11 +129,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     /**
-     * Rebuild all defined templates. Deletes existing images in reverse
-     * dependency order (children first), then builds leaf images (parents
-     * are built automatically by the recursive build).
+     * Rebuild templates.
+     * @param outdatedOnly if true, only rebuild outdated/missing templates; if false, rebuild all
      */
-    private void buildAll(Map<String, ImageDef> defs) {
+    private void buildAll(Map<String, ImageDef> defs, boolean outdatedOnly) {
         // Identify which images are parents of other images
         var parentNames = defs.values().stream()
                 .filter(d -> !d.isRoot())
@@ -138,35 +144,65 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 .filter(d -> !parentNames.contains(d.getName()))
                 .toList();
 
-        var allNames = new java.util.ArrayList<>(defs.keySet());
-        System.out.println("This will rebuild all templates: " + String.join(", ", allNames));
-        if (!yes) {
-            var console = System.console();
-            if (console != null) {
-                System.out.print("Continue? (y/N): ");
-                var answer = console.readLine().strip();
-                if (!answer.equalsIgnoreCase("y")) {
-                    System.out.println("Aborted.");
-                    return;
+        // Determine which leaves to rebuild
+        var leavesToBuild = outdatedOnly
+                ? leaves.stream()
+                    .filter(leaf -> !incus.exists(leaf.getName()) || isImageOutdated(leaf.getName(), leaf))
+                    .toList()
+                : leaves;
+
+        if (outdatedOnly && leavesToBuild.isEmpty()) {
+            System.out.println("All templates are up to date.");
+            return;
+        }
+
+        // Confirm with user
+        if (outdatedOnly) {
+            var outdatedNames = leavesToBuild.stream().map(ImageDef::getName).toList();
+            System.out.println("Outdated templates: " + String.join(", ", outdatedNames));
+            if (!yes) {
+                var console = System.console();
+                if (console != null) {
+                    System.out.print("Rebuild? (y/N): ");
+                    var answer = console.readLine().strip();
+                    if (!answer.equalsIgnoreCase("y")) {
+                        System.out.println("Aborted.");
+                        return;
+                    }
+                }
+            }
+        } else {
+            // Rebuild all - delete everything first
+            var allNames = new java.util.ArrayList<>(defs.keySet());
+            System.out.println("This will rebuild all templates: " + String.join(", ", allNames));
+            if (!yes) {
+                var console = System.console();
+                if (console != null) {
+                    System.out.print("Continue? (y/N): ");
+                    var answer = console.readLine().strip();
+                    if (!answer.equalsIgnoreCase("y")) {
+                        System.out.println("Aborted.");
+                        return;
+                    }
+                }
+            }
+
+            // Delete in reverse order (children before parents)
+            java.util.Collections.reverse(allNames);
+            System.out.println("\nDeleting existing images...");
+            for (var imgName : allNames) {
+                if (incus.exists(imgName)) {
+                    System.out.println("  Deleting " + imgName + "...");
+                    incus.delete(imgName, true);
                 }
             }
         }
 
-        // Delete in reverse order (children before parents)
-        java.util.Collections.reverse(allNames);
-        System.out.println("\nDeleting existing images...");
-        for (var imgName : allNames) {
-            if (incus.exists(imgName)) {
-                System.out.println("  Deleting " + imgName + "...");
-                incus.delete(imgName, true);
-            }
-        }
-
-        // Build each leaf — parents are built recursively
+        // Build each leaf — parents are built recursively (and checked for outdated status)
         // Track failures to skip children of failed parents
         var failedBuilds = new java.util.HashSet<String>();
         System.out.println();
-        for (var leaf : leaves) {
+        for (var leaf : leavesToBuild) {
             if (shouldSkipDueToFailedParent(leaf, defs, failedBuilds)) {
                 System.out.println("Skipping " + leaf.getName() + " (parent failed to build)");
                 failedBuilds.add(leaf.getName());
@@ -240,16 +276,24 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         ProxyHealthCheck.requireProxy(incus);
 
-        // If this image has a parent, ensure it exists
+        // If this image has a parent, ensure it exists and is up-to-date
         if (!imageDef.isRoot()) {
             var parentName = imageDef.getParent();
-            if (!incus.exists(parentName)) {
-                var parentDef = defs.get(parentName);
-                if (parentDef == null) {
-                    System.err.println("Parent image '" + parentName + "' not found in definitions.");
-                    System.exit(1);
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) {
+                System.err.println("Parent image '" + parentName + "' not found in definitions.");
+                System.exit(1);
+            }
+
+            boolean parentMissing = !incus.exists(parentName);
+            boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef);
+
+            if (needsRebuild) {
+                if (parentMissing) {
+                    System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
+                } else {
+                    System.out.println("Parent image '" + parentName + "' is outdated, rebuilding it first...\n");
                 }
-                System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
                 build(parentDef, defs);
                 System.out.println();
             }
@@ -286,6 +330,39 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             promoteToFailedInstance(targetName);
             throw new BuildFailedException(targetName);
         }
+    }
+
+    /**
+     * Check if an image is outdated (built with an older version of isx or with a different definition).
+     */
+    boolean isImageOutdated(String imageName, ImageDef imageDef) {
+        if (!incus.exists(imageName)) {
+            return false;
+        }
+
+        var currentVersion = BuildInfo.instance().version();
+        var buildVersion = incus.configGet(imageName, Metadata.BUILD_VERSION);
+
+        // Check if built with an older version of isx
+        if (buildVersion != null && !buildVersion.isEmpty() && !buildVersion.equals(currentVersion)) {
+            return true;
+        }
+
+        // Check if built with a missing version (very old build)
+        if (buildVersion == null || buildVersion.isEmpty()) {
+            return true;
+        }
+
+        // Check if definition has changed
+        var storedSha = incus.configGet(imageName, Metadata.DEFINITION_SHA);
+        if (storedSha != null && !storedSha.isEmpty()) {
+            var currentSha = imageDef.contentFingerprint(computeToolFingerprints(imageDef));
+            if (!storedSha.equals(currentSha)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void promoteToFailedInstance(String containerName) {

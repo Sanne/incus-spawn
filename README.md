@@ -206,6 +206,9 @@ Image schema fields (all optional except `name`):
 # Build a specific image (builds missing parents automatically)
 isx build tpl-java
 
+# Rebuild outdated templates (checks version and definition SHA)
+isx build --outdated
+
 # Rebuild all discovered images from scratch
 isx build --all
 ```
@@ -423,6 +426,7 @@ After branching, connect from JetBrains Gateway using the container's IP (visibl
 | `isx init` | One-time host setup (Incus, firewall, auth) |
 | `isx build <template>` | Build or rebuild a template image |
 | `isx build --all` | Rebuild all discovered templates |
+| `isx build --outdated` | Rebuild outdated templates |
 | `isx build --missing` | Build only templates that don't exist yet |
 | `isx branch <name>` | Create a CoW clone from a template or instance |
 | `isx shell <instance>` | Open a shell in an instance |

@@ -488,4 +488,89 @@ class BuildCommandTest {
         assertFalse(cmd.shouldSkipDueToFailedParent(root, defs, failedBuilds),
                 "Root image should never be skipped due to parent");
     }
+
+    @Test
+    void isImageOutdatedNotExists() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(false);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        assertFalse(cmd.isImageOutdated("tpl-test", imageDef),
+                "Non-existent image should not be considered outdated");
+    }
+
+    @Test
+    void isImageOutdatedDifferentVersion() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("0.0.1");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        assertTrue(cmd.isImageOutdated("tpl-test", imageDef),
+                "Image with different version should be outdated");
+    }
+
+    @Test
+    void isImageOutdatedMissingVersion() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        assertTrue(cmd.isImageOutdated("tpl-test", imageDef),
+                "Image with missing version should be outdated");
+    }
+
+    @Test
+    void isImageOutdatedSameVersionNoDefinitionChange() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha")).thenReturn("");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        assertFalse(cmd.isImageOutdated("tpl-test", imageDef),
+                "Image with same version and no definition SHA should not be outdated");
+    }
+
+    @Test
+    void isImageOutdatedDefinitionChanged() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha"))
+                .thenReturn("old-sha-123");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        cmd.toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+
+        assertTrue(cmd.isImageOutdated("tpl-test", imageDef),
+                "Image with changed definition should be outdated");
+    }
 }
