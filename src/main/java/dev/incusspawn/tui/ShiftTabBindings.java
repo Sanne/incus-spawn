@@ -19,7 +19,19 @@ public final class ShiftTabBindings {
 
     private ShiftTabBindings() {
     }
+
     private static final String ACTION_BACKTAB = "backtab";
+
+    /**
+     * Detect the specific pattern of Shift+Tab: UNKNOWN with character=0, no modifiers.
+     */
+    private static boolean isBacktabWorkaround(KeyEvent key) {
+        return key.code() == KeyCode.UNKNOWN
+                && key.character() == 0
+                && !key.hasCtrl()
+                && !key.hasAlt()
+                && !key.hasShift();
+    }
 
     /**
      * InputTrigger that matches Shift+Tab (coming through as UNKNOWN).
@@ -28,12 +40,7 @@ public final class ShiftTabBindings {
         @Override
         public boolean matches(Event event) {
             if (!(event instanceof KeyEvent key)) return false;
-            // Detect the specific pattern of Shift+Tab: UNKNOWN with character=0, no modifiers
-            return key.code() == KeyCode.UNKNOWN
-                    && key.character() == 0
-                    && !key.hasCtrl()
-                    && !key.hasAlt()
-                    && !key.hasShift();
+            return isBacktabWorkaround(key);
         }
 
         @Override
@@ -70,10 +77,6 @@ public final class ShiftTabBindings {
             return true;
         }
         // Fallback: Tamboui bug workaround - UNKNOWN with character=0, no modifiers
-        return key.code() == KeyCode.UNKNOWN
-                && key.character() == 0
-                && !key.hasCtrl()
-                && !key.hasAlt()
-                && !key.hasShift();
+        return isBacktabWorkaround(key);
     }
 }
