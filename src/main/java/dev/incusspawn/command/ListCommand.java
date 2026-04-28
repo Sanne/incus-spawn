@@ -15,6 +15,7 @@ import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.tui.ShiftTabBindings;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -23,6 +24,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
+import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
@@ -190,8 +192,8 @@ public class ListCommand implements Runnable {
                 focusedPanel = Panel.TEMPLATES;
             }
 
-            try (var runner = TuiRunner.create(dev.tamboui.tui.TuiConfig.builder()
-                    .bindings(dev.incusspawn.tui.ShiftTabBindings.createWithBacktab())
+            try (var runner = TuiRunner.create(TuiConfig.builder()
+                    .bindings(ShiftTabBindings.createWithBacktab())
                     .build())) {
                 runner.run(
                         (event, tui) -> handleEvent(event, tui, instanceTableState),
@@ -343,7 +345,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         // Tab or Shift+Tab: switch panels
-        if (key.isKey(KeyCode.TAB) || dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
+        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
         }
@@ -596,7 +598,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         // Shift+Tab: cycle backward (check before Tab to avoid matching TAB+Shift)
-        if (dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
+        if (ShiftTabBindings.isShiftTab(key)) {
             int max = maxBranchField();
             branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
             return true;
@@ -1278,7 +1280,7 @@ public class ListCommand implements Runnable {
             return true;
         }
         // Tab or Shift+Tab: toggle view mode
-        if (key.isKey(KeyCode.TAB) || dev.incusspawn.tui.ShiftTabBindings.isShiftTab(key)) {
+        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
             detailViewCompact = !detailViewCompact;
             detailScrollOffset = 0;
             return true;
