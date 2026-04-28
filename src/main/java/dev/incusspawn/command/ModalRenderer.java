@@ -128,7 +128,12 @@ final class ModalRenderer {
     static void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor,
                                     String confirmLabel) {
-        var modalArea = centerRect(screen, 54, 7);
+        int modalWidth = 54;
+        int innerWidth = modalWidth - 4; // Account for borders and padding
+        var wrappedLines = wrapText(message, innerWidth);
+        // 2 borders + 1 top spacing + message lines + 1 spacer + 2 buttons area
+        int modalHeight = 2 + 1 + wrappedLines.size() + 1 + 2;
+        var modalArea = centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
                 .title(title)
@@ -137,15 +142,58 @@ final class ModalRenderer {
                 .build();
         renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
-                .split(inner);
-        frame.renderWidget(Paragraph.from(Line.styled(
-                message, Style.EMPTY.fg(borderColor).bg(BG))), rows.get(1));
+
+        var constraints = new ArrayList<Constraint>();
+        constraints.add(Constraint.length(1)); // top spacing
+        for (int i = 0; i < wrappedLines.size(); i++) {
+            constraints.add(Constraint.length(1)); // one line per message line
+        }
+        constraints.add(Constraint.length(1)); // spacer
+        constraints.add(Constraint.fill()); // buttons
+
+        var rows = Layout.vertical().constraints(constraints.toArray(Constraint[]::new)).split(inner);
+
+        // Render message lines
+        for (int i = 0; i < wrappedLines.size(); i++) {
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    wrappedLines.get(i), Style.EMPTY.fg(borderColor).bg(BG))), rows.get(1 + i));
+        }
+
         var btnSpans = new ArrayList<Span>();
         addKey(btnSpans, "y", confirmLabel);
         addKey(btnSpans, "any key", "Cancel");
-        frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(3));
+        frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(rows.size() - 1));
+    }
+
+    private static List<String> wrapText(String text, int width) {
+        var result = new ArrayList<String>();
+        for (var paragraph : text.split("\n")) {
+            if (paragraph.isEmpty()) {
+                result.add("");
+                continue;
+            }
+            var words = paragraph.split("\\s+");
+            var line = new StringBuilder();
+            for (var word : words) {
+                if (line.length() + word.length() + (line.length() > 0 ? 1 : 0) > width) {
+                    if (line.length() > 0) {
+                        result.add(line.toString());
+                        line = new StringBuilder();
+                    }
+                    // If a single word is longer than width, add it anyway
+                    if (word.length() > width) {
+                        result.add(word);
+                        continue;
+                    }
+                }
+                if (line.length() > 0) line.append(" ");
+                line.append(word);
+            }
+            if (line.length() > 0) {
+                result.add(line.toString());
+            }
+        }
+        return result;
     }
 
     static void renderErrorModal(Frame frame, Rect screen, String message) {
