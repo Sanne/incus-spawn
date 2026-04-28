@@ -390,4 +390,102 @@ class BuildCommandTest {
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).shellExecInteractive(eq("test"), any(String[].class));
     }
+
+    @Test
+    void shouldSkipDueToFailedParentDirectParent() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-parent");
+
+        var cmd = new BuildCommand();
+        assertTrue(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should be skipped when parent failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentGrandparent() {
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-grandparent");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setParent("tpl-grandparent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of(
+                "tpl-grandparent", grandparent,
+                "tpl-parent", parent,
+                "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-grandparent");
+
+        var cmd = new BuildCommand();
+        assertTrue(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should be skipped when grandparent failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentNoFailures() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should not be skipped when no failures");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentUnrelatedFailure() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var unrelated = new ImageDef();
+        unrelated.setName("tpl-unrelated");
+
+        var defs = java.util.Map.of(
+                "tpl-parent", parent,
+                "tpl-child", child,
+                "tpl-unrelated", unrelated);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-unrelated");
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should not be skipped when only unrelated template failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentRootImage() {
+        var root = new ImageDef();
+        root.setName("tpl-root");
+        root.setImage("fedora/41");
+
+        var defs = java.util.Map.of("tpl-root", root);
+        var failedBuilds = new java.util.HashSet<String>();
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(root, defs, failedBuilds),
+                "Root image should never be skipped due to parent");
+    }
 }

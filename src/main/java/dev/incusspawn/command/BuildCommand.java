@@ -163,11 +163,45 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
 
         // Build each leaf — parents are built recursively
+        // Track failures to skip children of failed parents
+        var failedBuilds = new java.util.HashSet<String>();
         System.out.println();
         for (var leaf : leaves) {
-            build(leaf, defs);
-            System.out.println();
+            if (shouldSkipDueToFailedParent(leaf, defs, failedBuilds)) {
+                System.out.println("Skipping " + leaf.getName() + " (parent failed to build)");
+                failedBuilds.add(leaf.getName());
+                continue;
+            }
+            try {
+                build(leaf, defs);
+                System.out.println();
+            } catch (BuildFailedException e) {
+                failedBuilds.add(leaf.getName());
+                System.err.println("Build failed for " + leaf.getName() + ", continuing with other templates...\n");
+            }
         }
+
+        if (!failedBuilds.isEmpty()) {
+            System.err.println("\n\033[1;31mSome templates failed to build: " +
+                    String.join(", ", failedBuilds) + "\033[0m");
+        }
+    }
+
+    /**
+     * Check if a template should be skipped because one of its ancestors failed to build.
+     */
+    boolean shouldSkipDueToFailedParent(ImageDef imageDef, Map<String, ImageDef> defs,
+                                         java.util.Set<String> failedBuilds) {
+        var current = imageDef;
+        while (!current.isRoot()) {
+            var parentName = current.getParent();
+            if (failedBuilds.contains(parentName)) {
+                return true;
+            }
+            current = defs.get(parentName);
+            if (current == null) break;
+        }
+        return false;
     }
 
     /**
