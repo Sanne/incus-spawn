@@ -15,8 +15,10 @@ import dev.tamboui.tui.event.KeyEvent;
  * that maps this specific pattern to the "backtab" action, which we can then
  * detect in our event handlers.
  */
-public class ShiftTabBindings {
+public final class ShiftTabBindings {
 
+    private ShiftTabBindings() {
+    }
     private static final String ACTION_BACKTAB = "backtab";
 
     /**
