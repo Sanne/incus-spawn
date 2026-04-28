@@ -314,7 +314,7 @@ public class ProxyCommand {
                 var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("host"));
                 var proxy = new DumpProxy(port, debugLog);
                 proxy.start();
-            } catch (IOException e) {
+            } catch (Exception e) {
                 System.err.println("Failed to start dump proxy: " + e.getMessage());
             }
         }
