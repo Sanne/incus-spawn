@@ -257,10 +257,10 @@ public final class HostResourceSetup {
     }
 
     private static void chownHomeParents(Container container, String containerPath) {
-        var home = "/home/agentuser";
-        if (!containerPath.startsWith(home + "/")) return;
-        var path = Path.of(containerPath).getParent();
-        var homePath = Path.of(home);
+        var homePath = Path.of("/home/agentuser");
+        var normalized = Path.of(containerPath).normalize();
+        if (!normalized.startsWith(homePath) || normalized.equals(homePath)) return;
+        var path = normalized.getParent();
         while (path != null && path.startsWith(homePath) && !path.equals(homePath)) {
             container.exec("chown", "agentuser:agentuser", path.toString());
             path = path.getParent();
