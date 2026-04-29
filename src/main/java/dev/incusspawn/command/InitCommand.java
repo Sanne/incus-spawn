@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -97,6 +98,7 @@ public class InitCommand implements Runnable {
         setupClaudeAuth();
         setupGitHubAuth();
         setupSearchPaths();
+        setupHostPaths();
 
         installGitRemoteShim();
 
@@ -157,7 +159,7 @@ public class InitCommand implements Runnable {
     }
 
     private void checkIncusInstalled() {
-        System.out.println("[1/8] Checking Incus installation...");
+        System.out.println("[1/9] Checking Incus installation...");
         var result = runHost("which", "incus");
         if (result != 0) {
             var installCmd = detectInstallCommand();
@@ -237,7 +239,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureFirewall() {
-        System.out.println("[4/8] Configuring firewall for Incus bridge...");
+        System.out.println("[4/9] Configuring firewall for Incus bridge...");
 
         // Check if firewalld is available
         var fwCheck = runHost("which", "firewall-cmd");
@@ -305,7 +307,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureMitmProxy() {
-        System.out.println("[5/8] Configuring MITM authentication proxy...");
+        System.out.println("[5/9] Configuring MITM authentication proxy...");
 
         // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
         // for the gateway IP on port 443 is redirected to the proxy's listen port.
@@ -342,7 +344,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureSubuidSubgid() {
-        System.out.println("[2/8] Configuring subuid/subgid mappings...");
+        System.out.println("[2/9] Configuring subuid/subgid mappings...");
         boolean changed = false;
         try {
             var subuid = java.nio.file.Files.readString(java.nio.file.Path.of("/etc/subuid"));
@@ -365,7 +367,7 @@ public class InitCommand implements Runnable {
     }
 
     private void initializeIncus() {
-        System.out.println("[3/8] Initializing Incus (storage pool, network bridge)...");
+        System.out.println("[3/9] Initializing Incus (storage pool, network bridge)...");
 
         // Check if we can talk to the Incus daemon
         var canConnect = incus.exec("version");
@@ -470,7 +472,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupClaudeAuth() {
-        System.out.println("[6/8] Configuring Claude Code authentication...");
+        System.out.println("[6/9] Configuring Claude Code authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -714,7 +716,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupGitHubAuth() {
-        System.out.println("[7/8] Configuring GitHub authentication...");
+        System.out.println("[7/9] Configuring GitHub authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -792,12 +794,18 @@ public class InitCommand implements Runnable {
         }
     }
 
-    private void setupSearchPaths() {
-        System.out.println("[8/8] Configuring template search paths...");
+    private void setupPathList(
+            String stepLabel,
+            java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
+            java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
+            String description,
+            String skipMessage) {
+        System.out.println(stepLabel);
         var config = SpawnConfig.load();
-        var existing = config.getSearchPaths();
+        var existing = getter.apply(config);
+
         if (!existing.isEmpty()) {
-            System.out.println("  Current search paths:");
+            System.out.println("  Current paths:");
             for (var path : existing) {
                 System.out.println("    - " + path);
             }
@@ -809,17 +817,15 @@ public class InitCommand implements Runnable {
             return;
         }
 
-        System.out.println("  You can add directories containing custom image and tool definitions.");
-        System.out.println("  Each directory should have images/ and/or tools/ subdirectories with YAML files.");
-        System.out.println();
+        System.out.println(description);
 
         var paths = new java.util.ArrayList<>(existing);
         while (true) {
-            System.out.print("  Add a search path (or press Enter to " + (paths.isEmpty() ? "skip" : "finish") + "): ");
+            System.out.print("  Add a path (or press Enter to " + (paths.isEmpty() ? "skip" : "finish") + "): ");
             var input = console.readLine().strip();
             if (input.isEmpty()) break;
 
-            var expanded = dev.incusspawn.config.HostResourceSetup.expandHostTilde(input);
+            var expanded = HostResourceSetup.expandHostTilde(input);
             var path = java.nio.file.Path.of(expanded);
             if (!java.nio.file.Files.isDirectory(path)) {
                 System.out.println("  Warning: '" + input + "' is not an existing directory. Adding anyway.");
@@ -834,14 +840,36 @@ public class InitCommand implements Runnable {
         }
 
         if (!paths.equals(existing)) {
-            config.setSearchPaths(paths);
+            setter.accept(config, paths);
             config.save();
-            System.out.println("  Search paths saved.");
+            System.out.println("  Paths saved.");
         } else if (paths.isEmpty()) {
-            System.out.println("  No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+            System.out.println(skipMessage);
         } else {
-            System.out.println("  Search paths unchanged.");
+            System.out.println("  Paths unchanged.");
         }
+    }
+
+    private void setupSearchPaths() {
+        setupPathList(
+                "[8/9] Configuring template search paths...",
+                SpawnConfig::getSearchPaths,
+                SpawnConfig::setSearchPaths,
+                "  You can add directories containing custom image and tool definitions.\n" +
+                "  Each directory should have images/ and/or tools/ subdirectories with YAML files.\n",
+                "  No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+    }
+
+    private void setupHostPaths() {
+        setupPathList(
+                "[9/9] Configuring host resource paths...",
+                SpawnConfig::getHostPaths,
+                SpawnConfig::setHostPaths,
+                "\n  Host paths are base directories where your git repositories live.\n" +
+                "  This enables faster git clones (reference clones) and auto-remote management.\n" +
+                "  Example: ~/code\n",
+                "  No host paths configured. Add them later by re-running 'isx init'\n" +
+                "  or editing ~/.config/incus-spawn/config.yaml");
     }
 
     private boolean offerProxyService() {
