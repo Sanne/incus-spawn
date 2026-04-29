@@ -71,6 +71,17 @@ public class IncusClient {
         }
     }
 
+    private static boolean needsShellQuoting(String arg) {
+        for (int i = 0; i < arg.length(); i++) {
+            char c = arg.charAt(i);
+            if (Character.isLetterOrDigit(c) || "-_./=:,+@".indexOf(c) >= 0) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
     private List<String> buildCommand(List<String> args) {
         var command = new ArrayList<String>();
         if (needsSg()) {
@@ -80,7 +91,7 @@ public class IncusClient {
             var sb = new StringBuilder("incus");
             for (var arg : args) {
                 sb.append(' ');
-                if (arg.contains(" ") || arg.contains("'") || arg.contains("\"")) {
+                if (needsShellQuoting(arg)) {
                     sb.append("'").append(arg.replace("'", "'\\''")).append("'");
                 } else {
                     sb.append(arg);
