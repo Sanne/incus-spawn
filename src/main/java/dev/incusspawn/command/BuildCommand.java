@@ -353,18 +353,21 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.restart(targetName);
         waitForReady(targetName);
 
+        var container = new Container(incus, targetName);
+
         // Relax kernel restrictions that default to paranoid values inside containers.
         // On bare metal these are often already relaxed by the distro; in a container
         // they reset to kernel defaults. Since the container is the security boundary,
         // restore bare-metal-like behaviour for common developer tools.
-        incus.shellExec(targetName, "sh", "-c",
+        container.sh(
                 "printf '%s\\n' " +
                 "'net.ipv4.ping_group_range = 0 2147483647' " +
                 "'kernel.dmesg_restrict = 0' " +
                 "'kernel.perf_event_paranoid = 1' " +
                 "'kernel.yama.ptrace_scope = 0' " +
                 "> /etc/sysctl.d/99-dev-container.conf && " +
-                "sysctl -p /etc/sysctl.d/99-dev-container.conf");
+                "sysctl -p /etc/sysctl.d/99-dev-container.conf")
+                .assertSuccess("Failed to configure sysctl");
 
         // The base Fedora image uses systemd-resolved (127.0.0.53) which doesn't
         // work reliably inside Incus containers. Replace it with a direct resolv.conf
@@ -378,19 +381,22 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var gatewayIp = gatewayRaw.contains("/")
                 ? gatewayRaw.substring(0, gatewayRaw.indexOf('/'))
                 : gatewayRaw;
-        incus.shellExec(targetName, "sh", "-c",
+        container.sh(
                 "rm -f /etc/resolv.conf; " +
-                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf");
+                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
+                .assertSuccess("Failed to configure DNS");
 
         // Install MITM CA certificate so containers trust the proxy's TLS certs.
         // DNS interception is handled at the bridge level via dnsmasq (configured by isx proxy).
         System.out.println("Installing MITM proxy CA certificate...");
         var ca = CertificateAuthority.loadOrCreate();
-        incus.shellExec(targetName, "sh", "-c",
+        container.sh(
                 "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
                 ca.caCertPem() +
-                "CERTEOF");
-        incus.shellExec(targetName, "update-ca-trust");
+                "CERTEOF")
+                .assertSuccess("Failed to install MITM CA certificate");
+        container.exec("update-ca-trust")
+                .assertSuccess("Failed to update CA trust");
 
         waitForNetwork(targetName);
 
@@ -399,41 +405,43 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         // Update all packages to latest security patches
         System.out.println("Updating system packages...");
-        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "-y", "--setopt=keepcache=true",
-                "upgrade", "--refresh"),
-                "Failed to update system packages");
+        container.runInteractive("Failed to update system packages",
+                "dnf", "-y", "--setopt=keepcache=true", "upgrade", "--refresh");
 
         // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable it.
         // Also remove 'resolve' from nsswitch.conf so .local domains go through
         // regular DNS (dnsmasq) instead of mDNS.
         System.out.println("Finalizing DNS configuration...");
-        incus.shellExec(targetName, "sh", "-c",
+        container.sh(
                 "systemctl disable --now systemd-resolved 2>/dev/null; " +
                 "systemctl mask systemd-resolved 2>/dev/null; " +
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
-                "chattr +i /etc/resolv.conf");
+                "chattr +i /etc/resolv.conf")
+                .assertSuccess("Failed to finalize DNS configuration");
 
         // Create agentuser with passwordless sudo (container is the security boundary)
         System.out.println("Creating agentuser...");
-        incus.shellExec(targetName, "useradd", "-m", "-u", "1000", "agentuser");
-        incus.shellExec(targetName, "mkdir", "-p", "/home/agentuser/inbox");
-        incus.shellExec(targetName, "chown", "agentuser:agentuser", "/home/agentuser/inbox");
-        incus.shellExec(targetName, "sh", "-c",
-                "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser");
+        container.exec("useradd", "-m", "-u", "1000", "agentuser")
+                .assertSuccess("Failed to create agentuser");
+        container.exec("mkdir", "-p", "/home/agentuser/inbox")
+                .assertSuccess("Failed to create inbox directory");
+        container.exec("chown", "agentuser:agentuser", "/home/agentuser/inbox")
+                .assertSuccess("Failed to set inbox ownership");
+        container.sh(
+                "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
+                .assertSuccess("Failed to configure passwordless sudo");
 
         // Override Fedora's default PROMPT_COMMAND which sets the terminal title
         // to "user@host:path" — we want "isx:containername".
-        incus.shellExec(targetName, "sh", "-c",
-                "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc");
+        container.sh(
+                "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
+                .assertSuccess("Failed to configure .bashrc");
 
         // Install base packages needed by most tools
         System.out.println("Installing base packages...");
-        requireSuccess(incus.shellExecInteractive(targetName, "dnf", "install", "-y",
-                "--setopt=keepcache=true", "git", "curl", "which", "procps-ng", "findutils"),
-                "Failed to install base packages");
-
-        // Install packages and tools from image definition
-        var container = new Container(incus, targetName);
+        container.runInteractive("Failed to install base packages",
+                "dnf", "install", "-y", "--setopt=keepcache=true",
+                "git", "curl", "which", "procps-ng", "findutils");
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
@@ -671,13 +679,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                     collectToolDefRecursive(dep, tools, visited);
                 }
             }
-        }
-    }
-
-    private void requireSuccess(int exitCode, String message) {
-        if (exitCode != 0) {
-            throw new RuntimeException(
-                    message + " (exit code " + exitCode + ")");
         }
     }
 
