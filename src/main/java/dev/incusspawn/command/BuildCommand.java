@@ -370,19 +370,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         var container = new Container(incus, targetName);
 
-        // Relax kernel restrictions that default to paranoid values inside containers.
-        // On bare metal these are often already relaxed by the distro; in a container
-        // they reset to kernel defaults. Since the container is the security boundary,
-        // restore bare-metal-like behaviour for common developer tools.
-        container.sh(
-                "printf '%s\\n' " +
-                "'net.ipv4.ping_group_range = 0 2147483647' " +
-                "'kernel.dmesg_restrict = 0' " +
-                "'kernel.perf_event_paranoid = 1' " +
-                "'kernel.yama.ptrace_scope = 0' " +
-                "> /etc/sysctl.d/99-dev-container.conf && " +
-                "sysctl -p /etc/sysctl.d/99-dev-container.conf")
-                .assertSuccess("Failed to configure sysctl");
+        // Note: net.ipv4.ping_group_range is set by Incus itself at container
+        // start. Other kernel.* sysctls (dmesg_restrict, perf_event_paranoid,
+        // yama.ptrace_scope) are not namespaced and cannot be changed from
+        // inside a container — they require host-level configuration.
 
         // The base Fedora image uses systemd-resolved (127.0.0.53) which doesn't
         // work reliably inside Incus containers. Replace it with a direct resolv.conf
