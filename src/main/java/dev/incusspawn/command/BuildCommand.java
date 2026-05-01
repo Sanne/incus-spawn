@@ -12,6 +12,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -337,7 +338,21 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         // Launch base image
         System.out.println("Launching " + image + "...");
-        incus.launch(image, targetName, vm);
+        try {
+            incus.launch(image, targetName, vm);
+        } catch (IncusException e) {
+            if (incus.exists(targetName)) {
+                var log = incus.getLog(targetName);
+                if (log.contains("Exec format error")) {
+                    throw new RuntimeException(
+                            "The cached image for '" + image + "' has a broken /sbin/init " +
+                            "(Exec format error). " +
+                            "Delete it with 'incus image list' + 'incus image delete <fingerprint>' " +
+                            "and retry the build.", e);
+                }
+            }
+            throw e;
+        }
 
         waitForReady(targetName);
 
@@ -608,7 +623,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             if (result.success()) return;
             try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
         }
-        System.err.println("Warning: container " + container + " may not be fully ready.");
+        throw new RuntimeException(
+                "Container " + container + " failed to become ready after 30 seconds");
     }
 
     private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef) {

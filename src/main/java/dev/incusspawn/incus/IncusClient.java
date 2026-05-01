@@ -296,6 +296,10 @@ public class IncusClient {
         exec(args).assertSuccess("Failed to copy " + source + " to " + target);
     }
 
+    public String getLog(String instance) {
+        return exec("info", "--show-log", instance).stdout();
+    }
+
     /**
      * Start a stopped container/VM.
      */
