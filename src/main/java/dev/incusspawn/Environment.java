@@ -68,6 +68,7 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
 
+    public static final String OS_NAME = System.getProperty("os.name").toLowerCase();
     public static final String INCUS_CLIENT;
     public static final String INCUS_SERVER;
     static {

@@ -13,7 +13,10 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.tool.ActionContext;
+import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.YamlToolAction;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.tui.ShiftTabBindings;
 import dev.tamboui.layout.Constraint;
@@ -41,6 +44,7 @@ import dev.tamboui.widgets.scrollbar.Scrollbar;
 import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
 import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.table.TableState;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -69,9 +73,12 @@ public class ListCommand implements Runnable {
     ToolDefLoader toolDefLoader;
 
     @Inject
+    Instance<ToolAction> toolActions;
+
+    @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -100,10 +107,19 @@ public class ListCommand implements Runnable {
     private int instanceDetailScrollOffset;
     // Info modal state
     private int infoScrollOffset;
+    // Actions modal state
+    private java.util.List<ToolAction> actionsList;
+    private int actionsSelectedIndex;
+    private int actionsScrollOffset;
+    private ActionContext actionsContext;
+    // Actions cache (computed once per data refresh, not per render)
+    private java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
 
-    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE }
+    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
+    private ToolAction pendingToolAction;
+    private ActionContext pendingToolActionContext;
     // After returning from a shell/branch, focus this instance in the instances panel
     private String returnToInstance;
     private String returnToTemplate;
@@ -242,6 +258,16 @@ public class ListCommand implements Runnable {
                     new picocli.CommandLine(TemplatesCommand.Edit.class, factory)
                             .execute(pendingActionTarget);
                 }
+                case EXECUTE_ACTION -> {
+                    var result = pendingToolAction.execute(pendingToolActionContext);
+                    System.out.println(result.message());
+                    if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
+                        System.out.println("\nPress any key to continue...");
+                        try {
+                            System.in.read();
+                        } catch (java.io.IOException ignored) {}
+                    }
+                }
                 case NONE -> { return; }
             }
         }
@@ -304,9 +330,12 @@ public class ListCommand implements Runnable {
 
         // Instance panel: exclude template instances (they're shown in the template panel)
         entries = new ArrayList<>();
+        actionsCache = new java.util.HashMap<>();
         for (var inst : allInstances) {
             if (!templateNames.contains(inst.name)) {
                 entries.add(inst);
+                // Pre-compute actions for each instance
+                actionsCache.put(inst.name, resolveActionsForInstance(inst));
             }
         }
         buildRowData();
@@ -327,6 +356,7 @@ public class ListCommand implements Runnable {
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> handleInfoEvent(key);
             case ERROR -> { mode = Mode.BROWSE; yield true; }
+            case ACTIONS -> handleActionsEvent(key, tui);
         };
     }
 
@@ -539,6 +569,19 @@ public class ListCommand implements Runnable {
                 renameInput = new TextInputState(selected.name);
                 mode = Mode.RENAME;
             }
+            return true;
+        }
+        if (key.isKey(KeyCode.F9)) {
+            var actions = getActionsForInstance(selected);
+            if (actions.isEmpty()) {
+                statusMessage = "No actions available for " + selected.name;
+                return true;
+            }
+            actionsList = actions;
+            actionsSelectedIndex = 0;
+            actionsScrollOffset = 0;
+            actionsContext = buildActionContext(selected);
+            mode = Mode.ACTIONS;
             return true;
         }
         return false;
@@ -1020,6 +1063,8 @@ public class ListCommand implements Runnable {
         items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
         items.add(makeKey("F7", "Stop", !running || onTemplates));
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
+        boolean hasActions = hasInstance && !onTemplates && hasActionsForInstance(selected);
+        items.add(makeKey("F9", "Actions", !hasActions));
         items.add(makeKey("F10", "Quit", false));
 
         var contextLine = buildContextLine(template, selected, onTemplates);
@@ -1152,6 +1197,7 @@ public class ListCommand implements Runnable {
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
+            case ACTIONS -> renderActionsModal(frame, screen);
             case ERROR -> ModalRenderer.renderErrorModal(frame, screen, errorMessage);
             default -> {}
         }
@@ -1365,6 +1411,43 @@ public class ListCommand implements Runnable {
         return true;
     }
 
+    private boolean handleActionsEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F9)) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            if (actionsSelectedIndex < actionsList.size() - 1) {
+                actionsSelectedIndex++;
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            if (actionsSelectedIndex > 0) {
+                actionsSelectedIndex--;
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            var action = actionsList.get(actionsSelectedIndex);
+            // Commands need deferred execution (quit TUI, run, optionally wait for key)
+            if (action instanceof YamlToolAction yamlAction && yamlAction.needsDeferredExecution()) {
+                pendingAction = PendingAction.EXECUTE_ACTION;
+                pendingToolAction = action;
+                pendingToolActionContext = actionsContext;
+                mode = Mode.BROWSE;
+                tui.quit();
+                return true;
+            }
+            // Inline execution for URL and copy-to-clipboard
+            var result = action.execute(actionsContext);
+            statusMessage = result.message();
+            mode = Mode.BROWSE;
+            return true;
+        }
+        return false;
+    }
+
     private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var info = dev.incusspawn.BuildInfo.instance();
         var lines = List.of(
@@ -1403,6 +1486,7 @@ public class ListCommand implements Runnable {
                 shortcutRow("F6", "Rename instance", null, null),
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
+                shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null));
 
         int width = 60;
@@ -1793,6 +1877,100 @@ public class ListCommand implements Runnable {
         visiting.remove(name);
     }
 
+    private boolean hasActionsForInstance(InstanceInfo instance) {
+        return !getActionsForInstance(instance).isEmpty();
+    }
+
+    private java.util.List<ToolAction> getActionsForInstance(InstanceInfo instance) {
+        return actionsCache.getOrDefault(instance.name, java.util.List.of());
+    }
+
+    private void addActionIfAllowed(java.util.List<ToolAction> actions,
+                                     ToolAction action,
+                                     InstanceInfo instance) {
+        if (!action.requiresRunning() || isRunning(instance)) {
+            actions.add(action);
+        }
+    }
+
+    private java.util.List<ToolAction> resolveActionsForInstance(InstanceInfo instance) {
+        var actions = new ArrayList<ToolAction>();
+        var tools = collectInstalledTools(instance);
+        java.util.List<ActionContext.RepoInfo> repos = null;
+
+        // YAML-declared actions
+        for (var toolName : tools) {
+            var setup = toolDefLoader.find(toolName);
+            if (setup instanceof YamlToolSetup yts) {
+                var toolDef = yts.toolDef();
+                for (var entry : toolDef.getActions()) {
+                    if (YamlToolAction.EXPAND_REPOS.equals(entry.getExpand())) {
+                        // Expand per repo (compute repos once)
+                        if (repos == null) repos = collectRepos(instance);
+                        for (var repo : repos) {
+                            var action = new YamlToolAction(toolName, entry, repo);
+                            addActionIfAllowed(actions, action, instance);
+                        }
+                    } else {
+                        // Single action
+                        var action = new YamlToolAction(toolName, entry);
+                        addActionIfAllowed(actions, action, instance);
+                    }
+                }
+            }
+        }
+
+        // CDI-declared actions
+        for (var action : toolActions) {
+            if (tools.contains(action.toolName())) {
+                addActionIfAllowed(actions, action, instance);
+            }
+        }
+
+        return actions;
+    }
+
+    private java.util.Set<String> collectInstalledTools(InstanceInfo instance) {
+        var tools = new java.util.LinkedHashSet<String>();
+        var parent = instance.parent;
+        if (parent == null || parent.isEmpty() || "-".equals(parent)) return tools;
+        var chain = getInheritanceChain(parent);
+        for (var def : chain) {
+            tools.addAll(def.getTools());
+        }
+        // Add transitive deps
+        var allDeps = new java.util.LinkedHashSet<String>();
+        for (var toolName : new ArrayList<>(tools)) {
+            collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
+        }
+        tools.addAll(allDeps);
+        return tools;
+    }
+
+    private java.util.List<ActionContext.RepoInfo> collectRepos(InstanceInfo instance) {
+        var repos = new ArrayList<ActionContext.RepoInfo>();
+        var parent = instance.parent;
+        if (parent == null || parent.isEmpty() || "-".equals(parent)) return repos;
+        var chain = getInheritanceChain(parent);
+        for (var def : chain) {
+            for (var repo : def.getRepos()) {
+                var repoPath = repo.getPath().startsWith("~/")
+                        ? "/home/agentuser" + repo.getPath().substring(1) : repo.getPath();
+                var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
+                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
+            }
+        }
+        return repos;
+    }
+
+    private ActionContext buildActionContext(InstanceInfo instance) {
+        var tools = collectInstalledTools(instance);
+        var repos = collectRepos(instance);
+        return new ActionContext(
+                instance.name, instance.ipv4, instance.status,
+                instance.parent, tools, instance.networkMode, repos);
+    }
+
     private List<Line> buildTreeDetailLines(String templateName) {
         var chain = getInheritanceChain(templateName);
         if (chain.isEmpty()) return List.of();
@@ -1912,6 +2090,64 @@ public class ListCommand implements Runnable {
             spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
         }
         return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
+    }
+
+    private void renderActionsModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        if (actionsList == null || actionsList.isEmpty()) return;
+
+        var lines = new ArrayList<Line>();
+        for (int i = 0; i < actionsList.size(); i++) {
+            var action = actionsList.get(i);
+            var selected = (i == actionsSelectedIndex);
+            var prefix = selected ? " > " : "   ";
+            var style = selected
+                    ? Style.EMPTY.bold().fg(Color.WHITE).bg(ModalRenderer.BG)
+                    : Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+            if (action instanceof YamlToolAction ya && ya.isUrl()) {
+                var url = ya.resolveUrl(actionsContext);
+                if (url != null && !url.isBlank()) {
+                    style = style.hyperlink(url);
+                }
+            }
+            var toolStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+            lines.add(Line.from(List.of(
+                    Span.styled(prefix + action.label(), style),
+                    Span.styled("  (" + action.toolName() + ")", toolStyle))));
+        }
+
+        int modalWidth = Math.min(80, screen.width() - 4);
+        int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
+
+        var instanceName = actionsContext != null ? actionsContext.instanceName() : "";
+        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
+        var block = dev.tamboui.widgets.block.Block.builder()
+                .borders(dev.tamboui.widgets.block.Borders.ALL)
+                .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
+                .title(" Actions — " + instanceName + " ")
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .build();
+        ModalRenderer.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = dev.tamboui.layout.Layout.vertical()
+                .constraints(dev.tamboui.layout.Constraint.fill(), dev.tamboui.layout.Constraint.length(1))
+                .split(inner);
+
+        // Keep the selected item visible
+        int contentHeight = rows.get(0).height();
+        if (actionsSelectedIndex < actionsScrollOffset) {
+            actionsScrollOffset = actionsSelectedIndex;
+        } else if (actionsSelectedIndex >= actionsScrollOffset + contentHeight) {
+            actionsScrollOffset = actionsSelectedIndex - contentHeight + 1;
+        }
+
+        actionsScrollOffset = renderScrollableContent(frame, rows.get(0), lines, actionsScrollOffset);
+
+        var hintSpans = new ArrayList<Span>();
+        ModalRenderer.addKey(hintSpans, "Enter", "Run");
+        ModalRenderer.addKey(hintSpans, "F9/Esc", "Close");
+        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
     private static void fillBackground(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Color bg) {
