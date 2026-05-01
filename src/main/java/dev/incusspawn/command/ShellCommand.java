@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -40,6 +41,7 @@ public class ShellCommand implements Runnable {
         var info = incus.exec("list", name, "--format=csv", "--columns=s");
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             System.out.println("Starting " + name + "...");
+            HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
             waitForReady(name);
         }
@@ -52,6 +54,7 @@ public class ShellCommand implements Runnable {
         // Ensure the container is running so we can push the cert
         var info = incus.exec("list", container, "--format=csv", "--columns=s");
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+            HostResourceSetup.removeStaleDevices(incus, container);
             incus.start(container);
             waitForReady(container);
         }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
 
 import java.io.IOException;
@@ -65,6 +66,13 @@ public final class HostResourceSetup {
         return OVERLAY_BASE + containerPath;
     }
 
+    private static String deviceNameForMode(ImageDef.HostResource hr) {
+        var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
+        return "overlay".equals(hr.getMode())
+                ? overlayDeviceName(containerPath)
+                : deviceName(containerPath);
+    }
+
     public static List<ImageDef.HostResource> collectEffective(ImageDef imageDef, Map<String, ImageDef> defs) {
         var result = new LinkedHashMap<String, ImageDef.HostResource>();
         var chain = new ArrayList<ImageDef>();
@@ -102,15 +110,32 @@ public final class HostResourceSetup {
         }
     }
 
+    /**
+     * Removes disk devices whose host source path no longer exists.
+     */
+    public static void removeStaleDevices(IncusClient incus, String container) {
+        var hrJson = incus.configGet(container, Metadata.HOST_RESOURCES);
+        var resources = deserialize(hrJson);
+        for (var hr : resources) {
+            if ("copy".equals(hr.getMode())) continue;
+            var expandedSource = expandHostTilde(hr.getSource());
+            if (!Files.exists(Path.of(expandedSource))) {
+                removeExistingDevice(incus, container, deviceNameForMode(hr));
+                System.err.println("Warning: host-resource source not found: "
+                        + hr.getSource() + " (device removed)");
+            }
+        }
+    }
+
     public static void applyForInstance(IncusClient incus, String container, List<ImageDef.HostResource> resources) {
         for (var hr : resources) {
             switch (hr.getMode()) {
                 case "readonly" -> {
-                    removeExistingDevice(incus, container, deviceName(resolveContainerPath(hr.getSource(), hr.getPath())));
+                    removeExistingDevice(incus, container, deviceNameForMode(hr));
                     applyReadonly(incus, container, hr);
                 }
                 case "overlay" -> {
-                    removeExistingDevice(incus, container, overlayDeviceName(resolveContainerPath(hr.getSource(), hr.getPath())));
+                    removeExistingDevice(incus, container, deviceNameForMode(hr));
                     applyOverlayDevice(incus, container, hr);
                 }
                 case "copy" -> {} // already baked into the template
@@ -125,14 +150,12 @@ public final class HostResourceSetup {
     public static void removeBuildDevices(IncusClient incus, String container, List<ImageDef.HostResource> resources) {
         for (var hr : resources) {
             if ("copy".equals(hr.getMode())) continue;
-            var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
             try {
                 if ("overlay".equals(hr.getMode())) {
+                    var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
                     incus.shellExec(container, "umount", containerPath);
-                    incus.deviceRemove(container, overlayDeviceName(containerPath));
-                } else {
-                    incus.deviceRemove(container, deviceName(containerPath));
                 }
+                incus.deviceRemove(container, deviceNameForMode(hr));
             } catch (Exception e) {
                 System.err.println("Warning: failed to remove build device: " + e.getMessage());
             }

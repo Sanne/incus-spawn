@@ -2331,6 +2331,7 @@ public class ListCommand implements Runnable {
     private void fixCaMismatchIfNeeded(String containerName) {
         var info = incus.exec("list", containerName, "--format=csv", "--columns=s");
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+            HostResourceSetup.removeStaleDevices(incus, containerName);
             incus.start(containerName);
             waitForReady(containerName);
         }
@@ -2341,6 +2342,7 @@ public class ListCommand implements Runnable {
         var info = incus.exec("list", name, "--format=csv", "--columns=s");
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             System.out.println("Starting " + name + "...");
+            HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
             waitForReady(name);
         }
