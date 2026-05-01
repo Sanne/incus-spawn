@@ -15,3 +15,9 @@ run_as_user:
   - /opt/idea/bin/remote-dev-server.sh registerBackendLocationForGateway
 
 verify: test -x /opt/idea/bin/remote-dev-server.sh
+
+actions:
+  - label: "Open repo '${repo_name}' in Gateway"
+    type: url
+    expand: repos
+    url: "jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=${ip}&port=22&user=agentuser&type=ssh&deploy=false&projectPath=${repo_path}"

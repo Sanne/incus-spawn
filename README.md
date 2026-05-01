@@ -366,6 +366,7 @@ Tool schema fields (all optional except `name`):
 - `files` -- files to write (with optional `owner`)
 - `env` -- lines appended to agentuser's `.bashrc`
 - `verify` -- verification command (logged, non-fatal)
+- `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
 
 Download entry fields:
 - `url` (required) -- download URL
@@ -392,12 +393,75 @@ tools:
 
 After branching, connect from JetBrains Gateway using the container's IP (visible in the TUI via F3) over SSH as `agentuser`. Add your SSH public key to the template's `~/.ssh/authorized_keys` (e.g. via a host-resource or a custom tool) so authentication works automatically in every branch.
 
+The `idea-backend` tool also declares a tool action that lets you open repos directly in Gateway from the TUI — press F9 on a running instance to see available actions, including an "Open repo in Gateway" entry for each declared repository.
+
+### Tool Actions
+
+Tools can declare runtime actions that appear in the TUI when the tool is installed on an instance. Press **F9** on a selected instance to open the actions menu. Actions are only shown for tools that are part of the instance's template chain.
+
+Three action types are supported:
+
+| Type | Description |
+|------|-------------|
+| `url` | Opens a URL in the default browser (via `xdg-open`) |
+| `command` | Runs a shell command on the host (exits the TUI, re-enters after) |
+| `copy-to-clipboard` | Copies text to the system clipboard (via `xclip`) |
+
+Actions support template variables that are interpolated at execution time:
+
+| Variable | Value |
+|----------|-------|
+| `${ip}` | Instance IPv4 address |
+| `${name}` | Instance name |
+| `${parent}` | Parent template name |
+| `${repo_name}` | Repository directory name (when expanded) |
+| `${repo_path}` | Repository path inside the container (when expanded) |
+| `${repo_url}` | Repository clone URL (when expanded) |
+
+Use `expand: repos` to generate one action per declared repository in the template's inheritance chain. This is how the `idea-backend` tool creates a separate "Open in Gateway" entry for each repo:
+
+```yaml
+# tools/idea-backend.yaml (excerpt)
+actions:
+  - label: "Open repo '${repo_name}' in Gateway"
+    type: url
+    expand: repos
+    url: "jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=${ip}&port=22&user=agentuser&type=ssh&deploy=false&projectPath=${repo_path}"
+```
+
+A standalone action (without `expand`) looks like:
+
+```yaml
+actions:
+  - label: "Open web UI"
+    type: url
+    url: "http://${ip}:8080"
+  - label: "Copy SSH command"
+    type: copy-to-clipboard
+    text: "ssh agentuser@${ip}"
+  - label: "Run migrations"
+    type: command
+    command: "incus exec ${name} -- sudo -u agentuser /home/agentuser/app/migrate.sh"
+```
+
+Action entry fields:
+- `label` (required) -- text shown in the actions menu (supports template variables)
+- `type` (required) -- one of `url`, `command`, or `copy-to-clipboard`
+- `url` -- URL to open (for `url` type)
+- `command` -- shell command to run on the host (for `command` type)
+- `text` -- text to copy (for `copy-to-clipboard` type)
+- `expand` -- set to `repos` to generate one action per declared repository
+- `requires_running` -- whether the instance must be running (default: `true`)
+- `auto_return` -- for `command` type, skip the "press any key" prompt after execution (default: `false`)
+
+Actions can also be contributed programmatically by CDI beans implementing the `ToolAction` interface, for cases that need logic beyond what YAML declarations can express.
+
 ## Features
 
 - **Instant branching**: copy-on-write clones that share storage with the parent image
 - **System containers**: full init, real networking, bare-metal-like developer experience
 - **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel (optional)
-- **Interactive TUI**: Midnight Commander-style interface with F3 detail views, template staleness indicators, and modal dialogs for branching, renaming, and building
+- **Interactive TUI**: Midnight Commander-style interface with F3 detail views, F9 tool actions, template staleness indicators, and modal dialogs for branching, renaming, and building
 - **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Host resources**: share host files and directories with containers (read-only, overlay, or copy)
 - **Inbox mount**: share a host directory read-only into the container
@@ -410,7 +474,8 @@ After branching, connect from JetBrains Gateway using the container's IP (visibl
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 - **Git remotes**: `git fetch`/`git push` between host and container repos via `isx://` URLs, with automatic remote management
-- **Remote IDE**: JetBrains Gateway support via built-in `idea-backend` tool with transitive `sshd` dependency
+- **Remote IDE**: JetBrains Gateway support via built-in `idea-backend` tool with transitive `sshd` dependency, and one-click "Open in Gateway" action from the TUI
+- **Tool actions**: tools can declare runtime actions (open URL, run command, copy to clipboard) available via F9 in the TUI, with per-repo expansion and template variable interpolation
 - **Tool dependencies**: tools can declare `requires` for automatic transitive dependency resolution
 - **Version drift detection**: warns when templates were built with a different isx version or when definitions have changed since the last build
 - **Shell completions**: bash, zsh, and fish via `isx completion {bash,zsh,fish}`

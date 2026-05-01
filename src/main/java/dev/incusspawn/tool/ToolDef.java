@@ -38,6 +38,7 @@ public class ToolDef {
     private List<String> env = List.of();
     private List<String> requires = List.of();
     private String verify;
+    private List<ActionEntry> actions = List.of();
 
     private transient volatile String cachedFingerprint;
 
@@ -61,6 +62,8 @@ public class ToolDef {
     public void setRequires(List<String> requires) { this.requires = requires; }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
+    public List<ActionEntry> getActions() { return actions; }
+    public void setActions(List<ActionEntry> actions) { this.actions = actions; }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DownloadEntry {
@@ -91,6 +94,37 @@ public class ToolDef {
         public void setContent(String content) { this.content = content; }
         public String getOwner() { return owner; }
         public void setOwner(String owner) { this.owner = owner; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ActionEntry {
+        private String label;
+        private String type;
+        @JsonProperty("requires_running")
+        private boolean requiresRunning = true;
+        private String expand;
+        private String url;
+        private String command;
+        private String text;
+        @JsonProperty("auto_return")
+        private boolean autoReturn = false;
+
+        public String getLabel() { return label; }
+        public void setLabel(String label) { this.label = label; }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public boolean isRequiresRunning() { return requiresRunning; }
+        public void setRequiresRunning(boolean requiresRunning) { this.requiresRunning = requiresRunning; }
+        public String getExpand() { return expand; }
+        public void setExpand(String expand) { this.expand = expand; }
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String getCommand() { return command; }
+        public void setCommand(String command) { this.command = command; }
+        public String getText() { return text; }
+        public void setText(String text) { this.text = text; }
+        public boolean isAutoReturn() { return autoReturn; }
+        public void setAutoReturn(boolean autoReturn) { this.autoReturn = autoReturn; }
     }
 
     public String contentFingerprint() {
