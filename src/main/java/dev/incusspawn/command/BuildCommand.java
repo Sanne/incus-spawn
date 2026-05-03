@@ -415,14 +415,14 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 "dnf", "-y", "--setopt=keepcache=true", "upgrade", "--refresh");
 
         // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable it.
-        // Also remove 'resolve' from nsswitch.conf so .local domains go through
-        // regular DNS (dnsmasq) instead of mDNS.
+        // Masking (not just disabling) is sufficient: a masked unit can never be started
+        // by package scripts. Also remove 'resolve' from nsswitch.conf so .local domains
+        // go through regular DNS (dnsmasq) instead of mDNS.
         System.out.println("Finalizing DNS configuration...");
         container.sh(
                 "systemctl disable --now systemd-resolved 2>/dev/null; " +
                 "systemctl mask systemd-resolved 2>/dev/null; " +
-                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
-                "chattr +i /etc/resolv.conf")
+                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
                 .assertSuccess("Failed to finalize DNS configuration");
 
         // Create agentuser with passwordless sudo (container is the security boundary)
