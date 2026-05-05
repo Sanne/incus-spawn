@@ -92,8 +92,6 @@ public class ProxyCommand {
 
             installLogTee();
 
-            MitmProxy.configureBridgeDns(incus);
-
             var build = BuildInfo.instance();
             System.out.println("Starting MITM authentication proxy...");
             System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
@@ -132,7 +130,7 @@ public class ProxyCommand {
             }));
 
             try {
-                proxy.start();
+                proxy.start(() -> MitmProxy.configureBridgeDns(incus));
             } catch (Exception e) {
                 System.err.println("Failed to start proxy: " + e.getMessage());
                 System.err.println("Is another proxy already running? Check port " + port + ".");
@@ -209,10 +207,8 @@ public class ProxyCommand {
                     System.exit(1);
                 }
                 case STALE_DNS -> {
-                    System.err.println("Proxy is not running, but stale DNS overrides are active.");
-                    System.err.println("Clearing stale DNS overrides...");
-                    ProxyHealthCheck.clearStaleDns(incus);
-                    System.err.println("Start the proxy with: isx proxy start");
+                    System.err.println("Proxy is not running, but DNS overrides are still active.");
+                    System.err.println("Start the proxy to restore connectivity: isx proxy start");
                     System.exit(2);
                 }
             }

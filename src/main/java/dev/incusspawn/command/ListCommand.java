@@ -2532,12 +2532,10 @@ public class ListCommand implements Runnable {
         var proxyStatus = ProxyHealthCheck.check(incus);
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) return false;
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
-            ProxyHealthCheck.clearStaleDns(incus);
             errorMessage = "The MITM proxy is not running, but DNS overrides\n"
                     + "are still active from a previous session.\n"
                     + "\n"
-                    + "Stale DNS overrides have been cleared.\n"
-                    + "Start the proxy in a separate terminal:\n"
+                    + "Start the proxy to restore connectivity:\n"
                     + "\n"
                     + "  isx proxy start";
         } else {

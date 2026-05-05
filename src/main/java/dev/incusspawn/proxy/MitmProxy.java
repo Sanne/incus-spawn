@@ -250,8 +250,13 @@ public class MitmProxy {
 
     // --- Lifecycle ---
 
-    /** Start the MITM proxy and health server. Blocks until {@link #stop()} is called. */
-    public void start() throws Exception {
+    /**
+     * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
+     *
+     * @param onReady called after both servers are listening, before blocking on the stop latch.
+     *                Use this to enable DNS overrides so they are never visible without a healthy proxy.
+     */
+    public void start(Runnable onReady) throws Exception {
         stopLatch = new CountDownLatch(1);
         vertx = Vertx.vertx();
 
@@ -319,6 +324,10 @@ public class MitmProxy {
                 .requestHandler(this::handleHealthCheck);
         healthHttpServer.listen(healthPort, bindAddress)
                 .toCompletionStage().toCompletableFuture().get();
+
+        if (onReady != null) {
+            onReady.run();
+        }
 
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + bindAddress + ":" + healthPort + "/health");

@@ -94,10 +94,6 @@ public final class ProxyHealthCheck {
         return "";
     }
 
-    public static void clearStaleDns(IncusClient incus) {
-        MitmProxy.clearBridgeDns(incus);
-    }
-
     public static String formatError(ProxyStatus status) {
         var separator = "\033[33m" + "─".repeat(60) + "\033[0m";
         return switch (status) {
@@ -105,9 +101,8 @@ public final class ProxyHealthCheck {
                     + "\033[1mThe MITM proxy is not running, but DNS overrides are\n"
                     + "still active from a previous session.\033[0m\n\n"
                     + "Intercepted domains (Maven repos, GitHub, Docker registries)\n"
-                    + "are resolving to the gateway where nothing is listening.\n"
-                    + "Stale DNS overrides have been cleared.\n\n"
-                    + "Start the proxy in a separate terminal:\n"
+                    + "are resolving to the gateway where nothing is listening.\n\n"
+                    + "Start the proxy to restore connectivity:\n"
                     + "  \033[1misx proxy start\033[0m\n\n"
                     + "Then re-run this command.\n"
                     + separator;
@@ -131,9 +126,6 @@ public final class ProxyHealthCheck {
             warnIfDrifted(incus);
             return;
         }
-        if (status == ProxyStatus.STALE_DNS) {
-            clearStaleDns(incus);
-        }
         System.err.println(formatError(status));
         System.exit(1);
     }
@@ -143,9 +135,6 @@ public final class ProxyHealthCheck {
         if (status == ProxyStatus.RUNNING) {
             warnIfDrifted(incus);
             return true;
-        }
-        if (status == ProxyStatus.STALE_DNS) {
-            clearStaleDns(incus);
         }
         System.err.println(formatError(status));
         return false;

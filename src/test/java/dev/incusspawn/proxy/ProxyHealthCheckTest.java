@@ -70,7 +70,7 @@ class ProxyHealthCheckTest {
 
         var staleDns = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.STALE_DNS);
         assertTrue(staleDns.contains("isx proxy"));
-        assertTrue(staleDns.contains("Stale DNS"));
+        assertTrue(staleDns.contains("DNS overrides"));
     }
 
     @Test
