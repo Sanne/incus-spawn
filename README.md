@@ -18,10 +18,20 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ## Quick Start
 
+If on a Linux X64 machine, you can install incus-spawn with the following command:
+
 ```shell
 # Install
 curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
+```
 
+If on any other machine, you can install incus-spawn with the following command:
+
+```shell
+jbang app install isx@Sanne/incus-spawn
+```
+
+```shell
 # One-time host setup (Incus, firewall, auth)
 isx init
 
