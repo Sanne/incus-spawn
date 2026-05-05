@@ -8,6 +8,7 @@ import dev.incusspawn.incus.IncusClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
@@ -859,31 +860,33 @@ public class MitmProxy {
             return;
         }
 
-        vertx.executeBlocking(() -> {
+        vertx.<Path>executeBlocking(() -> {
             var m2File = resolveM2Path(domain, path);
             if (m2File == null || !Files.isRegularFile(m2File)) return null;
-
-            var upstreamSha1 = fetchSha1FromUpstream(domain, path + ".sha1");
-            if (upstreamSha1 == null) return null;
-
-            var localSha1 = computeSha1(m2File);
-            if (!upstreamSha1.equals(localSha1)) {
-                System.out.println("Maven .m2 SHA1 mismatch: " + domain + path +
-                        " (local=" + localSha1.substring(0, 8) + "..." +
-                        " upstream=" + upstreamSha1.substring(0, 8) + "...)");
-                return null;
-            }
-
-            Files.createDirectories(cacheFile.getParent());
-            try {
-                Files.createLink(cacheFile, m2File);
-            } catch (IOException e) {
-                // Cross-filesystem or unsupported — fall back to copy
-                Files.copy(m2File, cacheFile, StandardCopyOption.REPLACE_EXISTING);
-            }
-            System.out.println("Maven .m2 hit: " + domain + path +
-                    " (" + formatSize(Files.size(cacheFile)) + ", SHA1 verified)");
-            return cacheFile;
+            return m2File;
+        }).compose(m2File -> {
+            if (m2File == null) return Future.succeededFuture((Path) null);
+            return fetchSha1FromUpstream(domain, path + ".sha1").compose(upstreamSha1 ->
+                vertx.executeBlocking(() -> {
+                    if (upstreamSha1 == null) return null;
+                    var localSha1 = computeSha1(m2File);
+                    if (!upstreamSha1.equals(localSha1)) {
+                        System.out.println("Maven .m2 SHA1 mismatch: " + domain + path +
+                                " (local=" + localSha1.substring(0, 8) + "..." +
+                                " upstream=" + upstreamSha1.substring(0, 8) + "...)");
+                        return null;
+                    }
+                    Files.createDirectories(cacheFile.getParent());
+                    try {
+                        Files.createLink(cacheFile, m2File);
+                    } catch (IOException e) {
+                        Files.copy(m2File, cacheFile, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    System.out.println("Maven .m2 hit: " + domain + path +
+                            " (" + formatSize(Files.size(cacheFile)) + ", SHA1 verified)");
+                    return cacheFile;
+                })
+            );
         }).onSuccess(result -> {
             if (result != null) {
                 serveCachedFile(clientReq.response(), cacheFile, null);
@@ -1146,54 +1149,26 @@ public class MitmProxy {
         return java.util.HexFormat.of().formatHex(md.digest());
     }
 
-    /**
-     * Fetch the .sha1 checksum for a Maven artifact from the upstream repository.
-     * Returns the hex SHA1 string, or null if the checksum could not be retrieved.
-     */
-    private static String fetchSha1FromUpstream(String domain, String sha1Path) {
-        try {
-            var socket = (javax.net.ssl.SSLSocket) javax.net.ssl.SSLSocketFactory.getDefault()
-                    .createSocket(domain, 443);
-            socket.setSoTimeout(30_000);
+    private Future<String> fetchSha1FromUpstream(String domain, String sha1Path) {
+        var options = new RequestOptions()
+                .setMethod(HttpMethod.GET)
+                .setHost(domain)
+                .setPort(443)
+                .setURI(sha1Path);
 
-            try (socket) {
-                socket.startHandshake();
-                var out = socket.getOutputStream();
-                var in = socket.getInputStream();
-
-                var request = "GET " + sha1Path + " HTTP/1.1\r\n"
-                        + "Host: " + domain + "\r\n"
-                        + "Connection: close\r\n"
-                        + "\r\n";
-                out.write(request.getBytes());
-                out.flush();
-
-                var response = HttpMessage.readResponse(in);
-                if (response == null || response.statusCode() != 200) return null;
-
-                var clHeader = response.header("Content-Length");
-                byte[] body;
-                if (clHeader != null) {
-                    int len = Integer.parseInt(clHeader.trim());
-                    body = new byte[len];
-                    int offset = 0;
-                    while (offset < len) {
-                        int n = in.read(body, offset, len - offset);
-                        if (n == -1) break;
-                        offset += n;
-                    }
-                } else {
-                    body = in.readAllBytes();
-                }
-
-                // Handle "hash" or "hash  filename" formats
-                var hex = new String(body).trim().split("\\s+")[0].toLowerCase();
-                if (hex.matches("[a-f0-9]{40}")) return hex;
-                return null;
-            }
-        } catch (Exception e) {
-            return null;
-        }
+        return upstreamClient.request(options)
+                .compose(req -> {
+                    req.putHeader("Host", domain);
+                    return req.send();
+                })
+                .compose(resp -> {
+                    if (resp.statusCode() != 200) return Future.succeededFuture(null);
+                    return resp.body().map(buf -> {
+                        var hex = buf.toString().trim().split("\\s+")[0].toLowerCase();
+                        return hex.matches("[a-f0-9]{40}") ? hex : null;
+                    });
+                })
+                .otherwise(err -> null);
     }
 
     // --- Digest verification ---
@@ -1246,7 +1221,7 @@ public class MitmProxy {
             "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",    // RHEL, CentOS
     };
 
-    private static String findSystemCaBundle() {
+    static String findSystemCaBundle() {
         for (var path : SYSTEM_CA_BUNDLES) {
             if (Files.exists(Path.of(path))) return path;
         }
