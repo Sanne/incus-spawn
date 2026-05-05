@@ -16,7 +16,7 @@ class BuildSourceTest {
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
         imageDef.setDescription("Test template");
-        imageDef.setImage("images:fedora/43");
+        imageDef.setImage("images:fedora/44");
         imageDef.setPackages(List.of("git", "curl"));
         imageDef.setTools(List.of("maven-3"));
         imageDef.setSource("built-in");
@@ -49,7 +49,7 @@ class BuildSourceTest {
         assertNotNull(restoredDef);
         assertEquals("tpl-test", restoredDef.getName());
         assertEquals("Test template", restoredDef.getDescription());
-        assertEquals("images:fedora/43", restoredDef.getImage());
+        assertEquals("images:fedora/44", restoredDef.getImage());
         assertEquals(List.of("git", "curl"), restoredDef.getPackages());
         assertEquals(List.of("maven-3"), restoredDef.getTools());
         assertEquals("built-in", restoredDef.getSource());
@@ -66,7 +66,7 @@ class BuildSourceTest {
         var root = new ImageDef();
         root.setName("tpl-minimal");
         root.setDescription("Minimal");
-        root.setImage("images:fedora/43");
+        root.setImage("images:fedora/44");
         root.setSource("/path/to/minimal.yaml");
 
         var child = new ImageDef();
