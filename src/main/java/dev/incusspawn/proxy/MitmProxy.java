@@ -266,21 +266,21 @@ public class MitmProxy {
         // Build JKS keystore with per-domain certs (alias = domain name for SNI).
         // Also generate wildcard certs (*.domain) so subdomains resolved via
         // dnsmasq address= overrides get a valid cert (e.g. cdn01.quay.io).
+        var allDomains = INTERCEPTED_DOMAIN_SET.stream()
+                .sorted()
+                .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
+                .toList();
+        var certs = allDomains.parallelStream()
+                .map(domain -> java.util.Map.entry(domain, ca.generateDomainCert(domain)))
+                .toList();
         var keyStore = KeyStore.getInstance("JKS");
         keyStore.load(null, null);
-        for (var domain : INTERCEPTED_DOMAIN_SET) {
-            var certEntry = ca.generateDomainCert(domain);
+        for (var entry : certs) {
             keyStore.setKeyEntry(
-                    domain,
-                    certEntry.key(),
+                    entry.getKey(),
+                    entry.getValue().key(),
                     "changeit".toCharArray(),
-                    new X509Certificate[]{certEntry.cert(), ca.caCert()});
-            var wildcardEntry = ca.generateDomainCert("*." + domain);
-            keyStore.setKeyEntry(
-                    "*." + domain,
-                    wildcardEntry.key(),
-                    "changeit".toCharArray(),
-                    new X509Certificate[]{wildcardEntry.cert(), ca.caCert()});
+                    new X509Certificate[]{entry.getValue().cert(), ca.caCert()});
         }
         var baos = new ByteArrayOutputStream();
         keyStore.store(baos, "changeit".toCharArray());

@@ -6,15 +6,19 @@ import dev.incusspawn.incus.Metadata;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyFactory;
+import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
+import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
+import java.util.Date;
 
 /**
  * Manages a self-signed CA for the MITM TLS proxy.
@@ -62,52 +66,47 @@ public class CertificateAuthority {
     /**
      * Generate a TLS certificate for the given domain, signed by this CA.
      * The certificate includes the domain as both CN and a SAN DNS entry.
+     * Uses pure Java DER encoding — no openssl processes, no JDK internal APIs.
      */
     public CertEntry generateDomainCert(String domain) {
         try {
-            // Generate key pair for this domain
-            var domainKeyFile = Files.createTempFile("incus-spawn-domain-", ".key");
-            var domainCertFile = Files.createTempFile("incus-spawn-domain-", ".crt");
-            var csrFile = Files.createTempFile("incus-spawn-domain-", ".csr");
-            var extFile = Files.createTempFile("incus-spawn-domain-", ".ext");
+            var keyGen = KeyPairGenerator.getInstance("RSA");
+            keyGen.initialize(2048);
+            var keyPair = keyGen.generateKeyPair();
 
-            try {
-                // Write SAN extension config
-                Files.writeString(extFile,
-                        "subjectAltName=DNS:" + domain + "\n" +
-                        "basicConstraints=CA:FALSE\n");
+            var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
+            var expiry = new Date(yesterday.getTime() + 366L * 24 * 60 * 60 * 1000);
+            var serial = new BigInteger(128, SecureRandom.getInstanceStrong());
 
-                // Generate domain key
-                run("openssl", "genrsa", "-out", domainKeyFile.toString(), "2048");
+            var tbsCert = derSequence(concat(
+                    derExplicit(0, derInteger(BigInteger.valueOf(2))),   // v3
+                    derInteger(serial),
+                    SHA256_WITH_RSA_AID,
+                    caCert.getSubjectX500Principal().getEncoded(),      // issuer
+                    derSequence(concat(derUtcTime(yesterday), derUtcTime(expiry))),
+                    derDistinguishedName(domain),                       // subject
+                    keyPair.getPublic().getEncoded(),                   // SubjectPublicKeyInfo
+                    derExplicit(3, derSequence(concat(                  // extensions
+                            derExtension(OID_BASIC_CONSTRAINTS, true,
+                                    derSequence(new byte[]{0x01, 0x01, 0x00})),
+                            derExtension(OID_SUBJECT_ALT_NAME, false,
+                                    derSequence(derDnsName(domain)))
+                    )))
+            ));
 
-                // Generate CSR
-                run("openssl", "req", "-new",
-                        "-key", domainKeyFile.toString(),
-                        "-out", csrFile.toString(),
-                        "-subj", "/CN=" + domain);
+            var sig = java.security.Signature.getInstance("SHA256withRSA");
+            sig.initSign(caKey);
+            sig.update(tbsCert);
 
-                // Sign with CA
-                run("openssl", "x509", "-req",
-                        "-in", csrFile.toString(),
-                        "-CA", caCertFile().toString(),
-                        "-CAkey", caKeyFile().toString(),
-                        "-CAcreateserial",
-                        "-out", domainCertFile.toString(),
-                        "-days", "365",
-                        "-sha256",
-                        "-extfile", extFile.toString());
+            var certDer = derSequence(concat(
+                    tbsCert,
+                    SHA256_WITH_RSA_AID,
+                    derBitString(sig.sign())
+            ));
 
-                // Load the generated key and cert into Java objects
-                var key = loadPrivateKey(domainKeyFile);
-                var cert = loadCertificate(domainCertFile);
-
-                return new CertEntry(key, cert);
-            } finally {
-                Files.deleteIfExists(domainKeyFile);
-                Files.deleteIfExists(domainCertFile);
-                Files.deleteIfExists(csrFile);
-                Files.deleteIfExists(extFile);
-            }
+            var cert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                    .generateCertificate(new ByteArrayInputStream(certDer));
+            return new CertEntry(keyPair.getPrivate(), cert);
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate cert for " + domain + ": " + e.getMessage(), e);
         }
@@ -206,19 +205,112 @@ public class CertificateAuthority {
     }
 
     private static PrivateKey loadPrivateKey(Path path) throws Exception {
-        // openssl genrsa outputs PKCS#1 (traditional) format.
-        // Convert to PKCS#8 in memory for Java's KeyFactory.
-        var pb = new ProcessBuilder("openssl", "pkcs8", "-topk8", "-nocrypt",
-                "-in", path.toString(), "-outform", "DER");
-        pb.redirectErrorStream(true);
-        var process = pb.start();
-        var derBytes = process.getInputStream().readAllBytes();
-        var exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new RuntimeException("Failed to convert key to PKCS#8: exit code " + exitCode);
+        var pem = Files.readString(path);
+        var base64 = pem
+                .replaceAll("-----[A-Z ]+-----", "")
+                .replaceAll("\\s", "");
+        var der = Base64.getDecoder().decode(base64);
+
+        if (pem.contains("BEGIN RSA PRIVATE KEY")) {
+            // PKCS#1 (openssl genrsa output) — wrap in PKCS#8 envelope
+            der = wrapPkcs1InPkcs8(der);
         }
-        var keySpec = new PKCS8EncodedKeySpec(derBytes);
-        return KeyFactory.getInstance("RSA").generatePrivate(keySpec);
+        return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
+    }
+
+    // --- DER encoding helpers (X.509 cert building + PKCS#1→PKCS#8 wrapping) ---
+
+    // SHA256withRSA AlgorithmIdentifier: SEQUENCE { OID 1.2.840.113549.1.1.11, NULL }
+    private static final byte[] SHA256_WITH_RSA_AID = derSequence(concat(
+            new byte[]{0x06, 0x09, 0x2a, (byte) 0x86, 0x48, (byte) 0x86,
+                    (byte) 0xf7, 0x0d, 0x01, 0x01, 0x0b},
+            new byte[]{0x05, 0x00}));
+
+    // Extension OIDs
+    private static final byte[] OID_BASIC_CONSTRAINTS =
+            {0x06, 0x03, 0x55, 0x1d, 0x13};  // 2.5.29.19
+    private static final byte[] OID_SUBJECT_ALT_NAME =
+            {0x06, 0x03, 0x55, 0x1d, 0x11};  // 2.5.29.17
+
+    /** Wraps a PKCS#1 RSA key in a PKCS#8 envelope so Java's KeyFactory can parse it. */
+    private static byte[] wrapPkcs1InPkcs8(byte[] pkcs1) {
+        byte[] rsaOid = {0x06, 0x09, 0x2a, (byte) 0x86, 0x48, (byte) 0x86,
+                (byte) 0xf7, 0x0d, 0x01, 0x01, 0x01};
+        byte[] algId = derSequence(concat(rsaOid, new byte[]{0x05, 0x00}));
+        return derSequence(concat(derInteger(BigInteger.ZERO), algId, derOctetString(pkcs1)));
+    }
+
+    private static byte[] derDistinguishedName(String cn) {
+        // CN OID: 2.5.4.3
+        byte[] cnOid = {0x06, 0x03, 0x55, 0x04, 0x03};
+        byte[] cnValue = cn.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] cnUtf8 = concat(new byte[]{0x0c}, derLength(cnValue.length), cnValue);
+        return derSequence(derSet(derSequence(concat(cnOid, cnUtf8))));
+    }
+
+    private static byte[] derExtension(byte[] oid, boolean critical, byte[] value) {
+        var parts = critical
+                ? concat(oid, new byte[]{0x01, 0x01, (byte) 0xff}, derOctetString(value))
+                : concat(oid, derOctetString(value));
+        return derSequence(parts);
+    }
+
+    private static byte[] derDnsName(String name) {
+        // Context-tagged [2] implicit IA5String
+        byte[] ascii = name.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        return concat(new byte[]{(byte) 0x82}, derLength(ascii.length), ascii);
+    }
+
+    private static byte[] derUtcTime(Date date) {
+        var sdf = new java.text.SimpleDateFormat("yyMMddHHmmss'Z'");
+        sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        byte[] ascii = sdf.format(date).getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        return concat(new byte[]{0x17}, derLength(ascii.length), ascii);
+    }
+
+    private static byte[] derInteger(BigInteger val) {
+        byte[] bytes = val.toByteArray();
+        return concat(new byte[]{0x02}, derLength(bytes.length), bytes);
+    }
+
+    private static byte[] derBitString(byte[] content) {
+        // BIT STRING with 0 unused bits
+        return concat(new byte[]{0x03}, derLength(content.length + 1),
+                new byte[]{0x00}, content);
+    }
+
+    private static byte[] derSequence(byte[] content) {
+        return concat(new byte[]{0x30}, derLength(content.length), content);
+    }
+
+    private static byte[] derSet(byte[] content) {
+        return concat(new byte[]{0x31}, derLength(content.length), content);
+    }
+
+    private static byte[] derOctetString(byte[] content) {
+        return concat(new byte[]{0x04}, derLength(content.length), content);
+    }
+
+    private static byte[] derExplicit(int tag, byte[] content) {
+        return concat(new byte[]{(byte) (0xa0 | tag)}, derLength(content.length), content);
+    }
+
+    private static byte[] derLength(int length) {
+        if (length < 128) return new byte[]{(byte) length};
+        if (length < 256) return new byte[]{(byte) 0x81, (byte) length};
+        return new byte[]{(byte) 0x82, (byte) (length >> 8), (byte) length};
+    }
+
+    private static byte[] concat(byte[]... arrays) {
+        int len = 0;
+        for (var a : arrays) len += a.length;
+        var result = new byte[len];
+        int pos = 0;
+        for (var a : arrays) {
+            System.arraycopy(a, 0, result, pos, a.length);
+            pos += a.length;
+        }
+        return result;
     }
 
     private static X509Certificate loadCertificate(Path path) throws Exception {
