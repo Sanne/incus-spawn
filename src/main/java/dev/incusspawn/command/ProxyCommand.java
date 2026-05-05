@@ -239,11 +239,18 @@ public class ProxyCommand {
     )
     public static class Install implements Runnable {
 
+        @Inject
+        IncusClient incus;
+
         @Override
         public void run() {
             if (ProxyService.isActive()) {
                 ProxyService.upgradeIfNeeded();
-                System.out.println("Proxy service is already installed and running.");
+                if (ProxyService.reinstallIfChanged(incus)) {
+                    System.out.println("Proxy service restarted with updated binary.");
+                } else {
+                    System.out.println("Proxy service is already installed and running.");
+                }
                 return;
             }
             ProxyService.install();

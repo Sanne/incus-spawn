@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.incus.IncusClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -126,6 +127,47 @@ public final class ProxyService {
         }
 
         System.out.println("Proxy is not running.");
+    }
+
+    /**
+     * Check whether the installed service needs updating (binary path or version)
+     * and restart if so. Returns true if a restart was performed.
+     */
+    public static boolean reinstallIfChanged(IncusClient incus) {
+        if (!Files.exists(Environment.proxyServiceFile())) return false;
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) return false;
+
+        boolean needsRestart = false;
+        try {
+            var content = Files.readString(Environment.proxyServiceFile());
+            var expected = "ExecStart=" + isxPath + " proxy start";
+            if (!content.contains(expected)) {
+                var updated = content.replaceFirst(
+                        "ExecStart=\\S+ proxy start",
+                        "ExecStart=" + isxPath + " proxy start");
+                if (!updated.equals(content)) {
+                    Files.writeString(Environment.proxyServiceFile(), updated);
+                    runQuiet("systemctl", "--user", "daemon-reload");
+                    needsRestart = true;
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Warning: could not update proxy service file: " + e.getMessage());
+        }
+
+        if (!needsRestart) {
+            var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+            var info = ProxyHealthCheck.fetchProxyInfo(gatewayIp);
+            var drift = ProxyHealthCheck.checkVersionDrift(info);
+            needsRestart = !drift.isEmpty();
+        }
+
+        if (needsRestart) {
+            restart();
+            return true;
+        }
+        return false;
     }
 
     public static void upgradeIfNeeded() {
