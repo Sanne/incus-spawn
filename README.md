@@ -196,7 +196,7 @@ Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/43`)
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
-- `tools` -- tool names to run (resolved from YAML or Java)
+- `tools` -- tool names to run (resolved from YAML or Java, see [Custom Tools](#custom-tools))
 - `repos` -- git repositories to clone as agentuser (see below)
 - `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
 - `host-resources` -- host files/directories to share with containers (see below)
