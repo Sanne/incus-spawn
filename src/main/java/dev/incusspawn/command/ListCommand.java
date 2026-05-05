@@ -83,6 +83,7 @@ public class ListCommand implements Runnable {
     private String errorMessage;
     private String pendingDeleteName;
     private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
+    private String pendingBuildMessage; // pre-computed message for CONFIRM_BUILD modal
     // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
@@ -431,19 +432,25 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // Shift+F5: Build all templates
+        // Ctrl+Shift+F5: Rebuild all templates (force rebuild everything)
+        if (key.isKey(KeyCode.F5) && key.hasShift() && key.hasCtrl()) {
+            if (showProxyError()) return true;
+            pendingBuildName = "--all";
+            pendingBuildMessage = "This will delete and rebuild all templates.";
+            mode = Mode.CONFIRM_BUILD;
+            return true;
+        }
+
+        // Shift+F5: Build outdated templates
         if (key.isKey(KeyCode.F5) && key.hasShift()) {
-            var anyNotBuilt = templateEntries.stream()
-                    .anyMatch(t -> "not built".equals(t.buildStatus));
-            if (anyNotBuilt) {
-                if (showProxyError()) return true;
-                pendingAction = PendingAction.BUILD_TEMPLATE;
-                pendingActionTarget = "--missing";
-                tui.quit();
-            } else {
-                pendingBuildName = "--all";
-                mode = Mode.CONFIRM_BUILD;
-            }
+            if (showProxyError()) return true;
+            pendingBuildName = "--outdated";
+            var templatesToRebuild = BuildCommand.collectOutdatedTemplates(
+                    imageDefs, incus, toolDefLoader);
+            pendingBuildMessage = templatesToRebuild.isEmpty()
+                    ? "All templates are up to date."
+                    : "This will delete and rebuild:\n" + String.join(", ", templatesToRebuild);
+            mode = Mode.CONFIRM_BUILD;
             return true;
         }
 
@@ -460,6 +467,7 @@ public class ListCommand implements Runnable {
             if (!"not built".equals(template.buildStatus)) {
                 // Already built — confirm rebuild
                 pendingBuildName = template.name;
+                pendingBuildMessage = "This will delete and rebuild " + template.name + ".";
                 mode = Mode.CONFIRM_BUILD;
             } else {
                 if (showProxyError()) return true;
@@ -1178,12 +1186,12 @@ public class ListCommand implements Runnable {
                 ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
             }
             case CONFIRM_BUILD -> {
-                var isAll = "--all".equals(pendingBuildName);
-                var title = isAll ? " Rebuild all templates " : " Rebuild '" + pendingBuildName + "' ";
-                var message = isAll
-                        ? "This will delete and rebuild all templates."
-                        : "This will delete and rebuild " + pendingBuildName + ".";
-                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
+                var title = switch (pendingBuildName) {
+                    case "--all" -> " Rebuild all templates ";
+                    case "--outdated" -> " Rebuild outdated templates ";
+                    default -> " Rebuild '" + pendingBuildName + "' ";
+                };
+                ModalRenderer.renderConfirmModal(frame, screen, title, pendingBuildMessage, ModalRenderer.WARN);
             }
             case CONFIRM_STOP_FOR_RENAME -> {
                 ModalRenderer.renderConfirmModal(frame, screen,
@@ -1482,7 +1490,8 @@ public class ListCommand implements Runnable {
                 shortcutRow("F2", "Shell into instance", null, null),
                 shortcutRow("F3", "View details", null, null),
                 shortcutRow("F4", "Branch", null, null),
-                shortcutRow("F5", "Build template", "⇧F5", "Build all"),
+                shortcutRow("F5", "Build template", "⇧F5", "Build outdated"),
+                shortcutRow(null, null, "^⇧F5", "Rebuild all"),
                 shortcutRow("F6", "Rename instance", null, null),
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
@@ -1558,8 +1567,10 @@ public class ListCommand implements Runnable {
 
     private static Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled(String.format("  %-8s", key), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
-        spans.add(Span.styled(String.format("%-18s", desc), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+        var keyStr = key != null ? key : "";
+        var descStr = desc != null ? desc : "";
+        spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
         if (shiftKey != null) {
             spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));

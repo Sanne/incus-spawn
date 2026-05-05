@@ -390,4 +390,186 @@ class BuildCommandTest {
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).shellExecInteractive(eq("test"), any(String[].class));
     }
+
+    @Test
+    void shouldSkipDueToFailedParentDirectParent() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-parent");
+
+        var cmd = new BuildCommand();
+        assertTrue(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should be skipped when parent failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentGrandparent() {
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-grandparent");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setParent("tpl-grandparent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of(
+                "tpl-grandparent", grandparent,
+                "tpl-parent", parent,
+                "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-grandparent");
+
+        var cmd = new BuildCommand();
+        assertTrue(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should be skipped when grandparent failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentNoFailures() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var failedBuilds = new java.util.HashSet<String>();
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should not be skipped when no failures");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentUnrelatedFailure() {
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var unrelated = new ImageDef();
+        unrelated.setName("tpl-unrelated");
+
+        var defs = java.util.Map.of(
+                "tpl-parent", parent,
+                "tpl-child", child,
+                "tpl-unrelated", unrelated);
+        var failedBuilds = new java.util.HashSet<String>();
+        failedBuilds.add("tpl-unrelated");
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(child, defs, failedBuilds),
+                "Child should not be skipped when only unrelated template failed");
+    }
+
+    @Test
+    void shouldSkipDueToFailedParentRootImage() {
+        var root = new ImageDef();
+        root.setName("tpl-root");
+        root.setImage("fedora/41");
+
+        var defs = java.util.Map.of("tpl-root", root);
+        var failedBuilds = new java.util.HashSet<String>();
+
+        var cmd = new BuildCommand();
+        assertFalse(cmd.shouldSkipDueToFailedParent(root, defs, failedBuilds),
+                "Root image should never be skipped due to parent");
+    }
+
+    @Test
+    void isImageOutdatedNotExists() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(false);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+                "Non-existent image should not be considered outdated");
+    }
+
+    @Test
+    void isImageOutdatedDifferentVersion() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("0.0.1");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+                "Image with different version should be outdated");
+    }
+
+    @Test
+    void isImageOutdatedMissingVersion() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version")).thenReturn("");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+                "Image with missing version should be outdated");
+    }
+
+    @Test
+    void isImageOutdatedSameVersionNoDefinitionChange() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha")).thenReturn("");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+                "Image with same version and no definition SHA should not be outdated");
+    }
+
+    @Test
+    void isImageOutdatedDefinitionChanged() {
+        var incus = mock(IncusClient.class);
+        when(incus.exists("tpl-test")).thenReturn(true);
+        when(incus.configGet("tpl-test", "user.incus-spawn.build-version"))
+                .thenReturn(dev.incusspawn.BuildInfo.instance().version());
+        when(incus.configGet("tpl-test", "user.incus-spawn.definition-sha"))
+                .thenReturn("old-sha-123");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
+        var defs = java.util.Map.of("tpl-test", imageDef);
+
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+                "Image with changed definition should be outdated");
+    }
 }
