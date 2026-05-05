@@ -201,6 +201,50 @@ class HostResourceSetupTest {
         assertTrue(HostResourceSetup.deserialize("not json").isEmpty());
     }
 
+    @Test
+    void collectEffectiveMergeMode() {
+        var defs = new LinkedHashMap<String, ImageDef>();
+        var imageDef = makeImageDef("tpl-test", null, List.of(
+                new ImageDef.HostResource("~/.claude/settings.json", null, "merge")));
+        defs.put("tpl-test", imageDef);
+
+        var result = HostResourceSetup.collectEffective(imageDef, defs);
+        assertEquals(1, result.size());
+        assertEquals("merge", result.get(0).getMode());
+        assertEquals("~/.claude/settings.json", result.get(0).getSource());
+    }
+
+    @Test
+    void serializeDeserializeMergeMode() {
+        var resources = List.of(
+                new ImageDef.HostResource("~/.claude/settings.json", null, "merge"));
+
+        var json = HostResourceSetup.serialize(resources);
+        var deserialized = HostResourceSetup.deserialize(json);
+
+        assertEquals(1, deserialized.size());
+        assertEquals("merge", deserialized.get(0).getMode());
+        assertEquals("~/.claude/settings.json", deserialized.get(0).getSource());
+    }
+
+    @Test
+    void collectEffectiveMergeModeInheritance() {
+        var defs = new LinkedHashMap<String, ImageDef>();
+        var parent = makeImageDef("tpl-parent", null, List.of(
+                new ImageDef.HostResource("~/.gitconfig", null, "readonly")));
+        var child = makeImageDef("tpl-child", "tpl-parent", List.of(
+                new ImageDef.HostResource("~/.claude", null, "merge")));
+        defs.put("tpl-parent", parent);
+        defs.put("tpl-child", child);
+
+        var result = HostResourceSetup.collectEffective(child, defs);
+        assertEquals(2, result.size());
+        // Should have both resources with correct modes
+        var modes = result.stream().map(ImageDef.HostResource::getMode).toList();
+        assertTrue(modes.contains("readonly"));
+        assertTrue(modes.contains("merge"));
+    }
+
     private static ImageDef makeImageDef(String name, String parent, List<ImageDef.HostResource> hostResources) {
         var def = new ImageDef();
         def.setName(name);

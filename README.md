@@ -301,13 +301,14 @@ The `~/.m2/repository` entry shares your host Maven cache with the container. Wi
 
 The `~/.gitconfig` entry mounts your git configuration read-only (the default mode), so `git` inside the container picks up your name, email, aliases, and other settings.
 
-Three modes are available:
+Four modes are available:
 
 | Mode | Default? | Description |
 |------|----------|-------------|
 | `readonly` | Yes | Read-only bind mount. Simple, safe. |
 | `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. |
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
+| `merge` | No | Deep-merges JSON files from host with existing files in the container. Overlay values take precedence. Works on single files or directories. |
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. For example, `source: ~/.m2/repository` maps to `/home/agentuser/.m2/repository` inside the container.
 
@@ -326,7 +327,14 @@ host-resources:
   # Share Gradle cache with overlay (writable inside container, host protected)
   - source: ~/.gradle/caches
     mode: overlay
+
+  # Merge custom Claude settings with parent's defaults
+  - source: ~/.config/custom-claude
+    path: ~/.claude
+    mode: merge
 ```
+
+The `merge` mode is particularly useful for customizing JSON config files created by parent templates. For example, if a parent template installs Claude Code (which creates `.claude/settings.json` and `.claude.json`), a child template can use merge mode to customize `settings.json` while preserving `.claude.json` from the parent. The merge is deep: nested objects are recursively merged with host values taking precedence, while arrays are replaced entirely by the host version.
 
 If a host path doesn't exist at build or branch time, the entry is skipped with a warning -- the build proceeds without it. This means templates with host-resources remain portable: they work on machines that have the declared paths and gracefully degrade on machines that don't.
 

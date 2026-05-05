@@ -2,11 +2,13 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.util.JsonMergeUtil;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -97,6 +99,7 @@ public final class HostResourceSetup {
             switch (hr.getMode()) {
                 case "copy" -> applyCopy(container, hr);
                 case "readonly" -> applyReadonly(incus, container.name(), hr);
+                case "merge" -> applyMerge(container, hr);
                 case "overlay" -> {
                     applyOverlay(incus, container, hr);
                     overlayEntries.add(hr);
@@ -138,7 +141,7 @@ public final class HostResourceSetup {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
                     applyOverlayDevice(incus, container, hr);
                 }
-                case "copy" -> {} // already baked into the template
+                case "copy", "merge" -> {} // already baked into the template
             }
         }
     }
@@ -330,5 +333,111 @@ public final class HostResourceSetup {
                 "WantedBy=multi-user.target");
 
         container.exec("systemctl", "enable", "incus-spawn-overlays.service");
+    }
+
+    private static void applyMerge(Container container, ImageDef.HostResource hr) {
+        var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
+        var parentDir = containerPath.contains("/")
+                ? containerPath.substring(0, containerPath.lastIndexOf('/'))
+                : "/";
+
+        var expandedSource = expandHostTilde(hr.getSource());
+        var sourcePath = Path.of(expandedSource);
+
+        if (!Files.exists(sourcePath)) {
+            System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
+            return;
+        }
+
+        container.exec("mkdir", "-p", parentDir);
+
+        if (Files.isDirectory(sourcePath)) {
+            // Directory: merge all .json files, copy others
+            try {
+                mergeDirectory(container, sourcePath, containerPath);
+            } catch (IOException e) {
+                System.err.println("Warning: failed to merge directory " + hr.getSource() + ": " + e.getMessage());
+                return;
+            }
+        } else {
+            // Single file: must be .json for merge mode
+            if (!expandedSource.endsWith(".json")) {
+                System.err.println("Error: merge mode requires .json files, got: " + hr.getSource());
+                throw new RuntimeException("merge mode requires .json files");
+            }
+            mergeJsonFile(container, expandedSource, containerPath);
+        }
+
+        container.chown(containerPath, "agentuser:agentuser");
+        System.out.println("  Merged " + hr.getSource() + " -> " + containerPath);
+    }
+
+    private static void mergeDirectory(Container container, Path hostDir, String containerDir) throws IOException {
+        Files.walk(hostDir).forEach(hostPath -> {
+            if (Files.isDirectory(hostPath)) return;
+
+            var relativePath = hostDir.relativize(hostPath).toString();
+            var containerFilePath = containerDir + "/" + relativePath;
+            var containerFileDir = containerFilePath.substring(0,
+                    containerFilePath.lastIndexOf('/'));
+
+            container.exec("mkdir", "-p", containerFileDir);
+
+            if (hostPath.toString().endsWith(".json")) {
+                mergeJsonFile(container, hostPath.toString(), containerFilePath);
+            } else {
+                // Non-JSON files: just copy
+                container.filePush(hostPath.toString(), containerFilePath);
+            }
+        });
+    }
+
+    private static void mergeJsonFile(Container container, String hostFilePath, String containerFilePath) {
+        try {
+            // Read host JSON
+            var hostJson = Files.readString(Path.of(hostFilePath));
+            JsonNode hostNode;
+            try {
+                hostNode = JSON.readTree(hostJson);
+            } catch (Exception e) {
+                System.err.println("Warning: invalid JSON in host file " + hostFilePath
+                        + ", skipping merge: " + e.getMessage());
+                return;
+            }
+
+            // Read container JSON (if exists)
+            var checkResult = container.exec("test", "-f", containerFilePath);
+            JsonNode containerNode = null;
+
+            if (checkResult.success()) {
+                // Container file exists - verify it's JSON
+                if (!containerFilePath.endsWith(".json")) {
+                    System.err.println("Error: can only merge JSON files, container file is not .json: "
+                            + containerFilePath);
+                    throw new RuntimeException("container file is not .json: " + containerFilePath);
+                }
+
+                var catResult = container.exec("cat", containerFilePath);
+                if (catResult.success()) {
+                    try {
+                        containerNode = JSON.readTree(catResult.stdout());
+                    } catch (Exception e) {
+                        System.err.println("Warning: invalid JSON in container file " + containerFilePath
+                                + ", treating as empty: " + e.getMessage());
+                        // containerNode stays null, will merge with empty
+                    }
+                }
+            }
+
+            // Merge: host overlays container
+            JsonNode merged = JsonMergeUtil.deepMerge(containerNode, hostNode);
+
+            // Write back to container
+            var mergedJson = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(merged);
+            container.writeFile(containerFilePath, mergedJson);
+
+        } catch (IOException e) {
+            System.err.println("Warning: failed to merge JSON file " + hostFilePath + ": " + e.getMessage());
+        }
     }
 }
