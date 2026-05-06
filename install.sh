@@ -37,6 +37,28 @@ if $NATIVE; then
     cp "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
 else
+    # Resolve the Java binary so the wrapper always uses the JDK it was built with,
+    # even if a different version is the default at runtime.
+    if [ -n "$JAVA_HOME" ]; then
+        JAVA_BIN="$JAVA_HOME/bin/java"
+    else
+        JAVA_BIN="$(command -v java)"
+    fi
+    if [ -z "$JAVA_BIN" ] || [ ! -x "$JAVA_BIN" ]; then
+        echo "Error: no Java binary found."
+        echo "  Set JAVA_HOME to a Java 25+ installation, or build with --native to avoid the Java requirement."
+        exit 1
+    fi
+    JAVA_VER=$("$JAVA_BIN" -version 2>&1 | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+    case "$JAVA_VER" in
+        1.*) JAVA_MAJOR=$(echo "$JAVA_VER" | cut -d. -f2) ;;
+        *)   JAVA_MAJOR=$(echo "$JAVA_VER" | cut -d. -f1) ;;
+    esac
+    if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 25 ] 2>/dev/null; then
+        echo "Error: Java 25+ is required, but $JAVA_BIN reports version ${JAVA_MAJOR:-unknown}."
+        echo "  Set JAVA_HOME to a Java 25+ installation, or build with --native to avoid the Java requirement."
+        exit 1
+    fi
     echo "Building JVM package..."
     "$SCRIPT_DIR/mvnw" package -DskipTests -q
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
@@ -46,13 +68,6 @@ else
     if [ -z "$JARFILE" ]; then
         echo "Error: quarkus-run.jar not found in target/quarkus-app/"
         exit 1
-    fi
-    # Resolve the Java binary so the wrapper always uses the JDK it was built with,
-    # even if a different version is the default at runtime.
-    if [ -n "$JAVA_HOME" ]; then
-        JAVA_BIN="$JAVA_HOME/bin/java"
-    else
-        JAVA_BIN="$(command -v java)"
     fi
     rm -f "$INSTALL_DIR/$BINARY_NAME"
     cat > "$INSTALL_DIR/$BINARY_NAME" <<WRAPPER
