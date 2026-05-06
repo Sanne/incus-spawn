@@ -3,6 +3,8 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceType;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -63,6 +65,14 @@ public class ProjectCommand {
             // Clone from parent
             System.out.println("Cloning from " + parent + "...");
             incus.copy(parent, imageName);
+
+            // Tag with metadata (required before host integration)
+            InstanceLifecycle.tagMetadata(incus, imageName, Metadata.TYPE_PROJECT, parent);
+            incus.configSet(imageName, Metadata.PROJECT, imageName);
+
+            // Integrate with host (templates don't get git remotes)
+            InstanceLifecycle.integrateWithHost(incus, imageName, InstanceType.TEMPLATE);
+
             incus.start(imageName);
             waitForReady(imageName);
 
@@ -83,12 +93,6 @@ public class ProjectCommand {
                     System.err.println("Warning: pre-build command failed: " + result.stderr().strip());
                 }
             }
-
-            // Tag with metadata
-            incus.configSet(imageName, Metadata.TYPE, Metadata.TYPE_PROJECT);
-            incus.configSet(imageName, Metadata.PARENT, parent);
-            incus.configSet(imageName, Metadata.PROJECT, imageName);
-            incus.configSet(imageName, Metadata.CREATED, Metadata.today());
 
             // Stop the template
             System.out.println("Stopping project template...");

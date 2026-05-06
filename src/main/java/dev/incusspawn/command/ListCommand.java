@@ -10,6 +10,8 @@ import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -2392,72 +2394,35 @@ public class ListCommand implements Runnable {
         System.out.println("Branching '" + name + "' from '" + source + "'...");
         incus.copy(source, name);
 
-        // Apply resource limits
-        String cpuStr, memory, disk;
+        // Phase 1: Resource configuration
+        int cpu;
+        String memory, disk;
         if (vm) {
-            cpuStr = vmCpuInput.text().strip();
+            cpu = Integer.parseInt(vmCpuInput.text().strip());
             memory = vmMemoryInput.text().strip();
             disk = vmDiskInput.text().strip();
         } else {
-            cpuStr = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+            cpu = ResourceLimits.adaptiveCpuLimit();
             memory = ResourceLimits.adaptiveMemoryLimit();
             disk = ResourceLimits.defaultDiskLimit();
         }
-        System.out.println("Applying resource limits: " + cpuStr + " CPUs, " + memory + " memory, " + disk + " disk");
-        incus.configSet(name, "limits.cpu", cpuStr);
-        incus.configSet(name, "limits.memory", memory);
-        incus.exec("config", "device", "set", name, "root", "size=" + disk);
+        System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
+        InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
+        InstanceLifecycle.configureNetwork(incus, name, networkMode);
 
-        switch (networkMode) {
-            case PROXY_ONLY -> configureProxyOnly(name);
-            case AIRGAP -> configureAirgap(name);
-            case FULL -> {}
-        }
+        // Phase 2: Metadata tagging (required before host integration)
+        InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, source);
 
-        var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
-        var hostResources = HostResourceSetup.deserialize(hrJson);
-        if (!hostResources.isEmpty()) {
-            System.out.println("Applying host-resource devices...");
-            HostResourceSetup.applyForInstance(incus, name, hostResources);
-        }
+        // Phase 3: Host integration (depends on metadata)
+        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
-        incus.configSet(name, Metadata.PARENT, source);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
-
-        // Add git remotes to host repos (doesn't require instance to be running)
-        AutoRemoteService.addRemotes(incus, name);
-
+        // Phase 4: Start instance
         incus.start(name);
         waitForReady(name);
 
-        if (networkMode == NetworkMode.PROXY_ONLY) {
-            BranchCommand.applyProxyOnlyFirewall(incus, name);
-        }
-
-        if (gui && !configureGui(name)) {
-            System.err.println("Continuing without GUI passthrough.");
-        }
-
-        if (inboxPath != null && !inboxPath.isEmpty()) {
-            var path = java.nio.file.Path.of(inboxPath);
-            if (java.nio.file.Files.isDirectory(path)) {
-                System.out.println("Mounting inbox: " + path.toAbsolutePath() + " -> /home/agentuser/inbox (read-only)");
-                incus.deviceAdd(name, "inbox", "disk",
-                        "source=" + path.toAbsolutePath(),
-                        "path=/home/agentuser/inbox",
-                        "readonly=true");
-            } else {
-                System.err.println("Warning: inbox path '" + inboxPath + "' is not a directory, skipping.");
-            }
-        }
-
-        // Fix ownership of home dir itself (not recursively — files inside already
-        // have correct ownership from the template, and -R would be very slow on
-        // large images with many pre-built dependencies)
-        incus.shellExec(name, "chown", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
-
-        BranchCommand.injectSshKeyIfAvailable(incus, name);
+        // Phase 5: Runtime setup (requires running instance)
+        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, gui, inbox);
 
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
@@ -2465,58 +2430,6 @@ public class ListCommand implements Runnable {
         System.out.println();
     }
 
-    private boolean configureGui(String name) {
-        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
-        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
-        if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.");
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
-        var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
-        if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            System.err.println("Error: Wayland socket not found at " + hostSocket);
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
-
-        System.out.println("Enabling GUI passthrough...");
-        var uid = String.valueOf(getUid());
-
-        incus.deviceAdd(name, "gpu", "gpu");
-        incus.deviceAdd(name, "xdg-runtime", "disk",
-                "source=" + xdgRuntimeDir,
-                "path=/run/user/" + uid);
-
-        incus.shellExec(name, "sh", "-c",
-                "cat > /etc/profile.d/wayland.sh << 'ENVEOF'\n" +
-                "export WAYLAND_DISPLAY=" + waylandDisplay + "\n" +
-                "export XDG_RUNTIME_DIR=/run/user/" + uid + "\n" +
-                "export GDK_BACKEND=wayland\n" +
-                "export QT_QPA_PLATFORM=wayland\n" +
-                "export SDL_VIDEODRIVER=wayland\n" +
-                "export MOZ_ENABLE_WAYLAND=1\n" +
-                "export ELECTRON_OZONE_PLATFORM_HINT=wayland\n" +
-                "ENVEOF\n" +
-                "chmod 644 /etc/profile.d/wayland.sh");
-        return true;
-    }
-
-    private void configureProxyOnly(String name) {
-        System.out.println("Configuring proxy-only network...");
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-        incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
-        incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
-    }
-
-    private void configureAirgap(String name) {
-        System.out.println("Enabling network airgap...");
-        var result = incus.exec("network", "detach", "incusbr0", name);
-        if (!result.success()) {
-            incus.exec("config", "device", "override", name, "eth0");
-            incus.exec("config", "device", "remove", name, "eth0");
-        }
-    }
 
     private static int getUid() {
         try {

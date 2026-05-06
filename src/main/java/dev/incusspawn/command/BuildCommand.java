@@ -310,17 +310,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         cleanCaches(targetName);
 
         // Tag with metadata
-        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
-        incus.configSet(targetName, Metadata.PROFILE, targetName);
-        incus.configSet(targetName, Metadata.PARENT, parentName);
-        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName, imageDef);
-        if (!hostResources.isEmpty()) {
-            incus.configSet(targetName, Metadata.HOST_RESOURCES,
-                    HostResourceSetup.serialize(hostResources));
-        }
-        incus.configSet(targetName, Metadata.BUILD_SOURCE,
-                collectBuildSource(imageDef, defs).toJson());
+        tagTemplateMetadata(targetName, imageDef, parentName, hostResources, defs);
 
         System.out.println("Stopping image...");
         incus.stop(targetName);
@@ -470,16 +460,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         cleanCaches(targetName);
 
         // Tag with metadata
-        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
-        incus.configSet(targetName, Metadata.PROFILE, targetName);
-        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName, imageDef);
-        if (!hostResources.isEmpty()) {
-            incus.configSet(targetName, Metadata.HOST_RESOURCES,
-                    HostResourceSetup.serialize(hostResources));
-        }
-        incus.configSet(targetName, Metadata.BUILD_SOURCE,
-                collectBuildSource(imageDef, defs).toJson());
+        tagTemplateMetadata(targetName, imageDef, null, hostResources, defs);
 
         // Stop the template (it's a stopped snapshot you branch from, not a running instance)
         System.out.println("Stopping image...");
@@ -687,6 +668,34 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 }
             }
         }
+    }
+
+    /**
+     * Tag a template with build-specific metadata.
+     * Common logic for both buildFromScratch and buildFromParent.
+     *
+     * @param targetName Container name
+     * @param imageDef Image definition
+     * @param parentName Parent image name (null for root images)
+     * @param hostResources Host resources configuration
+     * @param defs All image definitions (for BUILD_SOURCE)
+     */
+    private void tagTemplateMetadata(String targetName, ImageDef imageDef, String parentName,
+                                    List<ImageDef.HostResource> hostResources,
+                                    Map<String, ImageDef> defs) {
+        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
+        incus.configSet(targetName, Metadata.PROFILE, targetName);
+        if (parentName != null) {
+            incus.configSet(targetName, Metadata.PARENT, parentName);
+        }
+        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
+        stampBuildVersion(targetName, imageDef);
+        if (!hostResources.isEmpty()) {
+            incus.configSet(targetName, Metadata.HOST_RESOURCES,
+                    HostResourceSetup.serialize(hostResources));
+        }
+        incus.configSet(targetName, Metadata.BUILD_SOURCE,
+                collectBuildSource(imageDef, defs).toJson());
     }
 
     static class BuildFailedException extends RuntimeException {
