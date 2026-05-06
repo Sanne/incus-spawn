@@ -935,6 +935,14 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                         container.runAsUser("agentuser",
                                 buildCloneCommand(repo, ref.containerPath()),
                                 "Failed to clone " + repo.getUrl() + " with reference");
+                        // Dissociate now that checkout succeeded: repack referenced
+                        // objects locally and drop the alternates entry, so the clone
+                        // is self-contained before the reference device is removed.
+                        var clonePath = shellQuote(expandHome(repo.getPath()));
+                        container.runAsUser("agentuser",
+                                "git -C " + clonePath + " repack -a -d"
+                                        + " && rm -f " + shellQuote(expandHome(repo.getPath()) + "/.git/objects/info/alternates"),
+                                "Failed to dissociate clone from reference");
                         cloned = true;
                         System.out.println("  Done.");
                     } catch (Exception e) {
@@ -986,7 +994,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var cmd = new StringBuilder("git clone --single-branch");
         if (referencePath != null) {
             cmd.append(" --reference ").append(shellQuote(referencePath));
-            cmd.append(" --dissociate");
         }
         if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
             cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
