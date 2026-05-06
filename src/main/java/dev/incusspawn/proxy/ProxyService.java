@@ -29,10 +29,19 @@ public final class ProxyService {
         }
     }
 
+    private static final int REQUIRED_JAVA_MAJOR = 25;
+
     public static boolean install() {
         var isxPath = resolveIsxPath();
         if (isxPath == null) {
             System.err.println("Could not find 'isx' in PATH.");
+            return false;
+        }
+
+        var javaIssue = checkJvmWrapper(isxPath);
+        if (javaIssue != null) {
+            System.err.println(javaIssue);
+            System.err.println("Reinstall with: install.sh --native   (builds a standalone binary that does not need Java)");
             return false;
         }
 
@@ -72,7 +81,7 @@ public final class ProxyService {
             return true;
         } else {
             System.err.println("Warning: service did not start.");
-            System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
+            printServiceLogs();
             return false;
         }
     }
@@ -202,6 +211,72 @@ public final class ProxyService {
             }
         } catch (Exception ignored) {}
         return -1;
+    }
+
+    /**
+     * If isx is a JVM wrapper script, validate that the embedded Java binary exists
+     * and is the required version. Returns a diagnostic message on failure, null if OK.
+     */
+    static String checkJvmWrapper(String isxPath) {
+        try {
+            var content = Files.readString(Path.of(isxPath));
+            if (!content.startsWith("#!/bin/bash")) return null; // native binary
+            var matcher = java.util.regex.Pattern.compile("exec\\s+\"?([^\"\\s]+)\"?\\s+.*-jar")
+                    .matcher(content);
+            if (!matcher.find()) return null; // not a java wrapper
+            var javaBin = matcher.group(1);
+
+            if (!Files.isExecutable(Path.of(javaBin))) {
+                return "Java binary not found: " + javaBin + "\n"
+                        + "The installed 'isx' is a JVM wrapper that requires Java " + REQUIRED_JAVA_MAJOR + "+.";
+            }
+
+            var pb = new ProcessBuilder(javaBin, "-version");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            if (process.waitFor() != 0) {
+                return "Could not determine Java version for " + javaBin;
+            }
+            var vmatcher = java.util.regex.Pattern.compile("\"(\\d+)")
+                    .matcher(output.lines().findFirst().orElse(""));
+            if (vmatcher.find()) {
+                int major = Integer.parseInt(vmatcher.group(1));
+                if (major < REQUIRED_JAVA_MAJOR) {
+                    return "Java " + REQUIRED_JAVA_MAJOR + "+ is required, but " + javaBin
+                            + " is version " + major + ".";
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            return null; // if we can't check, let it proceed and fail naturally
+        }
+    }
+
+    private static void printServiceLogs() {
+        try {
+            var pb = new ProcessBuilder(
+                    "journalctl", "--user", "-u", SERVICE_NAME, "--no-pager", "-n", "10");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            process.waitFor();
+            if (!output.isBlank()) {
+                System.err.println("Recent logs:");
+                System.err.println(output);
+                if (output.contains("status=127")) {
+                    System.err.println();
+                    System.err.println("Exit code 127 usually means the Java binary was not found.");
+                    System.err.println("If isx was installed as a JVM wrapper, ensure Java "
+                            + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper.");
+                    System.err.println("Alternatively, reinstall with: install.sh --native");
+                }
+            } else {
+                System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
+            }
+        } catch (Exception ignored) {
+            System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
+        }
     }
 
     static String resolveIsxPath() {
