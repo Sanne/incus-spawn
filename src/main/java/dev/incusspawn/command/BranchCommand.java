@@ -97,6 +97,9 @@ public class BranchCommand implements Runnable {
 
         applyHostResourceDevices(name);
 
+        // Add git remotes to host repos (doesn't require instance to be running)
+        AutoRemoteService.addRemotes(incus, name);
+
         if (noStart) {
             System.out.println("Branch '" + name + "' created (not started).");
             return;
@@ -131,7 +134,6 @@ public class BranchCommand implements Runnable {
         incus.shellExec(name, "chown", getUid() + ":" + getUid(), "/home/agentuser");
 
         injectSshKeyIfAvailable(incus, name);
-        AutoRemoteService.addRemotes(incus, name);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");

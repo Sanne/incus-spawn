@@ -2421,6 +2421,13 @@ public class ListCommand implements Runnable {
             HostResourceSetup.applyForInstance(incus, name, hostResources);
         }
 
+        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
+        incus.configSet(name, Metadata.PARENT, source);
+        incus.configSet(name, Metadata.CREATED, Metadata.today());
+
+        // Add git remotes to host repos (doesn't require instance to be running)
+        AutoRemoteService.addRemotes(incus, name);
+
         incus.start(name);
         waitForReady(name);
 
@@ -2450,12 +2457,7 @@ public class ListCommand implements Runnable {
         // large images with many pre-built dependencies)
         incus.shellExec(name, "chown", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
 
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
-        incus.configSet(name, Metadata.PARENT, source);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
-
         BranchCommand.injectSshKeyIfAvailable(incus, name);
-        AutoRemoteService.addRemotes(incus, name);
 
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
