@@ -916,7 +916,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     /**
      * Clone git repos declared in the image definition as agentuser.
      * When a matching host-side checkout is available (via SpawnConfig host-path/repo-paths),
-     * uses --reference --dissociate to speed up cloning from local objects.
+     * uses {@code --reference} to speed up cloning from local objects. Dissociation
+     * is deferred to after checkout: a manual {@code repack -a -d} followed by
+     * alternates removal makes the clone self-contained while the reference device
+     * is still mounted.
      */
     void cloneRepos(Container container, ImageDef imageDef) {
         var config = SpawnConfig.load();
@@ -935,6 +938,15 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                         container.runAsUser("agentuser",
                                 buildCloneCommand(repo, ref.containerPath()),
                                 "Failed to clone " + repo.getUrl() + " with reference");
+                        // Dissociate now that checkout succeeded: repack referenced
+                        // objects locally and drop the alternates entry, so the clone
+                        // is self-contained before the reference device is removed.
+                        var expandedPath = expandHome(repo.getPath());
+                        var clonePath = shellQuote(expandedPath);
+                        container.runAsUser("agentuser",
+                                "git -C " + clonePath + " repack -a -d"
+                                        + " && rm -f -- " + shellQuote(expandedPath + "/.git/objects/info/alternates"),
+                                "Failed to dissociate " + repo.getUrl() + " from reference");
                         cloned = true;
                         System.out.println("  Done.");
                     } catch (Exception e) {
@@ -986,7 +998,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var cmd = new StringBuilder("git clone --single-branch");
         if (referencePath != null) {
             cmd.append(" --reference ").append(shellQuote(referencePath));
-            cmd.append(" --dissociate");
         }
         if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
             cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
@@ -996,7 +1007,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         return cmd.toString();
     }
 
-    private RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config) {
+    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config) {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;

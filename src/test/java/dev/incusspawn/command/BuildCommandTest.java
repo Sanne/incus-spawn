@@ -390,4 +390,71 @@ class BuildCommandTest {
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).shellExecInteractive(eq("test"), any(String[].class));
     }
+
+    @Test
+    void cloneReposWithReferenceDissociates() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any());
+
+        cmd.cloneRepos(container, imageDef);
+
+        // Reference clone command
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "git clone --single-branch --reference '/mnt/ref/repo' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+        // Dissociation: repack + alternates removal
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "git -C '/home/agentuser/repo' repack -a -d && rm -f -- '/home/agentuser/repo/.git/objects/info/alternates'");
+        // Reference device cleaned up
+        verify(incus).deviceRemove("test", "ref-repo");
+    }
+
+    @Test
+    void cloneReposWithReferenceFailsFallsBack() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        // First call (reference clone) fails, rest succeed
+        when(incus.shellExecInteractive(eq("test"), any(String[].class)))
+                .thenReturn(1)  // reference clone fails
+                .thenReturn(0)  // cleanup rm -rf
+                .thenReturn(0)  // normal clone
+                .thenReturn(0); // refspec restore
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any());
+
+        cmd.cloneRepos(container, imageDef);
+
+        // Should fall back to normal clone
+        verify(incus).shellExecInteractive("test",
+                "su", "-l", "agentuser", "-c",
+                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+        // Reference device still cleaned up
+        verify(incus).deviceRemove("test", "ref-repo");
+    }
 }
