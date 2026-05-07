@@ -590,7 +590,9 @@ public class ListCommand implements Runnable {
     private void openBranchModal(String sourceName, String runtime) {
         branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestBranchName(sourceName));
-        branchEnableGui = false;
+        var def = imageDefs.get(sourceName);
+        branchEnableGui = (def != null && def.isGui())
+                || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED));
         branchNetworkMode = NetworkMode.FULL;
         branchEnableInbox = false;
         branchInboxInput = new TextInputState("");
@@ -2428,15 +2430,20 @@ public class ListCommand implements Runnable {
         // Add git remotes to host repos (doesn't require instance to be running)
         AutoRemoteService.addRemotes(incus, name);
 
+        // Configure GUI before start so environment.* keys are visible to init
+        if (gui) {
+            if (configureGui(name)) {
+                incus.configSet(name, Metadata.GUI_ENABLED, "true");
+            } else {
+                System.err.println("Continuing without GUI passthrough.");
+            }
+        }
+
         incus.start(name);
         waitForReady(name);
 
         if (networkMode == NetworkMode.PROXY_ONLY) {
             BranchCommand.applyProxyOnlyFirewall(incus, name);
-        }
-
-        if (gui && !configureGui(name)) {
-            System.err.println("Continuing without GUI passthrough.");
         }
 
         if (inboxPath != null && !inboxPath.isEmpty()) {
@@ -2466,40 +2473,7 @@ public class ListCommand implements Runnable {
     }
 
     private boolean configureGui(String name) {
-        var xdgRuntimeDir = System.getenv("XDG_RUNTIME_DIR");
-        var waylandDisplay = System.getenv("WAYLAND_DISPLAY");
-        if (xdgRuntimeDir == null || waylandDisplay == null) {
-            System.err.println("Error: GUI passthrough requires WAYLAND_DISPLAY and XDG_RUNTIME_DIR.");
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
-        var hostSocket = xdgRuntimeDir + "/" + waylandDisplay;
-        if (!java.nio.file.Files.exists(java.nio.file.Path.of(hostSocket))) {
-            System.err.println("Error: Wayland socket not found at " + hostSocket);
-            System.err.println("Make sure you are running isx from a Wayland graphical session.");
-            return false;
-        }
-
-        System.out.println("Enabling GUI passthrough...");
-        var uid = String.valueOf(getUid());
-
-        incus.deviceAdd(name, "gpu", "gpu");
-        incus.deviceAdd(name, "xdg-runtime", "disk",
-                "source=" + xdgRuntimeDir,
-                "path=/run/user/" + uid);
-
-        incus.shellExec(name, "sh", "-c",
-                "cat > /etc/profile.d/wayland.sh << 'ENVEOF'\n" +
-                "export WAYLAND_DISPLAY=" + waylandDisplay + "\n" +
-                "export XDG_RUNTIME_DIR=/run/user/" + uid + "\n" +
-                "export GDK_BACKEND=wayland\n" +
-                "export QT_QPA_PLATFORM=wayland\n" +
-                "export SDL_VIDEODRIVER=wayland\n" +
-                "export MOZ_ENABLE_WAYLAND=1\n" +
-                "export ELECTRON_OZONE_PLATFORM_HINT=wayland\n" +
-                "ENVEOF\n" +
-                "chmod 644 /etc/profile.d/wayland.sh");
-        return true;
+        return BranchCommand.configureGui(incus, name);
     }
 
     private void configureProxyOnly(String name) {
@@ -2582,9 +2556,14 @@ public class ListCommand implements Runnable {
             incus.start(name);
             waitForReady(name);
         }
+        checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
         System.out.println();
+    }
+
+    private void checkGuiHealth(String name) {
+        BranchCommand.checkGuiHealth(incus, name);
     }
 
     private void waitForReady(String name) {

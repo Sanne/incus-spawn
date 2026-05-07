@@ -24,6 +24,7 @@ public final class Metadata {
     public static final String HOST_RESOURCES = PREFIX + "host-resources";
     public static final String DEFINITION_SHA = PREFIX + "definition-sha";
     public static final String BUILD_SOURCE = PREFIX + "build-source";
+    public static final String GUI_ENABLED = PREFIX + "gui-enabled";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
