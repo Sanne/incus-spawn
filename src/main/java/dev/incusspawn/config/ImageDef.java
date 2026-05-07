@@ -77,6 +77,7 @@ public class ImageDef {
     private SkillsDef skills = SkillsDef.EMPTY;
     @JsonProperty("host-resources")
     private List<HostResource> hostResources = List.of();
+    private boolean gui;
 
     @JsonIgnore
     private String source = "unknown";
@@ -99,6 +100,8 @@ public class ImageDef {
     public void setSkills(SkillsDef skills) { this.skills = skills; }
     public List<HostResource> getHostResources() { return hostResources; }
     public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
+    public boolean isGui() { return gui; }
+    public void setGui(boolean gui) { this.gui = gui; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
 
@@ -234,6 +237,7 @@ public class ImageDef {
             sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
                     .append(',').append(hr.getMode()).append('\n');
         }
+        if (gui) sb.append("gui=true\n");
         return sha256hex(sb.toString());
     }
 

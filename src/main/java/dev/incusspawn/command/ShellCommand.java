@@ -46,6 +46,8 @@ public class ShellCommand implements Runnable {
             waitForReady(name);
         }
 
+        BranchCommand.checkGuiHealth(incus, name);
+
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
     }
