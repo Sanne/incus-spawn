@@ -2395,14 +2395,13 @@ public class ListCommand implements Runnable {
         System.out.println("Branching '" + name + "' from '" + source + "'...");
         incus.copy(source, name);
 
-        int cpu;
-        String memory, disk;
+        String cpu, memory, disk;
         if (vm) {
-            cpu = Integer.parseInt(vmCpuInput.text().strip());
+            cpu = vmCpuInput.text().strip();
             memory = vmMemoryInput.text().strip();
             disk = vmDiskInput.text().strip();
         } else {
-            cpu = ResourceLimits.adaptiveCpuLimit();
+            cpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
             memory = ResourceLimits.adaptiveMemoryLimit();
             disk = ResourceLimits.defaultDiskLimit();
         }

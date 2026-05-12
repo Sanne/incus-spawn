@@ -1,6 +1,5 @@
 package dev.incusspawn.lifecycle;
 
-import dev.incusspawn.command.BranchCommand;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
@@ -8,7 +7,10 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.MitmProxy;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -19,8 +21,8 @@ public final class InstanceLifecycle {
     private InstanceLifecycle() {}
 
     public static void applyResourceLimits(IncusClient incus, String name,
-                                          int cpu, String memory, String disk) {
-        incus.configSet(name, "limits.cpu", String.valueOf(cpu));
+                                          String cpu, String memory, String disk) {
+        incus.configSet(name, "limits.cpu", cpu);
         incus.configSet(name, "limits.memory", memory);
         incus.exec("config", "device", "set", name, "root", "size=" + disk);
     }
@@ -74,7 +76,7 @@ public final class InstanceLifecycle {
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, Path inboxPath) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
-            BranchCommand.applyProxyOnlyFirewall(incus, name);
+            applyProxyOnlyFirewall(incus, name);
         }
 
         if (inboxPath != null) {
@@ -94,15 +96,91 @@ public final class InstanceLifecycle {
         var uid = getUid();
         incus.shellExec(name, "chown", uid + ":" + uid, "/home/agentuser");
 
-        BranchCommand.injectSshKeyIfAvailable(incus, name);
+        injectSshKeyIfAvailable(incus, name);
     }
 
-    private static String getUid() {
+    /**
+     * Apply iptables rules inside the container to restrict outbound traffic to only
+     * the host MITM proxy and DNS. Called after the container is started.
+     */
+    public static void applyProxyOnlyFirewall(IncusClient incus, String name) {
+        var gatewayIp = incus.configGet(name, Metadata.PROXY_GATEWAY);
+        if (gatewayIp.isEmpty()) {
+            System.err.println("Warning: no proxy gateway configured, skipping firewall rules.");
+            return;
+        }
+
+        var mitmPort = MitmProxy.CONTAINER_FACING_PORT;
+        var healthPort = MitmProxy.DEFAULT_HEALTH_PORT;
+
+        System.out.println("Applying proxy-only firewall rules...");
+
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT");
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-m", "conntrack",
+                "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT");
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "tcp", "--dport", String.valueOf(mitmPort), "-j", "ACCEPT");
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "tcp", "--dport", String.valueOf(healthPort), "-j", "ACCEPT");
+        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
+                "-p", "udp", "--dport", "53", "-j", "ACCEPT");
+        incus.shellExec(name, "iptables", "-P", "OUTPUT", "DROP");
+
+        System.out.println("  Outbound traffic restricted to " + gatewayIp +
+                " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
+    }
+
+    public static void injectSshKeyIfAvailable(IncusClient incus, String name) {
+        var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
+        if (!check.success()) return;
+
+        var home = System.getProperty("user.home");
+        Path pubKey = null;
+        for (var keyName : List.of("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")) {
+            var candidate = Path.of(home, ".ssh", keyName);
+            if (Files.exists(candidate)) {
+                pubKey = candidate;
+                break;
+            }
+        }
+        if (pubKey == null) {
+            System.out.println("  SSH is available but no public key found in ~/.ssh/");
+            System.out.println("  Add your key manually: ssh-copy-id agentuser@<container-ip>");
+            return;
+        }
+
+        try {
+            var keyContent = Files.readString(pubKey).strip();
+            var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
+            try {
+                Files.writeString(tmpKey, keyContent + "\n");
+                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys");
+                incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/.ssh/authorized_keys");
+                incus.shellExec(name, "chmod", "600", "/home/agentuser/.ssh/authorized_keys");
+            } finally {
+                Files.deleteIfExists(tmpKey);
+            }
+        } catch (IOException e) {
+            System.err.println("  Warning: failed to inject SSH key: " + e.getMessage());
+            return;
+        }
+
+        var ipResult = incus.shellExec(name, "hostname", "-I");
+        if (ipResult.success()) {
+            var ip = ipResult.stdout().strip().split("\\s+")[0];
+            System.out.println("  SSH access: ssh agentuser@" + ip);
+        }
+    }
+
+    static String getUid() {
         try {
             var pb = new ProcessBuilder("id", "-u");
             var p = pb.start();
             var output = new String(p.getInputStream().readAllBytes()).strip();
-            p.waitFor();
+            int exitCode = p.waitFor();
+            if (exitCode != 0 || output.isEmpty() || !output.chars().allMatch(Character::isDigit)) {
+                return "1000";
+            }
             return output;
         } catch (Exception e) {
             return "1000";
