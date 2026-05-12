@@ -1,13 +1,13 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
-import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -79,27 +79,15 @@ public class BranchCommand implements Runnable {
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
         incus.copy(resolvedSource, name);
 
-        // Apply resource limits
         var cpu = cpuLimit != null ? cpuLimit : ResourceLimits.adaptiveCpuLimit();
         var memory = memoryLimit != null ? memoryLimit : ResourceLimits.adaptiveMemoryLimit();
         var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
 
         System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
-        incus.configSet(name, "limits.cpu", String.valueOf(cpu));
-        incus.configSet(name, "limits.memory", memory);
-        incus.exec("config", "device", "set", name, "root", "size=" + disk);
-
-        configureNetwork(networkMode);
-
-        // Tag with metadata — override inherited type so the TUI shows this as an instance, not a template
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
-        incus.configSet(name, Metadata.PARENT, resolvedSource);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
-
-        applyHostResourceDevices(name);
-
-        // Add git remotes to host repos (doesn't require instance to be running)
-        AutoRemoteService.addRemotes(incus, name);
+        InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
+        InstanceLifecycle.configureNetwork(incus, name, networkMode);
+        InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
+        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
         // Configure GUI before start so environment.* keys are visible to init
         if (gui) {
@@ -122,29 +110,7 @@ public class BranchCommand implements Runnable {
 
         incus.start(name);
         waitForReady(name);
-
-        if (networkMode == NetworkMode.PROXY_ONLY) {
-            applyProxyOnlyFirewall(name);
-        }
-
-        if (inbox != null) {
-            if (java.nio.file.Files.isDirectory(inbox)) {
-                System.out.println("Mounting inbox: " + inbox.toAbsolutePath() + " -> /home/agentuser/inbox (read-only)");
-                incus.deviceAdd(name, "inbox", "disk",
-                        "source=" + inbox.toAbsolutePath(),
-                        "path=/home/agentuser/inbox",
-                        "readonly=true");
-            } else {
-                System.err.println("Warning: inbox path '" + inbox + "' is not a directory, skipping.");
-            }
-        }
-
-        // Fix ownership of home dir itself (not recursively — files inside already
-        // have correct ownership from the template, and -R would be very slow on
-        // large images with many pre-built dependencies)
-        incus.shellExec(name, "chown", getUid() + ":" + getUid(), "/home/agentuser");
-
-        injectSshKeyIfAvailable(incus, name);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");
@@ -341,36 +307,11 @@ public class BranchCommand implements Runnable {
         return NetworkMode.FULL;
     }
 
-    private void configureNetwork(NetworkMode mode) {
-        switch (mode) {
-            case FULL -> {} // Default: keep on incusbr0, no restrictions
-            case PROXY_ONLY -> configureProxyOnly();
-            case AIRGAP -> configureAirgap();
-        }
-    }
-
-    private void configureAirgap() {
-        System.out.println("Enabling network airgap...");
-        var result = incus.exec("network", "detach", "incusbr0", name);
-        if (!result.success()) {
-            incus.exec("config", "device", "override", name, "eth0");
-            incus.exec("config", "device", "remove", name, "eth0");
-        }
-    }
-
-    private void configureProxyOnly() {
-        System.out.println("Configuring proxy-only network...");
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-
-        incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
-        incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
-    }
-
     /**
      * Apply iptables rules inside the container to restrict outbound traffic to only
      * the host MITM proxy and DNS. Called after the container is started.
      */
-    static void applyProxyOnlyFirewall(IncusClient incus, String name) {
+    public static void applyProxyOnlyFirewall(IncusClient incus, String name) {
         var gatewayIp = incus.configGet(name, Metadata.PROXY_GATEWAY);
         if (gatewayIp.isEmpty()) {
             System.err.println("Warning: no proxy gateway configured, skipping firewall rules.");
@@ -403,10 +344,6 @@ public class BranchCommand implements Runnable {
                 " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
     }
 
-    private void applyProxyOnlyFirewall(String name) {
-        applyProxyOnlyFirewall(incus, name);
-    }
-
     private static String getUid() {
         try {
             var pb = new ProcessBuilder("id", "-u");
@@ -416,15 +353,6 @@ public class BranchCommand implements Runnable {
             return output;
         } catch (Exception e) {
             return "1000";
-        }
-    }
-
-    private void applyHostResourceDevices(String containerName) {
-        var hrJson = incus.configGet(containerName, Metadata.HOST_RESOURCES);
-        var resources = HostResourceSetup.deserialize(hrJson);
-        if (!resources.isEmpty()) {
-            System.out.println("Applying host-resource devices...");
-            HostResourceSetup.applyForInstance(incus, containerName, resources);
         }
     }
 
@@ -455,7 +383,7 @@ public class BranchCommand implements Runnable {
         System.err.println("Warning: instance " + container + " may not be fully ready.");
     }
 
-    static void injectSshKeyIfAvailable(IncusClient incus, String name) {
+    public static void injectSshKeyIfAvailable(IncusClient incus, String name) {
         var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
         if (!check.success()) return;
 

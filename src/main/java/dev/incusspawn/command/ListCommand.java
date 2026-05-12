@@ -10,8 +10,9 @@ import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ToolAction;
@@ -2394,118 +2395,45 @@ public class ListCommand implements Runnable {
         System.out.println("Branching '" + name + "' from '" + source + "'...");
         incus.copy(source, name);
 
-        // Apply resource limits
-        String cpuStr, memory, disk;
+        int cpu;
+        String memory, disk;
         if (vm) {
-            cpuStr = vmCpuInput.text().strip();
+            cpu = Integer.parseInt(vmCpuInput.text().strip());
             memory = vmMemoryInput.text().strip();
             disk = vmDiskInput.text().strip();
         } else {
-            cpuStr = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+            cpu = ResourceLimits.adaptiveCpuLimit();
             memory = ResourceLimits.adaptiveMemoryLimit();
             disk = ResourceLimits.defaultDiskLimit();
         }
-        System.out.println("Applying resource limits: " + cpuStr + " CPUs, " + memory + " memory, " + disk + " disk");
-        incus.configSet(name, "limits.cpu", cpuStr);
-        incus.configSet(name, "limits.memory", memory);
-        incus.exec("config", "device", "set", name, "root", "size=" + disk);
-
-        switch (networkMode) {
-            case PROXY_ONLY -> configureProxyOnly(name);
-            case AIRGAP -> configureAirgap(name);
-            case FULL -> {}
-        }
-
-        var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
-        var hostResources = HostResourceSetup.deserialize(hrJson);
-        if (!hostResources.isEmpty()) {
-            System.out.println("Applying host-resource devices...");
-            HostResourceSetup.applyForInstance(incus, name, hostResources);
-        }
-
-        incus.configSet(name, Metadata.TYPE, Metadata.TYPE_CLONE);
-        incus.configSet(name, Metadata.PARENT, source);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
-
-        // Add git remotes to host repos (doesn't require instance to be running)
-        AutoRemoteService.addRemotes(incus, name);
+        System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
+        InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
+        InstanceLifecycle.configureNetwork(incus, name, networkMode);
+        InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, source);
+        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
         // Configure GUI before start so environment.* keys are visible to init
         if (gui) {
-            if (configureGui(name)) {
+            if (BranchCommand.configureGui(incus, name)) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {
                 BranchCommand.removeGui(incus, name);
                 System.err.println("Continuing without GUI passthrough.");
             }
         } else {
-            // Clean up inherited GUI devices/env from incus copy
             BranchCommand.removeGui(incus, name);
         }
 
         incus.start(name);
         waitForReady(name);
 
-        if (networkMode == NetworkMode.PROXY_ONLY) {
-            BranchCommand.applyProxyOnlyFirewall(incus, name);
-        }
-
-        if (inboxPath != null && !inboxPath.isEmpty()) {
-            var path = java.nio.file.Path.of(inboxPath);
-            if (java.nio.file.Files.isDirectory(path)) {
-                System.out.println("Mounting inbox: " + path.toAbsolutePath() + " -> /home/agentuser/inbox (read-only)");
-                incus.deviceAdd(name, "inbox", "disk",
-                        "source=" + path.toAbsolutePath(),
-                        "path=/home/agentuser/inbox",
-                        "readonly=true");
-            } else {
-                System.err.println("Warning: inbox path '" + inboxPath + "' is not a directory, skipping.");
-            }
-        }
-
-        // Fix ownership of home dir itself (not recursively — files inside already
-        // have correct ownership from the template, and -R would be very slow on
-        // large images with many pre-built dependencies)
-        incus.shellExec(name, "chown", String.valueOf(getUid()) + ":" + String.valueOf(getUid()), "/home/agentuser");
-
-        BranchCommand.injectSshKeyIfAvailable(incus, name);
+        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
 
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
         System.out.println();
-    }
-
-    private boolean configureGui(String name) {
-        return BranchCommand.configureGui(incus, name);
-    }
-
-    private void configureProxyOnly(String name) {
-        System.out.println("Configuring proxy-only network...");
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-        incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
-        incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
-    }
-
-    private void configureAirgap(String name) {
-        System.out.println("Enabling network airgap...");
-        var result = incus.exec("network", "detach", "incusbr0", name);
-        if (!result.success()) {
-            incus.exec("config", "device", "override", name, "eth0");
-            incus.exec("config", "device", "remove", name, "eth0");
-        }
-    }
-
-    private static int getUid() {
-        try {
-            var pb = new ProcessBuilder("id", "-u");
-            var p = pb.start();
-            var output = new String(p.getInputStream().readAllBytes()).strip();
-            p.waitFor();
-            return Integer.parseInt(output);
-        } catch (Exception e) {
-            return 1000;
-        }
     }
 
     private boolean showProxyError() {

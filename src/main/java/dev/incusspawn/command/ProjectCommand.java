@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -84,11 +85,8 @@ public class ProjectCommand {
                 }
             }
 
-            // Tag with metadata
-            incus.configSet(imageName, Metadata.TYPE, Metadata.TYPE_PROJECT);
-            incus.configSet(imageName, Metadata.PARENT, parent);
+            InstanceLifecycle.tagMetadata(incus, imageName, Metadata.TYPE_PROJECT, parent);
             incus.configSet(imageName, Metadata.PROJECT, imageName);
-            incus.configSet(imageName, Metadata.CREATED, Metadata.today());
 
             // Stop the template
             System.out.println("Stopping project template...");
