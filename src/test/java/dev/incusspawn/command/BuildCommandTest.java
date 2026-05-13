@@ -455,6 +455,7 @@ class BuildCommandTest {
                 () -> BuildCommand.collectEffectiveTools(child, defs,
                         toolDefLoader, java.util.List.of()));
         assertTrue(ex.getMessage().contains("idea-backend"));
+        assertTrue(ex.getMessage().contains("tpl-parent"));
         assertTrue(ex.getMessage().contains("different parameters"));
     }
 
