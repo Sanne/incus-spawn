@@ -512,6 +512,9 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         mountDnfCache(targetName);
         var container = new Container(incus, targetName);
 
+        container.sh("sed -i \"s/^export ISX_TEMPLATE=.*/export ISX_TEMPLATE='" + targetName + "'/\" /home/agentuser/.bashrc")
+                .assertSuccess("Failed to update ISX_TEMPLATE in .bashrc");
+
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             System.out.println("Applying host-resources...");
@@ -653,12 +656,14 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         container.sh(
                 "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
                 .assertSuccess("Failed to configure .bashrc");
+        container.appendToProfile("export ISX_CONTAINER=\"${HOSTNAME}\"");
+        container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(targetName));
 
         // Install base packages needed by most tools
         System.out.println("Installing base packages...");
         container.runInteractive("Failed to install base packages",
                 "dnf", "install", "-y", "--setopt=keepcache=true",
-                "git", "curl", "which", "procps-ng", "findutils");
+                "git", "curl", "which", "procps-ng", "findutils", "tmux");
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {

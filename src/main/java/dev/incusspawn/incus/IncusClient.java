@@ -229,13 +229,74 @@ public class IncusClient {
     public int interactiveShell(String container, String user) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
+
+        String savedWindowName = null;
+        boolean inTmux = System.getenv("TMUX") != null;
+        if (inTmux) {
+            savedWindowName = hostExecCapture("tmux", "display-message", "-p", "#W");
+            hostExecQuiet("tmux", "rename-window", "isx:" + container);
+        }
+
+        propagateTerminfo(container);
+
         try {
-            var args = List.of("exec", container, "--", "su", "-", user);
+            List<String> args;
+            if (inTmux) {
+                args = List.of("exec", container, "--", "su", "-", user);
+            } else {
+                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                        "if command -v tmux >/dev/null 2>&1; then "
+                        + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
+                        + "exec tmux new-session -A -s isx; fi; exec bash --login");
+            }
             return execInteractive(args);
         } finally {
+            if (inTmux && savedWindowName != null) {
+                hostExecQuiet("tmux", "rename-window", savedWindowName);
+            }
             System.out.print("\033]0;\007");
             System.out.flush();
         }
+    }
+
+    private static String hostExecCapture(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            process.waitFor();
+            return process.exitValue() == 0 ? output : null;
+        } catch (IOException e) {
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    private static void hostExecQuiet(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            pb.start().waitFor();
+        } catch (IOException e) {
+            // best-effort
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void propagateTerminfo(String container) {
+        String term = System.getenv("TERM");
+        if (term == null || term.isEmpty()) return;
+        var check = shellExec(container, "infocmp", term);
+        if (check.exitCode() == 0) return;
+        String terminfo = hostExecCapture("infocmp", "-x", term);
+        if (terminfo == null) return;
+        shellExec(container, "sh", "-c",
+                "cat <<'TERMINFO_EOF' | tic -x -\n" + terminfo + "\nTERMINFO_EOF");
     }
 
     private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
