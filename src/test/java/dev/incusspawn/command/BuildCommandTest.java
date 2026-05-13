@@ -332,6 +332,165 @@ class BuildCommandTest {
                 "Only child-skill should remain after deduplication");
     }
 
+    // --- collectEffectiveTools ---
+
+    @Test
+    void collectEffectiveToolsNoTools() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-empty");
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        var result = BuildCommand.collectEffectiveTools(imageDef, java.util.Map.of(),
+                toolDefLoader, java.util.List.of());
+        assertTrue(result.effective().isEmpty());
+        assertTrue(result.ancestors().isEmpty());
+    }
+
+    @Test
+    void collectEffectiveToolsNoParent() {
+        var tool = simpleToolSetup("maven");
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("maven")).thenReturn(tool);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-root");
+        imageDef.setTools(List.of(new ToolDef.ToolRef("maven")));
+
+        var result = BuildCommand.collectEffectiveTools(imageDef, java.util.Map.of(),
+                toolDefLoader, java.util.List.of());
+        assertEquals(1, result.effective().size());
+        assertEquals("maven", result.effective().get(0).name());
+        assertTrue(result.ancestors().isEmpty());
+    }
+
+    @Test
+    void collectEffectiveToolsDeduplicatesSameParams() {
+        var tool = simpleToolSetup("maven");
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("maven")).thenReturn(tool);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("maven")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("maven")));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var result = BuildCommand.collectEffectiveTools(child, defs,
+                toolDefLoader, java.util.List.of());
+        assertTrue(result.effective().isEmpty(),
+                "Tool 'maven' already in parent should be excluded");
+        assertEquals(1, result.ancestors().size());
+        assertEquals("maven", result.ancestors().get(0).name());
+    }
+
+    @Test
+    void collectEffectiveToolsDeduplicatesAcrossGrandparent() {
+        var tool1 = simpleToolSetup("maven");
+        var tool2 = simpleToolSetup("gh");
+        var tool3 = simpleToolSetup("podman");
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("maven")).thenReturn(tool1);
+        when(toolDefLoader.find("gh")).thenReturn(tool2);
+        when(toolDefLoader.find("podman")).thenReturn(tool3);
+
+        var grandparent = new ImageDef();
+        grandparent.setName("tpl-grandparent");
+        grandparent.setTools(List.of(new ToolDef.ToolRef("maven")));
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setParent("tpl-grandparent");
+        parent.setTools(List.of(new ToolDef.ToolRef("gh")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("maven"), new ToolDef.ToolRef("gh"),
+                new ToolDef.ToolRef("podman")));
+
+        var defs = java.util.Map.of(
+                "tpl-grandparent", grandparent,
+                "tpl-parent", parent,
+                "tpl-child", child);
+        var result = BuildCommand.collectEffectiveTools(child, defs,
+                toolDefLoader, java.util.List.of());
+        assertEquals(1, result.effective().size());
+        assertEquals("podman", result.effective().get(0).name(),
+                "Only podman should remain after deduplication");
+        assertEquals(2, result.ancestors().size());
+    }
+
+    @Test
+    void collectEffectiveToolsErrorsOnDifferentParams() {
+        var memParam = new ToolDef.ParameterDef();
+        memParam.setType("string");
+
+        var tool = new ToolSetup() {
+            @Override public String name() { return "idea-backend"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("memory", memParam);
+            }
+        };
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("idea-backend")).thenReturn(tool);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("idea-backend",
+                java.util.Map.of("memory", "4g"))));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("idea-backend",
+                java.util.Map.of("memory", "8g"))));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var ex = assertThrows(IllegalArgumentException.class,
+                () -> BuildCommand.collectEffectiveTools(child, defs,
+                        toolDefLoader, java.util.List.of()));
+        assertTrue(ex.getMessage().contains("idea-backend"));
+        assertTrue(ex.getMessage().contains("different parameters"));
+    }
+
+    @Test
+    void collectEffectiveToolsNewToolPassesThrough() {
+        var tool1 = simpleToolSetup("maven");
+        var tool2 = simpleToolSetup("podman");
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("maven")).thenReturn(tool1);
+        when(toolDefLoader.find("podman")).thenReturn(tool2);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("maven")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("podman")));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var result = BuildCommand.collectEffectiveTools(child, defs,
+                toolDefLoader, java.util.List.of());
+        assertEquals(1, result.effective().size());
+        assertEquals("podman", result.effective().get(0).name());
+        assertEquals(1, result.ancestors().size());
+        assertEquals("maven", result.ancestors().get(0).name());
+    }
+
+    private static ToolSetup simpleToolSetup(String toolName) {
+        return new ToolSetup() {
+            @Override public String name() { return toolName; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+        };
+    }
+
     @Test
     void shellQuoteWrapsInSingleQuotes() {
         assertEquals("'hello'", BuildCommand.shellQuote("hello"));
@@ -634,10 +793,7 @@ class BuildCommandTest {
 
     @Test
     void resolveToolsFindsCdiTools() {
-        var cdiTool = new ToolSetup() {
-            @Override public String name() { return "gh"; }
-            @Override public void install(Container container, java.util.Map<String, String> params) {}
-        };
+        var cdiTool = simpleToolSetup("gh");
 
         var toolDefLoader = mock(ToolDefLoader.class);
         when(toolDefLoader.find("gh")).thenReturn(cdiTool);
@@ -653,10 +809,7 @@ class BuildCommandTest {
 
     @Test
     void resolveToolsFindsYamlTools() {
-        var yamlTool = new ToolSetup() {
-            @Override public String name() { return "podman"; }
-            @Override public void install(Container container, java.util.Map<String, String> params) {}
-        };
+        var yamlTool = simpleToolSetup("podman");
 
         var toolDefLoader = mock(ToolDefLoader.class);
         when(toolDefLoader.find("podman")).thenReturn(yamlTool);
@@ -672,14 +825,8 @@ class BuildCommandTest {
 
     @Test
     void resolveToolsFindsMixOfYamlAndCdiTools() {
-        var cdiTool = new ToolSetup() {
-            @Override public String name() { return "claude"; }
-            @Override public void install(Container container, java.util.Map<String, String> params) {}
-        };
-        var yamlTool = new ToolSetup() {
-            @Override public String name() { return "sshd"; }
-            @Override public void install(Container container, java.util.Map<String, String> params) {}
-        };
+        var cdiTool = simpleToolSetup("claude");
+        var yamlTool = simpleToolSetup("sshd");
 
         var toolDefLoader = mock(ToolDefLoader.class);
         when(toolDefLoader.find("claude")).thenReturn(cdiTool);

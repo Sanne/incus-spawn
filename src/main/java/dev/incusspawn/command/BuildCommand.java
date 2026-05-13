@@ -518,9 +518,9 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             HostResourceSetup.applyForBuild(incus, container, hostResources);
         }
 
-        var tools = resolveTools(imageDef);
-        installAllPackages(container, imageDef, tools, defs);
-        runToolSetup(container, tools);
+        var toolResolution = collectEffectiveTools(imageDef, defs);
+        installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
+        runToolSetup(container, toolResolution.effective());
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
@@ -698,6 +698,11 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         Map<String, String> parameters
     ) {}
 
+    record ToolResolution(
+        java.util.List<ResolvedTool> effective,
+        java.util.List<ResolvedTool> ancestors
+    ) {}
+
     private java.util.List<ResolvedTool> resolveTools(ImageDef imageDef) {
         return resolveTools(imageDef, toolDefLoader, toolSetups, false);
     }
@@ -809,6 +814,20 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     private void installAllPackages(Container container, ImageDef imageDef,
                                     java.util.List<ResolvedTool> tools,
                                     Map<String, ImageDef> defs) {
+        var toolResolution = collectEffectiveTools(imageDef, defs);
+        installAllPackages(container, imageDef, tools, toolResolution.ancestors(), defs);
+    }
+
+    /**
+     * Collect all packages from the image definition and its tools,
+     * subtract those already installed by ancestor images, and install
+     * only the remaining packages. This overload accepts pre-resolved ancestor tools
+     * to avoid redundant resolution.
+     */
+    private void installAllPackages(Container container, ImageDef imageDef,
+                                    java.util.List<ResolvedTool> tools,
+                                    java.util.List<ResolvedTool> ancestorTools,
+                                    Map<String, ImageDef> defs) {
         var allPackages = new java.util.LinkedHashSet<>(imageDef.getPackages());
         for (var tool : tools) {
             allPackages.addAll(tool.setup().packages());
@@ -822,10 +841,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             var parentDef = defs.get(parentName);
             if (parentDef == null) break;
             ancestorPackages.addAll(parentDef.getPackages());
-            for (var tool : resolveTools(parentDef)) {
-                ancestorPackages.addAll(tool.setup().packages());
-            }
             parentName = parentDef.getParent();
+        }
+        for (var tool : ancestorTools) {
+            ancestorPackages.addAll(tool.setup().packages());
         }
 
         var totalCount = allPackages.size();
@@ -1198,6 +1217,53 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
         skills.removeAll(ancestorSkills);
         return new ArrayList<>(skills);
+    }
+
+    /**
+     * Resolve tools for this image, removing any already installed by ancestor images.
+     * If an ancestor declares the same tool with different parameters, that's an error
+     * (the parent's setup already ran and can't be undone).
+     * Returns both the effective tools to install and the resolved ancestor tools.
+     */
+    ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs) {
+        return collectEffectiveTools(imageDef, defs, toolDefLoader, toolSetups);
+    }
+
+    static ToolResolution collectEffectiveTools(ImageDef imageDef, Map<String, ImageDef> defs,
+                                                 ToolDefLoader toolDefLoader,
+                                                 Iterable<ToolSetup> cdiTools) {
+        var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false);
+
+        var ancestorToolsMap = new java.util.LinkedHashMap<String, ResolvedTool>();
+        var parentName = imageDef.getParent();
+        while (parentName != null && !parentName.isBlank()) {
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) break;
+            for (var resolved : resolveTools(parentDef, toolDefLoader, cdiTools, true)) {
+                ancestorToolsMap.putIfAbsent(resolved.name(), resolved);
+            }
+            parentName = parentDef.getParent();
+        }
+
+        var ancestorTools = new java.util.ArrayList<>(ancestorToolsMap.values());
+        if (tools.isEmpty()) {
+            return new ToolResolution(tools, ancestorTools);
+        }
+
+        var effective = new java.util.ArrayList<ResolvedTool>();
+        for (var tool : tools) {
+            var ancestorTool = ancestorToolsMap.get(tool.name());
+            if (ancestorTool == null) {
+                effective.add(tool);
+            } else if (!ancestorTool.parameters().equals(tool.parameters())) {
+                throw new IllegalArgumentException(
+                    "Tool '" + tool.name() + "' is already installed by a parent template with different parameters:\n" +
+                    "  Parent:  " + ancestorTool.parameters() + "\n" +
+                    "  Current: " + tool.parameters()
+                );
+            }
+        }
+        return new ToolResolution(effective, ancestorTools);
     }
 
     /**
