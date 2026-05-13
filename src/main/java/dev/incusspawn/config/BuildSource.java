@@ -22,14 +22,16 @@ public class BuildSource {
 
     private Map<String, ImageDef> definitions = new LinkedHashMap<>();
     private Map<String, ToolDef> tools = new LinkedHashMap<>();
+    private Map<String, ToolInstance> toolInstances = new LinkedHashMap<>();
     private Map<String, String> sources = new LinkedHashMap<>();
 
     public BuildSource() {}
 
     public BuildSource(Map<String, ImageDef> definitions, Map<String, ToolDef> tools,
-                       Map<String, String> sources) {
+                       Map<String, ToolInstance> toolInstances, Map<String, String> sources) {
         this.definitions = definitions != null ? definitions : new LinkedHashMap<>();
         this.tools = tools != null ? tools : new LinkedHashMap<>();
+        this.toolInstances = toolInstances != null ? toolInstances : new LinkedHashMap<>();
         this.sources = sources != null ? sources : new LinkedHashMap<>();
     }
 
@@ -46,6 +48,32 @@ public class BuildSource {
     public Map<String, String> getSources() { return sources; }
     public void setSources(Map<String, String> sources) {
         this.sources = sources != null ? sources : new LinkedHashMap<>();
+    }
+
+    public Map<String, ToolInstance> getToolInstances() { return toolInstances; }
+    public void setToolInstances(Map<String, ToolInstance> instances) {
+        this.toolInstances = instances != null ? instances : new LinkedHashMap<>();
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ToolInstance {
+        private String name;
+        private Map<String, String> parameterValues = Map.of();
+
+        public ToolInstance() {}
+
+        public ToolInstance(String name, Map<String, String> parameterValues) {
+            this.name = name;
+            this.parameterValues = parameterValues != null ? parameterValues : Map.of();
+        }
+
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public Map<String, String> getParameterValues() { return parameterValues; }
+        public void setParameterValues(Map<String, String> values) {
+            this.parameterValues = values != null ? values : Map.of();
+        }
     }
 
     public String descriptionFor(String templateName) {

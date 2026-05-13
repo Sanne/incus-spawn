@@ -18,7 +18,7 @@ class BuildSourceTest {
         imageDef.setDescription("Test template");
         imageDef.setImage("images:fedora/43");
         imageDef.setPackages(List.of("git", "curl"));
-        imageDef.setTools(List.of("maven-3"));
+        imageDef.setTools(List.of(new ToolDef.ToolRef("maven-3")));
         imageDef.setSource("built-in");
 
         var toolDef = new ToolDef();
@@ -35,7 +35,7 @@ class BuildSourceTest {
         var sources = new LinkedHashMap<String, String>();
         sources.put("tpl-test", "built-in");
 
-        var original = new BuildSource(definitions, tools, sources);
+        var original = new BuildSource(definitions, tools, new LinkedHashMap<>(), sources);
         var json = original.toJson();
 
         assertNotNull(json);
@@ -51,7 +51,11 @@ class BuildSourceTest {
         assertEquals("Test template", restoredDef.getDescription());
         assertEquals("images:fedora/43", restoredDef.getImage());
         assertEquals(List.of("git", "curl"), restoredDef.getPackages());
-        assertEquals(List.of("maven-3"), restoredDef.getTools());
+        assertEquals(1, restoredDef.getTools().size());
+        assertEquals("maven-3", restoredDef.getTools().get(0).getName());
+        var params = restoredDef.getTools().get(0).getParams();
+        assertNotNull(params, "params should not be null after deserialization");
+        assertTrue(params.isEmpty(), "params should be empty, but was: " + params);
         assertEquals("built-in", restoredDef.getSource());
 
         assertEquals(1, restored.getTools().size());
@@ -73,7 +77,7 @@ class BuildSourceTest {
         child.setName("tpl-dev");
         child.setDescription("Dev");
         child.setParent("tpl-minimal");
-        child.setTools(List.of("podman"));
+        child.setTools(List.of(new ToolDef.ToolRef("podman")));
         child.setSource("/path/to/dev.yaml");
 
         var definitions = new LinkedHashMap<String, ImageDef>();
@@ -84,7 +88,7 @@ class BuildSourceTest {
         sources.put("tpl-dev", "/path/to/dev.yaml");
         sources.put("tpl-minimal", "/path/to/minimal.yaml");
 
-        var bs = new BuildSource(definitions, new LinkedHashMap<>(), sources);
+        var bs = new BuildSource(definitions, new LinkedHashMap<>(), new LinkedHashMap<>(), sources);
         var json = bs.toJson();
         var restored = BuildSource.fromJson(json);
 
@@ -117,7 +121,7 @@ class BuildSourceTest {
         var definitions = new LinkedHashMap<String, ImageDef>();
         definitions.put("tpl-test", def);
 
-        var bs = new BuildSource(definitions, new LinkedHashMap<>(), new LinkedHashMap<>());
+        var bs = new BuildSource(definitions, new LinkedHashMap<>(), new LinkedHashMap<>(), new LinkedHashMap<>());
         assertEquals("My template", bs.descriptionFor("tpl-test"));
         assertEquals("", bs.descriptionFor("nonexistent"));
     }
@@ -127,7 +131,7 @@ class BuildSourceTest {
         var tool = new ToolDef();
         tool.setName("maven-3");
         tool.setPackages(List.of("maven"));
-        tool.setRequires(List.of("java-sdk"));
+        tool.setRequires(List.of(new ToolDef.ToolRef("java-sdk")));
 
         var depTool = new ToolDef();
         depTool.setName("java-sdk");
@@ -137,23 +141,26 @@ class BuildSourceTest {
         tools.put("maven-3", tool);
         tools.put("java-sdk", depTool);
 
-        var bs = new BuildSource(new LinkedHashMap<>(), tools, new LinkedHashMap<>());
+        var bs = new BuildSource(new LinkedHashMap<>(), tools, new LinkedHashMap<>(), new LinkedHashMap<>());
         var json = bs.toJson();
         var restored = BuildSource.fromJson(json);
 
         assertNotNull(restored);
         assertEquals(2, restored.getTools().size());
-        assertEquals(List.of("java-sdk"), restored.getTools().get("maven-3").getRequires());
+        assertEquals(1, restored.getTools().get("maven-3").getRequires().size());
+        assertEquals("java-sdk", restored.getTools().get("maven-3").getRequires().get(0).getName());
     }
 
     @Test
     void constructorHandlesNullMaps() {
-        var bs = new BuildSource(null, null, null);
+        var bs = new BuildSource(null, null, null, null);
         assertNotNull(bs.getDefinitions());
         assertNotNull(bs.getTools());
+        assertNotNull(bs.getToolInstances());
         assertNotNull(bs.getSources());
         assertTrue(bs.getDefinitions().isEmpty());
         assertTrue(bs.getTools().isEmpty());
+        assertTrue(bs.getToolInstances().isEmpty());
         assertTrue(bs.getSources().isEmpty());
     }
 

@@ -1887,12 +1887,18 @@ public class ListCommand implements Runnable {
         addDetailSection(lines, "Packages", allPackages, labelStyle, lineStyle, dimStyle);
 
         // Collect all tools
-        var allTools = new ArrayList<String>();
-        for (var def : chain) allTools.addAll(def.getTools());
-        addDetailSection(lines, "Tools", allTools, labelStyle, lineStyle, dimStyle);
+        var allToolsFormatted = new ArrayList<String>();
+        var allToolNames = new ArrayList<String>();
+        for (var def : chain) {
+            for (var toolRef : def.getTools()) {
+                allToolsFormatted.add(formatToolWithParams(toolRef));
+                allToolNames.add(toolRef.getName());
+            }
+        }
+        addDetailSection(lines, "Tools", allToolsFormatted, labelStyle, lineStyle, dimStyle);
 
         // Collect auto-added dependencies (transitive requires not already in explicit list)
-        var autoDeps = collectAutoDeps(allTools);
+        var autoDeps = collectAutoDeps(allToolNames);
         if (!autoDeps.isEmpty()) {
             addDetailSection(lines, "Dependencies (auto)", autoDeps, labelStyle, lineStyle, dimStyle);
         }
@@ -1958,6 +1964,17 @@ public class ListCommand implements Runnable {
         }
         allDeps.removeAll(explicit);
         return new ArrayList<>(allDeps);
+    }
+
+    private String formatToolWithParams(dev.incusspawn.tool.ToolDef.ToolRef toolRef) {
+        if (toolRef.getParams().isEmpty()) {
+            return toolRef.getName();
+        }
+        var paramStr = toolRef.getParams().entrySet().stream()
+            .sorted(java.util.Map.Entry.comparingByKey())
+            .map(e -> e.getKey() + ": " + e.getValue())
+            .collect(java.util.stream.Collectors.joining(", "));
+        return toolRef.getName() + " (" + paramStr + ")";
     }
 
     private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
@@ -2043,7 +2060,9 @@ public class ListCommand implements Runnable {
         if (parent == null || parent.isEmpty() || "-".equals(parent)) return tools;
         var chain = getInheritanceChain(parent);
         for (var def : chain) {
-            tools.addAll(def.getTools());
+            for (var toolRef : def.getTools()) {
+                tools.add(toolRef.getName());
+            }
         }
         // Add transitive deps
         var allDeps = new java.util.LinkedHashSet<String>();
@@ -2125,8 +2144,14 @@ public class ListCommand implements Runnable {
             if (!def.getTools().isEmpty()) {
                 var toolSpans = new ArrayList<Span>();
                 toolSpans.add(Span.styled(contentIndent + "Tools: ", labelStyle));
-                toolSpans.add(Span.styled(String.join(", ", def.getTools()), lineStyle));
-                var levelAutoDeps = collectAutoDeps(def.getTools());
+                var toolNames = def.getTools().stream()
+                    .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
+                    .collect(java.util.stream.Collectors.toList());
+                var toolDisplay = def.getTools().stream()
+                    .map(this::formatToolWithParams)
+                    .collect(java.util.stream.Collectors.toList());
+                toolSpans.add(Span.styled(String.join(", ", toolDisplay), lineStyle));
+                var levelAutoDeps = collectAutoDeps(toolNames);
                 if (!levelAutoDeps.isEmpty()) {
                     toolSpans.add(Span.styled("  (+" + String.join(", ", levelAutoDeps) + ")", dimStyle));
                 }
@@ -2506,8 +2531,8 @@ public class ListCommand implements Runnable {
         var depMap = new java.util.TreeMap<String, java.util.List<String>>();
         var visited = new java.util.HashSet<String>();
         for (var def : imageDefs.values()) {
-            for (var toolName : def.getTools()) {
-                collectToolFps(toolName, rawFps, depMap, visited);
+            for (var toolRef : def.getTools()) {
+                collectToolFps(toolRef.getName(), rawFps, depMap, visited);
             }
         }
         return dev.incusspawn.tool.ToolDef.compositeFingerprints(rawFps, depMap);
@@ -2519,11 +2544,14 @@ public class ListCommand implements Runnable {
         if (!visited.add(name)) return;
         var tool = toolDefLoader.find(name);
         if (tool instanceof YamlToolSetup yts) {
-            for (var dep : yts.toolDef().getRequires()) {
-                collectToolFps(dep, rawFps, depMap, visited);
+            for (var depRef : yts.toolDef().getRequires()) {
+                collectToolFps(depRef.getName(), rawFps, depMap, visited);
             }
             rawFps.put(name, yts.toolDef().contentFingerprint());
-            depMap.put(name, yts.toolDef().getRequires());
+            var depNames = yts.toolDef().getRequires().stream()
+                .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
+                .toList();
+            depMap.put(name, depNames);
         }
     }
 

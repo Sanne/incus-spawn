@@ -99,7 +99,9 @@ public class SpawnConfig {
         var tools = new java.util.HashSet<String>();
         var current = imageDef;
         while (current != null) {
-            tools.addAll(current.getTools());
+            for (var toolRef : current.getTools()) {
+                tools.add(toolRef.getName());
+            }
             if (current.isRoot() || existsCheck.test(current.getParent())) break;
             current = allDefs.get(current.getParent());
         }

@@ -19,7 +19,7 @@ public class GhSetup implements ToolSetup {
     }
 
     @Override
-    public void install(Container c) {
+    public void install(Container c, java.util.Map<String, String> resolvedParams) {
         System.out.println("Installing GitHub CLI...");
         // Package is installed in bulk by BuildCommand before tool.install() is called.
         configureAuth(c);

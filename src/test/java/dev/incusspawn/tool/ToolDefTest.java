@@ -125,8 +125,8 @@ class ToolDefTest {
                 """;
         var def = ToolDef.loadFromStream(toStream(yaml));
         assertEquals(2, def.getRequires().size());
-        assertEquals("sshd", def.getRequires().get(0));
-        assertEquals("other-tool", def.getRequires().get(1));
+        assertEquals("sshd", def.getRequires().get(0).getName());
+        assertEquals("other-tool", def.getRequires().get(1).getName());
     }
 
     @Test

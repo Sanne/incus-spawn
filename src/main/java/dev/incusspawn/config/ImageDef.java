@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.tool.ToolDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -59,6 +60,10 @@ public class ImageDef {
         return YAML.readValue(file.toFile(), ImageDef.class);
     }
 
+    public static ImageDef parseYaml(String yaml) throws IOException {
+        return YAML.readValue(yaml, ImageDef.class);
+    }
+
     /**
      * Derive the YAML filename from a template name (e.g. {@code tpl-java} -> {@code java.yaml}).
      */
@@ -71,7 +76,9 @@ public class ImageDef {
     private String image = "images:fedora/43";
     private String parent;
     private List<String> packages = List.of();
-    private List<String> tools = List.of();
+    @JsonDeserialize(using = ImageDef.ToolsDeserializer.class)
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolDef.ToolRef.Serializer.class)
+    private List<ToolDef.ToolRef> tools = List.of();
     private List<RepoEntry> repos = List.of();
     @JsonDeserialize(using = SkillsDef.Deserializer.class)
     private SkillsDef skills = SkillsDef.EMPTY;
@@ -92,8 +99,8 @@ public class ImageDef {
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getPackages() { return packages; }
     public void setPackages(List<String> packages) { this.packages = packages; }
-    public List<String> getTools() { return tools; }
-    public void setTools(List<String> tools) { this.tools = tools; }
+    public List<ToolDef.ToolRef> getTools() { return tools; }
+    public void setTools(List<ToolDef.ToolRef> tools) { this.tools = tools; }
     public List<RepoEntry> getRepos() { return repos; }
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
     public SkillsDef getSkills() { return skills; }
@@ -193,6 +200,16 @@ public class ImageDef {
         public void setPrime(String prime) { this.prime = prime; }
     }
 
+    public static class ToolsDeserializer extends StdDeserializer<List<ToolDef.ToolRef>> {
+        public ToolsDeserializer() { super(List.class); }
+
+        @Override
+        public List<ToolDef.ToolRef> deserialize(JsonParser p, DeserializationContext ctxt)
+                throws IOException {
+            return ToolDef.ToolRef.deserializeList(p, "tools");
+        }
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class HostResource {
         private String source;
@@ -220,10 +237,16 @@ public class ImageDef {
         sb.append("image=").append(image).append('\n');
         sb.append("parent=").append(parent != null ? parent : "").append('\n');
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
-        for (var t : tools.stream().sorted().toList()) {
-            sb.append("tool=").append(t);
-            var fp = toolFingerprints.get(t);
+        for (var t : tools.stream().sorted(java.util.Comparator.comparing(ToolDef.ToolRef::getName)).toList()) {
+            sb.append("tool=").append(t.getName());
+            var fp = toolFingerprints.get(t.getName());
             if (fp != null && !fp.isEmpty()) sb.append(':').append(fp);
+            // Include parameter values in fingerprint
+            if (!t.getParams().isEmpty()) {
+                t.getParams().entrySet().stream()
+                    .sorted(java.util.Map.Entry.comparingByKey())
+                    .forEach(e -> sb.append(',').append(e.getKey()).append('=').append(e.getValue()));
+            }
             sb.append('\n');
         }
         repos.stream()

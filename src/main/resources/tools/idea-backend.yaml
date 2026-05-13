@@ -3,6 +3,13 @@ description: JetBrains IntelliJ IDEA Remote Development backend 2026.1.1
 requires:
   - sshd
 
+parameters:
+  memory:
+    type: string
+    default: "2g"
+    description: "JVM heap size (e.g. 2g, 4g, 8g)"
+    pattern: "^[0-9]+[gGmM]$"
+
 downloads:
   - url: https://download.jetbrains.com/idea/idea-2026.1.1.tar.gz
     sha256: 7a58d386f2a2e5a8cd7e4591657b4fe599aeac22d960c7accf5f927846507bfb
@@ -12,6 +19,10 @@ run:
   - ln -snf /opt/idea-IU-* /opt/idea
 
 run_as_user:
+  - |
+    IJ_CFG_DIR=~/.config/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+    mkdir -p "$IJ_CFG_DIR"
+    printf -- '\n-Xmx${param_memory}\n' >> "$IJ_CFG_DIR/idea64.vmoptions"
   - /opt/idea/bin/remote-dev-server.sh registerBackendLocationForGateway
 
 verify: test -x /opt/idea/bin/remote-dev-server.sh

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import jakarta.enterprise.inject.Instance;
@@ -635,25 +636,17 @@ class BuildCommandTest {
     void resolveToolsFindsCdiTools() {
         var cdiTool = new ToolSetup() {
             @Override public String name() { return "gh"; }
-            @Override public void install(Container container) {}
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
         };
 
-        @SuppressWarnings("unchecked")
-        var toolSetups = mock(Instance.class);
-        when(toolSetups.iterator()).thenReturn((Iterator) List.of(cdiTool).iterator());
-
         var toolDefLoader = mock(ToolDefLoader.class);
-        when(toolDefLoader.find("gh")).thenReturn(null);
-
-        var cmd = new BuildCommand();
-        cmd.toolDefLoader = toolDefLoader;
-        cmd.toolSetups = toolSetups;
+        when(toolDefLoader.find("gh")).thenReturn(cdiTool);
 
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
-        imageDef.setTools(List.of("gh"));
+        imageDef.setTools(List.of(new ToolDef.ToolRef("gh")));
 
-        var resolved = cmd.resolveTools(imageDef);
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
         assertEquals(1, resolved.size(), "CDI tool 'gh' should be resolved");
         assertEquals("gh", resolved.get(0).name());
     }
@@ -662,25 +655,17 @@ class BuildCommandTest {
     void resolveToolsFindsYamlTools() {
         var yamlTool = new ToolSetup() {
             @Override public String name() { return "podman"; }
-            @Override public void install(Container container) {}
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
         };
-
-        @SuppressWarnings("unchecked")
-        var toolSetups = mock(Instance.class);
-        when(toolSetups.iterator()).thenReturn((Iterator) List.of().iterator());
 
         var toolDefLoader = mock(ToolDefLoader.class);
         when(toolDefLoader.find("podman")).thenReturn(yamlTool);
 
-        var cmd = new BuildCommand();
-        cmd.toolDefLoader = toolDefLoader;
-        cmd.toolSetups = toolSetups;
-
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
-        imageDef.setTools(List.of("podman"));
+        imageDef.setTools(List.of(new ToolDef.ToolRef("podman")));
 
-        var resolved = cmd.resolveTools(imageDef);
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
         assertEquals(1, resolved.size(), "YAML tool 'podman' should be resolved");
         assertEquals("podman", resolved.get(0).name());
     }
@@ -689,32 +674,24 @@ class BuildCommandTest {
     void resolveToolsFindsMixOfYamlAndCdiTools() {
         var cdiTool = new ToolSetup() {
             @Override public String name() { return "claude"; }
-            @Override public void install(Container container) {}
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
         };
         var yamlTool = new ToolSetup() {
             @Override public String name() { return "sshd"; }
-            @Override public void install(Container container) {}
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
         };
 
-        @SuppressWarnings("unchecked")
-        var toolSetups = mock(Instance.class);
-        when(toolSetups.iterator()).thenReturn((Iterator) List.of(cdiTool).iterator());
-
         var toolDefLoader = mock(ToolDefLoader.class);
-        when(toolDefLoader.find("claude")).thenReturn(null);
+        when(toolDefLoader.find("claude")).thenReturn(cdiTool);
         when(toolDefLoader.find("sshd")).thenReturn(yamlTool);
-
-        var cmd = new BuildCommand();
-        cmd.toolDefLoader = toolDefLoader;
-        cmd.toolSetups = toolSetups;
 
         var imageDef = new ImageDef();
         imageDef.setName("tpl-test");
-        imageDef.setTools(List.of("sshd", "claude"));
+        imageDef.setTools(List.of(new ToolDef.ToolRef("sshd"), new ToolDef.ToolRef("claude")));
 
-        var resolved = cmd.resolveTools(imageDef);
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
         assertEquals(2, resolved.size(), "Both YAML and CDI tools should be resolved");
-        var names = resolved.stream().map(ToolSetup::name).toList();
+        var names = resolved.stream().map(r -> r.name()).toList();
         assertTrue(names.contains("sshd"), "YAML tool 'sshd' should be present");
         assertTrue(names.contains("claude"), "CDI tool 'claude' should be present");
     }

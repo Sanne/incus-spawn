@@ -411,6 +411,71 @@ After branching, connect from JetBrains Gateway using the container's IP (visibl
 
 The `idea-backend` tool also declares a tool action that lets you open repos directly in Gateway from the TUI — press F9 on a running instance to see available actions, including an "Open repo in Gateway" entry for each declared repository.
 
+### Tool Parameters
+
+Tools can define parameters to allow configuration at build time. Parameters support validation by type (string, integer, boolean, enum) and constraints (regex patterns, min/max ranges, allowed values).
+
+Define parameters in the tool YAML:
+
+```yaml
+# tools/example-tool.yaml
+name: example-tool
+description: Example parameterized tool
+parameters:
+  memory:
+    type: string
+    default: "2g"
+    description: "JVM heap size"
+    pattern: "^[0-9]+[gGmM]$"
+  port:
+    type: integer
+    default: "8080"
+    min: 1024
+    max: 65535
+    description: "Server port"
+  debug:
+    type: boolean
+    default: "false"
+    description: "Enable debug mode"
+  mode:
+    type: enum
+    default: "production"
+    options:
+      - "production"
+      - "development"
+      - "testing"
+    description: "Deployment mode"
+
+run_as_user:
+  - echo "Memory: ${param_memory}, Port: ${param_port}"
+  - |
+    if [ "${param_debug}" = "true" ]; then
+      export DEBUG=1
+    fi
+
+env:
+  - export APP_MEMORY=${param_memory}
+  - export APP_PORT=${param_port}
+```
+
+Reference parameterized tools in image definitions:
+
+```yaml
+# images/example.yaml
+name: tpl-example
+tools:
+  - maven-3                      # Simple string form (uses defaults)
+  - example-tool:                # Map form with custom parameters
+      memory: "8g"
+      port: "9000"
+      debug: "true"
+      mode: "development"
+```
+
+Parameter values are substituted during tool installation. Use `${param_name}` in tool scripts, environment variables, and file content.
+
+**Validation**: When a tool defines parameters, any unknown or invalid parameters will trigger validation errors. Tools that do not define a `parameters` section will reject any parameters provided to them.
+
 ### Tool Actions
 
 Tools can declare runtime actions that appear in the TUI when the tool is installed on an instance. Press **F9** on a selected instance to open the actions menu. Actions are only shown for tools that are part of the instance's template chain.

@@ -52,7 +52,7 @@ class YamlToolSetupTest {
         def.setVerify("test-tool --version");
 
         var setup = new YamlToolSetup(def);
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         InOrder order = inOrder(incus);
 
@@ -91,7 +91,7 @@ class YamlToolSetupTest {
         def.setName("empty");
 
         var setup = new YamlToolSetup(def);
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         // No interactions with incus for an empty tool
         verifyNoInteractions(incus);
@@ -108,7 +108,7 @@ class YamlToolSetupTest {
         var setup = new YamlToolSetup(def);
         assertEquals(List.of("vim"), setup.packages());
 
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         // Packages are installed in bulk by BuildCommand — install() has nothing to do
         verifyNoInteractions(incus);
@@ -142,7 +142,7 @@ class YamlToolSetupTest {
         // install() will fail at the extractOnHost step since fakeArchive isn't a real archive,
         // but we can verify that downloadCache.download() was called before any run commands
         try {
-            setup.install(new Container(incus, CONTAINER));
+            setup.install(new Container(incus, CONTAINER), java.util.Map.of());
         } catch (RuntimeException expected) {
             // Extraction of the fake archive will fail
         }
@@ -169,7 +169,7 @@ class YamlToolSetupTest {
         def.setFiles(List.of(file));
 
         var setup = new YamlToolSetup(def);
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         // writeFile is called, but chown is not
         verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("/tmp/test"));

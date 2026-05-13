@@ -26,7 +26,7 @@ class GhSetupTest {
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var setup = new GhSetup();
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         // Packages are installed in bulk by BuildCommand, not by install().
         // install() only configures auth.
@@ -47,7 +47,7 @@ class GhSetupTest {
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var setup = new GhSetup();
-        setup.install(new Container(incus, CONTAINER));
+        setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
         // Should NOT write any hosts.yml
         verify(incus, never()).shellExec(eq(CONTAINER),

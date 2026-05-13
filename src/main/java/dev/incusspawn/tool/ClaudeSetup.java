@@ -13,7 +13,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
-    public void install(Container c) {
+    public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
         configureSettings(c);
         configureAuth(c);

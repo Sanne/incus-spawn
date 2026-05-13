@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.tool.ToolDef;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -38,9 +39,9 @@ class ImageDefTest {
         var dev = defs.get("tpl-dev");
         assertFalse(dev.isRoot());
         assertEquals("tpl-minimal", dev.getParent());
-        assertTrue(dev.getTools().contains("podman"));
-        assertTrue(dev.getTools().contains("gh"));
-        assertTrue(dev.getTools().contains("claude"));
+        assertTrue(dev.getTools().stream().anyMatch(t -> "podman".equals(t.getName())));
+        assertTrue(dev.getTools().stream().anyMatch(t -> "gh".equals(t.getName())));
+        assertTrue(dev.getTools().stream().anyMatch(t -> "claude".equals(t.getName())));
     }
 
     @Test
@@ -50,7 +51,7 @@ class ImageDefTest {
         assertFalse(java.isRoot());
         assertEquals("tpl-dev", java.getParent());
         assertTrue(java.getPackages().contains("java-25-openjdk-devel"));
-        assertTrue(java.getTools().contains("maven-3"));
+        assertTrue(java.getTools().stream().anyMatch(t -> "maven-3".equals(t.getName())));
     }
 
     @Test
@@ -99,7 +100,7 @@ class ImageDefTest {
         var quarkus = defs.get("tpl-quarkus");
         assertNotNull(quarkus, "tpl-quarkus should be loaded from search path");
         assertEquals("tpl-java", quarkus.getParent());
-        assertTrue(quarkus.getTools().contains("quarkus-src"));
+        assertTrue(quarkus.getTools().stream().anyMatch(t -> "quarkus-src".equals(t.getName())));
         // builtins should still be present
         assertNotNull(defs.get("tpl-minimal"));
         assertNotNull(defs.get("tpl-java"));
@@ -504,7 +505,7 @@ class ImageDefTest {
         def.setImage(image);
         def.setParent(parent);
         def.setPackages(packages);
-        def.setTools(tools);
+        def.setTools(tools.stream().map(ToolDef.ToolRef::new).toList());
         return def;
     }
 }

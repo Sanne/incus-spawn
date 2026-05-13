@@ -38,11 +38,18 @@ public class YamlToolSetup implements ToolSetup {
 
     @Override
     public java.util.List<String> requires() {
-        return def.getRequires();
+        return def.getRequires().stream()
+            .map(ToolDef.ToolRef::getName)
+            .toList();
     }
 
     @Override
-    public void install(Container container) {
+    public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+        return def.getParameters();
+    }
+
+    @Override
+    public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
         System.out.println("Installing " + label + "...");
 
@@ -53,34 +60,40 @@ public class YamlToolSetup implements ToolSetup {
             processDownload(dl, container);
         }
 
-        // 2. Shell commands as root
+        // 2. Shell commands as root (with parameter substitution)
         for (var script : def.getRun()) {
+            var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
             container.runInteractive("Failed to run setup for " + def.getName(),
-                    "sh", "-c", script);
+                    "sh", "-c", substituted);
         }
 
-        // 3. Shell commands as agentuser
+        // 3. Shell commands as agentuser (with parameter substitution)
         for (var script : def.getRunAsUser()) {
-            container.runAsUser("agentuser", script,
+            var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
+            container.runAsUser("agentuser", substituted,
                     "Failed to run user setup for " + def.getName());
         }
 
-        // 4. Files
+        // 4. Files (with parameter substitution in path and content)
         for (var file : def.getFiles()) {
-            container.writeFile(file.getPath(), file.getContent());
+            var path = ParameterSubstitutor.substitute(file.getPath(), resolvedParams);
+            var content = ParameterSubstitutor.substitute(file.getContent(), resolvedParams);
+            container.writeFile(path, content);
             if (file.getOwner() != null && !file.getOwner().isEmpty()) {
-                container.chown(file.getPath(), file.getOwner());
+                container.chown(path, file.getOwner());
             }
         }
 
-        // 5. Environment variables
+        // 5. Environment variables (with parameter substitution)
         for (var line : def.getEnv()) {
-            container.appendToProfile(line);
+            var substituted = ParameterSubstitutor.substitute(line, resolvedParams);
+            container.appendToProfile(substituted);
         }
 
-        // 6. Verification
+        // 6. Verification (with parameter substitution)
         if (def.getVerify() != null && !def.getVerify().isBlank()) {
-            var result = container.exec(def.getVerify().split("\\s+"));
+            var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
+            var result = container.exec(substituted.split("\\s+"));
             if (result.success()) {
                 System.out.println("  " + result.stdout().lines().findFirst().orElse(""));
             } else {
