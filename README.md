@@ -216,6 +216,12 @@ Image schema fields (all optional except `name`):
 # Build a specific image (builds missing parents automatically)
 isx build tpl-java
 
+# Rebuild a template and all its parents from scratch
+isx build tpl-java --with-parents
+
+# Rebuild out-of-sync templates (changed definitions or older isx version)
+isx build --out-of-sync
+
 # Rebuild all discovered images from scratch
 isx build --all
 ```
@@ -497,7 +503,9 @@ Actions can also be contributed programmatically by CDI beans implementing the `
 | `isx` | Launch the interactive TUI |
 | `isx init` | One-time host setup (Incus, firewall, auth) |
 | `isx build <template>` | Build or rebuild a template image |
+| `isx build <tpl> --with-parents` | Rebuild a template and all its parents |
 | `isx build --all` | Rebuild all discovered templates |
+| `isx build --out-of-sync` | Rebuild out-of-sync templates |
 | `isx build --missing` | Build only templates that don't exist yet |
 | `isx branch <name>` | Create a CoW clone from a template or instance |
 | `isx shell <instance>` | Open a shell in an instance |

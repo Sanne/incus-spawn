@@ -53,6 +53,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     @Option(names = "--all", description = "Rebuild all defined templates")
     boolean all;
 
+    @Option(names = "--out-of-sync", description = "Rebuild templates that are out of sync (definition or isx version changed)")
+    boolean outOfSync;
+
+    @Option(names = "--with-parents", description = "Rebuild the template and all its parents unconditionally")
+    boolean withParents;
+
     @Option(names = "--missing", description = "Build only templates that don't exist yet")
     boolean missing;
 
@@ -83,12 +89,30 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var defs = ImageDef.loadAll();
 
         try {
+            if (withParents) {
+                if (name == null) {
+                    System.err.println("Usage: isx build <template-name> --with-parents");
+                    return 1;
+                }
+                var imageDef = defs.get(name);
+                if (imageDef == null) {
+                    System.err.println("Unknown image: " + name);
+                    System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                    return 1;
+                }
+                buildWithParents(imageDef, defs);
+                return 0;
+            }
             if (missing) {
                 buildMissing(defs);
                 return 0;
             }
+            if (outOfSync) {
+                buildAll(defs, true);
+                return 0;
+            }
             if (all) {
-                buildAll(defs);
+                buildAll(defs, false);
                 return 0;
             }
 
@@ -123,11 +147,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     /**
-     * Rebuild all defined templates. Deletes existing images in reverse
-     * dependency order (children first), then builds leaf images (parents
-     * are built automatically by the recursive build).
+     * Rebuild templates.
+     * @param outdatedOnly if true, only rebuild outdated/missing templates; if false, rebuild all
      */
-    private void buildAll(Map<String, ImageDef> defs) {
+    private void buildAll(Map<String, ImageDef> defs, boolean outdatedOnly) {
         // Identify which images are parents of other images
         var parentNames = defs.values().stream()
                 .filter(d -> !d.isRoot())
@@ -139,12 +162,23 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 .filter(d -> !parentNames.contains(d.getName()))
                 .toList();
 
-        var allNames = new java.util.ArrayList<>(defs.keySet());
-        System.out.println("This will rebuild all templates: " + String.join(", ", allNames));
+        // Collect templates to rebuild (in build order: parents before children)
+        var templatesToRebuild = new java.util.ArrayList<String>();
+        var seen = new java.util.LinkedHashSet<String>();
+        collectTemplatesToRebuild(leaves, defs, templatesToRebuild, seen, incus, toolDefLoader, outdatedOnly);
+
+        if (templatesToRebuild.isEmpty()) {
+            System.out.println("All templates are up to date.");
+            return;
+        }
+
+        // Confirm with user
+        System.out.println((outdatedOnly ? "Templates to rebuild: " : "This will rebuild all templates: ")
+                + String.join(", ", templatesToRebuild));
         if (!yes) {
             var console = System.console();
             if (console != null) {
-                System.out.print("Continue? (y/N): ");
+                System.out.print((outdatedOnly ? "Rebuild? (y/N): " : "Continue? (y/N): "));
                 var answer = console.readLine().strip();
                 if (!answer.equalsIgnoreCase("y")) {
                     System.out.println("Aborted.");
@@ -153,22 +187,136 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
         }
 
-        // Delete in reverse order (children before parents)
-        java.util.Collections.reverse(allNames);
-        System.out.println("\nDeleting existing images...");
-        for (var imgName : allNames) {
-            if (incus.exists(imgName)) {
-                System.out.println("  Deleting " + imgName + "...");
-                incus.delete(imgName, true);
+        deleteAndBuild(templatesToRebuild, defs, !outdatedOnly);
+    }
+
+    private void deleteAndBuild(java.util.List<String> templates, Map<String, ImageDef> defs, boolean deleteFirst) {
+        if (deleteFirst) {
+            var reversed = new java.util.ArrayList<>(templates);
+            java.util.Collections.reverse(reversed);
+            System.out.println("\nDeleting existing images...");
+            for (var name : reversed) {
+                if (incus.exists(name)) {
+                    System.out.println("  Deleting " + name + "...");
+                    incus.delete(name, true);
+                }
             }
         }
 
-        // Build each leaf — parents are built recursively
+        var failedBuilds = new java.util.HashSet<String>();
         System.out.println();
-        for (var leaf : leaves) {
-            build(leaf, defs);
-            System.out.println();
+        for (var templateName : templates) {
+            var imageDef = defs.get(templateName);
+            if (imageDef == null) {
+                System.err.println("Template definition not found: " + templateName);
+                failedBuilds.add(templateName);
+                continue;
+            }
+            if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
+                System.out.println("Skipping " + templateName + " (parent failed to build)");
+                failedBuilds.add(templateName);
+                continue;
+            }
+            try {
+                buildSingleImage(imageDef, defs);
+                System.out.println();
+            } catch (BuildFailedException e) {
+                failedBuilds.add(templateName);
+                System.err.println("Build failed for " + templateName + ", continuing...\n");
+            }
         }
+
+        if (!failedBuilds.isEmpty()) {
+            System.err.println("\n\033[1;31mSome templates failed to build: " +
+                    String.join(", ", failedBuilds) + "\033[0m");
+        }
+    }
+
+    /**
+     * Collect templates to rebuild from a list of leaves, in build order (parents before children).
+     * @param outdatedOnly if true, only collect outdated/missing templates; if false, collect all
+     */
+    private static void collectTemplatesToRebuild(java.util.List<ImageDef> leaves,
+                                                   Map<String, ImageDef> defs,
+                                                   java.util.List<String> result,
+                                                   java.util.Set<String> seen,
+                                                   IncusClient incus,
+                                                   ToolDefLoader toolDefLoader,
+                                                   boolean outdatedOnly) {
+        if (outdatedOnly) {
+            for (var template : defs.values()) {
+                if (seen.contains(template.getName())) continue;
+                if (!incus.exists(template.getName())
+                        || isImageOutdated(template.getName(), template, incus, toolDefLoader, defs, true)) {
+                    collectAncestors(template, defs, result, seen, incus, toolDefLoader, true);
+                    if (seen.add(template.getName())) {
+                        result.add(template.getName());
+                    }
+                    collectDescendants(template.getName(), defs, result, seen);
+                }
+            }
+        } else {
+            for (var leaf : leaves) {
+                collectAllRecursive(leaf, defs, result, seen);
+            }
+        }
+    }
+
+    static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
+                                     java.util.List<String> result, java.util.Set<String> seen) {
+        var name = imageDef.getName();
+        if (seen.contains(name)) return;
+        if (!imageDef.isRoot()) {
+            var parentDef = defs.get(imageDef.getParent());
+            if (parentDef != null) {
+                collectAllRecursive(parentDef, defs, result, seen);
+            }
+        }
+        seen.add(name);
+        result.add(name);
+    }
+
+    private static void collectAncestors(ImageDef imageDef, Map<String, ImageDef> defs,
+                                          java.util.List<String> result, java.util.Set<String> seen,
+                                          IncusClient incus, ToolDefLoader toolDefLoader, boolean quiet) {
+        if (imageDef.isRoot()) return;
+        var parentName = imageDef.getParent();
+        if (seen.contains(parentName)) return;
+        var parentDef = defs.get(parentName);
+        if (parentDef == null) return;
+        if (!incus.exists(parentName)
+                || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, quiet)) {
+            collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader, quiet);
+            seen.add(parentName);
+            result.add(parentName);
+        }
+    }
+
+    private static void collectDescendants(String parentName, Map<String, ImageDef> defs,
+                                            java.util.List<String> result, java.util.Set<String> seen) {
+        for (var def : defs.values()) {
+            if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
+                result.add(def.getName());
+                collectDescendants(def.getName(), defs, result, seen);
+            }
+        }
+    }
+
+    /**
+     * Check if a template should be skipped because one of its ancestors failed to build.
+     */
+    boolean shouldSkipDueToFailedParent(ImageDef imageDef, Map<String, ImageDef> defs,
+                                         java.util.Set<String> failedBuilds) {
+        var current = imageDef;
+        while (!current.isRoot()) {
+            var parentName = current.getParent();
+            if (failedBuilds.contains(parentName)) {
+                return true;
+            }
+            current = defs.get(parentName);
+            if (current == null) break;
+        }
+        return false;
     }
 
     /**
@@ -192,6 +340,30 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     /**
+     * Unconditionally rebuild a template and all its ancestors.
+     */
+    private void buildWithParents(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var chain = new java.util.ArrayList<String>();
+        var seen = new java.util.LinkedHashSet<String>();
+        collectAllRecursive(imageDef, defs, chain, seen);
+
+        System.out.println("This will rebuild: " + String.join(", ", chain));
+        if (!yes) {
+            var console = System.console();
+            if (console != null) {
+                System.out.print("Continue? (y/N): ");
+                var answer = console.readLine().strip();
+                if (!answer.equalsIgnoreCase("y")) {
+                    System.out.println("Aborted.");
+                    return;
+                }
+            }
+        }
+
+        deleteAndBuild(chain, defs, true);
+    }
+
+    /**
      * Build an image. If the image has a parent, ensure the parent
      * is built first (recursively).
      */
@@ -207,20 +379,38 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         ProxyHealthCheck.requireProxy(incus);
 
-        // If this image has a parent, ensure it exists
+        // If this image has a parent, ensure it exists and is up-to-date
         if (!imageDef.isRoot()) {
             var parentName = imageDef.getParent();
-            if (!incus.exists(parentName)) {
-                var parentDef = defs.get(parentName);
-                if (parentDef == null) {
-                    System.err.println("Parent image '" + parentName + "' not found in definitions.");
-                    System.exit(1);
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) {
+                System.err.println("Parent image '" + parentName + "' not found in definitions.");
+                System.exit(1);
+            }
+
+            boolean parentMissing = !incus.exists(parentName);
+            boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, false);
+
+            if (needsRebuild) {
+                if (parentMissing) {
+                    System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
+                } else {
+                    System.out.println("Parent image '" + parentName + "' is outdated, rebuilding it first...\n");
                 }
-                System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
                 build(parentDef, defs);
                 System.out.println();
             }
         }
+
+        buildSingleImage(imageDef, defs);
+    }
+
+    /**
+     * Build a single image without checking or building parents.
+     * Assumes parent is already built and up-to-date.
+     */
+    private void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var targetName = imageDef.getName();
 
         System.out.println("Building image: " + targetName);
 
@@ -253,6 +443,38 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             promoteToFailedInstance(targetName);
             throw new BuildFailedException(targetName);
         }
+    }
+
+    /**
+     * Check if an image is outdated (built with an older version of isx or with a different definition).
+     */
+    static boolean isImageOutdated(String imageName, ImageDef imageDef,
+                                    IncusClient incus, ToolDefLoader toolDefLoader,
+                                    Map<String, ImageDef> defs, boolean quiet) {
+        var currentVersion = BuildInfo.instance().version();
+        var buildVersion = incus.configGet(imageName, Metadata.BUILD_VERSION);
+
+        // Check if built with an older version of isx
+        if (buildVersion != null && !buildVersion.isEmpty() && !buildVersion.equals(currentVersion)) {
+            return true;
+        }
+
+        // Check if built with a missing version (very old build)
+        if (buildVersion == null || buildVersion.isEmpty()) {
+            return true;
+        }
+
+        // Check if definition has changed
+        var storedSha = incus.configGet(imageName, Metadata.DEFINITION_SHA);
+        if (storedSha != null && !storedSha.isEmpty()) {
+            var currentSha = imageDef.contentFingerprint(
+                    computeToolFingerprints(imageDef, toolDefLoader, defs, quiet));
+            if (!storedSha.equals(currentSha)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void promoteToFailedInstance(String containerName) {
@@ -471,34 +693,48 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * transitive dependencies declared via {@code requires}.
      */
     private java.util.List<ToolSetup> resolveTools(ImageDef imageDef) {
+        return resolveTools(imageDef, toolDefLoader, false);
+    }
+
+    private static java.util.List<ToolSetup> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
         var explicit = new java.util.LinkedHashSet<String>(imageDef.getTools());
         var resolved = new java.util.LinkedHashMap<String, ToolSetup>();
 
         for (var toolName : imageDef.getTools()) {
-            resolveWithDeps(toolName, resolved, new java.util.LinkedHashSet<>(), explicit);
+            resolveWithDeps(toolName, resolved, new java.util.LinkedHashSet<>(), explicit, toolDefLoader, quiet);
         }
         return new java.util.ArrayList<>(resolved.values());
     }
 
     private void resolveWithDeps(String name, java.util.LinkedHashMap<String, ToolSetup> resolved,
                                   java.util.LinkedHashSet<String> visiting, java.util.Set<String> explicit) {
+        resolveWithDeps(name, resolved, visiting, explicit, toolDefLoader, false);
+    }
+
+    private static void resolveWithDeps(String name, java.util.LinkedHashMap<String, ToolSetup> resolved,
+                                  java.util.LinkedHashSet<String> visiting, java.util.Set<String> explicit,
+                                  ToolDefLoader toolDefLoader, boolean quiet) {
         if (resolved.containsKey(name)) return;
         if (!visiting.add(name)) {
-            System.err.println("Warning: dependency cycle detected: " +
-                    String.join(" -> ", visiting) + " -> " + name + ", skipping.");
+            if (!quiet) {
+                System.err.println("Warning: dependency cycle detected: " +
+                        String.join(" -> ", visiting) + " -> " + name + ", skipping.");
+            }
             return;
         }
-        var tool = findTool(name);
+        var tool = findTool(name, toolDefLoader);
         if (tool == null) {
-            System.err.println("Warning: unknown tool '" + name + "', skipping.");
+            if (!quiet) {
+                System.err.println("Warning: unknown tool '" + name + "', skipping.");
+            }
             visiting.remove(name);
             return;
         }
         for (var dep : tool.requires()) {
-            if (!explicit.contains(dep)) {
+            if (!quiet && !explicit.contains(dep)) {
                 System.out.println("  Auto-adding dependency: " + dep + " (required by " + name + ")");
             }
-            resolveWithDeps(dep, resolved, visiting, explicit);
+            resolveWithDeps(dep, resolved, visiting, explicit, toolDefLoader, quiet);
         }
         resolved.put(name, tool);
         visiting.remove(name);
@@ -558,14 +794,16 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private ToolSetup findTool(String name) {
-        // YAML tools (user-defined, then built-in) take priority
-        var yamlTool = toolDefLoader.find(name);
-        if (yamlTool != null) return yamlTool;
-        // Fall back to Java CDI implementations
-        for (var tool : toolSetups) {
-            if (tool.name().equals(name)) return tool;
+        var tool = findTool(name, toolDefLoader);
+        if (tool != null) return tool;
+        for (var t : toolSetups) {
+            if (t.name().equals(name)) return t;
         }
         return null;
+    }
+
+    private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader) {
+        return toolDefLoader.find(name);
     }
 
     private void cleanCaches(String container) {
@@ -604,19 +842,24 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 "Container " + container + " failed to become ready after 30 seconds");
     }
 
-    private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef) {
+    private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
+                                    Map<String, ImageDef> defs) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
-                imageDef.contentFingerprint(computeToolFingerprints(imageDef)));
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs, false)));
     }
 
-    private java.util.Map<String, String> computeToolFingerprints(dev.incusspawn.config.ImageDef imageDef) {
+    private static java.util.Map<String, String> computeToolFingerprints(
+            dev.incusspawn.config.ImageDef imageDef,
+            ToolDefLoader toolDefLoader,
+            Map<String, ImageDef> defs,
+            boolean quiet) {
         var rawFps = new java.util.TreeMap<String, String>();
         var depMap = new java.util.TreeMap<String, java.util.List<String>>();
-        for (var tool : resolveTools(imageDef)) {
+        for (var tool : resolveTools(imageDef, toolDefLoader, quiet)) {
             if (tool instanceof YamlToolSetup yts) {
                 rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
                 depMap.put(yts.toolDef().getName(), yts.toolDef().getRequires());
@@ -676,7 +919,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             incus.configSet(targetName, Metadata.PARENT, parentName);
         }
         incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName, imageDef);
+        stampBuildVersion(targetName, imageDef, defs);
         if (!hostResources.isEmpty()) {
             incus.configSet(targetName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));

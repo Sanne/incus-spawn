@@ -79,11 +79,15 @@ public class ListCommand implements Runnable {
     @Inject
     picocli.CommandLine.IFactory factory;
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
-    private String pendingBuildName; // template name or "--all" for CONFIRM_BUILD modal
+    // Build menu state (computed once when F5 opens the menu)
+    private record BuildMenuOption(String label, String description, String badge, String[] buildArgs, boolean enabled) {}
+    private java.util.List<BuildMenuOption> buildMenuOptions;
+    private int buildMenuSelectedIndex;
+    private String[] pendingBuildArgs;
     // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
@@ -140,6 +144,7 @@ public class ListCommand implements Runnable {
     private boolean anyParentRebuilt;
     private java.util.Set<String> templatesDefChanged = java.util.Set.of();
     private java.util.Set<String> templatesParentRebuilt = java.util.Set.of();
+    private java.util.Set<String> templatesOutOfSync = java.util.Set.of();
     private java.util.Set<String> storedSourceTemplates = java.util.Set.of();
     private TableState templateTableState;
 
@@ -242,16 +247,21 @@ public class ListCommand implements Runnable {
                     }
                 }
                 case BUILD_TEMPLATE -> {
-                    returnToTemplate = pendingActionTarget;
+                    var args = java.util.Arrays.copyOf(pendingBuildArgs, pendingBuildArgs.length + 1);
+                    args[args.length - 1] = "--yes";
+                    // Determine the template name for UI restoration
+                    var buildTarget = pendingBuildArgs[0];
+                    if (!buildTarget.startsWith("--")) {
+                        returnToTemplate = buildTarget;
+                    }
                     try {
                         int exitCode = new picocli.CommandLine(BuildCommand.class, factory)
-                                .execute(pendingActionTarget, "--yes");
+                                .execute(args);
                         statusMessage = exitCode == 0
-                                ? "Built " + pendingActionTarget + " successfully"
-                                : "Failed to build " + pendingActionTarget
-                                        + ". Check instance '" + pendingActionTarget + "-failed-build' for inspection.";
+                                ? buildStatusMessage(pendingBuildArgs, true)
+                                : buildStatusMessage(pendingBuildArgs, false);
                     } catch (Exception e) {
-                        statusMessage = "Failed to build " + pendingActionTarget + ": " + e.getMessage();
+                        statusMessage = "Build failed: " + e.getMessage();
                     }
                 }
                 case EDIT_TEMPLATE -> {
@@ -349,7 +359,7 @@ public class ListCommand implements Runnable {
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
-            case CONFIRM_BUILD -> handleConfirmBuildEvent(key, tui);
+            case BUILD_MENU -> handleBuildMenuEvent(key, tui);
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
@@ -432,24 +442,9 @@ public class ListCommand implements Runnable {
             return true;
         }
 
-        // Shift+F5: Build all templates
-        if (key.isKey(KeyCode.F5) && key.hasShift()) {
-            var anyNotBuilt = templateEntries.stream()
-                    .anyMatch(t -> "not built".equals(t.buildStatus));
-            if (anyNotBuilt) {
-                if (showProxyError()) return true;
-                pendingAction = PendingAction.BUILD_TEMPLATE;
-                pendingActionTarget = "--missing";
-                tui.quit();
-            } else {
-                pendingBuildName = "--all";
-                mode = Mode.CONFIRM_BUILD;
-            }
-            return true;
-        }
-
-        // F5: Build/rebuild selected template
-        if (key.isKey(KeyCode.F5) && !key.hasShift()) {
+        // F5: Open build menu
+        if (key.isKey(KeyCode.F5)) {
+            if (showProxyError()) return true;
             var def = imageDefs.get(template.name);
             if (def != null) {
                 var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
@@ -458,16 +453,7 @@ public class ListCommand implements Runnable {
                     return true;
                 }
             }
-            if (!"not built".equals(template.buildStatus)) {
-                // Already built — confirm rebuild
-                pendingBuildName = template.name;
-                mode = Mode.CONFIRM_BUILD;
-            } else {
-                if (showProxyError()) return true;
-                pendingAction = PendingAction.BUILD_TEMPLATE;
-                pendingActionTarget = template.name;
-                tui.quit();
-            }
+            openBuildMenu(template);
             return true;
         }
 
@@ -586,6 +572,72 @@ public class ListCommand implements Runnable {
             return true;
         }
         return false;
+    }
+
+    private void openBuildMenu(TemplateInfo template) {
+        var options = new java.util.ArrayList<BuildMenuOption>();
+        var def = imageDefs.get(template.name);
+        boolean isBuilt = !"not built".equals(template.buildStatus);
+
+        // Option 1: Build/Rebuild single template
+        if (isBuilt) {
+            options.add(new BuildMenuOption(
+                    "Rebuild " + template.name,
+                    "Deletes and rebuilds this template",
+                    null, new String[]{template.name}, true));
+        } else {
+            options.add(new BuildMenuOption(
+                    "Build " + template.name,
+                    "Builds this template for the first time",
+                    null, new String[]{template.name}, true));
+        }
+
+        // Option 2: Rebuild with parents (only for non-root templates)
+        if (def != null && !def.isRoot()) {
+            var chain = new java.util.ArrayList<String>();
+            BuildCommand.collectAllRecursive(def, imageDefs, chain, new java.util.LinkedHashSet<>());
+            var chainStr = String.join(" → ", chain);
+            options.add(new BuildMenuOption(
+                    "Rebuild " + template.name + " with parents",
+                    "Rebuilds " + chainStr,
+                    null, new String[]{template.name, "--with-parents"}, true));
+        }
+
+        // Option 3: Build missing templates (only if there are missing ones)
+        long missingCount = templateEntries.stream()
+                .filter(t -> "not built".equals(t.buildStatus)).count();
+        if (missingCount > 0) {
+            options.add(new BuildMenuOption(
+                    "Build templates not yet built",
+                    "Builds all templates that haven't been built yet",
+                    missingCount + (missingCount == 1 ? " template" : " templates"),
+                    new String[]{"--missing"}, true));
+        }
+
+        // Option 4: Rebuild out of sync templates (uses cached data from buildTemplateRowData)
+        if (templatesOutOfSync.isEmpty()) {
+            options.add(new BuildMenuOption(
+                    "Rebuild out of sync templates",
+                    "All templates match their current definitions",
+                    "all in sync", new String[]{"--out-of-sync"}, false));
+        } else {
+            options.add(new BuildMenuOption(
+                    "Rebuild out of sync templates",
+                    "Rebuilds all templates whose definition changed\n"
+                            + "since last build, or built with an older version",
+                    templatesOutOfSync.size() + (templatesOutOfSync.size() == 1 ? " template" : " templates"),
+                    new String[]{"--out-of-sync"}, true));
+        }
+
+        // Option 5: (Re)build all templates
+        options.add(new BuildMenuOption(
+                "(Re)build all templates",
+                "Deletes and rebuilds every template",
+                null, new String[]{"--all"}, true));
+
+        buildMenuOptions = options;
+        buildMenuSelectedIndex = 0;
+        mode = Mode.BUILD_MENU;
     }
 
     private void openBranchModal(String sourceName, String runtime) {
@@ -805,15 +857,53 @@ public class ListCommand implements Runnable {
         return true;
     }
 
-    private boolean handleConfirmBuildEvent(KeyEvent key, TuiRunner tui) {
-        if (key.isChar('y') || key.isChar('Y')) {
-            if (showProxyError()) return true;
-            pendingAction = PendingAction.BUILD_TEMPLATE;
-            pendingActionTarget = pendingBuildName;
-            tui.quit();
+    private boolean handleBuildMenuEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            mode = Mode.BROWSE;
+            return true;
         }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+            for (int i = buildMenuSelectedIndex + 1; i < buildMenuOptions.size(); i++) {
+                if (buildMenuOptions.get(i).enabled()) {
+                    buildMenuSelectedIndex = i;
+                    break;
+                }
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+            for (int i = buildMenuSelectedIndex - 1; i >= 0; i--) {
+                if (buildMenuOptions.get(i).enabled()) {
+                    buildMenuSelectedIndex = i;
+                    break;
+                }
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            var option = buildMenuOptions.get(buildMenuSelectedIndex);
+            if (!option.enabled()) return true;
+            executeBuildOption(option, tui);
+            return true;
+        }
+        if (key.code() == KeyCode.CHAR && key.character() >= '1' && key.character() <= '9') {
+            int index = key.character() - '1';
+            if (index < buildMenuOptions.size()) {
+                var option = buildMenuOptions.get(index);
+                if (!option.enabled()) return true;
+                buildMenuSelectedIndex = index;
+                executeBuildOption(option, tui);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void executeBuildOption(BuildMenuOption option, TuiRunner tui) {
+        pendingAction = PendingAction.BUILD_TEMPLATE;
+        pendingBuildArgs = option.buildArgs();
         mode = Mode.BROWSE;
-        return true;
+        tui.quit();
     }
 
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -1062,7 +1152,7 @@ public class ListCommand implements Runnable {
         items.add(makeKey("F2", "Shell", !hasInstance || onTemplates));
         items.add(makeKey("F3", "Details", onTemplates ? !hasTemplate : !hasInstance));
         items.add(makeKey("F4", "Branch\u2026", onTemplates ? !isBuilt : !hasInstance));
-        items.add(makeKey("F5", "Build", !hasTemplate || !onTemplates));
+        items.add(makeKey("F5", "Build…", !hasTemplate || !onTemplates));
         items.add(makeKey("F6", "Rename\u2026", !hasInstance || onTemplates));
         items.add(makeKey("F7", "Stop", !running || onTemplates));
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
@@ -1180,14 +1270,7 @@ public class ListCommand implements Runnable {
                         : "This action cannot be undone.";
                 ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
             }
-            case CONFIRM_BUILD -> {
-                var isAll = "--all".equals(pendingBuildName);
-                var title = isAll ? " Rebuild all templates " : " Rebuild '" + pendingBuildName + "' ";
-                var message = isAll
-                        ? "This will delete and rebuild all templates."
-                        : "This will delete and rebuild " + pendingBuildName + ".";
-                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
-            }
+            case BUILD_MENU -> renderBuildMenu(frame, screen);
             case CONFIRM_STOP_FOR_RENAME -> {
                 ModalRenderer.renderConfirmModal(frame, screen,
                         " Rename '" + renameSourceName + "' ",
@@ -1485,7 +1568,7 @@ public class ListCommand implements Runnable {
                 shortcutRow("F2", "Shell into instance", null, null),
                 shortcutRow("F3", "View details", null, null),
                 shortcutRow("F4", "Branch", null, null),
-                shortcutRow("F5", "Build template", "⇧F5", "Build all"),
+                shortcutRow("F5", "Build menu", null, null),
                 shortcutRow("F6", "Rename instance", null, null),
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
@@ -1559,10 +1642,31 @@ public class ListCommand implements Runnable {
         return scrollOffset;
     }
 
+    private static String buildStatusMessage(String[] args, boolean success) {
+        var firstArg = args[0];
+        boolean hasWithParents = java.util.Arrays.asList(args).contains("--with-parents");
+        if (firstArg.equals("--all")) {
+            return success ? "Rebuilt all templates successfully" : "Some templates failed to build";
+        } else if (firstArg.equals("--out-of-sync")) {
+            return success ? "Rebuilt out of sync templates successfully" : "Some templates failed to build";
+        } else if (firstArg.equals("--missing")) {
+            return success ? "Built missing templates successfully" : "Some templates failed to build";
+        } else if (hasWithParents) {
+            return success ? "Rebuilt " + firstArg + " with parents successfully"
+                    : "Failed to build " + firstArg + " with parents";
+        } else {
+            return success ? "Built " + firstArg + " successfully"
+                    : "Failed to build " + firstArg
+                            + ". Check instance '" + firstArg + "-failed-build' for inspection.";
+        }
+    }
+
     private static Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled(String.format("  %-8s", key), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
-        spans.add(Span.styled(String.format("%-18s", desc), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+        var keyStr = key != null ? key : "";
+        var descStr = desc != null ? desc : "";
+        spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
+        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
         if (shiftKey != null) {
             spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
             spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
@@ -2095,6 +2199,74 @@ public class ListCommand implements Runnable {
         return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
     }
 
+    private void renderBuildMenu(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        if (buildMenuOptions == null || buildMenuOptions.isEmpty()) return;
+
+        var lines = new ArrayList<Line>();
+        for (int i = 0; i < buildMenuOptions.size(); i++) {
+            var opt = buildMenuOptions.get(i);
+            var selected = (i == buildMenuSelectedIndex);
+            var prefix = selected ? " ▶ " : "   ";
+            var numPrefix = "[" + (i + 1) + "] ";
+
+            var labelStyle = !opt.enabled()
+                    ? Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)
+                    : selected
+                        ? Style.EMPTY.bold().fg(Color.WHITE).bg(ModalRenderer.BG)
+                        : Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+            var spans = new ArrayList<Span>();
+            spans.add(Span.styled(prefix + numPrefix + opt.label(), labelStyle));
+            if (opt.badge() != null) {
+                var badgeStyle = Style.EMPTY.fg(opt.enabled() ? ModalRenderer.ACCENT : Color.GRAY).bg(ModalRenderer.BG);
+                spans.add(Span.styled("  " + opt.badge(), badgeStyle));
+            }
+            lines.add(Line.from(spans));
+
+            // Description lines (may be multi-line via \n)
+            var descStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+            for (var descLine : opt.description().split("\n")) {
+                lines.add(Line.styled("       " + descLine, descStyle));
+            }
+
+            // Blank separator between options
+            if (i < buildMenuOptions.size() - 1) {
+                lines.add(Line.styled("", Style.EMPTY.bg(ModalRenderer.BG)));
+            }
+        }
+
+        int modalWidth = Math.min(60, screen.width() - 4);
+        int modalHeight = Math.min(lines.size() + 4, screen.height() - 2);
+
+        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
+        var block = dev.tamboui.widgets.block.Block.builder()
+                .borders(dev.tamboui.widgets.block.Borders.ALL)
+                .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
+                .title(" Build Templates ")
+                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
+                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .build();
+        ModalRenderer.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = dev.tamboui.layout.Layout.vertical()
+                .constraints(dev.tamboui.layout.Constraint.length(1),
+                        dev.tamboui.layout.Constraint.fill(),
+                        dev.tamboui.layout.Constraint.length(1))
+                .split(inner);
+
+        // Top spacing
+        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(
+                Line.styled("", Style.EMPTY.bg(ModalRenderer.BG))), rows.get(0));
+
+        renderScrollableContent(frame, rows.get(1), lines, 0);
+
+        var hintSpans = new ArrayList<Span>();
+        ModalRenderer.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");
+        ModalRenderer.addKey(hintSpans, "Enter", "Build");
+        ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
+        frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(2));
+    }
+
     private void renderActionsModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         if (actionsList == null || actionsList.isEmpty()) return;
 
@@ -2264,6 +2436,7 @@ public class ListCommand implements Runnable {
         anyTemplateOutdated = false;
         anyDefinitionChanged = false;
         anyParentRebuilt = false;
+        var versionOutdated = new java.util.HashSet<String>();
         var defChanged = new java.util.HashSet<String>();
         var parentRebuilt = new java.util.HashSet<String>();
 
@@ -2288,9 +2461,11 @@ public class ListCommand implements Runnable {
                 if (!t.buildVersion.isEmpty() && !t.buildVersion.equals(currentVersion)) {
                     symbols.append('!');
                     anyTemplateOutdated = true;
+                    versionOutdated.add(t.name);
                 } else if (t.buildVersion.isEmpty()) {
                     symbols.append('!');
                     anyTemplateOutdated = true;
+                    versionOutdated.add(t.name);
                 }
                 if (!t.definitionSha.isEmpty() && !storedSourceTemplates.contains(t.name)) {
                     var def = imageDefs.get(t.name);
@@ -2320,6 +2495,10 @@ public class ListCommand implements Runnable {
         }
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
+        var outOfSync = new java.util.LinkedHashSet<String>();
+        outOfSync.addAll(versionOutdated);
+        outOfSync.addAll(defChanged);
+        templatesOutOfSync = outOfSync;
     }
 
     private java.util.Map<String, String> computeAllToolFingerprints() {
