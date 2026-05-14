@@ -227,6 +227,14 @@ public class IncusClient {
      * Open an interactive shell in a container, inheriting stdio.
      */
     public int interactiveShell(String container, String user) {
+        var workdir = configGet(container, Metadata.WORKDIR);
+        var shellCmd = configGet(container, Metadata.SHELL_COMMAND);
+        return interactiveShell(container, user,
+                workdir.isBlank() ? null : workdir,
+                shellCmd.isBlank() ? null : shellCmd);
+    }
+
+    private int interactiveShell(String container, String user, String workdir, String shellCommand) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 
@@ -243,11 +251,20 @@ public class IncusClient {
 
         try {
             List<String> args;
-            if (inTmux) {
-                args = List.of("exec", container, "--", "su", "-", user);
+            var cdPrefix = workdir != null
+                    ? "cd " + Container.shellQuote(workdir) + " 2>/dev/null; "
+                    : "";
+
+            if (shellCommand != null) {
+                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                        cdPrefix + shellCommand + " || exec bash --login");
+            } else if (inTmux) {
+                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                        cdPrefix + "exec bash --login");
             } else {
                 args = List.of("exec", container, "--", "su", "-", user, "-c",
-                        "if command -v tmux >/dev/null 2>&1; then "
+                        cdPrefix
+                        + "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
             }

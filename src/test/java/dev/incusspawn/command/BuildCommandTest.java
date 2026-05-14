@@ -485,6 +485,115 @@ class BuildCommandTest {
         assertEquals("maven", result.ancestors().get(0).name());
     }
 
+    // --- resolveEffectiveWorkdir ---
+
+    @Test
+    void resolveEffectiveWorkdirExplicit() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setWorkdir("~/my-project");
+
+        assertEquals("/home/agentuser/my-project",
+                BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirFromOwnRepo() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        assertEquals("/home/agentuser/repo",
+                BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirFromOwnRepoFirstWins() {
+        var repo1 = new ImageDef.RepoEntry();
+        repo1.setUrl("https://github.com/owner/first.git");
+        repo1.setPath("~/first");
+        var repo2 = new ImageDef.RepoEntry();
+        repo2.setUrl("https://github.com/owner/second.git");
+        repo2.setPath("~/second");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo1, repo2));
+
+        assertEquals("/home/agentuser/first",
+                BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirFromParentRepo() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(repo));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        assertEquals("/home/agentuser/repo",
+                BuildCommand.resolveEffectiveWorkdir(child, defs));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirChildRepoTakesPriority() {
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/owner/parent-repo.git");
+        parentRepo.setPath("~/parent-repo");
+
+        var childRepo = new ImageDef.RepoEntry();
+        childRepo.setUrl("https://github.com/owner/child-repo.git");
+        childRepo.setPath("~/child-repo");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setRepos(List.of(childRepo));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        assertEquals("/home/agentuser/child-repo",
+                BuildCommand.resolveEffectiveWorkdir(child, defs));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirNoRepos() {
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+
+        assertNull(BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
+    }
+
+    @Test
+    void resolveEffectiveWorkdirExplicitOverridesRepo() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setWorkdir("~/custom-dir");
+        imageDef.setRepos(List.of(repo));
+
+        assertEquals("/home/agentuser/custom-dir",
+                BuildCommand.resolveEffectiveWorkdir(imageDef, java.util.Map.of()));
+    }
+
     private static ToolSetup simpleToolSetup(String toolName) {
         return new ToolSetup() {
             @Override public String name() { return toolName; }

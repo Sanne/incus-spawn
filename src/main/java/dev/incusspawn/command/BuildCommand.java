@@ -1059,6 +1059,29 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
         incus.configSet(buildName, Metadata.BUILD_SOURCE,
                 collectBuildSource(imageDef, defs).toJson());
+
+        var effectiveWorkdir = resolveEffectiveWorkdir(imageDef, defs);
+        if (effectiveWorkdir != null) {
+            incus.configSet(buildName, Metadata.WORKDIR, effectiveWorkdir);
+        }
+        if (imageDef.getShellCommand() != null && !imageDef.getShellCommand().isBlank()) {
+            incus.configSet(buildName, Metadata.SHELL_COMMAND, imageDef.getShellCommand());
+        }
+    }
+
+    static String resolveEffectiveWorkdir(ImageDef imageDef, Map<String, ImageDef> defs) {
+        if (imageDef.getWorkdir() != null && !imageDef.getWorkdir().isBlank()) {
+            return expandHome(imageDef.getWorkdir());
+        }
+        var current = imageDef;
+        while (current != null) {
+            if (!current.getRepos().isEmpty()) {
+                return expandHome(current.getRepos().get(0).getPath());
+            }
+            if (current.isRoot() || current.getParent() == null) break;
+            current = defs.get(current.getParent());
+        }
+        return null;
     }
 
     static class BuildFailedException extends RuntimeException {

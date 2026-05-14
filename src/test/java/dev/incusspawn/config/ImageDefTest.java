@@ -562,6 +562,49 @@ class ImageDefTest {
         assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
+    @Test
+    void parseImageWithWorkdirAndShellCommand(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("custom.yaml"), """
+                name: tpl-custom
+                parent: tpl-dev
+                workdir: ~/my-project
+                shell-command: claude
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var custom = defs.get("tpl-custom");
+        assertNotNull(custom);
+        assertEquals("~/my-project", custom.getWorkdir());
+        assertEquals("claude", custom.getShellCommand());
+    }
+
+    @Test
+    void imageWithoutWorkdirDefaultsToNull() {
+        var defs = ImageDef.loadAll();
+        var minimal = defs.get("tpl-minimal");
+        assertNotNull(minimal);
+        assertNull(minimal.getWorkdir());
+        assertNull(minimal.getShellCommand());
+    }
+
+    @Test
+    void fingerprintChangesWhenWorkdirSet() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        b.setWorkdir("~/project");
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenShellCommandSet() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        b.setShellCommand("claude");
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
     private static ImageDef makeDef(String image, String parent, List<String> packages, List<String> tools) {
         var def = new ImageDef();
         def.setImage(image);

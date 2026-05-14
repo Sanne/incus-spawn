@@ -87,6 +87,9 @@ public class ImageDef {
     @JsonProperty("host-resources")
     private List<HostResource> hostResources = List.of();
     private boolean gui;
+    private String workdir;
+    @JsonProperty("shell-command")
+    private String shellCommand;
 
     @JsonIgnore
     private String source = "unknown";
@@ -113,6 +116,10 @@ public class ImageDef {
     public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
     public boolean isGui() { return gui; }
     public void setGui(boolean gui) { this.gui = gui; }
+    public String getWorkdir() { return workdir; }
+    public void setWorkdir(String workdir) { this.workdir = workdir; }
+    public String getShellCommand() { return shellCommand; }
+    public void setShellCommand(String shellCommand) { this.shellCommand = shellCommand; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
 
@@ -288,6 +295,8 @@ public class ImageDef {
                     .append(',').append(hr.getMode()).append('\n');
         }
         if (gui) sb.append("gui=true\n");
+        if (workdir != null && !workdir.isEmpty()) sb.append("workdir=").append(workdir).append('\n');
+        if (shellCommand != null && !shellCommand.isEmpty()) sb.append("shell-command=").append(shellCommand).append('\n');
         return sha256hex(sb.toString());
     }
 

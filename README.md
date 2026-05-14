@@ -210,6 +210,8 @@ Image schema fields (all optional except `name`):
 - `repos` -- git repositories to clone as agentuser (see below)
 - `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
 - `host-resources` -- host files/directories to share with containers (see below)
+- `workdir` -- default working directory when shelling into a container (see below)
+- `shell-command` -- command to run instead of the login shell (see below)
 - `description` -- human-readable description for the TUI
 
 ```shell
@@ -249,6 +251,25 @@ Repo entry fields:
 - `path` (required) -- target directory (`~` expands to agentuser's home)
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
+
+### Shell Defaults
+
+Templates can configure the default working directory and shell command when connecting to a container via `isx shell` or the TUI:
+
+```yaml
+name: tpl-quarkus
+parent: tpl-java
+repos:
+  - url: https://github.com/quarkusio/quarkus.git
+    path: ~/quarkus
+workdir: ~/quarkus
+shell-command: claude
+```
+
+- `workdir` -- the directory to `cd` into when opening a shell. If omitted, defaults to the checkout path of the first declared repo. When a template inherits from a parent, the child's repos take priority; if the child has no repos, the parent's first repo is used. If no repos exist anywhere in the chain, the shell opens in the home directory.
+- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` to launch Claude Code directly). If the command fails to start, the shell falls back to `bash --login`.
+
+Both values are stored as Incus metadata at build time and propagate automatically to branches. A missing `workdir` directory never blocks shell access -- the `cd` fails silently and the shell opens in the home directory.
 
 ### Claude Code Skills
 
