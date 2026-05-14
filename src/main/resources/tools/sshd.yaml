@@ -16,3 +16,4 @@ run:
   - chmod 600 /home/agentuser/.ssh/authorized_keys
 
 verify: sshd -t
+ready: systemctl is-active sshd

@@ -130,6 +130,47 @@ class ToolDefTest {
     }
 
     @Test
+    void parseToolWithReady() throws Exception {
+        var yaml = """
+                name: sshd
+                packages:
+                  - openssh-server
+                ready: systemctl is-active sshd
+                verify: sshd -t
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals("sshd", def.getName());
+        assertEquals("systemctl is-active sshd", def.getReady());
+        assertEquals("sshd -t", def.getVerify());
+    }
+
+    @Test
+    void parseMinimalToolHasNullReady() throws Exception {
+        var yaml = "name: minimal\n";
+        var def = ToolDef.loadFromStream(toStream(yaml));
+        assertNull(def.getReady());
+    }
+
+    @Test
+    void fingerprintUnchangedByReady() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - openssh-server
+                verify: sshd -t
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - openssh-server
+                verify: sshd -t
+                ready: systemctl is-active sshd
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
     void ignoresUnknownFields() throws Exception {
         var yaml = """
                 name: flexible

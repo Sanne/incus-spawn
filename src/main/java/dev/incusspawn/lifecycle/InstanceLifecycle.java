@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
@@ -96,6 +97,7 @@ public final class InstanceLifecycle {
         var uid = getUid();
         incus.shellExec(name, "chown", uid + ":" + uid, "/home/agentuser");
 
+        awaitToolReadiness(incus, name);
         injectSshKeyIfAvailable(incus, name);
     }
 
@@ -128,6 +130,35 @@ public final class InstanceLifecycle {
 
         System.out.println("  Outbound traffic restricted to " + gatewayIp +
                 " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
+    }
+
+    public static void awaitToolReadiness(IncusClient incus, String name) {
+        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+        var buildSource = BuildSource.fromJson(buildSourceJson);
+        if (buildSource == null) return;
+
+        for (var tool : buildSource.getTools().values()) {
+            if (tool.getReady() == null || tool.getReady().isBlank()) continue;
+            var toolName = tool.getName();
+            var readyCmd = tool.getReady();
+            System.out.println("Waiting for " + toolName + "...");
+            boolean ready = false;
+            for (int i = 0; i < 15; i++) {
+                if (incus.shellExec(name, "sh", "-c", readyCmd).success()) {
+                    ready = true;
+                    break;
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            if (!ready) {
+                System.err.println("Warning: " + toolName + " did not become ready in time.");
+            }
+        }
     }
 
     public static void injectSshKeyIfAvailable(IncusClient incus, String name) {

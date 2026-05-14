@@ -49,6 +49,7 @@ public class ToolDef {
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolRef.Serializer.class)
     private List<ToolRef> requires = List.of();
     private String verify;
+    private String ready;
     private List<ActionEntry> actions = List.of();
     @JsonProperty("package_repos")
     private List<ImageDef.PackageRepo> packageRepos = List.of();
@@ -76,6 +77,8 @@ public class ToolDef {
     public void setRequires(List<ToolRef> requires) { this.requires = requires; }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
+    public String getReady() { return ready; }
+    public void setReady(String ready) { this.ready = ready; }
     public List<ActionEntry> getActions() { return actions; }
     public void setActions(List<ActionEntry> actions) { this.actions = actions; }
     public List<ImageDef.PackageRepo> getPackageRepos() { return packageRepos; }
