@@ -28,7 +28,7 @@ class ImageDefTest {
         var minimal = defs.get("tpl-minimal");
         assertTrue(minimal.isRoot());
         assertNotNull(minimal.getImage());
-        assertEquals("images:fedora/43", minimal.getImage());
+        assertEquals("images:fedora/44", minimal.getImage());
         assertTrue(minimal.getPackages().isEmpty());
         assertTrue(minimal.getTools().isEmpty());
     }
@@ -331,7 +331,7 @@ class ImageDefTest {
 
     @Test
     void fingerprintStableForSameInput() {
-        var def = makeDef("images:fedora/43", null, List.of("pkg-a", "pkg-b"), List.of("tool-x"));
+        var def = makeDef("images:fedora/44", null, List.of("pkg-a", "pkg-b"), List.of("tool-x"));
         var fp1 = def.contentFingerprint(Map.of("tool-x", "abc"));
         var fp2 = def.contentFingerprint(Map.of("tool-x", "abc"));
         assertEquals(fp1, fp2);
@@ -339,43 +339,43 @@ class ImageDefTest {
 
     @Test
     void fingerprintIgnoresPackageOrder() {
-        var a = makeDef("images:fedora/43", null, List.of("alpha", "beta"), List.of());
-        var b = makeDef("images:fedora/43", null, List.of("beta", "alpha"), List.of());
+        var a = makeDef("images:fedora/44", null, List.of("alpha", "beta"), List.of());
+        var b = makeDef("images:fedora/44", null, List.of("beta", "alpha"), List.of());
         assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintIgnoresToolOrder() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of("maven", "podman"));
-        var b = makeDef("images:fedora/43", null, List.of(), List.of("podman", "maven"));
+        var a = makeDef("images:fedora/44", null, List.of(), List.of("maven", "podman"));
+        var b = makeDef("images:fedora/44", null, List.of(), List.of("podman", "maven"));
         var toolFps = Map.of("maven", "fp1", "podman", "fp2");
         assertEquals(a.contentFingerprint(toolFps), b.contentFingerprint(toolFps));
     }
 
     @Test
     void fingerprintChangesWhenPackageAdded() {
-        var a = makeDef("images:fedora/43", null, List.of("alpha"), List.of());
-        var b = makeDef("images:fedora/43", null, List.of("alpha", "beta"), List.of());
+        var a = makeDef("images:fedora/44", null, List.of("alpha"), List.of());
+        var b = makeDef("images:fedora/44", null, List.of("alpha", "beta"), List.of());
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintChangesWhenImageChanges() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintChangesWhenParentChanges() {
-        var a = makeDef("images:fedora/43", "tpl-dev", List.of(), List.of());
-        var b = makeDef("images:fedora/43", "tpl-minimal", List.of(), List.of());
+        var a = makeDef("images:fedora/44", "tpl-dev", List.of(), List.of());
+        var b = makeDef("images:fedora/44", "tpl-minimal", List.of(), List.of());
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintIncludesToolFingerprints() {
-        var def = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        var def = makeDef("images:fedora/44", null, List.of(), List.of("maven"));
         var fp1 = def.contentFingerprint(Map.of("maven", "version-1"));
         var fp2 = def.contentFingerprint(Map.of("maven", "version-2"));
         assertNotEquals(fp1, fp2);
@@ -383,7 +383,7 @@ class ImageDefTest {
 
     @Test
     void fingerprintIgnoresUnrelatedToolsInMap() {
-        var def = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        var def = makeDef("images:fedora/44", null, List.of(), List.of("maven"));
         var fp1 = def.contentFingerprint(Map.of("maven", "v1"));
         var fp2 = def.contentFingerprint(Map.of("maven", "v1", "unrelated-tool", "xyz"));
         assertEquals(fp1, fp2, "Tools not in the image's explicit list should not affect fingerprint");
@@ -391,7 +391,7 @@ class ImageDefTest {
 
     @Test
     void fingerprintNotEmpty() {
-        var def = makeDef("images:fedora/43", null, List.of(), List.of());
+        var def = makeDef("images:fedora/44", null, List.of(), List.of());
         var fp = def.contentFingerprint(Map.of());
         assertNotNull(fp);
         assertFalse(fp.isEmpty());
@@ -400,10 +400,10 @@ class ImageDefTest {
 
     @Test
     void fingerprintIgnoresNameAndDescription() {
-        var a = makeDef("images:fedora/43", null, List.of("pkg"), List.of());
+        var a = makeDef("images:fedora/44", null, List.of("pkg"), List.of());
         a.setName("tpl-alpha");
         a.setDescription("First template");
-        var b = makeDef("images:fedora/43", null, List.of("pkg"), List.of());
+        var b = makeDef("images:fedora/44", null, List.of("pkg"), List.of());
         b.setName("tpl-beta");
         b.setDescription("Second template");
         assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
@@ -411,8 +411,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenRepoAdded() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/example/repo.git");
         repo.setPath("~/repo");
@@ -422,8 +422,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenRepoUrlChanges() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         var r1 = new ImageDef.RepoEntry();
         r1.setUrl("https://github.com/example/repo-a.git");
         r1.setPath("~/repo");
@@ -437,8 +437,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintIgnoresRepoOrder() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         var r1 = new ImageDef.RepoEntry();
         r1.setUrl("https://github.com/alpha.git");
         r1.setPath("~/alpha");
@@ -452,16 +452,16 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenSkillAdded() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         b.setSkills(new ImageDef.SkillsDef(null, List.of("security-review")));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintIgnoresSkillOrder() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         a.setSkills(new ImageDef.SkillsDef(null, List.of("alpha", "beta")));
         b.setSkills(new ImageDef.SkillsDef(null, List.of("beta", "alpha")));
         assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
@@ -469,8 +469,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenSkillsRepoChanges() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         a.setSkills(new ImageDef.SkillsDef("org/catalog-a", List.of()));
         b.setSkills(new ImageDef.SkillsDef("org/catalog-b", List.of()));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
@@ -478,16 +478,16 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenHostResourceAdded() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         b.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "readonly")));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintChangesWhenHostResourceModeChanges() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         a.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "readonly")));
         b.setHostResources(List.of(new ImageDef.HostResource("~/.m2", "/home/agentuser/.m2", "overlay")));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
@@ -495,8 +495,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenToolAdded() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of("maven"));
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of("maven"));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
@@ -534,16 +534,16 @@ class ImageDefTest {
 
     @Test
     void fingerprintChangesWhenPackageRepoAdded() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         b.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "jdxcode/mise")));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     @Test
     void fingerprintChangesWhenPackageRepoNameChanges() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         a.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "user/repo-a")));
         b.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "user/repo-b")));
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
@@ -551,8 +551,8 @@ class ImageDefTest {
 
     @Test
     void fingerprintIgnoresPackageRepoOrder() {
-        var a = makeDef("images:fedora/43", null, List.of(), List.of());
-        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
         a.setPackageRepos(List.of(
                 new ImageDef.PackageRepo("copr", "alpha/repo"),
                 new ImageDef.PackageRepo("copr", "beta/repo")));

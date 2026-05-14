@@ -73,7 +73,7 @@ public class ImageDef {
 
     private String name;
     private String description = "";
-    private String image = "images:fedora/43";
+    private String image = "images:fedora/44";
     private String parent;
     private List<String> packages = List.of();
     @JsonDeserialize(using = ImageDef.ToolsDeserializer.class)

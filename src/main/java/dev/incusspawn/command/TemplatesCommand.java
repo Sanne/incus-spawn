@@ -290,8 +290,8 @@ public class TemplatesCommand implements Runnable {
             # parent: tpl-dev
 
             # Base image (only for root templates without a parent)
-            # Default: images:fedora/43
-            # image: images:fedora/43
+            # Default: images:fedora/44
+            # image: images:fedora/44
 
             # System packages to install via dnf
             # packages:

@@ -54,7 +54,7 @@ tpl-minimal   (Base OS only — no tools)
 Each image definition specifies:
 - `name` — container name (required)
 - `description` — human-readable description for the TUI
-- `image` — base OS image, only for root images (default: `images:fedora/43`)
+- `image` — base OS image, only for root images (default: `images:fedora/44`)
 - `parent` — parent image name (omit for root images)
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
@@ -434,7 +434,7 @@ The alternative — a full clone — would download objects for hundreds of bran
 Auto-remote management requires explicit `host-paths` or `repo-paths` configuration. We don't attempt to auto-discover host repos because there's no reliable heuristic — the same repo name could exist in multiple directories, and scanning the filesystem would be slow and surprising. The user knows where their repos live.
 
 ### Fedora-specific
-The base image and package management are Fedora-specific (`dnf`, `images:fedora/43`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
+The base image and package management are Fedora-specific (`dnf`, `images:fedora/44`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
 
 ## Security Considerations
 
