@@ -1,11 +1,28 @@
 package dev.incusspawn.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import jakarta.enterprise.context.Dependent;
 
+import java.io.IOException;
+import java.nio.file.Files;
+
 @Dependent
 public class ClaudeSetup implements ToolSetup {
+
+    private static final String DOWNLOAD_BASE_URL = "https://downloads.claude.ai/claude-code-releases";
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private final DownloadCache downloadCache;
+
+    public ClaudeSetup() {
+        this(new DownloadCache());
+    }
+
+    ClaudeSetup(DownloadCache downloadCache) {
+        this.downloadCache = downloadCache;
+    }
 
     @Override
     public String name() {
@@ -21,15 +38,57 @@ public class ClaudeSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         System.out.println("Installing Claude Code...");
-        // Ensure ~/.local/bin is on agentuser's PATH before installing, so the
-        // installer doesn't warn about it and claude is immediately available.
+        // Ensure ~/.local/bin is on agentuser's PATH before installing, so
+        // claude is immediately available in interactive shells.
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
                 "chown -R agentuser:agentuser /home/agentuser/.local && " +
                 "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
                 "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /home/agentuser/.bashrc");
-        // Install as agentuser so it lands in /home/agentuser/.local/bin
-        c.runAsUser("agentuser", "curl -fsSL https://claude.ai/install.sh | sh",
-                "Failed to install Claude Code");
+
+        try {
+            var version = Files.readString(
+                    downloadCache.download(DOWNLOAD_BASE_URL + "/latest", null)).strip();
+            System.out.println("  Latest version: " + version);
+
+            var platform = detectPlatform();
+            var manifestJson = Files.readString(
+                    downloadCache.download(DOWNLOAD_BASE_URL + "/" + version + "/manifest.json", null));
+            var sha256 = extractChecksum(manifestJson, platform);
+
+            var binaryUrl = DOWNLOAD_BASE_URL + "/" + version + "/" + platform + "/claude";
+            var cached = downloadCache.download(binaryUrl, sha256);
+
+            var claudeBin = "/home/agentuser/.local/bin/claude";
+            c.filePush(cached.toString(), claudeBin);
+            c.exec("chmod", "+x", claudeBin);
+            c.chown(claudeBin, "agentuser:agentuser");
+
+            c.runAsUser("agentuser", claudeBin + " install",
+                    "Failed to set up Claude Code shell integration");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
+        }
+    }
+
+    static String detectPlatform() {
+        var arch = System.getProperty("os.arch");
+        return switch (arch) {
+            case "amd64", "x86_64" -> "linux-x64";
+            case "aarch64" -> "linux-arm64";
+            default -> throw new RuntimeException("Unsupported architecture: " + arch);
+        };
+    }
+
+    static String extractChecksum(String manifestJson, String platform) throws IOException {
+        var root = JSON.readTree(manifestJson);
+        var checksum = root.path("platforms").path(platform).path("checksum").asText(null);
+        if (checksum == null) {
+            throw new IOException("Platform " + platform + " not found in manifest");
+        }
+        if (!checksum.matches("[a-fA-F0-9]{64}")) {
+            throw new IOException("Invalid checksum for platform " + platform + ": " + checksum);
+        }
+        return checksum;
     }
 
     private void configureSettings(Container c) {
