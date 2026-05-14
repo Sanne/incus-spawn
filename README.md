@@ -5,7 +5,7 @@ Isolated Linux environments that behave like bare-metal machines, not stripped-d
 Unlike Docker/Podman containers, which package a single application with a minimal filesystem, incus-spawn creates full **system containers** powered by [Incus](https://linuxcontainers.org/incus/). Each environment runs its own init system, has real networking with working `ping`, `traceroute`, and `strace`, can run nested containers (Podman/Docker inside), and supports GUI and audio passthrough via Wayland. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
 
 **Primary use cases:**
-- Running untrusted AI agents (Claude Code, etc.) in isolated environments with pre-configured auth
+- Running untrusted AI agents (Claude Code, Pi, etc.) in isolated environments with pre-configured auth
 - Reproducing bug reports from external contributors without risking your host
 - Creating reproducible development environments with pre-cloned repos and cached dependencies
 
@@ -66,7 +66,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 - The proxy configures bridge-level DNS overrides (via dnsmasq on `incusbr0`) so containers resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
 - Template images include a custom CA certificate so containers trust the proxy's TLS certificates
 - The proxy terminates TLS, injects authentication headers, and forwards to the real upstream over TLS
-- Tools (`curl`, `git`, `gh`, `claude`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
+- Tools (`curl`, `git`, `gh`, `claude`, `pi`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
 - **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard API requests to Vertex AI `rawPredict` format — containers run Claude Code in standard mode with zero knowledge of Vertex, no GCP credentials
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
@@ -581,6 +581,7 @@ Actions can also be contributed programmatically by CDI beans implementing the `
 - **Network airgapping**: fully isolate environments from the network
 - **Adaptive resource limits**: CPU, memory, and disk auto-detected from host
 - **Claude Code integration**: auth via MITM proxy — API key never enters containers
+- **Pi coding agent integration**: provider-agnostic CLI agent, auth via MITM proxy — always uses standard Anthropic API, proxy handles Vertex AI translation automatically
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 - **Git remotes**: `git fetch`/`git push` between host and container repos via `isx://` URLs, with automatic remote management

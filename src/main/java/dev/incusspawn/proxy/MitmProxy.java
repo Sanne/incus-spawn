@@ -1126,10 +1126,12 @@ public class MitmProxy {
                 return false;
             }
             upReq.putHeader("Authorization", "Bearer " + token);
-            // Vertex rawPredict doesn't use the anthropic-beta header — features are
-            // available via anthropic_version directly
+            // Strip Anthropic-specific headers that Vertex doesn't use.
+            // The translated body already carries anthropic_version.
             upReq.headers().remove("x-api-key");
             upReq.headers().remove("anthropic-beta");
+            upReq.headers().remove("anthropic-version");
+            upReq.headers().remove("anthropic-dangerous-direct-browser-access");
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (anthropicApiKey != null && !anthropicApiKey.isBlank()) {
                 upReq.putHeader("x-api-key", anthropicApiKey);

@@ -51,6 +51,8 @@ tpl-minimal   (Base OS only — no tools)
         └── tpl-java  (JDK packages + Maven tool)
 ```
 
+Additional Java tools available: `pi` (Pi coding agent). Not included in built-in templates; users can add it to custom image definitions.
+
 Each image definition specifies:
 - `name` — container name (required)
 - `description` — human-readable description for the TUI
@@ -94,11 +96,11 @@ Execution order: packages → downloads → run → run_as_user → files → en
 **Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools. During build, `resolveWithDeps()` performs a recursive depth-first traversal to build the full dependency graph. Circular dependencies are detected and reported. Auto-added dependencies are logged: "Auto-adding dependency: sshd (required by idea-backend)". Dependencies are installed before the tools that require them.
 
 **Java tools** (fallback) — for tools needing programmatic logic beyond what YAML supports:
-- Implement `ToolSetup` interface (`name()` + `install(Container)`)
+- Implement `ToolSetup` interface (`name()` + `install(Container, Map<String, String>)`)
 - Discovered via CDI (`@Dependent`)
-- Currently used by: `claude` (binary install + settings), `gh` (dnf install)
+- Currently used by: `claude` (binary install + settings), `gh` (dnf install), `pi` (npm install + settings)
 
-**Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`) → Java CDI implementations. First match by name wins.
+**Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`). A YAML tool with the same name replaces any earlier definition. Java CDI implementations (`@Dependent` beans) are used as fallback when no YAML tool matches.
 
 ### Build Flow
 
@@ -245,13 +247,15 @@ The body translation uses an allowlist approach: only known-good fields (`messag
 - **Base URL override**: `ANTHROPIC_VERTEX_BASE_URL` redirects all Vertex SDK requests to a custom endpoint. Setting it to `https://api.anthropic.com/v1` causes the container's Vertex SDK to send requests to `api.anthropic.com`, which resolves to the proxy via dnsmasq.
 - **Response format**: Vertex `rawPredict` returns standard Anthropic response format — no response translation is needed.
 
+**Pi coding agent support:** Pi is a provider-agnostic coding agent that always communicates via the standard Anthropic API (`/v1/messages`). Unlike Claude Code, Pi does not have a Vertex mode — it always sends standard API requests with an `x-api-key` header. The proxy handles both direct key injection and standard-to-Vertex translation transparently. No Vertex-specific environment variables are needed inside the container; `ANTHROPIC_API_KEY=sk-ant-placeholder` is the only auth configuration.
+
 **Intercepted domains:** `api.anthropic.com`, `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`, `registry-1.docker.io`, `auth.docker.io`, `ghcr.io`, `quay.io`, `repo.maven.apache.org`, `repo1.maven.org`, `plugins.gradle.org`
 
 **HTTPS only:** The proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`.
 
 All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge NAT and are unaffected by the proxy.
 
-**Credential validation**: Building a template image that includes `claude` or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing.
+**Credential validation**: Building a template image that includes `claude`, `pi`, or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing.
 
 **Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version. If they differ: when no containers are running, the proxy is automatically restarted; when containers are running, a warning is shown with instructions to restart manually. This prevents subtle failures from CA certificate or protocol mismatches.
 
@@ -450,6 +454,7 @@ Real API keys and tokens never enter containers, regardless of network mode. Con
 |-----------|--------------|--------------|
 | Claude API key (direct mode) | Placeholder `sk-ant-placeholder` | Proxy replaces `x-api-key` header with real key |
 | GCP credentials (Vertex mode) | **Nothing** | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
+| Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct mode. Pi always uses standard API format; the proxy handles key injection or Vertex translation transparently |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 The MITM TLS proxy provides credential isolation:

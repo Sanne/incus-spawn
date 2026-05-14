@@ -106,9 +106,9 @@ public class SpawnConfig {
             current = allDefs.get(current.getParent());
         }
 
-        if (tools.contains("claude")) {
+        if (tools.contains("claude") || tools.contains("pi")) {
             if (!config.getClaude().isUseVertex() && config.getClaude().getApiKey().isBlank()) {
-                missing.add("Claude API key (or Vertex AI)");
+                missing.add("Anthropic API key (or Vertex AI)");
             }
         }
         if (tools.contains("gh")) {

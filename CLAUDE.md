@@ -53,9 +53,9 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 `ToolSetup` interface with two implementations:
 - **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> env -> verify
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`)
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`, `PiSetup`)
 
-Resolution via `ToolDefLoader`: user YAML -> built-in YAML -> Java CDI. First match by name wins.
+Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML. Java CDI tools are used as fallback when no YAML tool matches.
 
 **Important**: Built-in YAML files are listed in a hardcoded `BUILTIN_FILES` constant (not classpath scanning) because GraalVM native image makes classpath directory listing unreliable. When adding a built-in image or tool, you must update the corresponding `BUILTIN_FILES` list.
 
