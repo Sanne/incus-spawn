@@ -615,6 +615,19 @@ Details that save time and avoid frustration:
 - **Terminal title**: shell sessions set the terminal title to `isx:<containername>`, and the container prompt maintains it. Easy to identify which terminal belongs to which container.
 - **Container status indicators**: when inside a container, Starship prompts and tmux status lines automatically show you're in an `isx` environment. Set `ISX_CONTAINER_NAME` and `ISX_CONTAINER_PARENT` env vars are available for custom integrations.
 
+### Starship Prompt
+
+To enable [Starship](https://starship.rs/) prompts with container indicators, add the `starship` tool to your template:
+
+```yaml
+name: tpl-my-template
+parent: tpl-dev
+tools:
+  - starship
+```
+
+The built-in `starship` tool installs Starship with a preconfigured indicator (`◆ container-name`) that appears when you're inside a container. To customize the indicator, override `~/.config/starship.toml` via a `files` entry in your template or tool, or mount your host config with a `host-resources` entry.
+
 ## Installation
 
 ### Fedora (DNF)
