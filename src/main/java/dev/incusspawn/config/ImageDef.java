@@ -25,6 +25,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Definition of a template image, loaded from YAML.
@@ -324,17 +325,30 @@ public class ImageDef {
     }
 
     /**
+     * Load all image definitions, collecting parse warnings via the given consumer
+     * instead of printing to stderr. Use this from the TUI to avoid corrupting
+     * the terminal with raw error output.
+     */
+    public static Map<String, ImageDef> loadAll(Consumer<String> warnings) {
+        return loadAll(SpawnConfig.load().getSearchPaths(), warnings);
+    }
+
+    /**
      * Load all image definitions with explicit search paths.
      */
     static Map<String, ImageDef> loadAll(List<String> searchPaths) {
+        return loadAll(searchPaths, msg -> System.err.println(msg));
+    }
+
+    static Map<String, ImageDef> loadAll(List<String> searchPaths, Consumer<String> warnings) {
         var defs = new LinkedHashMap<String, ImageDef>();
-        loadBuiltins(defs);
-        loadUserDefined(defs);
+        loadBuiltins(defs, warnings);
+        loadUserDefined(defs, warnings);
         for (var searchPath : searchPaths) {
             var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
-            loadFromDirectory(Path.of(expandedPath).resolve("images"), defs);
+            loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings);
         }
-        loadFromDirectory(PROJECT_IMAGES_DIR, defs);
+        loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings);
         return defs;
     }
 
@@ -353,9 +367,9 @@ public class ImageDef {
         return defs.get(name);
     }
 
-    private static void loadBuiltins(Map<String, ImageDef> defs) {
+    private static void loadBuiltins(Map<String, ImageDef> defs, Consumer<String> warnings) {
         for (var filename : BUILTIN_FILES) {
-            var def = loadResource(RESOURCE_DIR + filename);
+            var def = loadResource(RESOURCE_DIR + filename, warnings);
             if (def != null) {
                 def.setSource("built-in");
                 defs.put(def.getName(), def);
@@ -363,11 +377,11 @@ public class ImageDef {
         }
     }
 
-    private static void loadUserDefined(Map<String, ImageDef> defs) {
-        loadFromDirectory(userImagesDir(), defs);
+    private static void loadUserDefined(Map<String, ImageDef> defs, Consumer<String> warnings) {
+        loadFromDirectory(userImagesDir(), defs, warnings);
     }
 
-    private static void loadFromDirectory(Path dir, Map<String, ImageDef> defs) {
+    private static void loadFromDirectory(Path dir, Map<String, ImageDef> defs, Consumer<String> warnings) {
         if (!Files.isDirectory(dir)) return;
         try (var stream = Files.list(dir)) {
             stream.filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
@@ -380,21 +394,21 @@ public class ImageDef {
                                 defs.put(def.getName(), def);
                             }
                         } catch (IOException e) {
-                            System.err.println("Warning: failed to load image definition: "
-                                    + path + ": " + e.getMessage());
+                            warnings.accept("Failed to load " + path.getFileName()
+                                    + ": " + e.getMessage());
                         }
                     });
         } catch (IOException e) {
-            System.err.println("Warning: failed to scan " + dir + ": " + e.getMessage());
+            warnings.accept("Warning: failed to scan " + dir + ": " + e.getMessage());
         }
     }
 
-    private static ImageDef loadResource(String path) {
+    private static ImageDef loadResource(String path, Consumer<String> warnings) {
         try (InputStream is = ImageDef.class.getClassLoader().getResourceAsStream(path)) {
             if (is == null) return null;
             return YAML.readValue(is, ImageDef.class);
         } catch (IOException e) {
-            System.err.println("Warning: failed to load image definition: " + path + ": " + e.getMessage());
+            warnings.accept("Failed to load built-in " + path + ": " + e.getMessage());
             return null;
         }
     }

@@ -292,7 +292,11 @@ public class ListCommand implements Runnable {
      */
     private void reloadData() {
         var allInstances = collectEntries();
-        imageDefs = dev.incusspawn.config.ImageDef.loadAll();
+        var loadWarnings = new ArrayList<String>();
+        imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
+        if (!loadWarnings.isEmpty()) {
+            statusMessage = loadWarnings.get(0);
+        }
 
         // Build template panel data by merging ImageDef definitions with Incus state
         templateEntries = new ArrayList<>();
