@@ -3,3 +3,9 @@ description: Terminal multiplexer with incus-spawn session integration
 
 packages:
   - tmux
+
+files:
+  - path: /home/agentuser/.tmux.conf
+    content: |
+      set -g extended-keys on
+    owner: agentuser:agentuser
