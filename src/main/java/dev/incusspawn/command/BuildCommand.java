@@ -246,8 +246,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             for (var template : defs.values()) {
                 if (seen.contains(template.getName())) continue;
                 if (!incus.exists(template.getName())
-                        || isImageOutdated(template.getName(), template, incus, toolDefLoader, defs, true)) {
-                    collectAncestors(template, defs, result, seen, incus, toolDefLoader, true);
+                        || isImageOutdated(template.getName(), template, incus, toolDefLoader, defs)) {
+                    collectAncestors(template, defs, result, seen, incus, toolDefLoader);
                     if (seen.add(template.getName())) {
                         result.add(template.getName());
                     }
@@ -277,15 +277,15 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
     private static void collectAncestors(ImageDef imageDef, Map<String, ImageDef> defs,
                                           java.util.List<String> result, java.util.Set<String> seen,
-                                          IncusClient incus, ToolDefLoader toolDefLoader, boolean quiet) {
+                                          IncusClient incus, ToolDefLoader toolDefLoader) {
         if (imageDef.isRoot()) return;
         var parentName = imageDef.getParent();
         if (seen.contains(parentName)) return;
         var parentDef = defs.get(parentName);
         if (parentDef == null) return;
         if (!incus.exists(parentName)
-                || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, quiet)) {
-            collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader, quiet);
+                || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs)) {
+            collectAncestors(parentDef, defs, result, seen, incus, toolDefLoader);
             seen.add(parentName);
             result.add(parentName);
         }
@@ -388,7 +388,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
 
             boolean parentMissing = !incus.exists(parentName);
-            boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs, false);
+            boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs);
 
             if (needsRebuild) {
                 if (parentMissing) {
@@ -455,7 +455,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      */
     static boolean isImageOutdated(String imageName, ImageDef imageDef,
                                     IncusClient incus, ToolDefLoader toolDefLoader,
-                                    Map<String, ImageDef> defs, boolean quiet) {
+                                    Map<String, ImageDef> defs) {
         var currentVersion = BuildInfo.instance().version();
         var buildVersion = incus.configGet(imageName, Metadata.BUILD_VERSION);
 

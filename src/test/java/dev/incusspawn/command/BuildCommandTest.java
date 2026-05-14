@@ -733,7 +733,7 @@ class BuildCommandTest {
         var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
         var defs = java.util.Map.of("tpl-test", imageDef);
 
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
                 "Image with different version should be outdated");
     }
 
@@ -749,7 +749,7 @@ class BuildCommandTest {
         var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
         var defs = java.util.Map.of("tpl-test", imageDef);
 
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
                 "Image with missing version should be outdated");
     }
 
@@ -767,7 +767,7 @@ class BuildCommandTest {
         var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
         var defs = java.util.Map.of("tpl-test", imageDef);
 
-        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+        assertFalse(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
                 "Image with same version and no definition SHA should not be outdated");
     }
 
@@ -786,7 +786,7 @@ class BuildCommandTest {
         var toolDefLoader = mock(dev.incusspawn.tool.ToolDefLoader.class);
         var defs = java.util.Map.of("tpl-test", imageDef);
 
-        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs, false),
+        assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
                 "Image with changed definition should be outdated");
     }
 
