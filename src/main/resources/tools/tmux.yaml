@@ -1,0 +1,5 @@
+name: tmux
+description: Terminal multiplexer with incus-spawn session integration
+
+packages:
+  - tmux

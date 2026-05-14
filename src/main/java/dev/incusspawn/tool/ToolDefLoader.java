@@ -28,7 +28,8 @@ public class ToolDefLoader {
             "maven-3.yaml",
             "sshd.yaml",
             "idea-backend.yaml",
-            "starship.yaml"
+            "starship.yaml",
+            "tmux.yaml"
     );
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");

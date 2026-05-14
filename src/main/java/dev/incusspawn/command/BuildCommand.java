@@ -651,7 +651,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         System.out.println("Installing base packages...");
         container.runInteractive("Failed to install base packages",
                 "dnf", "install", "-y", "--setopt=keepcache=true",
-                "git", "curl", "which", "procps-ng", "findutils", "tmux");
+                "git", "curl", "which", "procps-ng", "findutils");
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {

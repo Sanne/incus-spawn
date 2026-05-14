@@ -2,6 +2,7 @@ name: tpl-dev
 description: Podman, GitHub CLI, Claude Code
 parent: tpl-minimal
 tools:
+  - tmux
   - podman
   - gh
   - claude
