@@ -649,12 +649,27 @@ public class MitmProxy {
         });
     }
 
+    private static final int MAX_REDIRECTS = 10;
+
     /**
      * Follow a 3xx redirect from upstream, making a new request to the Location URL.
      * Uses the redirect target's host for both the connection and Host header.
+     * Handles multi-hop cross-domain redirects manually because Vert.x's built-in
+     * setFollowRedirects carries the original Host header across domains.
      */
     private void fetchFromRedirect(HttpServerRequest clientReq, HttpClientResponse upResp,
                                    String digest, Path cacheFile, String ref) {
+        followRedirect(clientReq, upResp, digest, cacheFile, ref, 0);
+    }
+
+    private void followRedirect(HttpServerRequest clientReq, HttpClientResponse upResp,
+                                String digest, Path cacheFile, String ref, int depth) {
+        if (depth >= MAX_REDIRECTS) {
+            System.err.println("Too many redirects for " + ref);
+            sendError(clientReq.response(), 502, "Too many redirects");
+            return;
+        }
+
         var location = upResp.getHeader("Location");
         if (location == null) {
             System.err.println("Redirect with no Location header for " + ref);
@@ -682,8 +697,7 @@ public class MitmProxy {
                 .setMethod(HttpMethod.GET)
                 .setHost(redirectHost)
                 .setPort(redirectPort)
-                .setURI(redirectPath)
-                .setFollowRedirects(true);
+                .setURI(redirectPath);
 
         upstreamClient.request(redirectOptions).onSuccess(redReq -> {
             redReq.putHeader("Host", redirectHost);
@@ -693,9 +707,11 @@ public class MitmProxy {
                 var statusCode = redResp.statusCode();
                 if (statusCode == 200) {
                     teeStreamToCache(clientReq.response(), redResp, digest, cacheFile, ref);
+                } else if (statusCode >= 300 && statusCode < 400) {
+                    followRedirect(clientReq, redResp, digest, cacheFile, ref, depth + 1);
                 } else {
-                    System.err.println("Redirect target returned " + statusCode + " for " + ref +
-                            " (Location: " + location + ")");
+                    System.err.println("Redirect target " + redirectHost + " returned " +
+                            statusCode + " for " + ref + " (Location: " + location + ")");
                     var clientResp = clientReq.response();
                     clientResp.setStatusCode(statusCode);
                     clientResp.setStatusMessage(redResp.statusMessage());
