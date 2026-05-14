@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
@@ -93,6 +94,7 @@ public class InitCommand implements Runnable {
         checkIncusInstalled();
         configureSubuidSubgid();
         initializeIncus();
+        checkBridgeSubnet();
         configureFirewall();
         configureMitmProxy();
         setupClaudeAuth();
@@ -468,6 +470,29 @@ public class InitCommand implements Runnable {
                     }
                 }
             }
+        }
+    }
+
+    private void checkBridgeSubnet() {
+        System.out.println("  Checking bridge subnet for VPN conflicts...");
+        try {
+            var result = BridgeSubnetCheck.detectAndFix(incus);
+            if (result.conflictDetected()) {
+                System.out.println("  Detected subnet conflict: bridge " + result.oldSubnet()
+                        + " overlaps with route: " + result.conflictingRoute());
+                if (result.newSubnet() != null) {
+                    System.out.println("  Reconfigured bridge to " + result.newSubnet()
+                            + " to avoid conflict.");
+                } else {
+                    System.err.println("  Warning: could not find a non-conflicting subnet.");
+                    System.err.println("  You may need to manually set the bridge address:");
+                    System.err.println("    incus network set incusbr0 ipv4.address 172.20.0.1/24");
+                }
+            } else {
+                System.out.println("  Bridge subnet is clear of VPN route conflicts.");
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not check bridge subnet: " + e.getMessage());
         }
     }
 

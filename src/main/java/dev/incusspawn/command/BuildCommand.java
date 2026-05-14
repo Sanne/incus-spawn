@@ -10,6 +10,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -935,8 +936,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 return;
             }
             if (attempt == 9) {
-                throw new RuntimeException(
-                        "DNS resolution is not working. Check your network setup.");
+                var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+                var message = "DNS resolution is not working. Check your network setup.";
+                if (diagnostic != null) {
+                    message += "\n\n" + diagnostic;
+                }
+                throw new RuntimeException(message);
             }
             try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
             System.out.println("  Waiting for DNS... (attempt " + (attempt + 2) + "/10)");

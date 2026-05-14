@@ -231,10 +231,12 @@ public class IncusClient {
         System.out.flush();
 
         String savedWindowName = null;
+        String savedStatusRight = null;
         boolean inTmux = System.getenv("TMUX") != null;
         if (inTmux) {
             savedWindowName = hostExecCapture("tmux", "display-message", "-p", "#W");
             hostExecQuiet("tmux", "rename-window", "isx:" + container);
+            savedStatusRight = setTmuxSubnetWarning();
         }
 
         propagateTerminfo(container);
@@ -254,9 +256,25 @@ public class IncusClient {
             if (inTmux && savedWindowName != null) {
                 hostExecQuiet("tmux", "rename-window", savedWindowName);
             }
+            if (savedStatusRight != null) {
+                if (savedStatusRight.isEmpty()) {
+                    hostExecQuiet("tmux", "set-option", "-u", "status-right");
+                } else {
+                    hostExecQuiet("tmux", "set-option", "status-right", savedStatusRight);
+                }
+            }
             System.out.print("\033]0;\007");
             System.out.flush();
         }
+    }
+
+    private String setTmuxSubnetWarning() {
+        var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(this);
+        if (diagnostic == null) return null;
+        var saved = hostExecCapture("tmux", "show-option", "-v", "status-right");
+        hostExecQuiet("tmux", "set-option", "status-right",
+                "#[bg=yellow,fg=black,bold] ⚠ Bridge subnet conflict — run 'isx init' #[default]");
+        return saved != null ? saved : "";
     }
 
     private static String hostExecCapture(String... command) {

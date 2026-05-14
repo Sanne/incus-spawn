@@ -7,6 +7,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -2672,8 +2673,19 @@ public class ListCommand implements Runnable {
         var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
         if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
         if (showProxyError()) return true;
+        showSubnetWarning();
         fixCaMismatchIfNeeded(containerName);
         return false;
+    }
+
+    private void showSubnetWarning() {
+        try {
+            var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+            if (diagnostic != null) {
+                statusMessage = "Bridge subnet conflict detected — run 'isx init' to fix";
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void fixCaMismatchIfNeeded(String containerName) {
