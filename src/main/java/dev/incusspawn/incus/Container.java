@@ -56,7 +56,7 @@ public class Container {
 
     /** Write content to a file inside the container. */
     public void writeFile(String path, String content) {
-        sh("cat > " + shellQuote(path) + " << 'INCUS_EOF'\n" + content.strip() + "\nINCUS_EOF")
+        sh("mkdir -p \"$(dirname " + shellQuote(path) + ")\" && cat > " + shellQuote(path) + " << 'INCUS_EOF'\n" + content.strip() + "\nINCUS_EOF")
                 .assertSuccess("Failed to write file in container: " + path);
     }
 
