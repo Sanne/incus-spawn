@@ -473,7 +473,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var storedSha = incus.configGet(imageName, Metadata.DEFINITION_SHA);
         if (storedSha != null && !storedSha.isEmpty()) {
             var currentSha = imageDef.contentFingerprint(
-                    computeToolFingerprints(imageDef, toolDefLoader, defs, quiet));
+                    computeToolFingerprints(imageDef, toolDefLoader, defs));
             if (!storedSha.equals(currentSha)) {
                 return true;
             }
@@ -965,17 +965,18 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
-                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs, false)));
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
     }
 
     private static java.util.Map<String, String> computeToolFingerprints(
             dev.incusspawn.config.ImageDef imageDef,
             ToolDefLoader toolDefLoader,
-            Map<String, ImageDef> defs,
-            boolean quiet) {
+            Map<String, ImageDef> defs) {
         var rawFps = new java.util.TreeMap<String, String>();
         var depMap = new java.util.TreeMap<String, java.util.List<String>>();
-        for (var resolvedTool : resolveTools(imageDef, toolDefLoader, quiet)) {
+        // Always quiet: this method only fingerprints YAML tools and doesn't have
+        // CDI tools, so non-YAML tools would produce spurious "unknown tool" warnings.
+        for (var resolvedTool : resolveTools(imageDef, toolDefLoader, true)) {
             if (resolvedTool.setup() instanceof YamlToolSetup yts) {
                 rawFps.put(yts.toolDef().getName(), yts.toolDef().contentFingerprint());
                 var depNames = yts.toolDef().getRequires().stream()
