@@ -37,6 +37,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<dev.incusspawn.config.ImageDef.PackageRepo> packageRepos() {
+        return def.getPackageRepos();
+    }
+
+    @Override
     public java.util.List<String> requires() {
         return def.getRequires().stream()
             .map(ToolDef.ToolRef::getName)

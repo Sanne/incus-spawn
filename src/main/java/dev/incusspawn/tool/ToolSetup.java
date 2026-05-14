@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 
 /**
@@ -13,6 +14,9 @@ public interface ToolSetup {
 
     /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
     default java.util.List<String> packages() { return java.util.List.of(); }
+
+    /** Package repositories this tool needs enabled before packages are installed. */
+    default java.util.List<ImageDef.PackageRepo> packageRepos() { return java.util.List.of(); }
 
     /** Other tools that must be installed before this one. */
     default java.util.List<String> requires() { return java.util.List.of(); }

@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.ImageDef;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -503,6 +504,72 @@ class ToolDefTest {
                       /opt/bin/tool: /usr/local/bin/tool
                 """));
         assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void parseToolWithPackageRepos() throws Exception {
+        var yaml = """
+                name: mise
+                package_repos:
+                  - type: copr
+                    name: jdxcode/mise
+                packages:
+                  - mise
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals("mise", def.getName());
+        assertEquals(1, def.getPackageRepos().size());
+        assertEquals("copr", def.getPackageRepos().get(0).getType());
+        assertEquals("jdxcode/mise", def.getPackageRepos().get(0).getName());
+        assertEquals(1, def.getPackages().size());
+        assertEquals("mise", def.getPackages().get(0));
+    }
+
+    @Test
+    void parseMinimalToolHasEmptyPackageRepos() throws Exception {
+        var yaml = "name: minimal\n";
+        var def = ToolDef.loadFromStream(toStream(yaml));
+        assertTrue(def.getPackageRepos().isEmpty());
+    }
+
+    @Test
+    void fingerprintChangesWhenPackageRepoAdded() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                packages:
+                  - mise
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                package_repos:
+                  - type: copr
+                    name: jdxcode/mise
+                packages:
+                  - mise
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresPackageRepoOrder() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                package_repos:
+                  - type: copr
+                    name: alpha/repo
+                  - type: copr
+                    name: beta/repo
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                package_repos:
+                  - type: copr
+                    name: beta/repo
+                  - type: copr
+                    name: alpha/repo
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
     }
 
     // --- compositeFingerprints tests ---

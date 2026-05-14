@@ -82,6 +82,8 @@ public class ImageDef {
     private List<RepoEntry> repos = List.of();
     @JsonDeserialize(using = SkillsDef.Deserializer.class)
     private SkillsDef skills = SkillsDef.EMPTY;
+    @JsonProperty("package_repos")
+    private List<PackageRepo> packageRepos = List.of();
     @JsonProperty("host-resources")
     private List<HostResource> hostResources = List.of();
     private boolean gui;
@@ -105,6 +107,8 @@ public class ImageDef {
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
     public SkillsDef getSkills() { return skills; }
     public void setSkills(SkillsDef skills) { this.skills = skills; }
+    public List<PackageRepo> getPackageRepos() { return packageRepos; }
+    public void setPackageRepos(List<PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
     public List<HostResource> getHostResources() { return hostResources; }
     public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
     public boolean isGui() { return gui; }
@@ -210,6 +214,25 @@ public class ImageDef {
         }
     }
 
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PackageRepo {
+        private String type;
+        private String name;
+
+        public PackageRepo() {}
+
+        public PackageRepo(String type, String name) {
+            this.type = type;
+            this.name = name;
+        }
+
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class HostResource {
         private String source;
@@ -249,6 +272,10 @@ public class ImageDef {
             }
             sb.append('\n');
         }
+        packageRepos.stream()
+                .sorted(java.util.Comparator.<PackageRepo, String>comparing(r -> String.valueOf(r.getType()))
+                        .thenComparing(r -> String.valueOf(r.getName())))
+                .forEach(r -> sb.append("pkgrepo=").append(r.getType()).append(',').append(r.getName()).append('\n'));
         repos.stream()
                 .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
                         .thenComparing(r -> String.valueOf(r.getPath())))

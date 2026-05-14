@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.config.ImageDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
@@ -49,6 +50,8 @@ public class ToolDef {
     private List<ToolRef> requires = List.of();
     private String verify;
     private List<ActionEntry> actions = List.of();
+    @JsonProperty("package_repos")
+    private List<ImageDef.PackageRepo> packageRepos = List.of();
     private Map<String, ParameterDef> parameters = Map.of();
 
     private transient volatile String cachedFingerprint;
@@ -75,6 +78,8 @@ public class ToolDef {
     public void setVerify(String verify) { this.verify = verify; }
     public List<ActionEntry> getActions() { return actions; }
     public void setActions(List<ActionEntry> actions) { this.actions = actions; }
+    public List<ImageDef.PackageRepo> getPackageRepos() { return packageRepos; }
+    public void setPackageRepos(List<ImageDef.PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
     public Map<String, ParameterDef> getParameters() { return parameters; }
     public void setParameters(Map<String, ParameterDef> parameters) {
         this.parameters = parameters != null ? parameters : Map.of();
@@ -305,6 +310,10 @@ public class ToolDef {
             sb.append('\n');
         }
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
+        packageRepos.stream()
+                .sorted(java.util.Comparator.<ImageDef.PackageRepo, String>comparing(r -> String.valueOf(r.getType()))
+                        .thenComparing(r -> String.valueOf(r.getName())))
+                .forEach(r -> sb.append("pkgrepo=").append(r.getType()).append(',').append(r.getName()).append('\n'));
         run.forEach(r -> sb.append("run=").append(r).append('\n'));
         runAsUser.forEach(r -> sb.append("run_as_user=").append(r).append('\n'));
         for (var f : files) {

@@ -500,6 +500,68 @@ class ImageDefTest {
         assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
+    @Test
+    void parseImageWithPackageRepos(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("mise.yaml"), """
+                name: tpl-mise
+                parent: tpl-dev
+                package_repos:
+                  - type: copr
+                    name: jdxcode/mise
+                packages:
+                  - mise
+                """);
+
+        var defs = ImageDef.loadAll(List.of(tempDir.toString()));
+        var mise = defs.get("tpl-mise");
+        assertNotNull(mise);
+        assertEquals(1, mise.getPackageRepos().size());
+        assertEquals("copr", mise.getPackageRepos().get(0).getType());
+        assertEquals("jdxcode/mise", mise.getPackageRepos().get(0).getName());
+        assertEquals(1, mise.getPackages().size());
+        assertEquals("mise", mise.getPackages().get(0));
+    }
+
+    @Test
+    void imageWithoutPackageReposDefaultsToEmpty() {
+        var defs = ImageDef.loadAll();
+        var minimal = defs.get("tpl-minimal");
+        assertNotNull(minimal);
+        assertTrue(minimal.getPackageRepos().isEmpty());
+    }
+
+    @Test
+    void fingerprintChangesWhenPackageRepoAdded() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        b.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "jdxcode/mise")));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenPackageRepoNameChanges() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        a.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "user/repo-a")));
+        b.setPackageRepos(List.of(new ImageDef.PackageRepo("copr", "user/repo-b")));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIgnoresPackageRepoOrder() {
+        var a = makeDef("images:fedora/43", null, List.of(), List.of());
+        var b = makeDef("images:fedora/43", null, List.of(), List.of());
+        a.setPackageRepos(List.of(
+                new ImageDef.PackageRepo("copr", "alpha/repo"),
+                new ImageDef.PackageRepo("copr", "beta/repo")));
+        b.setPackageRepos(List.of(
+                new ImageDef.PackageRepo("copr", "beta/repo"),
+                new ImageDef.PackageRepo("copr", "alpha/repo")));
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
     private static ImageDef makeDef(String image, String parent, List<String> packages, List<String> tools) {
         var def = new ImageDef();
         def.setImage(image);

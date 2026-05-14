@@ -522,6 +522,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
 
         var toolResolution = collectEffectiveTools(imageDef, defs);
+        enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         runToolSetup(container, toolResolution.effective());
         installSkills(container, imageDef, defs);
@@ -672,6 +673,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
 
         var tools = resolveTools(imageDef);
+        enablePackageRepos(container, imageDef, tools, List.of(), defs);
         installAllPackages(container, imageDef, tools, List.of(), defs);
         runToolSetup(container, tools);
         installSkills(container, imageDef, defs);
@@ -855,6 +857,61 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         args.addAll(java.util.List.of("dnf", "install", "-y", "--setopt=keepcache=true"));
         args.addAll(allPackages);
         container.runInteractive("Failed to install packages", args.toArray(String[]::new));
+    }
+
+    /**
+     * Enable package repositories (e.g. COPR) from the image and its tools,
+     * skipping any already enabled by ancestor images. Must be called before
+     * {@link #installAllPackages}.
+     */
+    private void enablePackageRepos(Container container, ImageDef imageDef,
+                                    java.util.List<ResolvedTool> tools,
+                                    java.util.List<ResolvedTool> ancestorTools,
+                                    Map<String, ImageDef> defs) {
+        var allRepos = new java.util.LinkedHashSet<String>();
+        for (var repo : imageDef.getPackageRepos()) {
+            allRepos.add(repo.getType() + ":" + repo.getName());
+        }
+        for (var tool : tools) {
+            for (var repo : tool.setup().packageRepos()) {
+                allRepos.add(repo.getType() + ":" + repo.getName());
+            }
+        }
+        if (allRepos.isEmpty()) return;
+
+        var ancestorRepos = new java.util.LinkedHashSet<String>();
+        var parentName = imageDef.getParent();
+        while (parentName != null && !parentName.isBlank()) {
+            var parentDef = defs.get(parentName);
+            if (parentDef == null) break;
+            for (var repo : parentDef.getPackageRepos()) {
+                ancestorRepos.add(repo.getType() + ":" + repo.getName());
+            }
+            parentName = parentDef.getParent();
+        }
+        for (var tool : ancestorTools) {
+            for (var repo : tool.setup().packageRepos()) {
+                ancestorRepos.add(repo.getType() + ":" + repo.getName());
+            }
+        }
+
+        allRepos.removeAll(ancestorRepos);
+        if (allRepos.isEmpty()) return;
+
+        for (var entry : allRepos) {
+            var colonIdx = entry.indexOf(':');
+            var type = entry.substring(0, colonIdx);
+            var name = entry.substring(colonIdx + 1);
+            switch (type) {
+                case "copr" -> {
+                    System.out.println("Enabling COPR repo " + name + "...");
+                    container.runInteractive("Failed to enable COPR repo " + name,
+                            "dnf", "copr", "enable", "-y", name);
+                }
+                default -> System.err.println("Warning: unknown package_repos type '" + type
+                        + "' for '" + name + "', skipping.");
+            }
+        }
     }
 
     /**
