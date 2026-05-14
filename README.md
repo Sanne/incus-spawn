@@ -428,6 +428,14 @@ tools:
   - idea-backend    # auto-installs sshd via requires
 ```
 
+The `idea-backend` tool accepts a `memory` parameter to control the JVM heap size (default `2g`). Use the map form to customize it:
+
+```yaml
+tools:
+  - idea-backend:
+      memory: "8g"
+```
+
 After branching, connect from JetBrains Gateway using the container's IP (visible in the TUI via F3) over SSH as `agentuser`. Add your SSH public key to the template's `~/.ssh/authorized_keys` (e.g. via a host-resource or a custom tool) so authentication works automatically in every branch.
 
 The `idea-backend` tool also declares a tool action that lets you open repos directly in Gateway from the TUI — press F9 on a running instance to see available actions, including an "Open repo in Gateway" entry for each declared repository.
