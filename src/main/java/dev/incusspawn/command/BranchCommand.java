@@ -338,12 +338,9 @@ public class BranchCommand implements Runnable {
     }
 
     private void waitForReady(String container) {
-        for (int i = 0; i < 30; i++) {
-            var result = incus.shellExec(container, "true");
-            if (result.success()) return;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+        if (!incus.pollUntilReady(container, 30, "true")) {
+            System.err.println("Warning: instance " + container + " may not be fully ready.");
         }
-        System.err.println("Warning: instance " + container + " may not be fully ready.");
     }
 
 }

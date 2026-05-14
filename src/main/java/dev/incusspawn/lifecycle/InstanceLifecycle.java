@@ -140,22 +140,8 @@ public final class InstanceLifecycle {
         for (var tool : buildSource.getTools().values()) {
             if (tool.getReady() == null || tool.getReady().isBlank()) continue;
             var toolName = tool.getName();
-            var readyCmd = tool.getReady();
             System.out.println("Waiting for " + toolName + "...");
-            boolean ready = false;
-            for (int i = 0; i < 15; i++) {
-                if (incus.shellExec(name, "sh", "-c", readyCmd).success()) {
-                    ready = true;
-                    break;
-                }
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            if (!ready) {
+            if (!incus.pollUntilReady(name, 15, "sh", "-c", tool.getReady())) {
                 System.err.println("Warning: " + toolName + " did not become ready in time.");
             }
         }

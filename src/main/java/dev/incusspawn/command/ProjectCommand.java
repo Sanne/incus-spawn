@@ -65,7 +65,7 @@ public class ProjectCommand {
             System.out.println("Cloning from " + parent + "...");
             incus.copy(parent, imageName);
             incus.start(imageName);
-            waitForReady(imageName);
+            incus.waitForReady(imageName);
 
             // Clone repos
             if (projectConfig.getRepos() != null && !projectConfig.getRepos().isEmpty()) {
@@ -108,13 +108,6 @@ public class ProjectCommand {
             return null;
         }
 
-        private void waitForReady(String container) {
-            for (int i = 0; i < 30; i++) {
-                var result = incus.shellExec(container, "true");
-                if (result.success()) return;
-                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-            }
-        }
     }
 
     @Command(
@@ -144,7 +137,7 @@ public class ProjectCommand {
 
             // Start if stopped
             incus.start(name);
-            waitForReady(name);
+            incus.waitForReady(name);
 
             // System updates
             System.out.println("Running system updates...");
@@ -181,12 +174,5 @@ public class ProjectCommand {
             System.out.println("Project template " + name + " updated successfully.");
         }
 
-        private void waitForReady(String container) {
-            for (int i = 0; i < 30; i++) {
-                var r = incus.shellExec(container, "true");
-                if (r.success()) return;
-                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-            }
-        }
     }
 }

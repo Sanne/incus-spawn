@@ -1005,13 +1005,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private void waitForReady(String container) {
-        for (int i = 0; i < 30; i++) {
-            var result = incus.shellExec(container, "true");
-            if (result.success()) return;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+        if (!incus.pollUntilReady(container, 30, "true")) {
+            throw new RuntimeException(
+                    "Container " + container + " failed to become ready after 30 seconds");
         }
-        throw new RuntimeException(
-                "Container " + container + " failed to become ready after 30 seconds");
     }
 
     private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,

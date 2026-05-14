@@ -55,7 +55,7 @@ public class UpdateAllCommand implements Runnable {
 
     private void updateImage(String name) {
         incus.start(name);
-        waitForReady(name);
+        incus.waitForReady(name);
 
         // System updates
         System.out.println("  Running system updates...");
@@ -82,11 +82,4 @@ public class UpdateAllCommand implements Runnable {
         }
     }
 
-    private void waitForReady(String container) {
-        for (int i = 0; i < 30; i++) {
-            var r = incus.shellExec(container, "true");
-            if (r.success()) return;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-        }
-    }
 }

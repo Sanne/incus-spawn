@@ -45,7 +45,7 @@ public class ShellCommand implements Runnable {
             System.out.println("Starting " + name + "...");
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
-            waitForReady(name);
+            incus.waitForReady(name);
         }
 
         BranchCommand.checkGuiHealth(incus, name);
@@ -60,7 +60,7 @@ public class ShellCommand implements Runnable {
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             HostResourceSetup.removeStaleDevices(incus, container);
             incus.start(container);
-            waitForReady(container);
+            incus.waitForReady(container);
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {
@@ -71,11 +71,4 @@ public class ShellCommand implements Runnable {
         }
     }
 
-    private void waitForReady(String container) {
-        for (int i = 0; i < 30; i++) {
-            var result = incus.shellExec(container, "true");
-            if (result.success()) return;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-        }
-    }
 }

@@ -2657,7 +2657,7 @@ public class ListCommand implements Runnable {
         }
 
         incus.start(name);
-        waitForReady(name);
+        incus.waitForReady(name);
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
@@ -2718,7 +2718,7 @@ public class ListCommand implements Runnable {
         if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
             HostResourceSetup.removeStaleDevices(incus, containerName);
             incus.start(containerName);
-            waitForReady(containerName);
+            incus.waitForReady(containerName);
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }
@@ -2729,7 +2729,7 @@ public class ListCommand implements Runnable {
             System.out.println("Starting " + name + "...");
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
-            waitForReady(name);
+            incus.waitForReady(name);
         }
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
@@ -2739,13 +2739,6 @@ public class ListCommand implements Runnable {
 
     private void checkGuiHealth(String name) {
         BranchCommand.checkGuiHealth(incus, name);
-    }
-
-    private void waitForReady(String name) {
-        for (int i = 0; i < 30; i++) {
-            if (incus.shellExec(name, "true").success()) break;
-            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
-        }
     }
 
     private static final ObjectMapper JSON = new ObjectMapper();

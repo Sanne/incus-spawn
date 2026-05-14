@@ -224,6 +224,26 @@ public class IncusClient {
     }
 
     /**
+     * Poll a command inside a container until it succeeds or retries are exhausted.
+     */
+    public boolean pollUntilReady(String name, int maxAttempts, String... command) {
+        for (int i = 0; i < maxAttempts; i++) {
+            if (shellExec(name, command).success()) return true;
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return false;
+    }
+
+    public void waitForReady(String name) {
+        pollUntilReady(name, 30, "true");
+    }
+
+    /**
      * Open an interactive shell in a container, inheriting stdio.
      */
     public int interactiveShell(String container, String user) {
