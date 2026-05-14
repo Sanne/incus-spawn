@@ -1,6 +1,5 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.config.ImageDef;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;

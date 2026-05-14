@@ -864,52 +864,53 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * skipping any already enabled by ancestor images. Must be called before
      * {@link #installAllPackages}.
      */
+    private record RepoKey(String type, String name) {
+        RepoKey(ImageDef.PackageRepo repo) { this(repo.getType(), repo.getName()); }
+    }
+
     private void enablePackageRepos(Container container, ImageDef imageDef,
                                     java.util.List<ResolvedTool> tools,
                                     java.util.List<ResolvedTool> ancestorTools,
                                     Map<String, ImageDef> defs) {
-        var allRepos = new java.util.LinkedHashSet<String>();
+        var allRepos = new java.util.LinkedHashSet<RepoKey>();
         for (var repo : imageDef.getPackageRepos()) {
-            allRepos.add(repo.getType() + ":" + repo.getName());
+            allRepos.add(new RepoKey(repo));
         }
         for (var tool : tools) {
             for (var repo : tool.setup().packageRepos()) {
-                allRepos.add(repo.getType() + ":" + repo.getName());
+                allRepos.add(new RepoKey(repo));
             }
         }
         if (allRepos.isEmpty()) return;
 
-        var ancestorRepos = new java.util.LinkedHashSet<String>();
+        var ancestorRepos = new java.util.LinkedHashSet<RepoKey>();
         var parentName = imageDef.getParent();
         while (parentName != null && !parentName.isBlank()) {
             var parentDef = defs.get(parentName);
             if (parentDef == null) break;
             for (var repo : parentDef.getPackageRepos()) {
-                ancestorRepos.add(repo.getType() + ":" + repo.getName());
+                ancestorRepos.add(new RepoKey(repo));
             }
             parentName = parentDef.getParent();
         }
         for (var tool : ancestorTools) {
             for (var repo : tool.setup().packageRepos()) {
-                ancestorRepos.add(repo.getType() + ":" + repo.getName());
+                ancestorRepos.add(new RepoKey(repo));
             }
         }
 
         allRepos.removeAll(ancestorRepos);
         if (allRepos.isEmpty()) return;
 
-        for (var entry : allRepos) {
-            var colonIdx = entry.indexOf(':');
-            var type = entry.substring(0, colonIdx);
-            var name = entry.substring(colonIdx + 1);
-            switch (type) {
+        for (var key : allRepos) {
+            switch (key.type()) {
                 case "copr" -> {
-                    System.out.println("Enabling COPR repo " + name + "...");
-                    container.runInteractive("Failed to enable COPR repo " + name,
-                            "dnf", "copr", "enable", "-y", name);
+                    System.out.println("Enabling COPR repo " + key.name() + "...");
+                    container.runInteractive("Failed to enable COPR repo " + key.name(),
+                            "dnf", "copr", "enable", "-y", key.name());
                 }
-                default -> System.err.println("Warning: unknown package_repos type '" + type
-                        + "' for '" + name + "', skipping.");
+                default -> System.err.println("Warning: unknown package_repos type '" + key.type()
+                        + "' for '" + key.name() + "', skipping.");
             }
         }
     }
