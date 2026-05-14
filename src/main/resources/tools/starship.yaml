@@ -14,12 +14,43 @@ files:
   - path: /home/agentuser/.config/starship.toml
     owner: agentuser
     content: |
+      format = """
+      $custom\
+      $directory\
+      $git_branch\
+      $git_status\
+      $git_state\
+      $cmd_duration\
+      $line_break\
+      $character"""
+
       [custom.incus_spawn]
       command = 'echo "$ISX_CONTAINER"'
       when = 'test -n "$ISX_CONTAINER"'
-      format = "[◆ $output]($style) "
+      format = "[\\[◆ $output\\]]($style) "
       style = "bold blue"
       description = "incus-spawn container indicator"
+
+      [directory]
+      truncation_length = 3
+      read_only = " 🔒"
+
+      [git_branch]
+      format = "[$symbol$branch]($style) "
+
+      [git_status]
+      format = '([$all_status$ahead_behind]($style) )'
+
+      [git_state]
+      format = '[$state( $progress_current/$progress_total)]($style) '
+
+      [cmd_duration]
+      min_time = 2000
+      format = "[⏱ $duration]($style) "
+
+      [character]
+      success_symbol = "[❯](green)"
+      error_symbol = "[❯](red)"
 
 run_as_user:
   - echo 'eval "$(starship init bash)"' >> ~/.bashrc
