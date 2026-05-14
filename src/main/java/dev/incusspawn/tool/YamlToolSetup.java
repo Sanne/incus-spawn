@@ -85,7 +85,7 @@ public class YamlToolSetup implements ToolSetup {
             var content = ParameterSubstitutor.substitute(file.getContent(), resolvedParams);
             container.writeFile(path, content);
             if (file.getOwner() != null && !file.getOwner().isEmpty()) {
-                container.chown(path, file.getOwner());
+                chownWithParents(container, path, file.getOwner());
             }
         }
 
@@ -164,6 +164,26 @@ public class YamlToolSetup implements ToolSetup {
         if (exitCode != 0) {
             throw new IOException("Extraction failed (exit code " + exitCode + ") for " + archive);
         }
+    }
+
+    /**
+     * Chown file and any root-owned parent directories inside /home that
+     * writeFile's mkdir -p created. Without this, a tool writing
+     * /home/user/.config/foo.conf leaves .config owned by root, blocking
+     * later run_as_user steps from creating siblings.
+     */
+    private static void chownWithParents(Container container, String path, String owner) {
+        container.chown(path, owner);
+        var ownerUser = owner.split(":")[0];
+        var home = "/home/" + ownerUser;
+        container.sh(
+                "d=$(dirname " + Container.shellQuote(path) + "); " +
+                "while [ \"$d\" != " + Container.shellQuote(home) + " ] && " +
+                      "[ \"$d\" != / ] && " +
+                      "case $d in " + Container.shellQuote(home) + "/*) true;; *) false;; esac; do " +
+                "  [ \"$(stat -c %U \"$d\")\" = root ] && chown " + Container.shellQuote(owner) + " \"$d\"; " +
+                "  d=$(dirname \"$d\"); " +
+                "done");
     }
 
     private static void deleteRecursive(Path dir) {
