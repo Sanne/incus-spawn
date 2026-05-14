@@ -395,6 +395,12 @@ public class IncusClient {
         exec(args).assertSuccess("Failed to delete " + name);
     }
 
+    public void deleteIfExists(String name) {
+        if (exists(name)) {
+            delete(name, true);
+        }
+    }
+
     public void rename(String oldName, String newName) {
         exec("rename", oldName, newName).assertSuccess("Failed to rename " + oldName + " to " + newName);
     }

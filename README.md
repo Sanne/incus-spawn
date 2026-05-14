@@ -71,7 +71,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
-The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots (requires Java 25+, or use the native compiled version to avoid any doubt). Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`.
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots. Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`.
 
 ### Network Modes
 
@@ -224,9 +224,6 @@ isx build --out-of-sync
 
 # Rebuild all discovered images from scratch
 isx build --all
-
-# Continue building remaining templates even if some fail
-isx build --all --continue-on-failure
 ```
 
 ### Declarative Repos
@@ -545,8 +542,8 @@ Actions can also be contributed programmatically by CDI beans implementing the `
 - **Instant branching**: copy-on-write clones that share storage with the parent image
 - **System containers**: full init, real networking, bare-metal-like developer experience
 - **KVM VMs**: `--vm` flag for hardware-level isolation with separate kernel (optional)
-- **Interactive TUI**: Midnight Commander-style interface with F3 detail views, F9 tool actions, template staleness indicators, build menu, and modal dialogs for branching, renaming, and building
-- **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration, health checks warn about Wayland configuration issues
+- **Interactive TUI**: Midnight Commander-style interface with F3 detail views, F9 tool actions, template staleness indicators, and modal dialogs for branching, renaming, and building
+- **GUI and audio passthrough**: Wayland + PipeWire with GPU acceleration
 - **Host resources**: share host files and directories with containers (read-only, overlay, or copy)
 - **Inbox mount**: share a host directory read-only into the container
 - **MITM TLS proxy**: transparent auth injection — credentials never enter containers in any form
@@ -613,20 +610,6 @@ Details that save time and avoid frustration:
 - **CA certificate mismatch warning**: branching from a template built with a different CA certificate warns you before you hit TLS failures.
 - **Claude Code auto-trust**: when templates declare repos, the build pre-trusts those directories in `.claude.json` so Claude Code doesn't prompt for trust on first use.
 - **Terminal title**: shell sessions set the terminal title to `isx:<containername>`, and the container prompt maintains it. Easy to identify which terminal belongs to which container.
-- **Container status indicators**: when inside a container, Starship prompts and tmux status lines automatically show you're in an `isx` environment. Set `ISX_CONTAINER_NAME` and `ISX_CONTAINER_PARENT` env vars are available for custom integrations.
-
-### Starship Prompt
-
-To enable [Starship](https://starship.rs/) prompts with container indicators, add the `starship` tool to your template:
-
-```yaml
-name: tpl-my-template
-parent: tpl-dev
-tools:
-  - starship
-```
-
-The built-in `starship` tool installs Starship with a preconfigured indicator (`◆ container-name`) that appears when you're inside a container. To customize the indicator, override `~/.config/starship.toml` via a `files` entry in your template or tool, or mount your host config with a `host-resources` entry.
 
 ## Installation
 

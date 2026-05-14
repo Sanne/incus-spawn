@@ -82,6 +82,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
     private static Path dnfCacheDir() { return Environment.dnfCacheDir(); }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
+    private static final String REBUILDING_SUFFIX = "-rebuilding";
 
     @Override
     public Integer call() {
@@ -187,23 +188,19 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
         }
 
-        deleteAndBuild(templatesToRebuild, defs, !outdatedOnly);
+        rebuildAll(templatesToRebuild, defs);
     }
 
-    private void deleteAndBuild(java.util.List<String> templates, Map<String, ImageDef> defs, boolean deleteFirst) {
-        if (deleteFirst) {
-            var reversed = new java.util.ArrayList<>(templates);
-            java.util.Collections.reverse(reversed);
-            System.out.println("\nDeleting existing images...");
-            for (var name : reversed) {
-                if (incus.exists(name)) {
-                    System.out.println("  Deleting " + name + "...");
-                    incus.delete(name, true);
-                }
-            }
-        }
-
+    /**
+     * Build all templates with atomic per-template swaps. Each template is built
+     * with a temporary name and promoted to the canonical name immediately on
+     * success. This means child templates always copy from the already-promoted
+     * parent. If a build fails, the remaining templates (which depend on it) are
+     * skipped — their originals are preserved since they were never touched.
+     */
+    private void rebuildAll(List<String> templates, Map<String, ImageDef> defs) {
         var failedBuilds = new java.util.HashSet<String>();
+
         System.out.println();
         for (var templateName : templates) {
             var imageDef = defs.get(templateName);
@@ -217,18 +214,19 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 failedBuilds.add(templateName);
                 continue;
             }
+
             try {
                 buildSingleImage(imageDef, defs);
                 System.out.println();
             } catch (BuildFailedException e) {
                 failedBuilds.add(templateName);
-                System.err.println("Build failed for " + templateName + ", continuing...\n");
             }
         }
 
         if (!failedBuilds.isEmpty()) {
             System.err.println("\n\033[1;31mSome templates failed to build: " +
                     String.join(", ", failedBuilds) + "\033[0m");
+            throw new BuildFailedException();
         }
     }
 
@@ -360,7 +358,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
         }
 
-        deleteAndBuild(chain, defs, true);
+        rebuildAll(chain, defs);
     }
 
     /**
@@ -408,19 +406,21 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     /**
      * Build a single image without checking or building parents.
      * Assumes parent is already built and up-to-date.
+     * Builds with a temporary name and swaps atomically on success.
      */
     private void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var targetName = imageDef.getName();
+        var canonicalName = imageDef.getName();
+        var tempName = canonicalName + REBUILDING_SUFFIX;
 
-        System.out.println("Building image: " + targetName);
+        System.out.println("Building image: " + canonicalName);
 
-        if (incus.exists(targetName)) {
+        if (incus.exists(canonicalName)) {
             if (!yes) {
-                System.out.println("Image '" + targetName + "' already exists.");
-                System.out.println("Rebuilding will destroy the existing image and any changes made to it.");
+                System.out.println("Image '" + canonicalName + "' already exists.");
+                System.out.println("It will be replaced if the build succeeds.");
                 var console = System.console();
                 if (console != null) {
-                    System.out.print("Delete and rebuild? (y/N): ");
+                    System.out.print("Rebuild? (y/N): ");
                     var answer = console.readLine().strip();
                     if (!answer.equalsIgnoreCase("y")) {
                         System.out.println("Aborted.");
@@ -428,21 +428,25 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                     }
                 }
             }
-            incus.delete(targetName, true);
         }
+
+        incus.deleteIfExists(tempName);
 
         try {
             if (imageDef.isRoot()) {
-                buildFromScratch(imageDef, defs);
+                buildFromScratch(imageDef, defs, tempName);
             } else {
-                buildFromParent(imageDef, defs);
+                buildFromParent(imageDef, defs, tempName, imageDef.getParent());
             }
         } catch (Exception e) {
             System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
-            System.err.println("\033[1mBuild failed for " + targetName + ": " + e.getMessage() + "\033[0m");
-            promoteToFailedInstance(targetName);
-            throw new BuildFailedException(targetName);
+            System.err.println("\033[1mBuild failed for " + canonicalName + ": " + e.getMessage() + "\033[0m");
+            promoteToFailedInstance(tempName, canonicalName);
+            throw new BuildFailedException(canonicalName);
         }
+
+        incus.deleteIfExists(canonicalName);
+        incus.rename(tempName, canonicalName);
     }
 
     /**
@@ -477,42 +481,43 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         return false;
     }
 
-    private void promoteToFailedInstance(String containerName) {
-        var promotedName = containerName + "-failed-build";
+    private void promoteToFailedInstance(String buildName, String canonicalName) {
+        var promotedName = canonicalName + "-failed-build";
         try {
-            if (incus.exists(promotedName)) {
-                incus.delete(promotedName, true);
-            }
-            try { unmountDnfCache(containerName); } catch (Exception ignored) {}
-            incus.stop(containerName);
-            incus.rename(containerName, promotedName);
+            incus.deleteIfExists(promotedName);
+            try { unmountDnfCache(buildName); } catch (Exception ignored) {}
+            incus.stop(buildName);
+            incus.rename(buildName, promotedName);
             incus.configSet(promotedName, Metadata.TYPE, Metadata.TYPE_FAILED_BUILD);
-            incus.configSet(promotedName, Metadata.PARENT, containerName);
+            incus.configSet(promotedName, Metadata.PARENT, canonicalName);
             incus.configSet(promotedName, Metadata.CREATED, Metadata.now());
             System.err.println("\033[1mContainer promoted to instance '" + promotedName + "' for inspection.\033[0m");
         } catch (Exception promoteError) {
             System.err.println("Failed to promote container: " + promoteError.getMessage());
-            System.err.println("Container '" + containerName + "' may still exist for manual cleanup.");
+            System.err.println("Container '" + buildName + "' may still exist for manual cleanup.");
         }
     }
 
     /**
      * Build an image by copying its parent and applying layers from the image definition.
+     * @param buildName the Incus container name to create (temp name during atomic rebuild)
+     * @param parentSource the parent container to copy from
      */
-    private void buildFromParent(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var targetName = imageDef.getName();
-        var parentName = imageDef.getParent();
+    private void buildFromParent(ImageDef imageDef, Map<String, ImageDef> defs,
+                                  String buildName, String parentSource) {
+        var canonicalName = imageDef.getName();
+        var parentCanonical = imageDef.getParent();
 
-        System.out.println("Deriving from parent image '" + parentName + "'...");
-        incus.copy(parentName, targetName);
-        incus.start(targetName);
-        waitForReady(targetName);
-        waitForNetwork(targetName);
+        System.out.println("Deriving from parent image '" + parentCanonical + "'...");
+        incus.copy(parentSource, buildName);
+        incus.start(buildName);
+        waitForReady(buildName);
+        waitForNetwork(buildName);
 
-        mountDnfCache(targetName);
-        var container = new Container(incus, targetName);
+        mountDnfCache(buildName);
+        var container = new Container(incus, buildName);
 
-        container.sh("sed -i \"s/^export ISX_TEMPLATE=.*/export ISX_TEMPLATE='" + targetName + "'/\" /home/agentuser/.bashrc")
+        container.sh("sed -i \"s/^export ISX_TEMPLATE=.*/export ISX_TEMPLATE='" + canonicalName + "'/\" /home/agentuser/.bashrc")
                 .assertSuccess("Failed to update ISX_TEMPLATE in .bashrc");
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
@@ -528,35 +533,35 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
-        HostResourceSetup.removeBuildDevices(incus, targetName, hostResources);
-        unmountDnfCache(targetName);
+        HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
+        unmountDnfCache(buildName);
 
-        // Clean up caches to minimize image size (important for CoW clones)
-        cleanCaches(targetName);
+        cleanCaches(buildName);
 
-        tagTemplateMetadata(targetName, imageDef, parentName, hostResources, defs);
+        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
 
         System.out.println("Stopping image...");
-        incus.stop(targetName);
+        incus.stop(buildName);
 
-        System.out.println("Image " + targetName + " built successfully.");
+        System.out.println("Image " + canonicalName + " built successfully.");
     }
 
     /**
      * Build an image from scratch using the base OS image.
      * This is the full setup path: DNS, user, packages, tools.
+     * @param buildName the Incus container name to create (may be a temp name)
      */
-    private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var targetName = imageDef.getName();
+    private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs, String buildName) {
+        var canonicalName = imageDef.getName();
         var image = imageDef.getImage();
 
         // Launch base image
         System.out.println("Launching " + image + "...");
         try {
-            incus.launch(image, targetName, vm);
+            incus.launch(image, buildName, vm);
         } catch (IncusException e) {
-            if (incus.exists(targetName)) {
-                var log = incus.getLog(targetName);
+            if (incus.exists(buildName)) {
+                var log = incus.getLog(buildName);
                 if (log.contains("Exec format error")) {
                     throw new RuntimeException(
                             "The cached image for '" + image + "' has a broken /sbin/init " +
@@ -568,33 +573,23 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             throw e;
         }
 
-        waitForReady(targetName);
+        waitForReady(buildName);
 
-        // Set ID mapping for UID 1000 (needed for Wayland passthrough) and enable
-        // nested containers with syscall interception for container runtimes.
-        // Don't drop any capabilities since the container is the security boundary;
-        // this ensures tools like ping, traceroute, tcpdump, strace, etc. work.
-        incus.configSet(targetName, "raw.idmap", "both 1000 1000");
-        incus.configSet(targetName, "security.nesting", "true");
-        incus.configSet(targetName, "security.syscalls.intercept.mknod", "true");
-        incus.configSet(targetName, "security.syscalls.intercept.setxattr", "true");
-        incus.configSet(targetName, "raw.lxc", "lxc.cap.drop =");
-        incus.restart(targetName);
-        waitForReady(targetName);
+        // UID mapping for Wayland passthrough, nested containers with syscall
+        // interception for container runtimes, and no dropped capabilities since
+        // the container itself is the security boundary.
+        incus.configSet(buildName, "raw.idmap", "both 1000 1000");
+        incus.configSet(buildName, "security.nesting", "true");
+        incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
+        incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+        incus.restart(buildName);
+        waitForReady(buildName);
 
-        var container = new Container(incus, targetName);
+        var container = new Container(incus, buildName);
 
-        // Note: net.ipv4.ping_group_range is set by Incus itself at container
-        // start. Other kernel.* sysctls (dmesg_restrict, perf_event_paranoid,
-        // yama.ptrace_scope) are not namespaced and cannot be changed from
-        // inside a container — they require host-level configuration.
-
-        // The base Fedora image uses systemd-resolved (127.0.0.53) which doesn't
-        // work reliably inside Incus containers. Replace it with a direct resolv.conf
-        // pointing at the bridge gateway's dnsmasq — this is how the container gets
-        // basic DNS resolution (package mirrors, etc.), unrelated to MITM proxy
-        // domain interception. systemd-resolved is disabled permanently after dnf
-        // upgrade (which can re-enable it).
+        // systemd-resolved (127.0.0.53) doesn't work reliably inside Incus
+        // containers. Point resolv.conf at the bridge gateway's dnsmasq instead.
         System.out.println("Replacing systemd-resolved with direct DNS...");
         var gatewayRaw = incus.exec("network", "get", "incusbr0", "ipv4.address")
                 .assertSuccess("Failed to get bridge IP").stdout().strip();
@@ -606,8 +601,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to configure DNS");
 
-        // Install MITM CA certificate so containers trust the proxy's TLS certs.
-        // DNS interception is handled at the bridge level via dnsmasq (configured by isx proxy).
         System.out.println("Installing MITM proxy CA certificate...");
         var ca = CertificateAuthority.loadOrCreate();
         container.sh(
@@ -618,20 +611,17 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
 
-        waitForNetwork(targetName);
+        waitForNetwork(buildName);
 
-        // Mount host-side DNF cache so metadata and packages are shared across builds
-        mountDnfCache(targetName);
+        mountDnfCache(buildName);
 
-        // Update all packages to latest security patches
         System.out.println("Updating system packages...");
         container.runInteractive("Failed to update system packages",
                 "dnf", "-y", "--setopt=keepcache=true", "upgrade", "--refresh");
 
-        // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable it.
-        // Masking (not just disabling) is sufficient: a masked unit can never be started
-        // by package scripts. Also remove 'resolve' from nsswitch.conf so .local domains
-        // go through regular DNS (dnsmasq) instead of mDNS.
+        // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
+        // it. Masking prevents package scripts from restarting it. Also remove
+        // 'resolve' from nsswitch.conf so .local domains use dnsmasq, not mDNS.
         System.out.println("Finalizing DNS configuration...");
         container.sh(
                 "systemctl disable --now systemd-resolved 2>/dev/null; " +
@@ -639,7 +629,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
                 .assertSuccess("Failed to finalize DNS configuration");
 
-        // Create agentuser with passwordless sudo (container is the security boundary)
         System.out.println("Creating agentuser...");
         container.exec("useradd", "-m", "-u", "1000", "agentuser")
                 .assertSuccess("Failed to create agentuser");
@@ -651,15 +640,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
                 .assertSuccess("Failed to configure passwordless sudo");
 
-        // Override Fedora's default PROMPT_COMMAND which sets the terminal title
-        // to "user@host:path" — we want "isx:containername".
         container.sh(
                 "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
                 .assertSuccess("Failed to configure .bashrc");
         container.appendToProfile("export ISX_CONTAINER=\"${HOSTNAME}\"");
-        container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(targetName));
+        container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(canonicalName));
 
-        // Install base packages needed by most tools
         System.out.println("Installing base packages...");
         container.runInteractive("Failed to install base packages",
                 "dnf", "install", "-y", "--setopt=keepcache=true",
@@ -678,19 +664,17 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
-        HostResourceSetup.removeBuildDevices(incus, targetName, hostResources);
-        // Unmount host-side DNF cache before cleanup — keeps images clean
-        unmountDnfCache(targetName);
+        HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
+        unmountDnfCache(buildName);
 
-        // Clean up caches to minimize image size (important for CoW clones)
-        cleanCaches(targetName);
+        cleanCaches(buildName);
 
-        tagTemplateMetadata(targetName, imageDef, null, hostResources, defs);
+        tagTemplateMetadata(buildName, canonicalName, imageDef, null, hostResources, defs);
 
         System.out.println("Stopping image...");
-        incus.stop(targetName);
+        incus.stop(buildName);
 
-        System.out.println("Image " + targetName + " built successfully.");
+        System.out.println("Image " + canonicalName + " built successfully.");
     }
 
     /**
@@ -994,21 +978,22 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
     }
 
-    private void tagTemplateMetadata(String targetName, ImageDef imageDef, String parentName,
+    private void tagTemplateMetadata(String buildName, String canonicalName, ImageDef imageDef,
+                                    String parentCanonicalName,
                                     List<ImageDef.HostResource> hostResources,
                                     Map<String, ImageDef> defs) {
-        incus.configSet(targetName, Metadata.TYPE, Metadata.TYPE_BASE);
-        incus.configSet(targetName, Metadata.PROFILE, targetName);
-        if (parentName != null) {
-            incus.configSet(targetName, Metadata.PARENT, parentName);
+        incus.configSet(buildName, Metadata.TYPE, Metadata.TYPE_BASE);
+        incus.configSet(buildName, Metadata.PROFILE, canonicalName);
+        if (parentCanonicalName != null) {
+            incus.configSet(buildName, Metadata.PARENT, parentCanonicalName);
         }
-        incus.configSet(targetName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(targetName, imageDef, defs);
+        incus.configSet(buildName, Metadata.CREATED, Metadata.today());
+        stampBuildVersion(buildName, imageDef, defs);
         if (!hostResources.isEmpty()) {
-            incus.configSet(targetName, Metadata.HOST_RESOURCES,
+            incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
         }
-        incus.configSet(targetName, Metadata.BUILD_SOURCE,
+        incus.configSet(buildName, Metadata.BUILD_SOURCE,
                 collectBuildSource(imageDef, defs).toJson());
     }
 
