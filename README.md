@@ -71,7 +71,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland), restricted netwo
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
-The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots (requires Java 25+). Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`.
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots (requires Java 25+, or use the native compiled version to avoid any doubt). Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`.
 
 ### Network Modes
 
