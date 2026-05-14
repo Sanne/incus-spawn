@@ -109,32 +109,52 @@ public class YamlToolSetup implements ToolSetup {
 
     private void processDownload(ToolDef.DownloadEntry dl, Container container) {
         try {
-            // Download to host cache
             var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
 
-            // Extract on host into temp directory
-            var extractDir = Files.createTempDirectory("isx-extract-");
-            try {
-                extractOnHost(cached, extractDir);
-
-                // Push extracted content into container
-                container.exec("mkdir", "-p", dl.getExtract());
-                try (var entries = Files.list(extractDir)) {
-                    for (var entry : entries.toList()) {
-                        container.filePushRecursive(entry.toString(), dl.getExtract());
-                    }
-                }
-
-                // Create symlinks
-                for (var linkEntry : dl.getLinks().entrySet()) {
-                    container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
-                }
-            } finally {
-                deleteRecursive(extractDir);
+            if (dl.isExtractInContainer()) {
+                extractInContainer(dl, cached, container);
+            } else {
+                extractOnHostAndPush(dl, cached, container);
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to process download for " + def.getName()
                     + ": " + e.getMessage(), e);
+        }
+    }
+
+    private void extractInContainer(ToolDef.DownloadEntry dl, Path cached, Container container) {
+        var filename = cached.getFileName().toString();
+        var containerArchive = "/tmp/" + filename;
+
+        container.exec("mkdir", "-p", dl.getExtract());
+        container.filePush(cached.toString(), containerArchive);
+        container.runInteractive("Failed to extract " + filename + " in container",
+                "tar", "xf", containerArchive, "-C", dl.getExtract());
+        container.exec("rm", "-f", containerArchive);
+
+        for (var linkEntry : dl.getLinks().entrySet()) {
+            container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
+        }
+    }
+
+    private void extractOnHostAndPush(ToolDef.DownloadEntry dl, Path cached, Container container)
+            throws IOException {
+        var extractDir = Files.createTempDirectory("isx-extract-");
+        try {
+            extractOnHost(cached, extractDir);
+
+            container.exec("mkdir", "-p", dl.getExtract());
+            try (var entries = Files.list(extractDir)) {
+                for (var entry : entries.toList()) {
+                    container.filePushRecursive(entry.toString(), dl.getExtract());
+                }
+            }
+
+            for (var linkEntry : dl.getLinks().entrySet()) {
+                container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
+            }
+        } finally {
+            deleteRecursive(extractDir);
         }
     }
 

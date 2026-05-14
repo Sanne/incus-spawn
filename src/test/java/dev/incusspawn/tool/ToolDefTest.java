@@ -94,6 +94,24 @@ class ToolDefTest {
         assertNull(dl.getSha256());
         assertEquals("/opt", dl.getExtract());
         assertTrue(dl.getLinks().isEmpty());
+        assertFalse(dl.isExtractInContainer());
+    }
+
+    @Test
+    void parseToolWithExtractInContainer() throws Exception {
+        var yaml = """
+                name: idea-backend
+                downloads:
+                  - url: https://example.com/idea.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                    extract_in_container: true
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals(1, def.getDownloads().size());
+        var dl = def.getDownloads().get(0);
+        assertTrue(dl.isExtractInContainer());
     }
 
     @Test
@@ -542,6 +560,26 @@ class ToolDefTest {
                     extract: /opt
                     links:
                       /opt/bin/tool: /usr/local/bin/tool
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenExtractInContainerChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                    extract_in_container: true
                 """));
         assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
     }

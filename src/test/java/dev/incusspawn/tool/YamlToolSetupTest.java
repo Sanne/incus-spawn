@@ -155,6 +155,50 @@ class YamlToolSetupTest {
     }
 
     @Test
+    void extractInContainerPushesArchiveAndExtractsInsideContainer(@TempDir Path tempDir) throws IOException {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var fakeArchive = tempDir.resolve("idea.tar.gz");
+        Files.writeString(fakeArchive, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(fakeArchive);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/idea.tar.gz");
+        dl.setSha256("abc123");
+        dl.setExtract("/opt");
+        dl.setExtractInContainer(true);
+        dl.setLinks(Map.of("/opt/idea/bin/idea", "/usr/local/bin/idea"));
+
+        var def = new ToolDef();
+        def.setName("idea-backend");
+        def.setDownloads(List.of(dl));
+
+        var setup = new YamlToolSetup(def, downloadCache);
+        setup.install(new Container(incus, CONTAINER), Map.of());
+
+        InOrder order = inOrder(incus);
+        // 1. mkdir -p /opt
+        order.verify(incus).shellExec(eq(CONTAINER), eq("mkdir"), eq("-p"), eq("/opt"));
+        // 2. push archive into container
+        order.verify(incus).filePush(eq(fakeArchive.toString()), eq(CONTAINER), eq("/tmp/idea.tar.gz"));
+        // 3. extract inside container
+        order.verify(incus).shellExecInteractive(eq(CONTAINER),
+                eq("tar"), eq("xf"), eq("/tmp/idea.tar.gz"), eq("-C"), eq("/opt"));
+        // 4. clean up archive
+        order.verify(incus).shellExec(eq(CONTAINER), eq("rm"), eq("-f"), eq("/tmp/idea.tar.gz"));
+        // 5. create symlinks
+        order.verify(incus).shellExec(eq(CONTAINER), eq("ln"), eq("-sf"),
+                eq("/opt/idea/bin/idea"), eq("/usr/local/bin/idea"));
+
+        // filePushRecursive should NOT be called
+        verify(incus, never()).filePushRecursive(any(), any(), any());
+    }
+
+    @Test
     void fileWithoutOwnerSkipsChown() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);

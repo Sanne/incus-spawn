@@ -94,6 +94,8 @@ public class ToolDef {
         private String sha256;
         private String extract;
         private Map<String, String> links = Map.of();
+        @JsonProperty("extract_in_container")
+        private boolean extractInContainer = false;
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
@@ -103,6 +105,8 @@ public class ToolDef {
         public void setExtract(String extract) { this.extract = extract; }
         public Map<String, String> getLinks() { return links; }
         public void setLinks(Map<String, String> links) { this.links = links; }
+        public boolean isExtractInContainer() { return extractInContainer; }
+        public void setExtractInContainer(boolean extractInContainer) { this.extractInContainer = extractInContainer; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -308,7 +312,8 @@ public class ToolDef {
         var sb = new StringBuilder();
         for (var d : downloads) {
             sb.append("dl=").append(d.url).append(',').append(d.sha256)
-                    .append(',').append(d.extract);
+                    .append(',').append(d.extract)
+                    .append(',').append(d.extractInContainer);
             new TreeMap<>(d.links).forEach((k, v) -> sb.append(',').append(k).append('=').append(v));
             sb.append('\n');
         }
