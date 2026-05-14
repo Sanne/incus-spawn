@@ -604,6 +604,23 @@ public class ListCommand implements Runnable {
                     null, new String[]{template.name, "--with-parents"}, true));
         }
 
+        // Option: Rebuild with descendants (only when template has descendants)
+        if (def != null) {
+            var descChain = new java.util.ArrayList<String>();
+            var descSeen = new java.util.LinkedHashSet<String>();
+            BuildCommand.collectDescendants(template.name, imageDefs, descChain, descSeen);
+            if (!descChain.isEmpty()) {
+                var fullChain = new java.util.ArrayList<String>();
+                fullChain.add(template.name);
+                fullChain.addAll(descChain);
+                var chainStr = String.join(" → ", fullChain);
+                options.add(new BuildMenuOption(
+                        "Rebuild " + template.name + " with descendants",
+                        "Rebuilds " + chainStr,
+                        null, new String[]{template.name, "--with-descendants"}, true));
+            }
+        }
+
         // Option 3: Build missing templates (only if there are missing ones)
         long missingCount = templateEntries.stream()
                 .filter(t -> "not built".equals(t.buildStatus)).count();
@@ -1646,6 +1663,7 @@ public class ListCommand implements Runnable {
     private static String buildStatusMessage(String[] args, boolean success) {
         var firstArg = args[0];
         boolean hasWithParents = java.util.Arrays.asList(args).contains("--with-parents");
+        boolean hasWithDescendants = java.util.Arrays.asList(args).contains("--with-descendants");
         if (firstArg.equals("--all")) {
             return success ? "Rebuilt all templates successfully" : "Some templates failed to build";
         } else if (firstArg.equals("--out-of-sync")) {
@@ -1655,6 +1673,9 @@ public class ListCommand implements Runnable {
         } else if (hasWithParents) {
             return success ? "Rebuilt " + firstArg + " with parents successfully"
                     : "Failed to build " + firstArg + " with parents";
+        } else if (hasWithDescendants) {
+            return success ? "Rebuilt " + firstArg + " with descendants successfully"
+                    : "Failed to build " + firstArg + " with descendants";
         } else {
             return success ? "Built " + firstArg + " successfully"
                     : "Failed to build " + firstArg

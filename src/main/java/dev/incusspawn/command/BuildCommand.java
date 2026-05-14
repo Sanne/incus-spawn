@@ -60,6 +60,9 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     @Option(names = "--with-parents", description = "Rebuild the template and all its parents unconditionally")
     boolean withParents;
 
+    @Option(names = "--with-descendants", description = "Rebuild the template and all templates inheriting from it")
+    boolean withDescendants;
+
     @Option(names = "--missing", description = "Build only templates that don't exist yet")
     boolean missing;
 
@@ -103,6 +106,20 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                     return 1;
                 }
                 buildWithParents(imageDef, defs);
+                return 0;
+            }
+            if (withDescendants) {
+                if (name == null) {
+                    System.err.println("Usage: isx build <template-name> --with-descendants");
+                    return 1;
+                }
+                var imageDef = defs.get(name);
+                if (imageDef == null) {
+                    System.err.println("Unknown image: " + name);
+                    System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                    return 1;
+                }
+                buildWithDescendants(imageDef, defs);
                 return 0;
             }
             if (missing) {
@@ -291,7 +308,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
     }
 
-    private static void collectDescendants(String parentName, Map<String, ImageDef> defs,
+    static void collectDescendants(String parentName, Map<String, ImageDef> defs,
                                             java.util.List<String> result, java.util.Set<String> seen) {
         for (var def : defs.values()) {
             if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
@@ -345,6 +362,32 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var chain = new java.util.ArrayList<String>();
         var seen = new java.util.LinkedHashSet<String>();
         collectAllRecursive(imageDef, defs, chain, seen);
+
+        System.out.println("This will rebuild: " + String.join(", ", chain));
+        if (!yes) {
+            var console = System.console();
+            if (console != null) {
+                System.out.print("Continue? (y/N): ");
+                var answer = console.readLine().strip();
+                if (!answer.equalsIgnoreCase("y")) {
+                    System.out.println("Aborted.");
+                    return;
+                }
+            }
+        }
+
+        rebuildAll(chain, defs);
+    }
+
+    /**
+     * Unconditionally rebuild a template and all templates that inherit from it.
+     */
+    private void buildWithDescendants(ImageDef imageDef, Map<String, ImageDef> defs) {
+        var chain = new java.util.ArrayList<String>();
+        var seen = new java.util.LinkedHashSet<String>();
+        chain.add(imageDef.getName());
+        seen.add(imageDef.getName());
+        collectDescendants(imageDef.getName(), defs, chain, seen);
 
         System.out.println("This will rebuild: " + String.join(", ", chain));
         if (!yes) {

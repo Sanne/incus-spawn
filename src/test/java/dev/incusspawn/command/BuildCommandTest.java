@@ -899,6 +899,93 @@ class BuildCommandTest {
                 "Image with changed definition should be outdated");
     }
 
+    // --- collectDescendants ---
+
+    @Test
+    void collectDescendantsFindsDirectChildren() {
+        var parent = new ImageDef();
+        parent.setName("tpl-base");
+
+        var child1 = new ImageDef();
+        child1.setName("tpl-java");
+        child1.setParent("tpl-base");
+
+        var child2 = new ImageDef();
+        child2.setName("tpl-python");
+        child2.setParent("tpl-base");
+
+        var defs = new java.util.LinkedHashMap<String, ImageDef>();
+        defs.put("tpl-base", parent);
+        defs.put("tpl-java", child1);
+        defs.put("tpl-python", child2);
+
+        var result = new java.util.ArrayList<String>();
+        BuildCommand.collectDescendants("tpl-base", defs, result, new java.util.LinkedHashSet<>());
+
+        assertEquals(2, result.size());
+        assertTrue(result.contains("tpl-java"));
+        assertTrue(result.contains("tpl-python"));
+    }
+
+    @Test
+    void collectDescendantsFindsTransitiveDescendants() {
+        var root = new ImageDef();
+        root.setName("tpl-base");
+
+        var mid = new ImageDef();
+        mid.setName("tpl-dev");
+        mid.setParent("tpl-base");
+
+        var leaf = new ImageDef();
+        leaf.setName("tpl-java");
+        leaf.setParent("tpl-dev");
+
+        var defs = new java.util.LinkedHashMap<String, ImageDef>();
+        defs.put("tpl-base", root);
+        defs.put("tpl-dev", mid);
+        defs.put("tpl-java", leaf);
+
+        var result = new java.util.ArrayList<String>();
+        BuildCommand.collectDescendants("tpl-base", defs, result, new java.util.LinkedHashSet<>());
+
+        assertEquals(List.of("tpl-dev", "tpl-java"), result,
+                "Should find tpl-dev before tpl-java (parent before child)");
+    }
+
+    @Test
+    void collectDescendantsEmptyForLeaf() {
+        var leaf = new ImageDef();
+        leaf.setName("tpl-leaf");
+
+        var defs = java.util.Map.of("tpl-leaf", leaf);
+        var result = new java.util.ArrayList<String>();
+        BuildCommand.collectDescendants("tpl-leaf", defs, result, new java.util.LinkedHashSet<>());
+
+        assertTrue(result.isEmpty(), "Leaf template should have no descendants");
+    }
+
+    @Test
+    void collectDescendantsSkipsAlreadySeen() {
+        var parent = new ImageDef();
+        parent.setName("tpl-base");
+
+        var child = new ImageDef();
+        child.setName("tpl-java");
+        child.setParent("tpl-base");
+
+        var defs = new java.util.LinkedHashMap<String, ImageDef>();
+        defs.put("tpl-base", parent);
+        defs.put("tpl-java", child);
+
+        var seen = new java.util.LinkedHashSet<String>();
+        seen.add("tpl-java");
+
+        var result = new java.util.ArrayList<String>();
+        BuildCommand.collectDescendants("tpl-base", defs, result, seen);
+
+        assertTrue(result.isEmpty(), "Already-seen descendant should be skipped");
+    }
+
     // --- resolveTools ---
 
     @Test
