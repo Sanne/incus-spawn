@@ -85,9 +85,19 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
     private static final String REBUILDING_SUFFIX = "-rebuilding";
 
+    private volatile String[] activeBuild;
+
     @Override
     public Integer call() {
         if (!InitCommand.requireInit(factory)) return 0;
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            var build = activeBuild;
+            if (build != null) {
+                promoteToFailedInstance(build[0], build[1]);
+            }
+        }));
+
         var defs = ImageDef.loadAll();
 
         try {
@@ -432,6 +442,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
 
         incus.deleteIfExists(tempName);
+        activeBuild = new String[]{tempName, canonicalName};
 
         try {
             if (imageDef.isRoot()) {
@@ -443,11 +454,13 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
             System.err.println("\033[1mBuild failed for " + canonicalName + ": " + e.getMessage() + "\033[0m");
             promoteToFailedInstance(tempName, canonicalName);
+            activeBuild = null;
             throw new BuildFailedException(canonicalName);
         }
 
         incus.deleteIfExists(canonicalName);
         incus.rename(tempName, canonicalName);
+        activeBuild = null;
     }
 
     /**
