@@ -76,6 +76,7 @@ public class MitmProxy {
             "repo.maven.apache.org", "repo1.maven.org",
             "plugins.gradle.org"
     );
+    private static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
 
     private static final Set<String> INTERCEPTED_DOMAIN_SET;
     static {
@@ -84,6 +85,7 @@ public class MitmProxy {
         all.addAll(GITHUB_DOMAINS);
         all.addAll(REGISTRY_DOMAINS);
         all.addAll(MAVEN_DOMAINS);
+        all.addAll(GRADLE_DOMAINS);
         INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
     }
 
@@ -92,12 +94,21 @@ public class MitmProxy {
     private static final Pattern BLOB_DIGEST_PATTERN = Pattern.compile(
             "/v2/(.+)/blobs/(sha256:[a-f0-9]{64})");
 
+    // Gradle distribution archive: /distributions/gradle-<version>-<variant>.zip
+    // Group 1 = filename (e.g. "gradle-9.2.1-bin.zip")
+    private static final Pattern GRADLE_DIST_PATTERN = Pattern.compile(
+            "/distributions/(gradle-[\\w.\\-]+-(?:bin|all)\\.zip)");
+
     private static Path registryCacheDir() {
         return Environment.registryCacheDir();
     }
 
     private static Path mavenCacheDir() {
         return Environment.mavenCacheDir();
+    }
+
+    private static Path gradleCacheDir() {
+        return Environment.gradleCacheDir();
     }
 
     private static Path m2Repository() {
@@ -338,6 +349,8 @@ public class MitmProxy {
                 " (domains: " + MAVEN_DOMAINS + ")");
         System.out.println("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
+        System.out.println("Gradle cache: " + gradleCacheDir() +
+                " (domains: " + GRADLE_DOMAINS + ")");
         if (useVertex) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexHost() +
@@ -375,6 +388,8 @@ public class MitmProxy {
             handleRegistryRequest(clientReq, domain);
         } else if (MAVEN_DOMAINS.contains(domain)) {
             handleMavenRequest(clientReq, domain);
+        } else if (GRADLE_DOMAINS.contains(domain)) {
+            handleGradleRequest(clientReq, domain);
         } else if (INTERCEPTED_DOMAIN_SET.contains(domain)) {
             handleApiRequest(clientReq, domain);
         } else {
@@ -813,6 +828,73 @@ public class MitmProxy {
         }
     }
 
+    // --- Gradle distribution caching ---
+
+    /**
+     * Handle a request to services.gradle.org.
+     * GET requests for distribution archives (/distributions/gradle-X.Y.Z-bin.zip,
+     * gradle-X.Y.Z-all.zip) are served from cache or fetched, cached, and served.
+     * All other paths are relayed transparently since they may be mutable.
+     */
+    private void handleGradleRequest(HttpServerRequest clientReq, String domain) {
+        var path = clientReq.path();
+
+        if (clientReq.method() == HttpMethod.GET && path != null) {
+            var matcher = GRADLE_DIST_PATTERN.matcher(path);
+            if (matcher.matches()) {
+                var filename = matcher.group(1);
+                var cacheFile = gradleCacheDir().resolve(filename);
+                var ref = domain + path;
+
+                vertx.executeBlocking(() -> {
+                    if (Files.exists(cacheFile)) {
+                        return Files.size(cacheFile);
+                    }
+                    return -1L;
+                }).onSuccess(size -> {
+                    if (size >= 0) {
+                        System.out.println("Gradle cache hit: " + filename +
+                                " (" + formatSize(size) + ")");
+                        serveCachedFile(clientReq.response(), cacheFile, null);
+                    } else {
+                        fetchGradleDistAndServe(clientReq, domain, cacheFile, ref);
+                    }
+                }).onFailure(err -> {
+                    System.err.println("Gradle cache check error: " + err.getMessage());
+                    relayRequest(clientReq, domain);
+                });
+                return;
+            }
+        }
+
+        relayRequest(clientReq, domain);
+    }
+
+    /**
+     * Fetch the SHA256 checksum sidecar, then fetch and cache the Gradle distribution
+     * with digest verification via the existing fetchCacheAndServe() infrastructure.
+     */
+    private void fetchGradleDistAndServe(HttpServerRequest clientReq, String domain,
+                                          Path cacheFile, String ref) {
+        var sha256Path = clientReq.path() + ".sha256";
+
+        vertx.executeBlocking(() -> fetchChecksumFromUpstream(domain, sha256Path, 64))
+            .onSuccess(sha256Hex -> {
+                String digest = sha256Hex != null ? "sha256:" + sha256Hex : null;
+                if (digest != null) {
+                    System.out.println("Gradle: fetching " + ref + " (sha256:" +
+                            sha256Hex.substring(0, 12) + "...)");
+                } else {
+                    System.out.println("Gradle: fetching " + ref + " (no sha256 sidecar)");
+                }
+                fetchCacheAndServe(clientReq, domain, digest, cacheFile, ref);
+            })
+            .onFailure(err -> {
+                System.err.println("Gradle SHA256 fetch error for " + ref + ": " + err.getMessage());
+                fetchCacheAndServe(clientReq, domain, null, cacheFile, ref);
+            });
+    }
+
     // --- Maven/Gradle artifact caching ---
 
     /**
@@ -863,7 +945,7 @@ public class MitmProxy {
             var m2File = resolveM2Path(domain, path);
             if (m2File == null || !Files.isRegularFile(m2File)) return null;
 
-            var upstreamSha1 = fetchSha1FromUpstream(domain, path + ".sha1");
+            var upstreamSha1 = fetchChecksumFromUpstream(domain, path + ".sha1", 40);
             if (upstreamSha1 == null) return null;
 
             var localSha1 = computeSha1(m2File);
@@ -1147,10 +1229,12 @@ public class MitmProxy {
     }
 
     /**
-     * Fetch the .sha1 checksum for a Maven artifact from the upstream repository.
-     * Returns the hex SHA1 string, or null if the checksum could not be retrieved.
+     * Fetch a checksum sidecar file from upstream (e.g. .sha1 or .sha256).
+     * Returns the hex checksum string, or null if it could not be retrieved
+     * or doesn't match the expected length.
      */
-    private static String fetchSha1FromUpstream(String domain, String sha1Path) {
+    private static String fetchChecksumFromUpstream(String domain, String checksumPath,
+                                                     int hexLength) {
         try {
             var socket = (javax.net.ssl.SSLSocket) javax.net.ssl.SSLSocketFactory.getDefault()
                     .createSocket(domain, 443);
@@ -1161,7 +1245,7 @@ public class MitmProxy {
                 var out = socket.getOutputStream();
                 var in = socket.getInputStream();
 
-                var request = "GET " + sha1Path + " HTTP/1.1\r\n"
+                var request = "GET " + checksumPath + " HTTP/1.1\r\n"
                         + "Host: " + domain + "\r\n"
                         + "Connection: close\r\n"
                         + "\r\n";
@@ -1186,9 +1270,8 @@ public class MitmProxy {
                     body = in.readAllBytes();
                 }
 
-                // Handle "hash" or "hash  filename" formats
                 var hex = new String(body).trim().split("\\s+")[0].toLowerCase();
-                if (hex.matches("[a-f0-9]{40}")) return hex;
+                if (hex.matches("[a-f0-9]{" + hexLength + "}")) return hex;
                 return null;
             }
         } catch (Exception e) {

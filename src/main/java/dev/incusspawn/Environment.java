@@ -38,6 +38,10 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/maven");
     }
 
+    public static Path gradleCacheDir() {
+        return home().resolve(".cache/incus-spawn/gradle");
+    }
+
     public static Path dnfCacheDir() {
         return home().resolve(".cache/incus-spawn/dnf");
     }
