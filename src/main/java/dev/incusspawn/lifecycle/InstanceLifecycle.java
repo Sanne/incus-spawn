@@ -7,6 +7,7 @@ import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.ssh.SshKeyManager;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -151,26 +152,48 @@ public final class InstanceLifecycle {
         var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
         if (!check.success()) return;
 
+        // Ensure managed key infrastructure exists (creates lazily for pre-existing installs)
+        boolean includeConfigured = false;
+        try {
+            if (!SshKeyManager.exists()) {
+                SshKeyManager.ensureKeyPairExists();
+            }
+            includeConfigured = SshKeyManager.ensureSshConfigInclude();
+        } catch (Exception ignored) {}
+
+        // Collect keys to inject — managed key plus any personal key
+        var keys = new java.util.ArrayList<String>();
+
+        if (SshKeyManager.exists()) {
+            try {
+                keys.add(SshKeyManager.publicKeyContent());
+            } catch (Exception ignored) {}
+        }
+
         var home = System.getProperty("user.home");
-        Path pubKey = null;
         for (var keyName : List.of("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")) {
             var candidate = Path.of(home, ".ssh", keyName);
             if (Files.exists(candidate)) {
-                pubKey = candidate;
+                try {
+                    var personalKey = Files.readString(candidate).strip();
+                    if (!keys.contains(personalKey)) {
+                        keys.add(personalKey);
+                    }
+                } catch (IOException ignored) {}
                 break;
             }
         }
-        if (pubKey == null) {
-            System.out.println("  SSH is available but no public key found in ~/.ssh/");
+
+        if (keys.isEmpty()) {
+            System.out.println("  SSH is available but no public key found");
             System.out.println("  Add your key manually: ssh-copy-id agentuser@<container-ip>");
             return;
         }
 
         try {
-            var keyContent = Files.readString(pubKey).strip();
             var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
             try {
-                Files.writeString(tmpKey, keyContent + "\n");
+                Files.writeString(tmpKey, String.join("\n", keys) + "\n");
                 incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys");
                 incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/.ssh/authorized_keys");
                 incus.shellExec(name, "chmod", "600", "/home/agentuser/.ssh/authorized_keys");
@@ -182,10 +205,26 @@ public final class InstanceLifecycle {
             return;
         }
 
+        // Harvest host key and configure ssh alias
+        boolean hostConfigured = false;
+        if (SshKeyManager.exists()) {
+            try {
+                hostConfigured = SshKeyManager.harvestHostKey(incus, name);
+            } catch (Exception e) {
+                System.err.println("  Warning: failed to harvest SSH host key: " + e.getMessage());
+            }
+        }
+
         var ipResult = incus.shellExec(name, "hostname", "-I");
         if (ipResult.success()) {
             var ip = ipResult.stdout().strip().split("\\s+")[0];
-            System.out.println("  SSH access: ssh agentuser@" + ip);
+            if (hostConfigured && includeConfigured) {
+                System.out.println("  SSH access: ssh " + name);
+            } else if (SshKeyManager.exists()) {
+                System.out.println("  SSH access: ssh -i ~/.config/incus-spawn/ssh/id_ed25519 agentuser@" + ip);
+            } else {
+                System.out.println("  SSH access: ssh agentuser@" + ip);
+            }
         }
     }
 

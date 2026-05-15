@@ -464,7 +464,7 @@ tools:
       memory: "8g"
 ```
 
-After branching, connect from JetBrains Gateway using the container's IP (visible in the TUI via F3) over SSH as `agentuser`. Add your SSH public key to the template's `~/.ssh/authorized_keys` (e.g. via a host-resource or a custom tool) so authentication works automatically in every branch.
+SSH keys are managed automatically: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`, and each branch injects it into the container along with your personal `~/.ssh` key. Container host keys are pre-validated so `ssh <instance-name>` just works — no passphrase prompt, no host key warning. Entries are cleaned up when instances are destroyed.
 
 The `idea-backend` tool also declares a tool action that lets you open repos directly in Gateway from the TUI — press F9 on a running instance to see available actions, including an "Open repo in Gateway" entry for each declared repository.
 
@@ -613,6 +613,7 @@ Actions can also be contributed programmatically by CDI beans implementing the `
 - **Claude Code skills**: bake skills into templates so they are available in every branched instance
 - **GitHub integration**: auth via MITM proxy — token never enters containers
 - **Git remotes**: `git fetch`/`git push` between host and container repos via `isx://` URLs, with automatic remote management
+- **SSH key management**: dedicated passphraseless key pair, per-instance SSH config, isolated known_hosts — `ssh <instance-name>` just works
 - **Remote IDE**: JetBrains Gateway support via built-in `idea-backend` tool with transitive `sshd` dependency, and one-click "Open in Gateway" action from the TUI
 - **Tool actions**: tools can declare runtime actions (open URL, run command, copy to clipboard) available via F9 in the TUI, with per-repo expansion and template variable interpolation
 - **Tool dependencies**: tools can declare `requires` for automatic transitive dependency resolution
@@ -733,6 +734,7 @@ Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get
 ## Configuration
 
 - `~/.config/incus-spawn/config.yaml` -- auth credentials and global settings
+- `~/.config/incus-spawn/ssh/` -- managed SSH key pair, per-instance config, and known_hosts
 - `~/.config/incus-spawn/images/*.yaml` -- user-level template definitions
 - `~/.config/incus-spawn/tools/*.yaml` -- user-level tool definitions
 - `.incus-spawn/images/*.yaml` -- project-local template definitions

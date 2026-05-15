@@ -22,6 +22,26 @@ public final class Environment {
         return home().resolve(".config/incus-spawn");
     }
 
+    public static Path sshDir() {
+        return configDir().resolve("ssh");
+    }
+
+    public static Path sshKeyFile() {
+        return sshDir().resolve("id_ed25519");
+    }
+
+    public static Path sshPubKeyFile() {
+        return sshDir().resolve("id_ed25519.pub");
+    }
+
+    public static Path sshConfigFile() {
+        return sshDir().resolve("config");
+    }
+
+    public static Path sshKnownHostsFile() {
+        return sshDir().resolve("known_hosts");
+    }
+
     public static Path downloadCacheDir() {
         return home().resolve(".cache/incus-spawn/downloads");
     }

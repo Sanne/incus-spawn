@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.ssh.SshKeyManager;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -43,6 +44,7 @@ public class DestroyCommand implements Runnable {
         System.out.println("Destroying " + name + "...");
         incus.delete(name, true);
         AutoRemoteService.removeRemotes(name);
+        SshKeyManager.cleanupInstance(name);
         System.out.println("Destroyed " + name + ".");
     }
 

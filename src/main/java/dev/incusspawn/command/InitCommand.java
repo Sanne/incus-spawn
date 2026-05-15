@@ -5,6 +5,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyService;
 import jakarta.inject.Inject;
@@ -97,6 +98,7 @@ public class InitCommand implements Runnable {
         checkBridgeSubnet();
         configureFirewall();
         configureMitmProxy();
+        setupSshKeyPair();
         setupClaudeAuth();
         setupGitHubAuth();
         setupSearchPaths();
@@ -144,14 +146,23 @@ public class InitCommand implements Runnable {
         if (installCmd == null) return;
 
         var missing = new ArrayList<String>();
-        if (!commandExists("openssl")) missing.add("openssl");
-        if (!commandExists("btrfs"))   missing.add("btrfs-progs");
+        if (!commandExists("openssl"))    missing.add("openssl");
+        if (!commandExists("ssh-keygen")) missing.add("openssh-clients");
+        if (!commandExists("btrfs"))      missing.add("btrfs-progs");
         if (missing.isEmpty()) return;
 
         System.out.println("Installing dependencies: " + String.join(", ", missing) + "...");
         // zypper uses "btrfsprogs" instead of "btrfs-progs"
         if (commandExists("zypper")) {
             missing.replaceAll(p -> "btrfs-progs".equals(p) ? "btrfsprogs" : p);
+        }
+        // Debian/Ubuntu uses "openssh-client" (singular)
+        if (commandExists("apt")) {
+            missing.replaceAll(p -> "openssh-clients".equals(p) ? "openssh-client" : p);
+        }
+        // Arch/pacman uses "openssh"
+        if (commandExists("pacman")) {
+            missing.replaceAll(p -> "openssh-clients".equals(p) ? "openssh" : p);
         }
         var cmd = new ArrayList<String>();
         cmd.add("sudo");
@@ -161,7 +172,7 @@ public class InitCommand implements Runnable {
     }
 
     private void checkIncusInstalled() {
-        System.out.println("[1/9] Checking Incus installation...");
+        System.out.println("[1/10] Checking Incus installation...");
         var result = runHost("which", "incus");
         if (result != 0) {
             var installCmd = detectInstallCommand();
@@ -241,7 +252,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureFirewall() {
-        System.out.println("[4/9] Configuring firewall for Incus bridge...");
+        System.out.println("[4/10] Configuring firewall for Incus bridge...");
 
         // Check if firewalld is available
         var fwCheck = runHost("which", "firewall-cmd");
@@ -309,7 +320,7 @@ public class InitCommand implements Runnable {
     }
 
     private void configureMitmProxy() {
-        System.out.println("[5/9] Configuring MITM authentication proxy...");
+        System.out.println("[5/10] Configuring MITM authentication proxy...");
 
         // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
         // for the gateway IP on port 443 is redirected to the proxy's listen port.
@@ -345,8 +356,29 @@ public class InitCommand implements Runnable {
         System.out.println("  MITM proxy configured.");
     }
 
+    private void setupSshKeyPair() {
+        System.out.println("[6/10] Configuring SSH key pair...");
+        try {
+            if (SshKeyManager.exists()) {
+                System.out.println("  SSH key pair already exists.");
+            } else {
+                SshKeyManager.ensureKeyPairExists();
+            }
+            if (SshKeyManager.ensureSshConfigInclude()) {
+                System.out.println("  SSH configuration ready.");
+            } else {
+                System.out.println("  SSH key generated but ~/.ssh/config could not be updated.");
+                System.out.println("  Add manually: Include ~/.config/incus-spawn/ssh/config");
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: SSH key setup failed: " + e.getMessage());
+            System.err.println("  SSH container access will fall back to your personal keys.");
+            System.err.println("  You can retry later with: isx init");
+        }
+    }
+
     private void configureSubuidSubgid() {
-        System.out.println("[2/9] Configuring subuid/subgid mappings...");
+        System.out.println("[2/10] Configuring subuid/subgid mappings...");
         boolean changed = false;
         try {
             var subuid = java.nio.file.Files.readString(java.nio.file.Path.of("/etc/subuid"));
@@ -369,7 +401,7 @@ public class InitCommand implements Runnable {
     }
 
     private void initializeIncus() {
-        System.out.println("[3/9] Initializing Incus (storage pool, network bridge)...");
+        System.out.println("[3/10] Initializing Incus (storage pool, network bridge)...");
 
         // Check if we can talk to the Incus daemon
         var canConnect = incus.exec("version");
@@ -485,7 +517,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupClaudeAuth() {
-        System.out.println("[6/9] Configuring Claude Code authentication...");
+        System.out.println("[7/10] Configuring Claude Code authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -729,7 +761,7 @@ public class InitCommand implements Runnable {
     }
 
     private void setupGitHubAuth() {
-        System.out.println("[7/9] Configuring GitHub authentication...");
+        System.out.println("[8/10] Configuring GitHub authentication...");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -865,7 +897,7 @@ public class InitCommand implements Runnable {
 
     private void setupSearchPaths() {
         setupPathList(
-                "[8/9] Configuring template search paths...",
+                "[9/10] Configuring template search paths...",
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
                 "  You can add directories containing custom image and tool definitions.\n" +
@@ -875,7 +907,7 @@ public class InitCommand implements Runnable {
 
     private void setupHostPaths() {
         setupPathList(
-                "[9/9] Configuring host resource paths...",
+                "[10/10] Configuring host resource paths...",
                 SpawnConfig::getHostPaths,
                 SpawnConfig::setHostPaths,
                 "\n  Host paths are base directories where your git repositories live.\n" +

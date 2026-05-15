@@ -16,6 +16,7 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -834,6 +835,7 @@ public class ListCommand implements Runnable {
                         try {
                             incus.delete(name, true);
                             AutoRemoteService.removeRemotes(name, msg -> statusMessage = msg);
+                            SshKeyManager.cleanupInstance(name);
                             destroyed++;
                         } catch (Exception e) {
                             statusMessage = "Failed to destroy " + name + ": " + e.getMessage();
@@ -853,6 +855,7 @@ public class ListCommand implements Runnable {
                     try {
                         incus.delete(entry.name(), true);
                         AutoRemoteService.removeRemotes(entry.name(), msg -> statusMessage = msg);
+                        SshKeyManager.cleanupInstance(entry.name());
                         destroyed++;
                     } catch (Exception e) {
                         statusMessage = "Failed to destroy " + entry.name() + ": " + e.getMessage();
@@ -868,6 +871,7 @@ public class ListCommand implements Runnable {
                 try {
                     incus.delete(pendingDeleteName, true);
                     AutoRemoteService.removeRemotes(pendingDeleteName, msg -> statusMessage = msg);
+                    SshKeyManager.cleanupInstance(pendingDeleteName);
                     statusMessage = "Destroyed " + pendingDeleteName;
                 } catch (Exception e) {
                     statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
