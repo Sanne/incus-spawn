@@ -86,6 +86,24 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     picocli.CommandLine.IFactory factory;
 
     private static Path dnfCacheDir() { return Environment.dnfCacheDir(); }
+
+    /**
+     * Prompt the user for confirmation unless {@code --yes} was passed.
+     * Returns {@code true} if the operation should proceed, {@code false} if
+     * the user declined. When there is no interactive console the prompt is
+     * skipped and {@code true} is returned (non-interactive CI behaviour).
+     */
+    private boolean confirm(String prompt) {
+        if (yes) return true;
+        var console = System.console();
+        if (console == null) return true;
+        System.out.print(prompt + " (y/N): ");
+        if (!console.readLine().strip().equalsIgnoreCase("y")) {
+            System.out.println("Aborted.");
+            return false;
+        }
+        return true;
+    }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
     private static final String REBUILDING_SUFFIX = "-rebuilding";
 
@@ -205,17 +223,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         // Confirm with user
         System.out.println((outdatedOnly ? "Templates to rebuild: " : "This will rebuild all templates: ")
                 + String.join(", ", templatesToRebuild));
-        if (!yes) {
-            var console = System.console();
-            if (console != null) {
-                System.out.print((outdatedOnly ? "Rebuild? (y/N): " : "Continue? (y/N): "));
-                var answer = console.readLine().strip();
-                if (!answer.equalsIgnoreCase("y")) {
-                    System.out.println("Aborted.");
-                    return;
-                }
-            }
-        }
+        if (!confirm(outdatedOnly ? "Rebuild?" : "Continue?")) return;
 
         rebuildAll(templatesToRebuild, defs);
     }
@@ -375,17 +383,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         collectAllRecursive(imageDef, defs, chain, seen);
 
         System.out.println("This will rebuild: " + String.join(", ", chain));
-        if (!yes) {
-            var console = System.console();
-            if (console != null) {
-                System.out.print("Continue? (y/N): ");
-                var answer = console.readLine().strip();
-                if (!answer.equalsIgnoreCase("y")) {
-                    System.out.println("Aborted.");
-                    return;
-                }
-            }
-        }
+        if (!confirm("Continue?")) return;
 
         rebuildAll(chain, defs);
     }
@@ -401,17 +399,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         collectDescendants(imageDef.getName(), defs, chain, seen);
 
         System.out.println("This will rebuild: " + String.join(", ", chain));
-        if (!yes) {
-            var console = System.console();
-            if (console != null) {
-                System.out.print("Continue? (y/N): ");
-                var answer = console.readLine().strip();
-                if (!answer.equalsIgnoreCase("y")) {
-                    System.out.println("Aborted.");
-                    return;
-                }
-            }
-        }
+        if (!confirm("Continue?")) return;
 
         rebuildAll(chain, defs);
     }
@@ -473,16 +461,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             if (!yes) {
                 System.out.println("Image '" + canonicalName + "' already exists.");
                 System.out.println("It will be replaced if the build succeeds.");
-                var console = System.console();
-                if (console != null) {
-                    System.out.print("Rebuild? (y/N): ");
-                    var answer = console.readLine().strip();
-                    if (!answer.equalsIgnoreCase("y")) {
-                        System.out.println("Aborted.");
-                        return;
-                    }
-                }
             }
+            if (!confirm("Rebuild?")) return;
         }
 
         incus.deleteIfExists(tempName);
