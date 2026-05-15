@@ -311,6 +311,23 @@ public class ImageDef {
         }
     }
 
+    /**
+     * Return the ordered list of ancestor images, starting from the immediate
+     * parent and walking up to the root. Stops if a name is missing from
+     * {@code defs}.
+     */
+    public static List<ImageDef> ancestors(ImageDef start, Map<String, ImageDef> defs) {
+        var result = new ArrayList<ImageDef>();
+        var parentName = start.getParent();
+        while (parentName != null && !parentName.isBlank()) {
+            var parent = defs.get(parentName);
+            if (parent == null) break;
+            result.add(parent);
+            parentName = parent.getParent();
+        }
+        return result;
+    }
+
     /** Whether this image is built from scratch (no parent). */
     public boolean isRoot() {
         return parent == null || parent.isBlank();

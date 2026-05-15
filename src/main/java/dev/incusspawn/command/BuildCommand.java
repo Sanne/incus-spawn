@@ -873,12 +873,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         // Collect packages already installed by ancestor images
         var ancestorPackages = new java.util.LinkedHashSet<String>();
-        var parentName = imageDef.getParent();
-        while (parentName != null && !parentName.isBlank()) {
-            var parentDef = defs.get(parentName);
-            if (parentDef == null) break;
-            ancestorPackages.addAll(parentDef.getPackages());
-            parentName = parentDef.getParent();
+        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
+            ancestorPackages.addAll(ancestor.getPackages());
         }
         for (var tool : ancestorTools) {
             ancestorPackages.addAll(tool.setup().packages());
@@ -926,14 +922,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         if (allRepos.isEmpty()) return;
 
         var ancestorRepos = new java.util.LinkedHashSet<RepoKey>();
-        var parentName = imageDef.getParent();
-        while (parentName != null && !parentName.isBlank()) {
-            var parentDef = defs.get(parentName);
-            if (parentDef == null) break;
-            for (var repo : parentDef.getPackageRepos()) {
+        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
+            for (var repo : ancestor.getPackageRepos()) {
                 ancestorRepos.add(new RepoKey(repo));
             }
-            parentName = parentDef.getParent();
         }
         for (var tool : ancestorTools) {
             for (var repo : tool.setup().packageRepos()) {
@@ -1327,12 +1319,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         if (skills.isEmpty()) return List.of();
 
         var ancestorSkills = new java.util.LinkedHashSet<String>();
-        var parentName = imageDef.getParent();
-        while (parentName != null && !parentName.isBlank()) {
-            var parentDef = defs.get(parentName);
-            if (parentDef == null) break;
-            ancestorSkills.addAll(parentDef.getSkills().getList());
-            parentName = parentDef.getParent();
+        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
+            ancestorSkills.addAll(ancestor.getSkills().getList());
         }
         skills.removeAll(ancestorSkills);
         return new ArrayList<>(skills);
@@ -1355,16 +1343,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
 
         var ancestorToolsMap = new java.util.LinkedHashMap<String, ResolvedTool>();
         var ancestorTemplateNames = new java.util.LinkedHashMap<String, String>();
-        var parentName = imageDef.getParent();
-        while (parentName != null && !parentName.isBlank()) {
-            var parentDef = defs.get(parentName);
-            if (parentDef == null) break;
-            for (var resolved : resolveTools(parentDef, toolDefLoader, cdiTools, true)) {
+        for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
+            for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
                 if (ancestorToolsMap.putIfAbsent(resolved.name(), resolved) == null) {
-                    ancestorTemplateNames.put(resolved.name(), parentDef.getName());
+                    ancestorTemplateNames.put(resolved.name(), ancestor.getName());
                 }
             }
-            parentName = parentDef.getParent();
         }
 
         var ancestorTools = new java.util.ArrayList<>(ancestorToolsMap.values());
