@@ -416,24 +416,8 @@ public class InitCommand implements Runnable {
         checkStorageDriver();
     }
 
-    private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
-
     private void checkStorageDriver() {
-        var result = incus.exec("storage", "list", "--format=csv", "--columns=nD");
-        if (!result.success()) return;
-        var lines = result.stdout().strip().lines().toList();
-        if (lines.isEmpty()) return;
-
-        boolean anyCow = false;
-        var existingPoolNames = new java.util.ArrayList<String>();
-        for (var line : lines) {
-            var parts = line.split(",", 2);
-            if (parts.length >= 1) existingPoolNames.add(parts[0].strip());
-            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
-                anyCow = true;
-                break;
-            }
-        }
+        var anyCow = incus.findCowPool() != null;
 
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
