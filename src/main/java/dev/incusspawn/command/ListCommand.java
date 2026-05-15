@@ -11,6 +11,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -2646,14 +2647,14 @@ public class ListCommand implements Runnable {
 
         // Configure GUI before start so environment.* keys are visible to init
         if (gui) {
-            if (BranchCommand.configureGui(incus, name)) {
+            if (GuiPassthrough.configureGui(incus, name)) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
             } else {
-                BranchCommand.removeGui(incus, name);
+                GuiPassthrough.removeGui(incus, name);
                 System.err.println("Continuing without GUI passthrough.");
             }
         } else {
-            BranchCommand.removeGui(incus, name);
+            GuiPassthrough.removeGui(incus, name);
         }
 
         incus.start(name);
@@ -2738,7 +2739,7 @@ public class ListCommand implements Runnable {
     }
 
     private void checkGuiHealth(String name) {
-        BranchCommand.checkGuiHealth(incus, name);
+        GuiPassthrough.checkGuiHealth(incus, name);
     }
 
     private static final ObjectMapper JSON = new ObjectMapper();

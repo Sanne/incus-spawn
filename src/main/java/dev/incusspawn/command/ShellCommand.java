@@ -5,6 +5,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
@@ -48,7 +49,7 @@ public class ShellCommand implements Runnable {
             incus.waitForReady(name);
         }
 
-        BranchCommand.checkGuiHealth(incus, name);
+        GuiPassthrough.checkGuiHealth(incus, name);
 
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
