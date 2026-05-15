@@ -603,17 +603,17 @@ class BuildCommandTest {
 
     @Test
     void shellQuoteWrapsInSingleQuotes() {
-        assertEquals("'hello'", BuildCommand.shellQuote("hello"));
+        assertEquals("'hello'", Container.shellQuote("hello"));
     }
 
     @Test
     void shellQuoteEscapesSingleQuotes() {
-        assertEquals("'it'\"'\"'s'", BuildCommand.shellQuote("it's"));
+        assertEquals("'it'\"'\"'s'", Container.shellQuote("it's"));
     }
 
     @Test
     void shellQuoteHandlesEmpty() {
-        assertEquals("''", BuildCommand.shellQuote(""));
+        assertEquals("''", Container.shellQuote(""));
     }
 
     @Test

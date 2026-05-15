@@ -13,6 +13,7 @@ import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -1488,10 +1489,6 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                         "Failed to prime " + repo.getPath());
             }
         }
-    }
-
-    static String shellQuote(String value) {
-        return Container.shellQuote(value);
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
