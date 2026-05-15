@@ -7,5 +7,9 @@ packages:
 files:
   - path: /home/agentuser/.tmux.conf
     content: |
+      # Enable extended key reporting so TUI apps (Pi, Claude Code, etc.) receive
+      # unambiguous key sequences for modified keys (Shift+Enter, Ctrl+Shift+*, …).
+      # csi-u is the modern standard; xterm (the default) cannot distinguish many combos.
       set -g extended-keys on
+      set -g extended-keys-format csi-u
     owner: agentuser:agentuser
