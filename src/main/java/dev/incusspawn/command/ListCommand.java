@@ -1187,13 +1187,14 @@ public class ListCommand implements Runnable {
 
         if (hasStatus) {
             var rows = splitVertical(area, 1, 1, 1);
-            var isError = statusMessage.startsWith("Failed") || statusMessage.startsWith("Invalid")
-                    || statusMessage.startsWith("Template");
+            var singleLine = statusMessage.replaceAll("[\\n\\r]+", " ").strip();
+            var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
+                    || singleLine.startsWith("Template");
             var statusBg = Color.rgb(0, 0, 80);
             var msgFg = isError ? Color.LIGHT_RED : Color.WHITE;
             frame.renderWidget(
                     Paragraph.builder()
-                            .text(Text.from(Line.styled(" " + statusMessage,
+                            .text(Text.from(Line.styled(" " + singleLine,
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
