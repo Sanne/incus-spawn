@@ -1323,10 +1323,15 @@ public class MitmProxy {
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
+                + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
                 + ",\"caFingerprint\":\"" + caFingerprint + "\"}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    private static String escapeJson(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     // --- SSL trust ---

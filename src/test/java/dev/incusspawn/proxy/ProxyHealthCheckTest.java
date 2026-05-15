@@ -81,9 +81,10 @@ class ProxyHealthCheckTest {
     @Test
     void parseProxyInfoExtractsAllFields() {
         var info = ProxyHealthCheck.parseProxyInfo(
-                "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"caFingerprint\":\"deadbeef\"}");
+                "{\"status\":\"ok\",\"version\":\"0.1.10\",\"gitSha\":\"abc1234\",\"runtime\":\"native (GraalVM 23.1)\",\"caFingerprint\":\"deadbeef\"}");
         assertEquals("0.1.10", info.version());
         assertEquals("abc1234", info.gitSha());
+        assertEquals("native (GraalVM 23.1)", info.runtime());
         assertEquals("deadbeef", info.caFingerprint());
         assertFalse(info.isLegacy());
     }
@@ -93,6 +94,7 @@ class ProxyHealthCheckTest {
         var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\"}");
         assertEquals("", info.version());
         assertEquals("", info.gitSha());
+        assertEquals("", info.runtime());
         assertTrue(info.isLegacy());
     }
 
@@ -105,13 +107,13 @@ class ProxyHealthCheckTest {
     @Test
     void checkVersionDriftReturnsEmptyWhenMatching() {
         var cliInfo = BuildInfo.instance();
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), "somefp");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp");
         assertEquals("", ProxyHealthCheck.checkVersionDrift(proxyInfo));
     }
 
     @Test
     void checkVersionDriftDetectsMismatch() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "somefp");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "JVM", "somefp");
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertFalse(drift.isEmpty());
         assertTrue(drift.contains("0.0.1"));
@@ -119,7 +121,7 @@ class ProxyHealthCheckTest {
 
     @Test
     void checkVersionDriftDetectsLegacy() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "");
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertTrue(drift.contains("pre-versioning"));
     }
@@ -131,8 +133,8 @@ class ProxyHealthCheckTest {
 
     @Test
     void proxyInfoIsLegacyWhenVersionEmpty() {
-        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "fp").isLegacy());
-        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "fp").isLegacy());
-        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "fp").isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "runtime", "fp").isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "runtime", "fp").isLegacy());
+        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "runtime", "fp").isLegacy());
     }
 }

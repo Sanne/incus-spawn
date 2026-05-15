@@ -16,7 +16,7 @@ public final class ProxyHealthCheck {
         STALE_DNS
     }
 
-    public record ProxyInfo(String version, String gitSha, String caFingerprint) {
+    public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
 
@@ -74,9 +74,10 @@ public final class ProxyHealthCheck {
             return new ProxyInfo(
                     textOrEmpty(node, "version"),
                     textOrEmpty(node, "gitSha"),
+                    textOrEmpty(node, "runtime"),
                     textOrEmpty(node, "caFingerprint"));
         } catch (Exception e) {
-            return new ProxyInfo("", "", "");
+            return new ProxyInfo("", "", "", "");
         }
     }
 

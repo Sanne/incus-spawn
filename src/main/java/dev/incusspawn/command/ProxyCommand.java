@@ -182,6 +182,9 @@ public class ProxyCommand {
                     if (proxyInfo != null) {
                         if (!proxyInfo.isLegacy()) {
                             System.out.println("  Version:         " + proxyInfo.version() + " (" + proxyInfo.gitSha() + ")");
+                            if (proxyInfo.runtime() != null && !proxyInfo.runtime().isEmpty()) {
+                                System.out.println("  Runtime:         " + proxyInfo.runtime());
+                            }
                         }
                         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
                         if (!drift.isEmpty()) {
@@ -282,6 +285,9 @@ public class ProxyCommand {
     )
     public static class Logs implements Runnable {
 
+        @Inject
+        IncusClient incus;
+
         @Override
         public void run() {
             if (!Files.exists(logFile())) {
@@ -289,6 +295,20 @@ public class ProxyCommand {
                 System.err.println("The proxy has not been started yet, or logs have been cleared.");
                 return;
             }
+
+            // Show version and runtime at the beginning
+            var build = BuildInfo.instance();
+            String gatewayIp = "(unknown)";
+            try {
+                gatewayIp = MitmProxy.resolveGatewayIp(incus);
+            } catch (Exception ignored) {}
+
+            System.out.println("Gateway IP:    " + gatewayIp);
+            System.out.println("MITM port:     " + MitmProxy.DEFAULT_MITM_PORT);
+            System.out.println("Version:       " + build.version() + " (" + build.gitSha() + ")");
+            System.out.println("Runtime:       " + build.runtime());
+            System.out.println();
+
             try {
                 var pb = new ProcessBuilder("tail", "-f", logFile().toString());
                 pb.inheritIO();
