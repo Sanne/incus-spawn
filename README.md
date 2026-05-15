@@ -267,9 +267,37 @@ shell-command: claude
 ```
 
 - `workdir` -- the directory to `cd` into when opening a shell. If omitted, defaults to the checkout path of the first declared repo. When a template inherits from a parent, the child's repos take priority; if the child has no repos, the parent's first repo is used. If no repos exist anywhere in the chain, the shell opens in the home directory.
-- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` to launch Claude Code directly). If the command fails to start, the shell falls back to `bash --login`.
+- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` to launch Claude Code directly, or `pi` to launch the Pi coding agent). If the command fails to start, the shell falls back to `bash --login`.
 
 Both values are stored as Incus metadata at build time and propagate automatically to branches. A missing `workdir` directory never blocks shell access -- the `cd` fails silently and the shell opens in the home directory.
+
+### Pi Coding Agent
+
+Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API. Add it to any template with `tools: [pi]`:
+
+```yaml
+name: tpl-pi-dev
+description: Isolated dev environment with Pi coding agent
+parent: tpl-dev
+repos:
+  - url: https://github.com/myorg/myproject.git
+    path: ~/myproject
+workdir: ~/myproject
+tools:
+  - pi
+shell-command: pi
+```
+
+Pi is pre-configured at build time with a placeholder `ANTHROPIC_API_KEY`. The [MITM proxy](#mitm-tls-proxy) intercepts all requests to `api.anthropic.com` and injects your real credentials transparently — Pi works out of the box, and your API key never enters the container. If your host is configured for Vertex AI, the proxy automatically translates Pi's standard Anthropic API requests to Vertex AI format, with no configuration needed inside the container.
+
+To run Pi without making it the default shell, omit `shell-command` and just include it in `tools:`:
+
+```yaml
+tools:
+  - pi
+```
+
+You can then launch it manually with `pi` after connecting via `isx shell <instance>`.
 
 ### Claude Code Skills
 
