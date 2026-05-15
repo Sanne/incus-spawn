@@ -37,8 +37,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 
 @Command(
@@ -46,7 +54,7 @@ import java.util.Map;
         description = "Build or rebuild a template image (e.g. tpl-minimal, tpl-java)",
         mixinStandardHelpOptions = true
 )
-public class BuildCommand implements java.util.concurrent.Callable<Integer> {
+public class BuildCommand implements Callable<Integer> {
 
     @Parameters(index = "0", description = "Name of the template (e.g. tpl-minimal, tpl-java)",
             arity = "0..1")
@@ -203,7 +211,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var parentNames = defs.values().stream()
                 .filter(d -> !d.isRoot())
                 .map(ImageDef::getParent)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
 
         // Leaf images = images that no other image references as parent
         var leaves = defs.values().stream()
@@ -211,8 +219,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 .toList();
 
         // Collect templates to rebuild (in build order: parents before children)
-        var templatesToRebuild = new java.util.ArrayList<String>();
-        var seen = new java.util.LinkedHashSet<String>();
+        var templatesToRebuild = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
         collectTemplatesToRebuild(leaves, defs, templatesToRebuild, seen, incus, toolDefLoader, outdatedOnly);
 
         if (templatesToRebuild.isEmpty()) {
@@ -236,7 +244,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * skipped — their originals are preserved since they were never touched.
      */
     private void rebuildAll(List<String> templates, Map<String, ImageDef> defs) {
-        var failedBuilds = new java.util.HashSet<String>();
+        var failedBuilds = new HashSet<String>();
 
         System.out.println();
         for (var templateName : templates) {
@@ -271,10 +279,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * Collect templates to rebuild from a list of leaves, in build order (parents before children).
      * @param outdatedOnly if true, only collect outdated/missing templates; if false, collect all
      */
-    private static void collectTemplatesToRebuild(java.util.List<ImageDef> leaves,
+    private static void collectTemplatesToRebuild(List<ImageDef> leaves,
                                                    Map<String, ImageDef> defs,
-                                                   java.util.List<String> result,
-                                                   java.util.Set<String> seen,
+                                                   List<String> result,
+                                                   Set<String> seen,
                                                    IncusClient incus,
                                                    ToolDefLoader toolDefLoader,
                                                    boolean outdatedOnly) {
@@ -298,7 +306,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     static void collectAllRecursive(ImageDef imageDef, Map<String, ImageDef> defs,
-                                     java.util.List<String> result, java.util.Set<String> seen) {
+                                     List<String> result, Set<String> seen) {
         var name = imageDef.getName();
         if (seen.contains(name)) return;
         if (!imageDef.isRoot()) {
@@ -312,7 +320,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private static void collectAncestors(ImageDef imageDef, Map<String, ImageDef> defs,
-                                          java.util.List<String> result, java.util.Set<String> seen,
+                                          List<String> result, Set<String> seen,
                                           IncusClient incus, ToolDefLoader toolDefLoader) {
         if (imageDef.isRoot()) return;
         var parentName = imageDef.getParent();
@@ -328,7 +336,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     static void collectDescendants(String parentName, Map<String, ImageDef> defs,
-                                            java.util.List<String> result, java.util.Set<String> seen) {
+                                            List<String> result, Set<String> seen) {
         for (var def : defs.values()) {
             if (parentName.equals(def.getParent()) && seen.add(def.getName())) {
                 result.add(def.getName());
@@ -341,7 +349,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * Check if a template should be skipped because one of its ancestors failed to build.
      */
     boolean shouldSkipDueToFailedParent(ImageDef imageDef, Map<String, ImageDef> defs,
-                                         java.util.Set<String> failedBuilds) {
+                                         Set<String> failedBuilds) {
         var current = imageDef;
         while (!current.isRoot()) {
             var parentName = current.getParent();
@@ -362,7 +370,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         var parentNames = defs.values().stream()
                 .filter(d -> !d.isRoot())
                 .map(ImageDef::getParent)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         var leaves = defs.values().stream()
                 .filter(d -> !parentNames.contains(d.getName()))
                 .toList();
@@ -378,8 +386,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * Unconditionally rebuild a template and all its ancestors.
      */
     private void buildWithParents(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var chain = new java.util.ArrayList<String>();
-        var seen = new java.util.LinkedHashSet<String>();
+        var chain = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
         collectAllRecursive(imageDef, defs, chain, seen);
 
         System.out.println("This will rebuild: " + String.join(", ", chain));
@@ -392,8 +400,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * Unconditionally rebuild a template and all templates that inherit from it.
      */
     private void buildWithDescendants(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var chain = new java.util.ArrayList<String>();
-        var seen = new java.util.LinkedHashSet<String>();
+        var chain = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
         chain.add(imageDef.getName());
         seen.add(imageDef.getName());
         collectDescendants(imageDef.getName(), defs, chain, seen);
@@ -732,38 +740,38 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         List<ResolvedTool> ancestors
     ) {}
 
-    private java.util.List<ResolvedTool> resolveTools(ImageDef imageDef) {
+    private List<ResolvedTool> resolveTools(ImageDef imageDef) {
         return resolveTools(imageDef, toolDefLoader, toolSetups, false);
     }
 
-    static java.util.List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
-        return resolveTools(imageDef, toolDefLoader, java.util.List.of(), quiet);
+    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader, boolean quiet) {
+        return resolveTools(imageDef, toolDefLoader, List.of(), quiet);
     }
 
-    static java.util.List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
+    static List<ResolvedTool> resolveTools(ImageDef imageDef, ToolDefLoader toolDefLoader,
                                                       Iterable<ToolSetup> cdiTools, boolean quiet) {
-        var explicit = new java.util.LinkedHashSet<String>();
+        var explicit = new LinkedHashSet<String>();
         for (var toolRef : imageDef.getTools()) {
             explicit.add(toolRef.getName());
         }
-        var resolved = new java.util.LinkedHashMap<String, ResolvedTool>();
+        var resolved = new LinkedHashMap<String, ResolvedTool>();
 
         for (var toolRef : imageDef.getTools()) {
             resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
-                new java.util.LinkedHashSet<>(), explicit, toolDefLoader, cdiTools, quiet);
+                new LinkedHashSet<>(), explicit, toolDefLoader, cdiTools, quiet);
         }
-        return new java.util.ArrayList<>(resolved.values());
+        return new ArrayList<>(resolved.values());
     }
 
     private void resolveWithDeps(String name, Map<String, String> params,
-                                  java.util.LinkedHashMap<String, ResolvedTool> resolved,
-                                  java.util.LinkedHashSet<String> visiting, java.util.Set<String> explicit) {
+                                  LinkedHashMap<String, ResolvedTool> resolved,
+                                  LinkedHashSet<String> visiting, Set<String> explicit) {
         resolveWithDeps(name, params, resolved, visiting, explicit, toolDefLoader, toolSetups, false);
     }
 
     private static void resolveWithDeps(String name, Map<String, String> params,
-                                  java.util.LinkedHashMap<String, ResolvedTool> resolved,
-                                  java.util.LinkedHashSet<String> visiting, java.util.Set<String> explicit,
+                                  LinkedHashMap<String, ResolvedTool> resolved,
+                                  LinkedHashSet<String> visiting, Set<String> explicit,
                                   ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
         if (!visiting.add(name)) {
             if (!quiet) {
@@ -842,17 +850,17 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * to avoid redundant resolution.
      */
     private void installAllPackages(Container container, ImageDef imageDef,
-                                    java.util.List<ResolvedTool> tools,
-                                    java.util.List<ResolvedTool> ancestorTools,
+                                    List<ResolvedTool> tools,
+                                    List<ResolvedTool> ancestorTools,
                                     Map<String, ImageDef> defs) {
-        var allPackages = new java.util.LinkedHashSet<>(imageDef.getPackages());
+        var allPackages = new LinkedHashSet<>(imageDef.getPackages());
         for (var tool : tools) {
             allPackages.addAll(tool.setup().packages());
         }
         if (allPackages.isEmpty()) return;
 
         // Collect packages already installed by ancestor images
-        var ancestorPackages = new java.util.LinkedHashSet<String>();
+        var ancestorPackages = new LinkedHashSet<String>();
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             ancestorPackages.addAll(ancestor.getPackages());
         }
@@ -871,8 +879,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         System.out.println("Installing " + allPackages.size() + " packages (" +
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages) + "...");
-        var args = new java.util.ArrayList<String>();
-        args.addAll(java.util.List.of("dnf", "install", "-y", "--setopt=keepcache=true"));
+        var args = new ArrayList<String>();
+        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true"));
         args.addAll(allPackages);
         container.runInteractive("Failed to install packages", args.toArray(String[]::new));
     }
@@ -887,10 +895,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private void enablePackageRepos(Container container, ImageDef imageDef,
-                                    java.util.List<ResolvedTool> tools,
-                                    java.util.List<ResolvedTool> ancestorTools,
+                                    List<ResolvedTool> tools,
+                                    List<ResolvedTool> ancestorTools,
                                     Map<String, ImageDef> defs) {
-        var allRepos = new java.util.LinkedHashSet<RepoKey>();
+        var allRepos = new LinkedHashSet<RepoKey>();
         for (var repo : imageDef.getPackageRepos()) {
             allRepos.add(new RepoKey(repo));
         }
@@ -901,7 +909,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
         }
         if (allRepos.isEmpty()) return;
 
-        var ancestorRepos = new java.util.LinkedHashSet<RepoKey>();
+        var ancestorRepos = new LinkedHashSet<RepoKey>();
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             for (var repo : ancestor.getPackageRepos()) {
                 ancestorRepos.add(new RepoKey(repo));
@@ -932,7 +940,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     /**
      * Run the non-package setup steps for each tool (scripts, files, env, verify).
      */
-    private void runToolSetup(Container container, java.util.List<ResolvedTool> tools) {
+    private void runToolSetup(Container container, List<ResolvedTool> tools) {
         for (var resolved : tools) {
             resolved.setup().install(container, resolved.parameters());
         }
@@ -994,12 +1002,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
     }
 
-    private static java.util.Map<String, String> computeToolFingerprints(
+    private static Map<String, String> computeToolFingerprints(
             dev.incusspawn.config.ImageDef imageDef,
             ToolDefLoader toolDefLoader,
             Map<String, ImageDef> defs) {
-        var rawFps = new java.util.TreeMap<String, String>();
-        var depMap = new java.util.TreeMap<String, java.util.List<String>>();
+        var rawFps = new TreeMap<String, String>();
+        var depMap = new TreeMap<String, List<String>>();
         // Always quiet: this method only fingerprints YAML tools and doesn't have
         // CDI tools, so non-YAML tools would produce spurious "unknown tool" warnings.
         for (var resolvedTool : resolveTools(imageDef, toolDefLoader, true)) {
@@ -1015,12 +1023,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private BuildSource collectBuildSource(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var definitions = new java.util.LinkedHashMap<String, ImageDef>();
-        var tools = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolDef>();
-        var toolInstances = new java.util.LinkedHashMap<String, BuildSource.ToolInstance>();
-        var sources = new java.util.LinkedHashMap<String, String>();
+        var definitions = new LinkedHashMap<String, ImageDef>();
+        var tools = new LinkedHashMap<String, dev.incusspawn.tool.ToolDef>();
+        var toolInstances = new LinkedHashMap<String, BuildSource.ToolInstance>();
+        var sources = new LinkedHashMap<String, String>();
 
-        var visited = new java.util.HashSet<String>();
+        var visited = new HashSet<String>();
         var current = imageDef;
         while (current != null) {
             definitions.put(current.getName(), current);
@@ -1045,7 +1053,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private void collectToolDefs(ImageDef imageDef, Map<String, dev.incusspawn.tool.ToolDef> tools,
-                                  java.util.Set<String> visited) {
+                                  Set<String> visited) {
         var toolRefs = imageDef.getTools();
         if (toolRefs == null) return;
         for (var toolRef : toolRefs) {
@@ -1054,7 +1062,7 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
     }
 
     private void collectToolDefRecursive(String name, Map<String, dev.incusspawn.tool.ToolDef> tools,
-                                          java.util.Set<String> visited) {
+                                          Set<String> visited) {
         if (!visited.add(name)) return;
         var setup = toolDefLoader.find(name);
         if (setup instanceof YamlToolSetup yts) {
@@ -1295,10 +1303,10 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
      * Collect skills declared in this image, minus any already declared by ancestor images.
      */
     List<String> collectEffectiveSkills(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var skills = new java.util.LinkedHashSet<>(imageDef.getSkills().getList());
+        var skills = new LinkedHashSet<>(imageDef.getSkills().getList());
         if (skills.isEmpty()) return List.of();
 
-        var ancestorSkills = new java.util.LinkedHashSet<String>();
+        var ancestorSkills = new LinkedHashSet<String>();
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             ancestorSkills.addAll(ancestor.getSkills().getList());
         }
@@ -1321,8 +1329,8 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
                                                  Iterable<ToolSetup> cdiTools) {
         var tools = resolveTools(imageDef, toolDefLoader, cdiTools, false);
 
-        var ancestorToolsMap = new java.util.LinkedHashMap<String, ResolvedTool>();
-        var ancestorTemplateNames = new java.util.LinkedHashMap<String, String>();
+        var ancestorToolsMap = new LinkedHashMap<String, ResolvedTool>();
+        var ancestorTemplateNames = new LinkedHashMap<String, String>();
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
             for (var resolved : resolveTools(ancestor, toolDefLoader, cdiTools, true)) {
                 if (ancestorToolsMap.putIfAbsent(resolved.name(), resolved) == null) {
@@ -1331,12 +1339,12 @@ public class BuildCommand implements java.util.concurrent.Callable<Integer> {
             }
         }
 
-        var ancestorTools = new java.util.ArrayList<>(ancestorToolsMap.values());
+        var ancestorTools = new ArrayList<>(ancestorToolsMap.values());
         if (tools.isEmpty()) {
             return new ToolResolution(tools, ancestorTools);
         }
 
-        var effective = new java.util.ArrayList<ResolvedTool>();
+        var effective = new ArrayList<ResolvedTool>();
         for (var tool : tools) {
             var ancestorTool = ancestorToolsMap.get(tool.name());
             if (ancestorTool == null) {
