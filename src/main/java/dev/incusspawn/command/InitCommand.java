@@ -417,10 +417,11 @@ public class InitCommand implements Runnable {
     }
 
     private void checkStorageDriver() {
+        var cowProbe = incus.probeCowPool();
         // Guard against transient/permission/daemon errors: if we can't list pools, don't
-        // misinterpret a failed command as "no CoW pool" and spuriously try to create one.
-        if (!incus.exec("storage", "list", "--format=csv", "--columns=nD").success()) return;
-        var anyCow = incus.findCowPool() != null;
+        // misinterpret that as "no CoW pool" and spuriously try to create one.
+        if (!cowProbe.listed()) return;
+        var anyCow = cowProbe.poolName() != null;
 
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");

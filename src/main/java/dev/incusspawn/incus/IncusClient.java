@@ -356,20 +356,27 @@ public class IncusClient {
 
     private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
 
+    public record CowPoolProbe(boolean listed, String poolName) {
+    }
+
+    public CowPoolProbe probeCowPool() {
+        var result = exec("storage", "list", "--format=csv", "--columns=nD");
+        if (!result.success()) return new CowPoolProbe(false, null);
+        for (var line : result.stdout().strip().lines().toList()) {
+            var parts = line.split(",", 2);
+            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
+                return new CowPoolProbe(true, parts[0].strip());
+            }
+        }
+        return new CowPoolProbe(true, null);
+    }
+
     /**
      * Find the best copy-on-write storage pool, if one exists.
      * Returns the pool name, or null if no CoW pool is available.
      */
     public String findCowPool() {
-        var result = exec("storage", "list", "--format=csv", "--columns=nD");
-        if (!result.success()) return null;
-        for (var line : result.stdout().strip().lines().toList()) {
-            var parts = line.split(",", 2);
-            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
-                return parts[0].strip();
-            }
-        }
-        return null;
+        return probeCowPool().poolName();
     }
 
     /**
