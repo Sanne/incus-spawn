@@ -189,7 +189,7 @@ public final class InstanceLifecycle {
         }
     }
 
-    static String getUid() {
+    public static String getUid() {
         try {
             var pb = new ProcessBuilder("id", "-u");
             var p = pb.start();

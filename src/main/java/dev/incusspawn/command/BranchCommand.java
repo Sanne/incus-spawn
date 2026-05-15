@@ -9,6 +9,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import jakarta.inject.Inject;
@@ -193,7 +194,7 @@ public class BranchCommand implements Runnable {
                 "path=/mnt/host-xdg");
         // Set env vars via container config (visible to init and direct exec)
         // AND via profile.d script (visible to login shells, since su - resets env).
-        var uid = getUid();
+        var uid = InstanceLifecycle.getUid();
         var waylandSocketPath = "/mnt/host-xdg/" + waylandDisplay;
         incus.configSet(name, "environment.WAYLAND_DISPLAY", waylandSocketPath);
         incus.configSet(name, "environment.XDG_RUNTIME_DIR", "/run/user/" + uid);
@@ -305,18 +306,6 @@ public class BranchCommand implements Runnable {
         if (airgap) return NetworkMode.AIRGAP;
         if (proxyOnly) return NetworkMode.PROXY_ONLY;
         return NetworkMode.FULL;
-    }
-
-    private static String getUid() {
-        try {
-            var pb = new ProcessBuilder("id", "-u");
-            var p = pb.start();
-            var output = new String(p.getInputStream().readAllBytes()).strip();
-            p.waitFor();
-            return output;
-        } catch (Exception e) {
-            return "1000";
-        }
     }
 
     private boolean checkCaMismatch(String source) {
