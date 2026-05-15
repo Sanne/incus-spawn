@@ -378,7 +378,7 @@ public class ListCommand implements Runnable {
 
     private boolean handleBrowseEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         // Global keys (both panels)
-        if (key.isKey(KeyCode.F10) || key.isCtrlC()
+        if (key.isKey(KeyCode.F10) || key.isCtrlC() || key.isCtrlD()
                 || key.isChar('q') || (key.hasCtrl() && key.isCharIgnoreCase('q'))) {
             tui.quit();
             return true;
