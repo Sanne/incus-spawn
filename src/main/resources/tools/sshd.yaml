@@ -8,6 +8,9 @@ run:
   - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
   - sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
   - ssh-keygen -A
+  # Disable socket activation to avoid conflict with sshd.service — skip if
+  # the unit doesn't exist (e.g. non-Fedora base images).
+  - if systemctl cat sshd.socket >/dev/null 2>&1; then systemctl disable --now sshd.socket; fi
   - systemctl enable --now sshd
   - mkdir -p /home/agentuser/.ssh
   - touch /home/agentuser/.ssh/authorized_keys
