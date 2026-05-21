@@ -27,11 +27,15 @@ public final class Metadata {
     public static final String GUI_ENABLED = PREFIX + "gui-enabled";
     public static final String WORKDIR = PREFIX + "workdir";
     public static final String SHELL_COMMAND = PREFIX + "shell-command";
+    public static final String PENDING_OP = PREFIX + "pending-op";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
     public static final String TYPE_CLONE = "clone";
     public static final String TYPE_FAILED_BUILD = "failed-build";
+
+    public static final String OP_STOPPING = "stopping";
+    public static final String OP_DELETING = "deleting";
 
     private Metadata() {}
 

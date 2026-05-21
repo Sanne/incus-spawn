@@ -18,6 +18,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
+import dev.incusspawn.tui.BackgroundTaskManager;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.YamlToolAction;
@@ -44,6 +45,9 @@ import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import dev.tamboui.widgets.scrollbar.Scrollbar;
 import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
 import dev.tamboui.widgets.scrollbar.ScrollbarState;
@@ -81,6 +85,16 @@ public class ListCommand implements Runnable {
 
     @Inject
     picocli.CommandLine.IFactory factory;
+
+    @Inject
+    BackgroundTaskManager backgroundTasks;
+
+    // Background operation state
+    private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
+    private final AtomicReference<String> pendingStatusMessage = new AtomicReference<>();
+    private long lastRefreshTime = 0;
+    private static final long REFRESH_DEBOUNCE_MS = 1000;
+    private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
     private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
     private Mode mode = Mode.BROWSE;
@@ -316,10 +330,10 @@ public class ListCommand implements Runnable {
             if (match != null) {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
                         match.created.isEmpty() ? "built" : match.created, match.runtime,
-                        match.buildVersion, match.definitionSha));
+                        match.buildVersion, match.definitionSha, match.pendingOp));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", ""));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", ""));
             }
         }
         // Add out-of-scope templates (built but not in current definition scope)
@@ -338,7 +352,7 @@ public class ListCommand implements Runnable {
 
             templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
                     inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
-                    inst.buildVersion, inst.definitionSha));
+                    inst.buildVersion, inst.definitionSha, inst.pendingOp));
             templateNames.add(inst.name);
             storedNames.add(inst.name);
         }
@@ -449,6 +463,12 @@ public class ListCommand implements Runnable {
             return true;
         }
 
+        // Block all actions if there's a pending operation
+        if (hasPendingOp(template)) {
+            statusMessage = "Operation in progress for " + template.name;
+            return true;
+        }
+
         // F5: Open build menu
         if (key.isKey(KeyCode.F5)) {
             if (showProxyError()) return true;
@@ -523,6 +543,12 @@ public class ListCommand implements Runnable {
             mode = Mode.CONFIRM_DELETE;
             return true;
         }
+        // Block all actions if there's a pending operation
+        if (hasPendingOp(selected)) {
+            statusMessage = "Operation in progress for " + selected.name;
+            return true;
+        }
+
         // F8 or Delete: Destroy instance
         if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
             pendingDeleteName = selected.name;
@@ -546,13 +572,23 @@ public class ListCommand implements Runnable {
             return true;
         }
         if (key.isKey(KeyCode.F7) && !key.hasShift() && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "Stopping", "Stopped", "Failed to stop",
-                    selected.name, () -> incus.stop(selected.name));
+            execInBackground("Stopping " + selected.name,
+                    "Stopped " + selected.name,
+                    selected.name,
+                    "Stopped " + selected.name,
+                    Metadata.OP_STOPPING,
+                    () -> incus.stop(selected.name));
+            refreshData(tableState); // Force immediate refresh to show visual indicator
             return true;
         }
         if (key.isKey(KeyCode.F7) && key.hasShift() && isRunning(selected)) {
-            execWithFeedback(tui, tableState, "Restarting", "Restarted", "Failed to restart",
-                    selected.name, () -> incus.restart(selected.name));
+            execInBackground("Restarting " + selected.name,
+                    "Restarted " + selected.name,
+                    selected.name,
+                    "Restarted " + selected.name,
+                    Metadata.OP_STOPPING,  // Use same indicator for restart
+                    () -> incus.restart(selected.name));
+            refreshData(tableState); // Force immediate refresh to show visual indicator
             return true;
         }
         if (key.isKey(KeyCode.F6)) {
@@ -827,58 +863,82 @@ public class ListCommand implements Runnable {
                 // Destroy all built templates in reverse order (children before parents)
                 var allNames = new java.util.ArrayList<>(imageDefs.keySet());
                 java.util.Collections.reverse(allNames);
-                int destroyed = 0;
+                int count = allNames.size();
+                // Mark all templates as being deleted BEFORE starting background task
                 for (var name : allNames) {
-                    if (incus.exists(name)) {
-                        progressMessage = "Destroying " + name + "...";
-                        tui.draw(frame -> render(frame, tableState));
+                    incus.setPendingOperation(name, Metadata.OP_DELETING);
+                }
+                refreshData(tableState); // Force immediate refresh to show visual indicators
+                backgroundTasks.submit("Deleting " + count + " template(s)",
+                        "Deleted " + count + " template(s)", null, () -> {
+                    int destroyed = 0;
+                    for (var name : allNames) {
+                        if (incus.exists(name)) {
+                            try {
+                                incus.delete(name, true);
+                                AutoRemoteService.removeRemotes(name, msg -> {});
+                                SshKeyManager.cleanupInstance(name);
+                                destroyed++;
+                            } catch (Exception e) {
+                                setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
+                                incus.clearPendingOperation(name);
+                                break;
+                            }
+                        }
+                    }
+                    if (destroyed > 0) {
+                        setStatusMessage("Destroyed " + destroyed + " template(s)");
+                    }
+                    refreshDataAfterBackground();
+                });
+            } else if ("--all-instances".equals(pendingDeleteName)) {
+                // Destroy all instances
+                var allEntries = new java.util.ArrayList<>(entries);
+                int count = allEntries.size();
+                // Mark all instances as being deleted BEFORE starting background task
+                for (var entry : allEntries) {
+                    incus.setPendingOperation(entry.name(), Metadata.OP_DELETING);
+                }
+                refreshData(tableState); // Force immediate refresh to show visual indicators
+                backgroundTasks.submit("Deleting " + count + " instance(s)",
+                        "Deleted " + count + " instance(s)", null, () -> {
+                    int destroyed = 0;
+                    for (var entry : allEntries) {
                         try {
-                            incus.delete(name, true);
-                            AutoRemoteService.removeRemotes(name, msg -> statusMessage = msg);
-                            SshKeyManager.cleanupInstance(name);
+                            incus.delete(entry.name(), true);
+                            AutoRemoteService.removeRemotes(entry.name(), msg -> {});
+                            SshKeyManager.cleanupInstance(entry.name());
                             destroyed++;
                         } catch (Exception e) {
-                            statusMessage = "Failed to destroy " + name + ": " + e.getMessage();
+                            setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
+                            incus.clearPendingOperation(entry.name());
                             break;
                         }
                     }
-                }
-                if (statusMessage == null || statusMessage.isEmpty()) {
-                    statusMessage = "Destroyed " + destroyed + " template(s)";
-                }
-            } else if ("--all-instances".equals(pendingDeleteName)) {
-                // Destroy all instances
-                int destroyed = 0;
-                for (var entry : entries) {
-                    progressMessage = "Destroying " + entry.name() + "...";
-                    tui.draw(frame -> render(frame, tableState));
-                    try {
-                        incus.delete(entry.name(), true);
-                        AutoRemoteService.removeRemotes(entry.name(), msg -> statusMessage = msg);
-                        SshKeyManager.cleanupInstance(entry.name());
-                        destroyed++;
-                    } catch (Exception e) {
-                        statusMessage = "Failed to destroy " + entry.name() + ": " + e.getMessage();
-                        break;
+                    if (destroyed > 0) {
+                        setStatusMessage("Destroyed " + destroyed + " instance(s)");
                     }
-                }
-                if (statusMessage == null || statusMessage.isEmpty()) {
-                    statusMessage = "Destroyed " + destroyed + " instance(s)";
-                }
+                    refreshDataAfterBackground();
+                });
             } else {
-                progressMessage = "Destroying " + pendingDeleteName + "...";
-                tui.draw(frame -> render(frame, tableState));
-                try {
-                    incus.delete(pendingDeleteName, true);
-                    AutoRemoteService.removeRemotes(pendingDeleteName, msg -> statusMessage = msg);
-                    SshKeyManager.cleanupInstance(pendingDeleteName);
-                    statusMessage = "Destroyed " + pendingDeleteName;
-                } catch (Exception e) {
-                    statusMessage = "Failed to destroy " + pendingDeleteName + ": " + e.getMessage();
-                }
+                // Mark as being deleted BEFORE starting background task
+                incus.setPendingOperation(pendingDeleteName, Metadata.OP_DELETING);
+                refreshData(tableState); // Force immediate refresh to show visual indicator
+                backgroundTasks.submit("Deleting " + pendingDeleteName,
+                        "Deleted " + pendingDeleteName, pendingDeleteName, () -> {
+                    try {
+                        incus.delete(pendingDeleteName, true);
+                        AutoRemoteService.removeRemotes(pendingDeleteName, msg -> {});
+                        SshKeyManager.cleanupInstance(pendingDeleteName);
+                        setStatusMessage("Destroyed " + pendingDeleteName);
+                    } catch (Exception e) {
+                        setStatusMessage("Failed to destroy " + pendingDeleteName + ": " + e.getMessage());
+                    } finally {
+                        incus.clearPendingOperation(pendingDeleteName);
+                    }
+                    refreshDataAfterBackground();
+                });
             }
-            progressMessage = null;
-            refreshData(tableState);
         }
         mode = Mode.BROWSE;
         return true;
@@ -986,6 +1046,21 @@ public class ListCommand implements Runnable {
         renderInstanceTable(frame, chunks.get(1), tableState);
         renderToolbar(frame, chunks.get(2), tableState, hasStatus);
 
+        // Background task management (cleanup old tasks, check for refresh, apply pending status)
+        backgroundTasks.cleanupCompleted(TASK_DISPLAY_DURATION);
+        if (needsRefresh.get()) {
+            long now = System.currentTimeMillis();
+            if (now - lastRefreshTime > REFRESH_DEBOUNCE_MS) {
+                needsRefresh.set(false);
+                refreshData(tableState);
+                lastRefreshTime = now;
+            }
+        }
+        String pending = pendingStatusMessage.getAndSet(null);
+        if (pending != null) {
+            statusMessage = pending;
+        }
+
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
         }
@@ -1055,7 +1130,18 @@ public class ListCommand implements Runnable {
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
-            tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
+            var highlightStyle = Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE);
+            // Preserve modifiers from selected row if it has a pending operation
+            var selected = selectedTemplate();
+            if (selected != null && !selected.pendingOp.isEmpty()) {
+                if (Metadata.OP_DELETING.equals(selected.pendingOp)) {
+                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
+                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp)) {
+                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+                }
+            }
+            tableBuilder.highlightStyle(highlightStyle);
         } else {
             tableBuilder.highlightStyle(Style.EMPTY);
         }
@@ -1139,7 +1225,18 @@ public class ListCommand implements Runnable {
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
-            tableBuilder.highlightStyle(Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE));
+            var highlightStyle = Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE);
+            // Preserve modifiers from selected row if it has a pending operation
+            var selected = selectedEntry(tableState);
+            if (selected != null && !selected.pendingOp.isEmpty()) {
+                if (Metadata.OP_DELETING.equals(selected.pendingOp)) {
+                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
+                } else if (Metadata.OP_STOPPING.equals(selected.pendingOp)) {
+                    highlightStyle = highlightStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+                }
+            }
+            tableBuilder.highlightStyle(highlightStyle);
         } else {
             tableBuilder.highlightStyle(Style.EMPTY);
         }
@@ -1265,7 +1362,90 @@ public class ListCommand implements Runnable {
 
     private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
         fillBackground(frame, area, CONTEXT_BG);
+
+        // Reserve right side for background tasks if any exist
+        var tasks = backgroundTasks.getActiveTasks();
+        if (!tasks.isEmpty()) {
+            // Estimate width needed for background tasks
+            int taskWidth = estimateBackgroundTaskWidth(tasks);
+            // Always show background tasks, even if terminal is narrow (better to overlap than hide)
+            if (taskWidth > 0 && area.width() > 30) {
+                int allocatedWidth = Math.min(taskWidth, area.width() / 2);
+                var parts = Layout.horizontal()
+                        .constraints(Constraint.fill(), Constraint.length(allocatedWidth))
+                        .split(area);
+                frame.renderWidget(Paragraph.from(line), parts.get(0));
+                renderBackgroundTasksInline(frame, parts.get(1), tasks);
+                return;
+            }
+        }
+
         frame.renderWidget(Paragraph.from(line), area);
+    }
+
+    private int estimateBackgroundTaskWidth(List<dev.incusspawn.tui.BackgroundTask> tasks) {
+        var running = tasks.stream()
+                .filter(t -> t.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
+                .toList();
+        var completed = tasks.stream()
+                .filter(t -> t.status() != dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
+                .toList();
+
+        int width = 0;
+        if (!running.isEmpty()) {
+            width += 15; // " Running: X "
+            int toShow = Math.min(running.size(), 2);
+            for (int i = 0; i < toShow; i++) {
+                width += running.get(i).displayName().length() + 5; // name + "... "
+            }
+            if (running.size() > 2) {
+                width += 10; // " +X more "
+            }
+        }
+        for (var task : completed) {
+            if (task instanceof dev.incusspawn.tui.BackgroundTask.Completed completedTask) {
+                width += completedTask.getDisplayText().length() + 4; // symbol + spaces
+            }
+        }
+        return Math.min(width, 80); // Cap at reasonable width
+    }
+
+    private void renderBackgroundTasksInline(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
+                                             List<dev.incusspawn.tui.BackgroundTask> tasks) {
+        var running = tasks.stream()
+                .filter(t -> t.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
+                .toList();
+        var completed = tasks.stream()
+                .filter(t -> t.status() != dev.incusspawn.tui.BackgroundTask.TaskStatus.RUNNING)
+                .toList();
+
+        var spans = new ArrayList<Span>();
+
+        // Show running tasks
+        if (!running.isEmpty()) {
+            spans.add(Span.styled(" Running: " + running.size() + " ",
+                    Style.EMPTY.fg(Color.YELLOW).bg(CONTEXT_BG)));
+            for (var task : running.stream().limit(2).toList()) {
+                spans.add(Span.styled(" " + task.displayName() + "... ",
+                        Style.EMPTY.fg(Color.WHITE).bg(CONTEXT_BG)));
+            }
+            if (running.size() > 2) {
+                spans.add(Span.styled(" +" + (running.size() - 2) + " more ",
+                        Style.EMPTY.fg(Color.GRAY).bg(CONTEXT_BG)));
+            }
+        }
+
+        // Show completed tasks
+        for (var task : completed) {
+            if (task instanceof dev.incusspawn.tui.BackgroundTask.Completed completedTask) {
+                var symbol = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? "✓" : "✗";
+                var color = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? Color.GREEN : Color.RED;
+                spans.add(Span.styled(" " + symbol + " " + completedTask.getDisplayText() + " ",
+                        Style.EMPTY.fg(color).bg(CONTEXT_BG)));
+            }
+        }
+
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
     private void renderKeyItems(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
@@ -2398,6 +2578,14 @@ public class ListCommand implements Runnable {
         return "RUNNING".equalsIgnoreCase(entry.status);
     }
 
+    private static boolean hasPendingOp(InstanceInfo entry) {
+        return entry != null && !entry.pendingOp.isEmpty();
+    }
+
+    private static boolean hasPendingOp(TemplateInfo template) {
+        return template != null && !template.pendingOp.isEmpty();
+    }
+
     private void execWithFeedback(TuiRunner tui, TableState tableState, String progressVerb,
                                     String doneVerb, String failVerb, String name, Runnable action) {
         progressMessage = progressVerb + " " + name + "...";
@@ -2410,6 +2598,62 @@ public class ListCommand implements Runnable {
         }
         progressMessage = null;
         refreshData(tableState);
+    }
+
+    /**
+     * Execute an operation in the background using a virtual thread.
+     * The UI remains responsive while the operation runs.
+     *
+     * @param displayName Present tense description (e.g., "Stopping instance-name")
+     * @param completedDisplayName Past tense description (e.g., "Stopped instance-name")
+     * @param targetName Instance/template name for duplicate prevention
+     * @param successMessage Message to show in status bar on success
+     * @param pendingOp Operation type for metadata (e.g., Metadata.OP_STOPPING)
+     * @param action The operation to execute
+     */
+    private void execInBackground(String displayName, String completedDisplayName,
+                                  String targetName, String successMessage, String pendingOp,
+                                  Runnable action) {
+        if (backgroundTasks.hasRunningTask(targetName)) {
+            statusMessage = "Operation already in progress for " + targetName;
+            return;
+        }
+
+        // Set metadata BEFORE submitting the task so UI can show it immediately
+        if (pendingOp != null && targetName != null) {
+            incus.setPendingOperation(targetName, pendingOp);
+        }
+
+        backgroundTasks.submit(displayName, completedDisplayName, targetName, () -> {
+            try {
+                action.run();
+                setStatusMessage(successMessage);
+            } catch (Exception e) {
+                setStatusMessage("Failed: " + e.getMessage());
+            } finally {
+                // Clear operation marker
+                if (targetName != null) {
+                    incus.clearPendingOperation(targetName);
+                }
+                refreshDataAfterBackground();
+            }
+        });
+    }
+
+    /**
+     * Signal that data should be refreshed after a background task completes.
+     * The refresh will happen in the render loop (debounced).
+     */
+    private void refreshDataAfterBackground() {
+        needsRefresh.set(true);
+    }
+
+    /**
+     * Set a status message from a background thread.
+     * The message will be applied in the render loop.
+     */
+    private void setStatusMessage(String msg) {
+        pendingStatusMessage.set(msg);
     }
 
     private static String validateInstanceName(String name) {
@@ -2548,6 +2792,17 @@ public class ListCommand implements Runnable {
                 }
             }
             var desc = t.description == null ? "" : t.description;
+
+            // Apply pending operation visual indicators
+            if (!t.pendingOp.isEmpty()) {
+                if (Metadata.OP_DELETING.equals(t.pendingOp)) {
+                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
+                } else if (Metadata.OP_STOPPING.equals(t.pendingOp)) {
+                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+                }
+            }
+
             templateRows.add(Row.from(t.name, statusDisplay, desc).style(statusStyle));
         }
         templatesDefChanged = defChanged;
@@ -2619,6 +2874,17 @@ public class ListCommand implements Runnable {
                 case "STOPPED" -> Style.EMPTY.fg(Color.GRAY);
                 default -> Style.EMPTY;
             };
+
+            // Apply pending operation visual indicators
+            if (!entry.pendingOp.isEmpty()) {
+                if (Metadata.OP_DELETING.equals(entry.pendingOp)) {
+                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM)
+                            .addModifier(dev.tamboui.style.Modifier.ITALIC);
+                } else if (Metadata.OP_STOPPING.equals(entry.pendingOp)) {
+                    statusStyle = statusStyle.addModifier(dev.tamboui.style.Modifier.DIM);
+                }
+            }
+
             tableRows.add(Row.from(entry.name, entry.status, entry.ipv4,
                     parent, entry.runtime, age).style(statusStyle));
             rowToEntry.add(entry);
@@ -2800,7 +3066,8 @@ public class ListCommand implements Runnable {
                         configVal(config, Metadata.DEFINITION_SHA, ""),
                         type,
                         Metadata.TYPE_BASE.equals(type)
-                                ? configVal(config, Metadata.BUILD_SOURCE, "") : ""));
+                                ? configVal(config, Metadata.BUILD_SOURCE, "") : "",
+                        configVal(config, Metadata.PENDING_OP, "")));
             }
             return entryList;
         } catch (Exception e) {
@@ -2831,7 +3098,7 @@ public class ListCommand implements Runnable {
 
     private record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
-                                String definitionSha) {}
+                                String definitionSha, String pendingOp) {}
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
@@ -2839,5 +3106,5 @@ public class ListCommand implements Runnable {
                                 String limitsCpu, String limitsMemory, String rootSize,
                                 String ipv4, String networkMode, String architecture,
                                 String buildVersion, String definitionSha,
-                                String type, String buildSourceJson) {}
+                                String type, String buildSourceJson, String pendingOp) {}
 }

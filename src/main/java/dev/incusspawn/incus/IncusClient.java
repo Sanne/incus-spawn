@@ -520,6 +520,40 @@ public class IncusClient {
     }
 
     /**
+     * Mark an instance as having a pending operation.
+     * This metadata is visible to all processes.
+     */
+    public void setPendingOperation(String name, String operation) {
+        try {
+            configSet(name, Metadata.PENDING_OP, operation);
+        } catch (Exception e) {
+            // If setting metadata fails (e.g., instance already deleted), ignore
+        }
+    }
+
+    /**
+     * Clear the pending operation marker from an instance.
+     */
+    public void clearPendingOperation(String name) {
+        try {
+            exec("config", "unset", name, Metadata.PENDING_OP);
+        } catch (Exception e) {
+            // If clearing fails (e.g., instance already deleted), ignore
+        }
+    }
+
+    /**
+     * Get the pending operation for an instance, or empty string if none.
+     */
+    public String getPendingOperation(String name) {
+        try {
+            return configGet(name, Metadata.PENDING_OP);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
      * List containers/VMs with their status and type.
      * Returns a list of maps with keys: name, status, type.
      */
