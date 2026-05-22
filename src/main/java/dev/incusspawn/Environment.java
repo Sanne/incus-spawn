@@ -66,6 +66,10 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/dnf");
     }
 
+    public static Path lockDir() {
+        return home().resolve(".cache/incus-spawn/locks");
+    }
+
     public static Path m2Repository() {
         return home().resolve(".m2/repository");
     }

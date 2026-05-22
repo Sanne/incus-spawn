@@ -35,6 +35,7 @@ public final class Metadata {
     public static final String TYPE_FAILED_BUILD = "failed-build";
 
     public static final String OP_STOPPING = "stopping";
+    public static final String OP_RESTARTING = "restarting";
     public static final String OP_DELETING = "deleting";
 
     private Metadata() {}

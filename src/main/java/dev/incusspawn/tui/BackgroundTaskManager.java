@@ -38,7 +38,7 @@ public class BackgroundTaskManager {
      *
      * @param displayName Human-readable name for UI display (present tense, e.g., "Stopping instance")
      * @param completedDisplayName Past-tense display name for completed state (e.g., "Stopped instance")
-     * @param targetName Instance/template name (for duplicate prevention), or null
+     * @param targetName Instance/template name (for display), or null
      * @param task The task to execute
      * @return Unique task ID
      */
@@ -46,26 +46,33 @@ public class BackgroundTaskManager {
         String id = UUID.randomUUID().toString();
         tasks.put(id, new BackgroundTask.Pending(id, displayName, targetName));
 
-        if (targetName != null) {
-            instancesWithPendingOps.add(targetName);
-        }
-
         Thread.startVirtualThread(() -> {
             try {
                 task.run();
                 tasks.put(id, new BackgroundTask.Completed(id, displayName, completedDisplayName,
                         targetName, true, null, System.currentTimeMillis()));
-            } catch (Exception e) {
+            } catch (Throwable t) {
                 tasks.put(id, new BackgroundTask.Completed(id, displayName, completedDisplayName,
-                        targetName, false, e.getMessage(), System.currentTimeMillis()));
-            } finally {
-                if (targetName != null) {
-                    instancesWithPendingOps.remove(targetName);
-                }
+                        targetName, false, t.getMessage(), System.currentTimeMillis()));
             }
         });
 
         return id;
+    }
+
+    /**
+     * Atomically claim an instance for an operation within this JVM.
+     * @return true if the claim succeeded (no other in-process task is operating on this instance)
+     */
+    public boolean tryClaim(String instanceName) {
+        return instancesWithPendingOps.add(instanceName);
+    }
+
+    /**
+     * Release the in-process claim for an instance.
+     */
+    public void releaseClaim(String instanceName) {
+        instancesWithPendingOps.remove(instanceName);
     }
 
     /**
