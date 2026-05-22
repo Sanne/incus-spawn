@@ -80,12 +80,13 @@ class FlockInstanceLockManagerTest {
 
     @Test
     void crossProcessContention() throws Exception {
+        var javaCmd = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         var mgr = new FlockInstanceLockManager(lockDir);
         var lock = mgr.tryAcquire("contested", "stopping");
         assertTrue(lock.isPresent());
 
         // Spawn a child process that tries to acquire the same lock
-        var pb = new ProcessBuilder("java", "-cp",
+        var pb = new ProcessBuilder(javaCmd, "-cp",
                 System.getProperty("java.class.path"),
                 "dev.incusspawn.tui.FlockInstanceLockManagerTest$LockProbe",
                 lockDir.toString(), "contested");
@@ -100,7 +101,7 @@ class FlockInstanceLockManagerTest {
         lock.get().close();
 
         // Now the child should succeed
-        var pb2 = new ProcessBuilder("java", "-cp",
+        var pb2 = new ProcessBuilder(javaCmd, "-cp",
                 System.getProperty("java.class.path"),
                 "dev.incusspawn.tui.FlockInstanceLockManagerTest$LockProbe",
                 lockDir.toString(), "contested");

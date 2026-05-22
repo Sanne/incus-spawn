@@ -6,6 +6,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -57,12 +58,21 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                 var channel = FileChannel.open(lockFile,
                         StandardOpenOption.CREATE,
                         StandardOpenOption.WRITE);
-                var fileLock = channel.tryLock();
+                FileLock fileLock;
+                try {
+                    fileLock = channel.tryLock();
+                } catch (OverlappingFileLockException e) {
+                    channel.close();
+                    return Optional.empty();
+                }
                 if (fileLock == null) {
                     channel.close();
                     return Optional.empty();
                 }
 
+                channel.write(java.nio.ByteBuffer.wrap(
+                        (operation + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                channel.force(false);
                 heldLocks.put(instanceName, new HeldLock(channel, fileLock));
                 return Optional.of(new FlockLockHandle(instanceName));
             } catch (IOException e) {
@@ -89,7 +99,12 @@ public class FlockInstanceLockManager implements InstanceLockManager {
         try (var channel = FileChannel.open(lockFile,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE)) {
-            var fileLock = channel.tryLock();
+            FileLock fileLock;
+            try {
+                fileLock = channel.tryLock();
+            } catch (OverlappingFileLockException e) {
+                return false;
+            }
             if (fileLock == null) {
                 return true;
             }

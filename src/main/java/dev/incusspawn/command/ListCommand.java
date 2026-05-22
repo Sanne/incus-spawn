@@ -881,8 +881,13 @@ public class ListCommand implements Runnable {
                     int destroyed = 0;
                     int skipped = 0;
                     for (var name : allNames) {
+                        if (!backgroundTasks.tryClaim(name)) {
+                            skipped++;
+                            continue;
+                        }
                         var lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
                         if (lockOpt.isEmpty()) {
+                            backgroundTasks.releaseClaim(name);
                             skipped++;
                             continue;
                         }
@@ -897,9 +902,12 @@ public class ListCommand implements Runnable {
                                 } catch (Exception e) {
                                     setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
                                     incus.clearPendingOperation(name);
+                                    backgroundTasks.releaseClaim(name);
                                     break;
                                 }
                             }
+                        } finally {
+                            backgroundTasks.releaseClaim(name);
                         }
                     }
                     String msg = "Destroyed " + destroyed + " template(s)";
@@ -915,8 +923,13 @@ public class ListCommand implements Runnable {
                     int destroyed = 0;
                     int skipped = 0;
                     for (var entry : allEntries) {
+                        if (!backgroundTasks.tryClaim(entry.name())) {
+                            skipped++;
+                            continue;
+                        }
                         var lockOpt = lockManager.tryAcquire(entry.name(), Metadata.OP_DELETING);
                         if (lockOpt.isEmpty()) {
+                            backgroundTasks.releaseClaim(entry.name());
                             skipped++;
                             continue;
                         }
@@ -930,8 +943,11 @@ public class ListCommand implements Runnable {
                             } catch (Exception e) {
                                 setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
                                 incus.clearPendingOperation(entry.name());
+                                backgroundTasks.releaseClaim(entry.name());
                                 break;
                             }
+                        } finally {
+                            backgroundTasks.releaseClaim(entry.name());
                         }
                     }
                     String msg = "Destroyed " + destroyed + " instance(s)";
@@ -2644,6 +2660,7 @@ public class ListCommand implements Runnable {
                     setStatusMessage(successMessage);
                 } catch (Throwable t) {
                     setStatusMessage("Failed: " + (t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()));
+                    throw t;
                 } finally {
                     incus.clearPendingOperation(targetName);
                 }
