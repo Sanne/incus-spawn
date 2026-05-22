@@ -1,6 +1,12 @@
 name: tmux
 description: Terminal multiplexer with incus-spawn session integration
 
+parameters:
+  auto_attach:
+    type: boolean
+    default: "false"
+    description: "Automatically attach to a tmux session when shelling into the container"
+
 packages:
   - tmux
 

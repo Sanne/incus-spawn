@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.config.BuildSource;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.io.BufferedReader;
@@ -281,12 +282,15 @@ public class IncusClient {
             } else if (inTmux) {
                 args = List.of("exec", container, "--", "su", "-", user, "-c",
                         cdPrefix + "exec bash --login");
-            } else {
+            } else if (shouldAutoAttachTmux(container)) {
                 args = List.of("exec", container, "--", "su", "-", user, "-c",
                         cdPrefix
                         + "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
+            } else {
+                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                        cdPrefix + "exec bash --login");
             }
             return execInteractive(args);
         } finally {
@@ -303,6 +307,14 @@ public class IncusClient {
             System.out.print("\033]0;\007");
             System.out.flush();
         }
+    }
+
+    private boolean shouldAutoAttachTmux(String container) {
+        var json = configGet(container, Metadata.BUILD_SOURCE);
+        var bs = BuildSource.fromJson(json);
+        if (bs == null) return false;
+        var tmux = bs.getToolInstances().get("tmux");
+        return tmux != null && Boolean.parseBoolean(tmux.getParameterValues().get("auto_attach"));
     }
 
     private String setTmuxSubnetWarning() {
