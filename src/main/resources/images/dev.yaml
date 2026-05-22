@@ -3,6 +3,7 @@ description: Podman, GitHub CLI, Claude Code
 parent: tpl-minimal
 tools:
   - tmux
+  - starship
   - podman
   - gh
   - claude
