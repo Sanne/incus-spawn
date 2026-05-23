@@ -4,9 +4,12 @@ import dev.incusspawn.Environment;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -22,10 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * <b>fcntl gotcha:</b> on Linux, closing <em>any</em> file descriptor
  * for a file releases <em>all</em> fcntl locks held by the process on
- * that file. To prevent accidental self-release, {@link #tryAcquire}
- * synchronizes on the instance name so only one thread at a time can
- * open a channel for a given lock file, and {@link #isHeldByOther}
- * skips the file probe when this manager already holds the lock.
+ * that file. All methods that open or close channels for a given instance
+ * synchronize on a per-instance lock object to prevent accidental
+ * self-release.
  */
 @ApplicationScoped
 public class FlockInstanceLockManager implements InstanceLockManager {
@@ -33,6 +35,7 @@ public class FlockInstanceLockManager implements InstanceLockManager {
     private record HeldLock(FileChannel channel, FileLock lock) {}
 
     private final Map<String, HeldLock> heldLocks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> lockStripes = new ConcurrentHashMap<>();
     private final Path lockDir;
 
     public FlockInstanceLockManager() {
@@ -43,11 +46,13 @@ public class FlockInstanceLockManager implements InstanceLockManager {
         this.lockDir = lockDir;
     }
 
+    private Object lockFor(String instanceName) {
+        return lockStripes.computeIfAbsent(instanceName, k -> new Object());
+    }
+
     @Override
     public Optional<LockHandle> tryAcquire(String instanceName, String operation) {
-        // Synchronize per instance name to prevent two threads from opening
-        // channels to the same lock file concurrently (fcntl self-release gotcha).
-        synchronized (instanceName.intern()) {
+        synchronized (lockFor(instanceName)) {
             if (heldLocks.containsKey(instanceName)) {
                 return Optional.empty();
             }
@@ -70,63 +75,65 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                     return Optional.empty();
                 }
 
-                channel.write(java.nio.ByteBuffer.wrap(
-                        (operation + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                channel.truncate(0);
+                channel.position(0);
+                channel.write(ByteBuffer.wrap(
+                        (operation + "\n").getBytes(StandardCharsets.UTF_8)));
                 channel.force(false);
                 heldLocks.put(instanceName, new HeldLock(channel, fileLock));
                 return Optional.of(new FlockLockHandle(instanceName));
             } catch (IOException e) {
-                return Optional.empty();
+                throw new UncheckedIOException("Failed to acquire lock for " + instanceName, e);
             }
         }
     }
 
     @Override
     public boolean isHeldByOther(String instanceName) {
-        // If WE hold it, it's not held by "other" — and we must not
-        // open a second channel (fcntl would see our own lock).
-        if (heldLocks.containsKey(instanceName)) {
-            return false;
-        }
-
-        var lockFile = lockDir.resolve(instanceName + ".lock");
-        if (!Files.exists(lockFile)) {
-            return false;
-        }
-
-        // Safe to probe: we definitely don't hold a lock on this file,
-        // so closing this channel won't release anything.
-        try (var channel = FileChannel.open(lockFile,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.WRITE)) {
-            FileLock fileLock;
-            try {
-                fileLock = channel.tryLock();
-            } catch (OverlappingFileLockException e) {
+        synchronized (lockFor(instanceName)) {
+            if (heldLocks.containsKey(instanceName)) {
                 return false;
             }
-            if (fileLock == null) {
-                return true;
+
+            var lockFile = lockDir.resolve(instanceName + ".lock");
+            if (!Files.exists(lockFile)) {
+                return false;
             }
-            fileLock.release();
-            return false;
-        } catch (IOException e) {
-            return false;
+
+            try (var channel = FileChannel.open(lockFile,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE)) {
+                FileLock fileLock;
+                try {
+                    fileLock = channel.tryLock();
+                } catch (OverlappingFileLockException e) {
+                    return false;
+                }
+                if (fileLock == null) {
+                    return true;
+                }
+                fileLock.release();
+                return false;
+            } catch (IOException e) {
+                return false;
+            }
         }
     }
 
     private void release(String instanceName) {
-        var held = heldLocks.remove(instanceName);
-        if (held != null) {
-            try {
-                held.lock.release();
-            } catch (IOException ignored) {}
-            try {
-                held.channel.close();
-            } catch (IOException ignored) {}
-            try {
-                Files.deleteIfExists(lockDir.resolve(instanceName + ".lock"));
-            } catch (IOException ignored) {}
+        synchronized (lockFor(instanceName)) {
+            var held = heldLocks.remove(instanceName);
+            if (held != null) {
+                try {
+                    held.lock.release();
+                } catch (IOException ignored) {}
+                try {
+                    held.channel.close();
+                } catch (IOException ignored) {}
+                try {
+                    Files.deleteIfExists(lockDir.resolve(instanceName + ".lock"));
+                } catch (IOException ignored) {}
+            }
         }
     }
 

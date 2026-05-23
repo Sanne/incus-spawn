@@ -64,6 +64,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Command(
         name = "list",
@@ -885,7 +886,14 @@ public class ListCommand implements Runnable {
                             skipped++;
                             continue;
                         }
-                        var lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
+                        Optional<InstanceLockManager.LockHandle> lockOpt;
+                        try {
+                            lockOpt = lockManager.tryAcquire(name, Metadata.OP_DELETING);
+                        } catch (java.io.UncheckedIOException e) {
+                            backgroundTasks.releaseClaim(name);
+                            setStatusMessage("Lock error for " + name + ": " + e.getCause().getMessage());
+                            break;
+                        }
                         if (lockOpt.isEmpty()) {
                             backgroundTasks.releaseClaim(name);
                             skipped++;
@@ -927,7 +935,14 @@ public class ListCommand implements Runnable {
                             skipped++;
                             continue;
                         }
-                        var lockOpt = lockManager.tryAcquire(entry.name(), Metadata.OP_DELETING);
+                        Optional<InstanceLockManager.LockHandle> lockOpt;
+                        try {
+                            lockOpt = lockManager.tryAcquire(entry.name(), Metadata.OP_DELETING);
+                        } catch (java.io.UncheckedIOException e) {
+                            backgroundTasks.releaseClaim(entry.name());
+                            setStatusMessage("Lock error for " + entry.name() + ": " + e.getCause().getMessage());
+                            break;
+                        }
                         if (lockOpt.isEmpty()) {
                             backgroundTasks.releaseClaim(entry.name());
                             skipped++;
@@ -2643,7 +2658,15 @@ public class ListCommand implements Runnable {
         }
 
         backgroundTasks.submit(displayName, completedDisplayName, targetName, () -> {
-            var lockOpt = lockManager.tryAcquire(targetName, pendingOp);
+            Optional<InstanceLockManager.LockHandle> lockOpt;
+            try {
+                lockOpt = lockManager.tryAcquire(targetName, pendingOp);
+            } catch (java.io.UncheckedIOException e) {
+                backgroundTasks.releaseClaim(targetName);
+                setStatusMessage("Lock error for " + targetName + ": " + e.getCause().getMessage());
+                refreshDataAfterBackground();
+                throw e;
+            }
             if (lockOpt.isEmpty()) {
                 backgroundTasks.releaseClaim(targetName);
                 setStatusMessage("Instance " + targetName + " is locked by another process");

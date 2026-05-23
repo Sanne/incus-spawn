@@ -1,5 +1,6 @@
 package dev.incusspawn.tui;
 
+import java.io.UncheckedIOException;
 import java.util.Optional;
 
 /**
@@ -16,6 +17,7 @@ public interface InstanceLockManager {
      * @param instanceName the Incus instance or template name
      * @param operation description of the operation (for diagnostics)
      * @return a lock handle if acquired, empty if another holder exists
+     * @throws UncheckedIOException if the lock could not be attempted due to an I/O error
      */
     Optional<LockHandle> tryAcquire(String instanceName, String operation);
 
