@@ -316,11 +316,19 @@ public class ListCommand implements Runnable {
 
         // Stale metadata cleanup: if pending-op is set but no process holds the lock,
         // a previous process crashed — clear the stale marker.
+        // Acquire the lock before clearing to avoid racing with another process.
         for (var inst : allInstances) {
             if (!inst.pendingOp.isEmpty()
                     && !backgroundTasks.hasRunningTask(inst.name)
                     && !lockManager.isHeldByOther(inst.name)) {
-                incus.clearPendingOperation(inst.name);
+                try {
+                    var cleanupLock = lockManager.tryAcquire(inst.name, "cleanup");
+                    if (cleanupLock.isPresent()) {
+                        try (var lock = cleanupLock.get()) {
+                            incus.clearPendingOperation(inst.name);
+                        }
+                    }
+                } catch (java.io.UncheckedIOException ignored) {}
             }
         }
 
@@ -904,6 +912,7 @@ public class ListCommand implements Runnable {
                         try (var lock = lockOpt.get()) {
                             if (incus.exists(name)) {
                                 incus.setPendingOperation(name, Metadata.OP_DELETING);
+                                refreshDataAfterBackground();
                                 try {
                                     incus.delete(name, true);
                                     AutoRemoteService.removeRemotes(name, msg -> {});
@@ -913,6 +922,7 @@ public class ListCommand implements Runnable {
                                     setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
                                     incus.clearPendingOperation(name);
                                     backgroundTasks.releaseClaim(name);
+                                    refreshDataAfterBackground();
                                     break;
                                 }
                             }
@@ -952,6 +962,7 @@ public class ListCommand implements Runnable {
                         }
                         try (var lock = lockOpt.get()) {
                             incus.setPendingOperation(entry.name(), Metadata.OP_DELETING);
+                            refreshDataAfterBackground();
                             try {
                                 incus.delete(entry.name(), true);
                                 AutoRemoteService.removeRemotes(entry.name(), msg -> {});
@@ -961,6 +972,7 @@ public class ListCommand implements Runnable {
                                 setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
                                 incus.clearPendingOperation(entry.name());
                                 backgroundTasks.releaseClaim(entry.name());
+                                refreshDataAfterBackground();
                                 break;
                             }
                         } finally {
@@ -2679,6 +2691,7 @@ public class ListCommand implements Runnable {
             try (var lock = lockOpt.get()) {
                 if (pendingOp != null) {
                     incus.setPendingOperation(targetName, pendingOp);
+                    refreshDataAfterBackground();
                 }
                 try {
                     action.run();
@@ -2688,6 +2701,7 @@ public class ListCommand implements Runnable {
                     throw t;
                 } finally {
                     incus.clearPendingOperation(targetName);
+                    refreshDataAfterBackground();
                 }
             } finally {
                 backgroundTasks.releaseClaim(targetName);

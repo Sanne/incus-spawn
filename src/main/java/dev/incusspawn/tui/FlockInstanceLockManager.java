@@ -50,8 +50,16 @@ public class FlockInstanceLockManager implements InstanceLockManager {
         return lockStripes.computeIfAbsent(instanceName, k -> new Object());
     }
 
+    private static void validateName(String instanceName) {
+        if (instanceName.contains("/") || instanceName.contains("\\")
+                || instanceName.contains("..") || instanceName.isEmpty()) {
+            throw new IllegalArgumentException("Unsafe instance name for lock file: " + instanceName);
+        }
+    }
+
     @Override
     public Optional<LockHandle> tryAcquire(String instanceName, String operation) {
+        validateName(instanceName);
         synchronized (lockFor(instanceName)) {
             if (heldLocks.containsKey(instanceName)) {
                 return Optional.empty();
@@ -94,6 +102,7 @@ public class FlockInstanceLockManager implements InstanceLockManager {
 
     @Override
     public boolean isHeldByOther(String instanceName) {
+        validateName(instanceName);
         synchronized (lockFor(instanceName)) {
             if (heldLocks.containsKey(instanceName)) {
                 return false;
@@ -119,12 +128,14 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                 fileLock.release();
                 return false;
             } catch (IOException e) {
-                return false;
+                // Conservative: if we can't probe, assume held to avoid clearing valid markers
+                return true;
             }
         }
     }
 
     private void release(String instanceName) {
+        validateName(instanceName);
         synchronized (lockFor(instanceName)) {
             var held = heldLocks.remove(instanceName);
             if (held != null) {

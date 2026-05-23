@@ -536,9 +536,10 @@ public class IncusClient {
      */
     public void clearPendingOperation(String name) {
         try {
-            exec("config", "unset", name, Metadata.PENDING_OP);
+            exec("config", "unset", name, Metadata.PENDING_OP)
+                    .assertSuccess("Failed to clear pending-op on " + name);
         } catch (Exception e) {
-            // If clearing fails (e.g., instance already deleted), ignore
+            // Instance may have been deleted between setting and clearing
         }
     }
 
