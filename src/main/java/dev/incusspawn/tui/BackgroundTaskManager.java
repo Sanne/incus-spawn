@@ -76,10 +76,20 @@ public class BackgroundTaskManager {
     }
 
     /**
-     * Get all active tasks (running + recently completed).
+     * Get all active tasks (running first, then completed by time), in stable order.
      */
     public List<BackgroundTask> getActiveTasks() {
-        return new ArrayList<>(tasks.values());
+        var list = new ArrayList<>(tasks.values());
+        list.sort((a, b) -> {
+            boolean aRunning = a.status() == BackgroundTask.TaskStatus.RUNNING;
+            boolean bRunning = b.status() == BackgroundTask.TaskStatus.RUNNING;
+            if (aRunning != bRunning) return aRunning ? -1 : 1;
+            if (a instanceof BackgroundTask.Completed ca && b instanceof BackgroundTask.Completed cb) {
+                return Long.compare(ca.completionTime(), cb.completionTime());
+            }
+            return a.id().compareTo(b.id());
+        });
+        return list;
     }
 
     /**

@@ -57,10 +57,11 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                 return Optional.empty();
             }
 
+            FileChannel channel = null;
             try {
                 Files.createDirectories(lockDir);
                 var lockFile = lockDir.resolve(instanceName + ".lock");
-                var channel = FileChannel.open(lockFile,
+                channel = FileChannel.open(lockFile,
                         StandardOpenOption.CREATE,
                         StandardOpenOption.WRITE);
                 FileLock fileLock;
@@ -83,6 +84,9 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                 heldLocks.put(instanceName, new HeldLock(channel, fileLock));
                 return Optional.of(new FlockLockHandle(instanceName));
             } catch (IOException e) {
+                if (channel != null) {
+                    try { channel.close(); } catch (IOException ignored) {}
+                }
                 throw new UncheckedIOException("Failed to acquire lock for " + instanceName, e);
             }
         }

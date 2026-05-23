@@ -549,6 +549,13 @@ public class ListCommand implements Runnable {
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
 
+        // F3: Show instance details (always accessible, even during operations)
+        if (key.isKey(KeyCode.F3)) {
+            instanceDetailScrollOffset = 0;
+            mode = Mode.INSTANCE_DETAIL;
+            return true;
+        }
+
         // Shift+F8 or Shift+Delete: Destroy all instances
         if ((key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) && key.hasShift()) {
             if (entries.isEmpty()) {
@@ -559,7 +566,7 @@ public class ListCommand implements Runnable {
             mode = Mode.CONFIRM_DELETE;
             return true;
         }
-        // Block all actions if there's a pending operation
+        // Block actions that mutate the selected instance if there's a pending operation
         if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name)) {
             statusMessage = "Operation in progress for " + selected.name;
             return true;
@@ -576,11 +583,6 @@ public class ListCommand implements Runnable {
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = selected.name;
             tui.quit();
-            return true;
-        }
-        if (key.isKey(KeyCode.F3)) {
-            instanceDetailScrollOffset = 0;
-            mode = Mode.INSTANCE_DETAIL;
             return true;
         }
         if (key.isKey(KeyCode.F4)) {
