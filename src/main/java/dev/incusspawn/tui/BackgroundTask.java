@@ -52,6 +52,7 @@ public sealed interface BackgroundTask permits BackgroundTask.Pending, Backgroun
          * For completed tasks, returns the past-tense version.
          */
         public String getDisplayText() {
+            if (!success) return displayName;
             return completedDisplayName != null ? completedDisplayName : displayName;
         }
     }

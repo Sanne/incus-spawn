@@ -92,7 +92,7 @@ class FlockInstanceLockManagerTest {
                 lockDir.toString(), "contested");
         pb.redirectErrorStream(true);
         var proc = pb.start();
-        var output = new String(proc.getInputStream().readAllBytes()).strip();
+        var output = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).strip();
         int exitCode = proc.waitFor();
 
         // Child should fail to acquire (exit code 1)

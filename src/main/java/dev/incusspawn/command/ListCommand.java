@@ -936,7 +936,6 @@ public class ListCommand implements Runnable {
                                 } catch (Exception e) {
                                     setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
                                     incus.clearPendingOperation(name);
-                                    backgroundTasks.releaseClaim(name);
                                     refreshDataAfterBackground();
                                     break;
                                 }
@@ -986,7 +985,6 @@ public class ListCommand implements Runnable {
                             } catch (Exception e) {
                                 setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
                                 incus.clearPendingOperation(entry.name());
-                                backgroundTasks.releaseClaim(entry.name());
                                 refreshDataAfterBackground();
                                 break;
                             }

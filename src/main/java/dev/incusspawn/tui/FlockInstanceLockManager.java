@@ -35,8 +35,10 @@ public class FlockInstanceLockManager implements InstanceLockManager {
 
     private record HeldLock(FileChannel channel, FileLock lock) {}
 
+    private static final int STRIPE_COUNT = 64;
+
     private final Map<String, HeldLock> heldLocks = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Object> lockStripes = new ConcurrentHashMap<>();
+    private final Object[] lockStripes;
     private final Path lockDir;
 
     public FlockInstanceLockManager() {
@@ -45,10 +47,14 @@ public class FlockInstanceLockManager implements InstanceLockManager {
 
     FlockInstanceLockManager(Path lockDir) {
         this.lockDir = lockDir;
+        this.lockStripes = new Object[STRIPE_COUNT];
+        for (int i = 0; i < STRIPE_COUNT; i++) {
+            lockStripes[i] = new Object();
+        }
     }
 
     private Object lockFor(String instanceName) {
-        return lockStripes.computeIfAbsent(instanceName, k -> new Object());
+        return lockStripes[Math.floorMod(instanceName.hashCode(), STRIPE_COUNT)];
     }
 
     private static void validateName(String instanceName) {
