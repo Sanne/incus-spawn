@@ -11,6 +11,7 @@ import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
@@ -114,7 +115,6 @@ public class FlockInstanceLockManager implements InstanceLockManager {
             }
 
             try (var channel = FileChannel.open(lockFile,
-                    StandardOpenOption.CREATE,
                     StandardOpenOption.WRITE)) {
                 FileLock fileLock;
                 try {
@@ -126,6 +126,9 @@ public class FlockInstanceLockManager implements InstanceLockManager {
                     return true;
                 }
                 fileLock.release();
+                return false;
+            } catch (NoSuchFileException e) {
+                // Lock file deleted between exists() check and open() — not held
                 return false;
             } catch (IOException e) {
                 // Conservative: if we can't probe, assume held to avoid clearing valid markers

@@ -317,6 +317,7 @@ public class ListCommand implements Runnable {
         // Stale metadata cleanup: if pending-op is set but no process holds the lock,
         // a previous process crashed — clear the stale marker.
         // Acquire the lock before clearing to avoid racing with another process.
+        var clearedInstances = new java.util.HashSet<String>();
         for (var inst : allInstances) {
             if (!inst.pendingOp.isEmpty()
                     && !backgroundTasks.hasRunningTask(inst.name)
@@ -326,10 +327,24 @@ public class ListCommand implements Runnable {
                     if (cleanupLock.isPresent()) {
                         try (var lock = cleanupLock.get()) {
                             incus.clearPendingOperation(inst.name);
+                            clearedInstances.add(inst.name);
                         }
                     }
                 } catch (java.io.UncheckedIOException ignored) {}
             }
+        }
+        // Override pendingOp in allInstances for entries we just cleared,
+        // so the UI doesn't render stale indicators until the next reload.
+        if (!clearedInstances.isEmpty()) {
+            allInstances = allInstances.stream()
+                    .map(inst -> clearedInstances.contains(inst.name)
+                            ? new InstanceInfo(inst.name, inst.status, inst.project, inst.profile,
+                                    inst.created, inst.runtime, inst.parent, inst.limitsCpu,
+                                    inst.limitsMemory, inst.rootSize, inst.ipv4, inst.networkMode,
+                                    inst.architecture, inst.buildVersion, inst.definitionSha,
+                                    inst.type, inst.buildSourceJson, "")
+                            : inst)
+                    .toList();
         }
 
         var loadWarnings = new ArrayList<String>();
@@ -2685,7 +2700,7 @@ public class ListCommand implements Runnable {
                 backgroundTasks.releaseClaim(targetName);
                 setStatusMessage("Instance " + targetName + " is locked by another process");
                 refreshDataAfterBackground();
-                return;
+                throw new IllegalStateException("Locked by another process");
             }
 
             try (var lock = lockOpt.get()) {
