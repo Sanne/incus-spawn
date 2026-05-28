@@ -47,13 +47,13 @@ jobs:
 
       - name: Upload uber-jar
         if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: uber-jar
           path: target/incus-spawn-runner.jar
 
       - name: Upload native binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: native-${{ matrix.arch }}
           path: target/incus-spawn-linux-${{ matrix.arch }}
@@ -70,7 +70,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
