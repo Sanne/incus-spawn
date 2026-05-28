@@ -695,6 +695,82 @@ class ToolDefTest {
         assertEquals(r1.get("parent"), r2.get("parent"), "Dep order should not affect composite fp");
     }
 
+    @Test
+    void parseDownloadWithArch() throws Exception {
+        var yaml = """
+                name: starship
+                downloads:
+                  - url: https://example.com/starship-x86_64.tar.gz
+                    sha256: abc123
+                    extract: /tmp/starship
+                    arch: x86_64
+                  - url: https://example.com/starship-aarch64.tar.gz
+                    sha256: def456
+                    extract: /tmp/starship
+                    arch: aarch64
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertEquals(2, def.getDownloads().size());
+        assertEquals("x86_64", def.getDownloads().get(0).getArch());
+        assertEquals("aarch64", def.getDownloads().get(1).getArch());
+    }
+
+    @Test
+    void parseDownloadWithoutArchHasNullArch() throws Exception {
+        var yaml = """
+                name: maven-3
+                downloads:
+                  - url: https://example.com/maven.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        assertNull(def.getDownloads().get(0).getArch());
+    }
+
+    @Test
+    void fingerprintChangesWhenArchChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                    arch: x86_64
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                    arch: aarch64
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenArchAddedToDownload() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                    sha256: abc123
+                    extract: /opt
+                    arch: x86_64
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
     private static ByteArrayInputStream toStream(String yaml) {
         return new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8));
     }

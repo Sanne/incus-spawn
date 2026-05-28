@@ -199,6 +199,91 @@ class YamlToolSetupTest {
     }
 
     @Test
+    void downloadWithMatchingArchIsProcessed(@TempDir Path tempDir) throws IOException {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var fakeArchive = tempDir.resolve("tool.tar.gz");
+        Files.writeString(fakeArchive, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(fakeArchive);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool-" + YamlToolSetup.canonicalArch() + ".tar.gz");
+        dl.setSha256("abc123");
+        dl.setExtract("/opt");
+        dl.setArch(YamlToolSetup.canonicalArch());
+
+        var def = new ToolDef();
+        def.setName("arch-match");
+        def.setDownloads(List.of(dl));
+
+        var setup = new YamlToolSetup(def, downloadCache);
+        try {
+            setup.install(new Container(incus, CONTAINER), Map.of());
+        } catch (RuntimeException ignored) {
+            // extraction of fake archive fails
+        }
+
+        verify(downloadCache).download(dl.getUrl(), "abc123");
+    }
+
+    @Test
+    void downloadWithNonMatchingArchIsSkipped(@TempDir Path tempDir) throws IOException {
+        var incus = mock(IncusClient.class);
+
+        var downloadCache = mock(DownloadCache.class);
+
+        var otherArch = YamlToolSetup.canonicalArch().equals("x86_64") ? "aarch64" : "x86_64";
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool-" + otherArch + ".tar.gz");
+        dl.setSha256("abc123");
+        dl.setExtract("/opt");
+        dl.setArch(otherArch);
+
+        var def = new ToolDef();
+        def.setName("arch-skip");
+        def.setDownloads(List.of(dl));
+
+        var setup = new YamlToolSetup(def, downloadCache);
+        setup.install(new Container(incus, CONTAINER), Map.of());
+
+        verify(downloadCache, never()).download(anyString(), any());
+    }
+
+    @Test
+    void downloadWithoutArchIsAlwaysProcessed(@TempDir Path tempDir) throws IOException {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var fakeArchive = tempDir.resolve("tool.tar.gz");
+        Files.writeString(fakeArchive, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(fakeArchive);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool.tar.gz");
+        dl.setSha256("abc123");
+        dl.setExtract("/opt");
+        // no arch set — should match all
+
+        var def = new ToolDef();
+        def.setName("no-arch");
+        def.setDownloads(List.of(dl));
+
+        var setup = new YamlToolSetup(def, downloadCache);
+        try {
+            setup.install(new Container(incus, CONTAINER), Map.of());
+        } catch (RuntimeException ignored) {
+            // extraction of fake archive fails
+        }
+
+        verify(downloadCache).download(dl.getUrl(), "abc123");
+    }
+
+    @Test
     void fileWithoutOwnerSkipsChown() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
