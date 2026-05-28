@@ -6,10 +6,17 @@ on:
       - 'v*'
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm64
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
@@ -28,6 +35,7 @@ jobs:
           mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false
 
       - name: Build uber-jar
+        if: matrix.arch == 'amd64'
         run: |
           mvn package -Prelease -DskipTests
           cp target/incus-spawn-*-runner.jar target/incus-spawn-runner.jar
@@ -35,13 +43,43 @@ jobs:
       - name: Build native image
         run: |
           mvn package -Dnative -DskipTests
-          cp target/incus-spawn-*-runner target/incus-spawn-linux-amd64
+          cp target/incus-spawn-*-runner target/incus-spawn-linux-${{ matrix.arch }}
+
+      - name: Upload uber-jar
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uber-jar
+          path: target/incus-spawn-runner.jar
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.arch }}
+          path: target/incus-spawn-linux-${{ matrix.arch }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        run: git clone --depth 1 --branch $GITHUB_REF_NAME https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create GitHub Release
         run: |
           gh release create $GITHUB_REF_NAME \
-            target/incus-spawn-runner.jar \
-            target/incus-spawn-linux-amd64 \
+            artifacts/uber-jar/incus-spawn-runner.jar \
+            artifacts/native-amd64/incus-spawn-linux-amd64 \
+            artifacts/native-aarch64/incus-spawn-linux-aarch64 \
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,7 +96,8 @@ jobs:
           CHANGELOG="* $(date +'%a %b %d %Y') Sanne Grinovero <sanne@hibernate.org> - ${VERSION}-1\n- See https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
           sed -e "s/@VERSION@/$VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
           mkdir -p ~/rpmbuild/{SOURCES,SPECS}
-          cp target/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
+          cp artifacts/native-amd64/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
+          cp artifacts/native-aarch64/incus-spawn-linux-aarch64 ~/rpmbuild/SOURCES/
           cp src/main/resources/git-remote-isx ~/rpmbuild/SOURCES/
           cp /tmp/incus-spawn.spec ~/rpmbuild/SPECS/
           rpmbuild -bs ~/rpmbuild/SPECS/incus-spawn.spec
@@ -67,4 +106,3 @@ jobs:
           COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
           COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
           COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
-

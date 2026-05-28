@@ -6,8 +6,9 @@ License:        Apache-2.0
 URL:            https://github.com/Sanne/incus-spawn
 Source0:        incus-spawn-linux-amd64
 Source1:        git-remote-isx
+Source2:        incus-spawn-linux-aarch64
 
-ExclusiveArch:  x86_64
+ExclusiveArch:  x86_64 aarch64
 
 %global debug_package %{nil}
 
@@ -26,7 +27,12 @@ for credential isolation, and an interactive TUI.
 
 %install
 mkdir -p %{buildroot}%{_bindir}
+%ifarch x86_64
 install -m 755 %{SOURCE0} %{buildroot}%{_bindir}/isx
+%endif
+%ifarch aarch64
+install -m 755 %{SOURCE2} %{buildroot}%{_bindir}/isx
+%endif
 
 install -m 755 %{SOURCE1} %{buildroot}%{_bindir}/git-remote-isx
 
