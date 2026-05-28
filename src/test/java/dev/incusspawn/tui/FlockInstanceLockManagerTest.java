@@ -3,6 +3,7 @@ package dev.incusspawn.tui;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -109,6 +110,19 @@ class FlockInstanceLockManagerTest {
         var proc2 = pb2.start();
         proc2.getInputStream().readAllBytes();
         assertEquals(0, proc2.waitFor(), "Child should succeed after lock release");
+    }
+
+    @Test
+    void lockFileDeletedAfterRelease() {
+        var mgr = new FlockInstanceLockManager(lockDir);
+        var lock = mgr.tryAcquire("cleanup-test", "stopping");
+        assertTrue(lock.isPresent());
+        assertTrue(Files.exists(lockDir.resolve("cleanup-test.lock")));
+        lock.get().close();
+        assertFalse(Files.exists(lockDir.resolve("cleanup-test.lock")),
+                "Per-instance lock file should be deleted after release");
+        assertTrue(Files.exists(lockDir.resolve(".global.lock")),
+                "Global lock file should persist");
     }
 
     /** Helper main class for cross-process lock testing. */
