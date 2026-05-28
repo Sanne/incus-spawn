@@ -25,7 +25,22 @@ fi
 
 if $NATIVE; then
     echo "Building native image (this may take a minute)..."
-    "$SCRIPT_DIR/mvnw" package -Dnative -Dquarkus.native.container-build=true -DskipTests -q
+    NATIVE_ARGS="-Dnative -DskipTests -q"
+    if [ "$(uname -s)" = "Linux" ]; then
+        NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.container-build=true"
+    elif [ "$(uname -s)" = "Darwin" ]; then
+        if [ -z "$GRAALVM_HOME" ] || [ ! -x "$GRAALVM_HOME/bin/native-image" ]; then
+            GRAALVM_HOME=$(/usr/libexec/java_home -V 2>&1 | grep -i graal | awk '{print $NF}' | head -1)
+        fi
+        if [ -z "$GRAALVM_HOME" ] || [ ! -x "$GRAALVM_HOME/bin/native-image" ]; then
+            echo "Error: GraalVM with native-image is required for native builds on macOS."
+            echo "  Install with: brew install graalvm-jdk@25"
+            echo "  Or set GRAALVM_HOME to a GraalVM installation."
+            exit 1
+        fi
+        export JAVA_HOME="$GRAALVM_HOME"
+    fi
+    "$SCRIPT_DIR/mvnw" package $NATIVE_ARGS
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
     mkdir -p "$INSTALL_DIR"
     RUNNER=$(ls -t "$SCRIPT_DIR"/target/incus-spawn-*-runner 2>/dev/null | head -1)
