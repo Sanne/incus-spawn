@@ -277,19 +277,19 @@ public class IncusClient {
                     : "";
 
             if (shellCommand != null) {
-                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
                         cdPrefix + shellCommand + " || exec bash --login");
             } else if (inTmux) {
-                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
                         cdPrefix + "exec bash --login");
             } else if (shouldAutoAttachTmux(container)) {
-                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
                         cdPrefix
                         + "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
             } else {
-                args = List.of("exec", container, "--", "su", "-", user, "-c",
+                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
                         cdPrefix + "exec bash --login");
             }
             return execInteractive(args);
