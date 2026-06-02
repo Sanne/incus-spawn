@@ -61,7 +61,7 @@ Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user 
 
 ### Incus Interaction
 
-`IncusClient` wraps the `incus` CLI via process execution (no SDK/API). `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`). The client auto-detects whether `sg incus-admin` wrapping is needed.
+`IncusClient` communicates with the Incus daemon via its REST API. On Linux, requests go over a Unix domain socket (`UnixSocketTransport`); on macOS, over HTTPS with client certificates (`HttpsTransport`). `IncusApi` handles request serialization, async operation waiting, and WebSocket-based exec (capture, stream, PTY). `Container` is a helper for running commands inside a specific container (`exec`, `runAsUser`, `runInteractive`). The `incus` CLI binary is not required at runtime.
 
 ### MITM TLS Proxy
 

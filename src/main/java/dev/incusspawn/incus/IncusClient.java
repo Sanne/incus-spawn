@@ -1,62 +1,69 @@
 package dev.incusspawn.incus;
 
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.incusspawn.config.BuildSource;
 import jakarta.enterprise.context.ApplicationScoped;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 /**
- * Wraps the incus CLI for container/VM lifecycle operations.
+ * Manages Incus container/VM lifecycle operations.
+ * Uses the Incus REST API over Unix socket (Linux) or HTTPS (macOS/remote).
  */
 @ApplicationScoped
 public class IncusClient {
 
-    private volatile Boolean needsSg;
+    private volatile boolean apiInitialized;
+    private volatile IncusApi api;
 
-    private boolean needsSg() {
-        if (needsSg == null) {
+    private IncusApi api() {
+        if (!apiInitialized) {
             synchronized (this) {
-                if (needsSg == null) {
-                    needsSg = detectSgRequirement();
+                if (!apiInitialized) {
+                    api = IncusApi.tryConnect();
+                    apiInitialized = true;
                 }
             }
         }
-        return needsSg;
+        return api;
     }
 
-    private static boolean detectSgRequirement() {
-        // Test with 'incus list' since 'incus version' succeeds even without daemon access.
-        try {
-            var pb = new ProcessBuilder("incus", "list", "--format=csv", "--columns=n");
-            pb.redirectErrorStream(true);
-            var p = pb.start();
-            p.getInputStream().readAllBytes();
-            if (p.waitFor() == 0) {
-                return false;
-            }
-        } catch (Exception e) {
-            // incus not installed or not accessible
+    private IncusApi http() {
+        var result = api();
+        if (result == null) {
+            throw new IncusException(IncusApi.diagnoseConnectionFailure());
         }
+        return result;
+    }
 
-        // Direct access failed — check if sg would help
+    /**
+     * Probe the daemon and return its version string, or "unknown" if unreachable.
+     * Used for informational display (isx version, proxy status). Static so it can
+     * be called at class-init time from Environment.java.
+     */
+    public static String daemonVersion() {
+        var http = IncusApi.tryConnect();
+        if (http == null) return "unknown";
         try {
-            var pb = new ProcessBuilder("sg", "incus-admin", "-c", "incus version");
-            pb.redirectErrorStream(true);
-            var p = pb.start();
-            p.getInputStream().readAllBytes();
-            if (p.waitFor() == 0) {
-                return true;
+            var resp = http.get("/1.0");
+            if (resp.isSuccess()) {
+                var ver = resp.body().path("metadata").path("environment")
+                        .path("server_version").asText("");
+                if (!ver.isEmpty()) return ver;
+                return resp.body().path("metadata").path("api_version").asText("unknown");
             }
-        } catch (Exception e) {
-            // sg not available or group doesn't exist
-        }
-        return false;
+        } catch (Exception ignored) {}
+        return "unknown";
     }
 
     public record ExecResult(int exitCode, String stdout, String stderr) {
@@ -72,156 +79,60 @@ public class IncusClient {
         }
     }
 
-    private static boolean needsShellQuoting(String arg) {
-        for (int i = 0; i < arg.length(); i++) {
-            char c = arg.charAt(i);
-            if (Character.isLetterOrDigit(c) || "-_./=:,+@".indexOf(c) >= 0) {
-                continue;
-            }
-            return true;
-        }
-        return false;
-    }
-
-    private List<String> buildCommand(List<String> args) {
-        var command = new ArrayList<String>();
-        if (needsSg()) {
-            command.add("sg");
-            command.add("incus-admin");
-            command.add("-c");
-            var sb = new StringBuilder("incus");
-            for (var arg : args) {
-                sb.append(' ');
-                if (needsShellQuoting(arg)) {
-                    sb.append("'").append(arg.replace("'", "'\\''")).append("'");
-                } else {
-                    sb.append(arg);
-                }
-            }
-            command.add(sb.toString());
-        } else {
-            command.add("incus");
-            command.addAll(args);
-        }
-        return command;
-    }
-
-    public ExecResult exec(String... args) {
-        return exec(List.of(args));
-    }
-
-    public ExecResult exec(List<String> args) {
-        var command = buildCommand(args);
-        try {
-            var pb = new ProcessBuilder(command);
-            pb.environment().putAll(System.getenv());
-            var process = pb.start();
-            var stdout = readStream(process.getInputStream());
-            var stderr = readStream(process.getErrorStream());
-            int exitCode = process.waitFor();
-            return new ExecResult(exitCode, stdout, stderr);
-        } catch (IOException | InterruptedException e) {
-            throw new IncusException("Failed to execute: incus " + String.join(" ", args), e);
-        }
-    }
-
-    /**
-     * Execute an incus command with inherited IO, so progress output is visible.
-     * Use this for long-running operations like launch, image downloads, package installs.
-     */
-    public int execInteractive(String... args) {
-        return execInteractive(List.of(args));
-    }
-
-    public int execInteractive(List<String> args) {
-        var command = buildCommand(args);
-        try {
-            var pb = new ProcessBuilder(command);
-            pb.inheritIO();
-            return pb.start().waitFor();
-        } catch (IOException | InterruptedException e) {
-            throw new IncusException("Failed to execute: incus " + String.join(" ", args), e);
-        }
-    }
-
-    /**
-     * Build the full command list for running a shell command inside a container as a given user,
-     * without executing it. Useful when the caller needs to manage the process directly
-     * (e.g., for stdin/stdout piping in the git remote helper).
-     */
-    public List<String> buildExecCommand(String instance, String user, String shellCommand) {
-        var args = new ArrayList<String>();
-        args.add("exec");
-        args.add(instance);
-        args.add("--");
-        args.add("su");
-        args.add("-l");
-        args.add(user);
-        args.add("-c");
-        args.add(shellCommand);
-        return buildCommand(args);
-    }
-
-    /**
-     * Build a command list for running a program directly inside a container, without a login
-     * shell. Uses incus exec --user/--env flags to set the user and home directory.
-     * This avoids shell init scripts that may produce stdout output, which is critical for
-     * binary protocols like the git pack protocol.
-     */
-    public List<String> buildDirectExecCommand(String instance, int uid, String home,
-                                                String... command) {
-        var args = new ArrayList<String>();
-        args.add("exec");
-        args.add(instance);
-        args.add("--user");
-        args.add(String.valueOf(uid));
-        args.add("--env");
-        args.add("HOME=" + home);
-        args.add("--");
-        args.addAll(List.of(command));
-        return buildCommand(args);
-    }
-
-    /**
-     * Execute a command inside a container as a given user.
-     */
-    public ExecResult execInContainer(String container, String user, String... command) {
-        var args = new ArrayList<String>();
-        args.add("exec");
-        args.add(container);
-        args.add("--");
-        args.add("su");
-        args.add("-");
-        args.add(user);
-        if (command.length > 0) {
-            args.add("-c");
-            args.add(String.join(" ", command));
-        }
-        return exec(args);
-    }
-
-    /**
-     * Execute a command inside a container as root, with inherited IO for progress output.
-     */
-    public int shellExecInteractive(String container, String... command) {
-        var args = new ArrayList<String>();
-        args.add("exec");
-        args.add(container);
-        args.add("--");
-        args.addAll(List.of(command));
-        return execInteractive(args);
-    }
-
     /**
      * Execute a command inside a container as root.
      */
     public ExecResult shellExec(String container, String... command) {
-        var args = new ArrayList<String>();
-        args.add("exec");
-        args.add(container);
-        args.add("--");
-        args.addAll(List.of(command));
-        return exec(args);
+        return http().execCapture(container, List.of(command), 0, 0, null, Map.of());
+    }
+
+    /**
+     * Execute a command inside a container as root with inherited IO (visible output).
+     */
+    public int shellExecInteractive(String container, String... command) {
+        return http().execStream(container, List.of(command), 0, 0, null, Map.of(),
+                System.out, System.err);
+    }
+
+    // su - replaces the process environment with the user's login environment,
+    // which on Fedora/RHEL defaults to PATH=/bin:/usr/bin (from login.defs).
+    // The old incus CLI injected /usr/local/bin into PATH before su ran, so it
+    // was inherited. With the REST API we must inject it into the script itself.
+    static final String LOGIN_PATH_PREFIX =
+            "export PATH=/usr/local/sbin:/usr/local/bin:$PATH; ";
+
+    /**
+     * Run a shell script inside a container as a specific user with inherited IO.
+     * Uses 'su - user -c script' to establish a login session (sources /etc/profile
+     * and ~/.profile or ~/.bash_profile) so that SDKMAN, custom PATH additions,
+     * and other user-level environment setup are available.
+     */
+    public int shellExecInteractiveAsUser(String container, String user, String script) {
+        return http().execStream(container,
+                List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script),
+                0, 0, null, Map.of(), System.out, System.err);
+    }
+
+    /**
+     * Execute a command inside a container as a given user.
+     * Uses 'su - user -c "joined cmd"' to replicate the original CLI behaviour,
+     * giving the command access to the user's full login environment.
+     */
+    public ExecResult execInContainer(String container, String user, String... command) {
+        var script = command.length > 0 ? String.join(" ", command) : "bash";
+        return http().execCapture(container,
+                List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script),
+                0, 0, null, Map.of());
+    }
+
+    /**
+     * Execute a bidirectional command inside a container, forwarding stdin from the host.
+     * Used for binary protocols like the git pack protocol.
+     */
+    public int execBidirectional(String container, int uid, int gid, String home, String[] command,
+                                  InputStream stdin, OutputStream stdout, OutputStream stderr) {
+        return http().execBidirectional(container, List.of(command), uid, gid, home,
+                Map.of("HOME", home), stdin, stdout, stderr);
     }
 
     /**
@@ -229,7 +140,11 @@ public class IncusClient {
      */
     public boolean pollUntilReady(String name, int maxAttempts, String... command) {
         for (int i = 0; i < maxAttempts; i++) {
-            if (shellExec(name, command).success()) return true;
+            try {
+                if (shellExec(name, command).success()) return true;
+            } catch (Exception ignored) {
+                // Container may not be Running yet — treat any exec failure as not-ready and retry.
+            }
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
@@ -242,6 +157,15 @@ public class IncusClient {
 
     public void waitForReady(String name) {
         pollUntilReady(name, 30, "true");
+    }
+
+    /**
+     * Check connectivity to the Incus daemon.
+     * Returns null if connected successfully, or a diagnostic message if not.
+     */
+    public String checkConnectivity() {
+        if (api() != null) return null;
+        return IncusApi.diagnoseConnectionFailure();
     }
 
     /**
@@ -275,40 +199,25 @@ public class IncusClient {
             var homeDir = "/home/" + user;
             var targetCwd = workdir != null ? workdir : homeDir;
 
-            var args = new ArrayList<String>();
-            args.add("exec");
-            args.add(container);
-            args.add("--force-interactive");
-            args.add("--user");
-            args.add(uidGid.uid);
-            args.add("--group");
-            args.add(uidGid.gid);
-            args.add("--cwd");
-            args.add(targetCwd);
-            args.add("--env");
-            args.add("HOME=" + homeDir);
-            args.add("--");
-
+            List<String> shellArgs;
             if (shellCommand != null) {
-                args.add("bash");
-                args.add("--login");
-                args.add("-c");
-                args.add(shellCommand + " || exec bash --login");
+                shellArgs = List.of("bash", "--login", "-c", shellCommand + " || exec bash --login");
             } else if (inTmux) {
-                args.add("bash");
-                args.add("--login");
+                shellArgs = List.of("bash", "--login");
             } else if (shouldAutoAttachTmux(container)) {
-                args.add("bash");
-                args.add("--login");
-                args.add("-c");
-                args.add("if command -v tmux >/dev/null 2>&1; then "
+                shellArgs = List.of("bash", "--login", "-c",
+                        "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
             } else {
-                args.add("bash");
-                args.add("--login");
+                shellArgs = List.of("bash", "--login");
             }
-            return execInteractive(args);
+
+            var size = IncusApi.terminalSize();
+            return http().execPty(container, shellArgs,
+                    Integer.parseInt(uidGid.uid()), Integer.parseInt(uidGid.gid()),
+                    targetCwd, Map.of("HOME", homeDir),
+                    size[0], size[1]);
         } finally {
             if (inTmux && savedWindowName != null) {
                 hostExecQuiet("tmux", "rename-window", savedWindowName);
@@ -400,18 +309,18 @@ public class IncusClient {
                 "cat <<'TERMINFO_EOF' | tic -x -\n" + terminfo + "\nTERMINFO_EOF");
     }
 
-    private static final java.util.Set<String> COW_DRIVERS = java.util.Set.of("btrfs", "zfs", "lvm");
+    private static final Set<String> COW_DRIVERS = Set.of("btrfs", "zfs", "lvm");
 
     public record CowPoolProbe(boolean listed, String poolName) {
     }
 
     public CowPoolProbe probeCowPool() {
-        var result = exec("storage", "list", "--format=csv", "--columns=nD");
-        if (!result.success()) return new CowPoolProbe(false, null);
-        for (var line : result.stdout().strip().lines().toList()) {
-            var parts = line.split(",", 2);
-            if (parts.length >= 2 && COW_DRIVERS.contains(parts[1].strip())) {
-                return new CowPoolProbe(true, parts[0].strip());
+        var resp = http().get("/1.0/storage-pools?recursion=1");
+        if (!resp.isSuccess()) return new CowPoolProbe(false, null);
+        for (var pool : resp.body().path("metadata")) {
+            var driver = pool.path("driver").asText("");
+            if (COW_DRIVERS.contains(driver)) {
+                return new CowPoolProbe(true, pool.path("name").asText());
             }
         }
         return new CowPoolProbe(true, null);
@@ -426,81 +335,220 @@ public class IncusClient {
     }
 
     /**
+     * Get a config value from a named network (e.g. "incusbr0").
+     * Returns empty string if the key is not set.
+     */
+    public String networkConfigGet(String networkName, String key) {
+        var resp = http().get("/1.0/networks/" + networkName);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to get network config " + key + " from " + networkName);
+        }
+        var value = resp.body().path("metadata").path("config").path(key);
+        return value.isMissingNode() || value.isNull() ? "" : value.asText();
+    }
+
+    /**
+     * Set a config value on a named network (e.g. "incusbr0").
+     */
+    public void networkConfigSet(String networkName, String key, String value) {
+        var resp = http().requestAndWait("PATCH", "/1.0/networks/" + networkName,
+                Map.of("config", Map.of(key, value)));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to set network config " + key + " on " + networkName);
+        }
+    }
+
+    /**
+     * Detach the named network from an instance by finding and removing the matching NIC device.
+     * If the NIC is inherited from a profile (not in instance devices), it is first overridden
+     * into the instance's own devices so it can be removed.
+     */
+    public void networkDetach(String instance, String networkName) {
+        var resp = http().get("/1.0/instances/" + instance);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to get instance " + instance + " for network detach");
+        }
+        var metadata = resp.body().path("metadata");
+        var instanceDevices = metadata.path("devices");
+        var expandedDevices = metadata.path("expanded_devices");
+        for (var it = expandedDevices.fields(); it.hasNext(); ) {
+            var entry = it.next();
+            var dev = entry.getValue();
+            if ("nic".equals(dev.path("type").asText()) &&
+                (networkName.equals(dev.path("network").asText()) ||
+                 networkName.equals(dev.path("parent").asText()))) {
+                var devName = entry.getKey();
+                if (instanceDevices.path(devName).isMissingNode()) {
+                    var override = new LinkedHashMap<String, String>();
+                    dev.fields().forEachRemaining(e -> override.put(e.getKey(), e.getValue().asText()));
+                    var overrideResp = http().requestAndWait("PATCH", "/1.0/instances/" + instance,
+                            Map.of("devices", Map.of(devName, override)));
+                    if (!overrideResp.isSuccess()) {
+                        throw new IncusException("Failed to override profile device " + devName
+                                + " on " + instance + " for network detach");
+                    }
+                }
+                deviceRemove(instance, devName);
+                return;
+            }
+        }
+    }
+
+    /**
      * Launch a new container or VM from an image.
+     * The image may be a local alias ("my-image") or a remote reference
+     * ("images:fedora/44"). Remote references are resolved by reading the
+     * Incus client config (~/.config/incus/config.yml) to get the server
+     * URL and protocol — the REST API does not understand the "remote:alias"
+     * CLI shorthand and needs the full server URL instead.
      */
     public void launch(String image, String name, boolean vm) {
-        var args = new ArrayList<String>();
-        args.add("launch");
-        args.add(image);
-        args.add(name);
-        if (vm) {
-            args.add("--vm");
-        }
+        var http = http();
         var cowPool = findCowPool();
-        if (cowPool != null) {
-            args.add("--storage");
-            args.add(cowPool);
+        var body = new LinkedHashMap<String, Object>();
+        body.put("name", name);
+        body.put("type", vm ? "virtual-machine" : "container");
+        body.put("source", resolveImageSource(image));
+        if (cowPool != null) body.put("storage", cowPool);
+        var resp = http.requestAndWait("POST", "/1.0/instances", body);
+        if (!resp.isSuccess()) throw new IncusException("Failed to launch " + name);
+        var startResp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                Map.of("action", "start", "timeout", 30, "force", false));
+        if (!startResp.isSuccess()) throw new IncusException("Failed to start " + name + " after launch");
+    }
+
+    /**
+     * Build the REST API source object for an image reference.
+     * Handles both local aliases and "remote:alias" notation by reading
+     * the Incus client config to resolve the remote's server URL.
+     */
+    private static Map<String, Object> resolveImageSource(String image) {
+        if (image.startsWith("sha256:")) {
+            return Map.of("type", "image", "fingerprint", image.substring("sha256:".length()));
         }
-        int exitCode = execInteractive(args);
-        if (exitCode != 0) {
-            throw new IncusException("Failed to launch " + name + " (exit code " + exitCode + ")");
+        int colon = image.indexOf(':');
+        if (colon < 0) {
+            return Map.of("type", "image", "alias", image);
         }
+        var remoteName = image.substring(0, colon);
+        var alias = image.substring(colon + 1);
+        var remote = readIncusRemote(remoteName);
+        if (remote == null) {
+            throw new IncusException(
+                    "Unknown Incus remote '" + remoteName + "' for image '" + image + "'. " +
+                    "Add it with: incus remote add " + remoteName + " <url>");
+        }
+        var source = new LinkedHashMap<String, Object>();
+        source.put("type", "image");
+        source.put("mode", "pull");
+        source.put("server", remote.addr());
+        source.put("protocol", remote.protocol());
+        source.put("alias", alias);
+        return source;
+    }
+
+    private record RemoteConfig(String addr, String protocol) {}
+
+    /**
+     * Read a named remote's configuration from the Incus client config file.
+     * Returns null if the remote is not found.
+     */
+    private static RemoteConfig readIncusRemote(String name) {
+        var home = System.getProperty("user.home", "");
+        var candidates = List.of(
+                Path.of(home, ".config", "incus", "config.yml"),
+                Path.of(home, ".local", "share", "incus", "config.yml")
+        );
+        for (var path : candidates) {
+            if (!Files.exists(path)) continue;
+            try {
+                var yaml = new YAMLMapper();
+                var root = yaml.readTree(path.toFile());
+                var remoteNode = root.path("remotes").path(name);
+                if (remoteNode.isMissingNode()) continue;
+                var addr = remoteNode.path("addr").asText("");
+                var protocol = remoteNode.path("protocol").asText("simplestreams");
+                if (!addr.isEmpty()) return new RemoteConfig(addr, protocol);
+            } catch (Exception ignored) {}
+        }
+        return null;
     }
 
     /**
      * Copy (clone) an existing container/VM.
      * Automatically selects the best CoW storage pool if available.
      */
-    public void copy(String source, String target, String... extraArgs) {
-        var args = new ArrayList<String>();
-        args.add("copy");
-        args.add(source);
-        args.add(target);
-        args.addAll(List.of(extraArgs));
+    public void copy(String source, String target) {
+        var http = http();
         var cowPool = findCowPool();
-        if (cowPool != null) {
-            args.add("--storage");
-            args.add(cowPool);
-        }
-        exec(args).assertSuccess("Failed to copy " + source + " to " + target);
+        var body = new LinkedHashMap<String, Object>();
+        body.put("name", target);
+        body.put("source", Map.of("type", "copy", "source", source));
+        if (cowPool != null) body.put("storage", cowPool);
+        var resp = http.requestAndWait("POST", "/1.0/instances", body);
+        if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
     }
 
     public String getLog(String instance) {
-        return exec("info", "--show-log", instance).stdout();
+        var logsResp = http().get("/1.0/instances/" + instance + "/logs");
+        if (!logsResp.isSuccess()) return "";
+        var logs = logsResp.body().path("metadata");
+        // Prefer lxc.console (actual console output with kernel messages like "Exec format error").
+        // Fall back to the last entry in the list if the console log isn't present.
+        String consolePath = null, lastPath = null;
+        for (var log : logs) {
+            var path = log.asText();
+            lastPath = path;
+            if (path.endsWith("lxc.console")) consolePath = path;
+        }
+        var logPath = consolePath != null ? consolePath : lastPath;
+        if (logPath == null) return "";
+        return http().getText(logPath);
     }
 
     /**
      * Start a stopped container/VM.
      */
     public void start(String name) {
-        exec("start", name).assertSuccess("Failed to start " + name);
+        var resp = http().requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                Map.of("action", "start", "timeout", 30, "force", false));
+        if (!resp.isSuccess()) throw new IncusException("Failed to start " + name);
     }
 
     /**
      * Stop a running container/VM.
      */
     public void stop(String name) {
-        exec("stop", name).assertSuccess("Failed to stop " + name);
+        var resp = http().requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                Map.of("action", "stop", "timeout", 30, "force", false));
+        if (!resp.isSuccess()) throw new IncusException("Failed to stop " + name);
     }
 
     /**
      * Restart a container/VM.
      */
     public void restart(String name) {
-        exec("restart", name).assertSuccess("Failed to restart " + name);
+        var resp = http().requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                Map.of("action", "restart", "timeout", 30, "force", false));
+        if (!resp.isSuccess()) throw new IncusException("Failed to restart " + name);
     }
 
     /**
      * Delete a container/VM.
+     * If force is true, stops the instance first (REST API does not accept delete of a running instance).
      */
     public void delete(String name, boolean force) {
-        var args = new ArrayList<String>();
-        args.add("delete");
-        args.add(name);
+        var http = http();
         if (force) {
-            args.add("--force");
+            try {
+                http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                        Map.of("action", "stop", "timeout", 30, "force", true));
+            } catch (Exception ignored) {
+                // May already be stopped — proceed to delete.
+            }
         }
-        exec(args).assertSuccess("Failed to delete " + name);
+        var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
+        if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
     }
 
     public void deleteIfExists(String name) {
@@ -510,47 +558,91 @@ public class IncusClient {
     }
 
     public void rename(String oldName, String newName) {
-        exec("rename", oldName, newName).assertSuccess("Failed to rename " + oldName + " to " + newName);
+        var resp = http().requestAndWait("POST", "/1.0/instances/" + oldName,
+                Map.of("name", newName, "migration", false));
+        if (!resp.isSuccess()) throw new IncusException("Failed to rename " + oldName + " to " + newName);
     }
 
     /**
      * Set a config key on a container/VM.
      */
     public void configSet(String name, String key, String value) {
-        exec("config", "set", name, key + "=" + value)
-                .assertSuccess("Failed to set config " + key + " on " + name);
+        var resp = http().requestAndWait("PATCH", "/1.0/instances/" + name,
+                Map.of("config", Map.of(key, value)));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to set config " + key + " on " + name);
+        }
     }
 
     /**
      * Add a device to a container/VM.
      */
     public void deviceAdd(String container, String deviceName, String type, String... props) {
-        var args = new ArrayList<String>();
-        args.add("config");
-        args.add("device");
-        args.add("add");
-        args.add(container);
-        args.add(deviceName);
-        args.add(type);
-        args.addAll(List.of(props));
-        exec(args).assertSuccess("Failed to add device " + deviceName + " to " + container);
+        var device = new LinkedHashMap<String, String>();
+        device.put("type", type);
+        for (var prop : props) {
+            int eq = prop.indexOf('=');
+            if (eq > 0) device.put(prop.substring(0, eq), prop.substring(eq + 1));
+        }
+        var resp = http().requestAndWait("PATCH", "/1.0/instances/" + container,
+                Map.of("devices", Map.of(deviceName, device)));
+        if (!resp.isSuccess()) throw new IncusException("Failed to add device " + deviceName + " to " + container);
     }
 
     /**
      * Remove a device from a container/VM.
+     * Uses a read-modify-write via GET + PUT because Incus PATCH cannot remove devices
+     * (null values are rejected with 400, empty objects with 500).
      */
     public void deviceRemove(String container, String deviceName) {
-        exec("config", "device", "remove", container, deviceName)
-                .assertSuccess("Failed to remove device " + deviceName + " from " + container);
+        var resp = http().removeDevice(container, deviceName);
+        if (!resp.isSuccess()) throw new IncusException("Failed to remove device " + deviceName + " from " + container);
     }
 
     /**
-     * Get a specific config value.
+     * Set a single property on an existing device, merging with its current expanded config.
+     * Incus requires a complete device config in PATCH; a partial device (missing type) is rejected.
+     * Uses a read-modify-write: GET expanded_devices, merge the key, PATCH back.
+     */
+    public void deviceConfigSet(String container, String deviceName, String key, String value) {
+        var resp = http().deviceConfigSet(container, deviceName, key, value);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to set device " + deviceName + "." + key + " on " + container);
+        }
+    }
+
+    /**
+     * Remove (unset) a config key from a container/VM.
+     * Uses null in the REST API PATCH body, which fully removes the key.
+     */
+    public void configUnset(String name, String key) {
+        var configMap = new HashMap<String, Object>();
+        configMap.put(key, null);
+        var resp = http().requestAndWait("PATCH", "/1.0/instances/" + name,
+                Map.of("config", configMap));
+        if (!resp.isSuccess()) throw new IncusException("Failed to unset config " + key + " on " + name);
+    }
+
+    /**
+     * Get the current status of an instance (e.g. "Running", "Stopped").
+     * Returns empty string if the instance does not exist.
+     */
+    public String getInstanceStatus(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) return "";
+        return resp.body().path("metadata").path("status").asText("");
+    }
+
+    /**
+     * Get a specific config value. Returns empty string if the key is not set.
      */
     public String configGet(String name, String key) {
-        return exec("config", "get", name, key)
-                .assertSuccess("Failed to get config " + key + " from " + name)
-                .stdout().strip();
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to get config " + key + " from " + name);
+        }
+        var value = resp.body().path("metadata").path("config").path(key);
+        return value.isMissingNode() || value.isNull() ? "" : value.asText();
     }
 
     /**
@@ -570,8 +662,7 @@ public class IncusClient {
      */
     public void clearPendingOperation(String name) {
         try {
-            exec("config", "unset", name, Metadata.PENDING_OP)
-                    .assertSuccess("Failed to clear pending-op on " + name);
+            configUnset(name, Metadata.PENDING_OP);
         } catch (Exception e) {
             // Instance may have been deleted between setting and clearing
         }
@@ -593,59 +684,53 @@ public class IncusClient {
      * Returns a list of maps with keys: name, status, type.
      */
     public List<Map<String, String>> list() {
-        var result = exec("list", "--format=csv", "--columns=nst")
-                .assertSuccess("Failed to list instances");
-        if (result.stdout().isBlank()) {
-            return List.of();
+        var resp = http().get("/1.0/instances?recursion=1");
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
         }
-        return result.stdout().strip().lines()
-                .map(line -> {
-                    var parts = line.split(",", 3);
-                    return Map.of(
-                            "name", parts[0],
-                            "status", parts.length > 1 ? parts[1] : "",
-                            "type", parts.length > 2 ? parts[2] : ""
-                    );
-                })
-                .collect(Collectors.toList());
+        var result = new ArrayList<Map<String, String>>();
+        for (var instance : resp.body().path("metadata")) {
+            result.add(Map.of(
+                    "name", instance.path("name").asText(""),
+                    "status", instance.path("status").asText(""),
+                    "type", instance.path("type").asText("")
+            ));
+        }
+        return result;
     }
 
     /**
-     * List all instances with full details as JSON.
-     * Returns the raw JSON string from 'incus list --format=json'.
+     * List all instances with full details as a JSON array.
+     * Uses recursion=2 to include network state for running instances,
+     * matching the output format of 'incus list --format=json'.
      */
     public String listJson() {
-        return exec("list", "--format=json")
-                .assertSuccess("Failed to list instances")
-                .stdout();
+        var resp = http().get("/1.0/instances?recursion=2");
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
+        }
+        return resp.body().path("metadata").toString();
     }
 
     /**
      * Check if an instance exists.
      */
     public boolean exists(String name) {
-        return exec("info", name).success();
+        return http().get("/1.0/instances/" + name).isSuccess();
     }
 
     /**
      * Push a file into a container.
      */
     public void filePush(String source, String container, String destPath) {
-        exec("file", "push", source, container + destPath)
-                .assertSuccess("Failed to push file to " + container);
+        var resp = http().filePush(container, destPath, Path.of(source));
+        if (!resp.isSuccess()) throw new IncusException("Failed to push file to " + container + destPath);
     }
 
     /**
      * Push a directory recursively into a container.
      */
     public void filePushRecursive(String sourceDir, String container, String destPath) {
-        exec("file", "push", "-r", sourceDir, container + destPath)
-                .assertSuccess("Failed to push directory to " + container);
-    }
-
-    private String readStream(java.io.InputStream is) throws IOException {
-        try (var reader = new BufferedReader(new InputStreamReader(is))) {
-            return reader.lines().collect(Collectors.joining("\n"));
-        }
+        http().filePushRecursive(container, destPath, Path.of(sourceDir));
     }
 }

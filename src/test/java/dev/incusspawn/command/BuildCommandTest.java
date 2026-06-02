@@ -191,7 +191,7 @@ class BuildCommandTest {
         var container = new Container(incus, "test");
 
         // git clone succeeds
-        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/quarkusio/quarkus.git");
@@ -205,14 +205,11 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef);
 
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "cd '/home/agentuser/quarkus' && mvn -B dependency:go-offline");
     }
 
@@ -620,7 +617,7 @@ class BuildCommandTest {
     void cloneReposWithBranch() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
-        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -634,11 +631,9 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef);
 
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-branches origin '*'");
     }
 
@@ -647,7 +642,7 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
 
-        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -662,14 +657,14 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef);
 
         // Clone call + refspec restore, but no prime
-        verify(incus, times(2)).shellExecInteractive(eq("test"), any(String[].class));
+        verify(incus, times(2)).shellExecInteractiveAsUser(eq("test"), anyString(), anyString());
     }
 
     @Test
     void cloneReposWithReferenceDissociates() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
-        when(incus.shellExecInteractive(eq("test"), any(String[].class))).thenReturn(0);
+        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -687,12 +682,10 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef);
 
         // Reference clone command
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch --reference '/mnt/ref/repo' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Dissociation: repack + alternates removal
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git -C '/home/agentuser/repo' repack -a -d && rm -f -- '/home/agentuser/repo/.git/objects/info/alternates'");
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
@@ -703,7 +696,7 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
         // First call (reference clone) fails, rest succeed
-        when(incus.shellExecInteractive(eq("test"), any(String[].class)))
+        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString()))
                 .thenReturn(1)  // reference clone fails
                 .thenReturn(0)  // cleanup rm -rf
                 .thenReturn(0)  // normal clone
@@ -725,8 +718,7 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef);
 
         // Should fall back to normal clone
-        verify(incus).shellExecInteractive("test",
-                "su", "-l", "agentuser", "-c",
+        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Reference device still cleaned up
         verify(incus).deviceRemove("test", "ref-repo");

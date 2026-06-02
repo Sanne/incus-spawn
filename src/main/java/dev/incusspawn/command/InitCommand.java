@@ -423,21 +423,17 @@ public class InitCommand implements Runnable {
         System.out.println("[3/10] Initializing Incus (storage pool, network bridge)...");
 
         // Check if we can talk to the Incus daemon
-        var canConnect = incus.exec("version");
-        if (!canConnect.success()) {
-            var stderr = canConnect.stderr().strip();
-            var daemonNotRunning = stderr.contains("connection refused") || stderr.contains("no such file")
-                    || stderr.contains("cannot connect") || stderr.contains("failed to connect");
-            var permissionDenied = stderr.contains("permissions") || stderr.contains("socket")
-                    || stderr.contains("permission denied");
-            if (daemonNotRunning) {
+        var connectivity = incus.checkConnectivity();
+        if (connectivity != null) {
+            if (connectivity.contains("not running") || connectivity.contains("Connection refused")
+                    || connectivity.contains("not accepting connections")) {
                 System.out.println();
                 System.out.println("  Cannot connect to the Incus daemon — it does not appear to be running.");
                 System.out.println("  Enable and start it with:");
                 System.out.println("    sudo systemctl enable --now incus");
                 System.out.println("  Then re-run 'isx init' to continue.");
                 System.exit(1);
-            } else if (permissionDenied) {
+            } else if (connectivity.contains("permission denied") || connectivity.contains("newgrp")) {
                 System.out.println();
                 System.out.println("  Cannot connect to the Incus daemon.");
                 System.out.println("  This usually means the 'incus-admin' group membership is not active in this shell.");
@@ -448,6 +444,7 @@ public class InitCommand implements Runnable {
                 System.out.println("  Then re-run 'isx init' to continue.");
                 System.exit(1);
             }
+            // Unknown error — continue anyway (daemon may start during init)
         }
 
         // Use sudo for admin init since it may need elevated privileges
@@ -456,8 +453,7 @@ public class InitCommand implements Runnable {
             System.out.println("  Incus initialized with default storage pool and network.");
         } else {
             // May already be initialized
-            var check = incus.exec("storage", "list");
-            if (check.success() && !check.stdout().isBlank()) {
+            if (incus.probeCowPool().listed()) {
                 System.out.println("  Incus already initialized.");
             } else {
                 System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");

@@ -18,6 +18,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import dev.incusspawn.tool.ToolDefLoader;
@@ -639,11 +640,7 @@ public class BuildCommand implements Callable<Integer> {
         // systemd-resolved (127.0.0.53) doesn't work reliably inside Incus
         // containers. Point resolv.conf at the bridge gateway's dnsmasq instead.
         System.out.println("Replacing systemd-resolved with direct DNS...");
-        var gatewayRaw = incus.exec("network", "get", "incusbr0", "ipv4.address")
-                .assertSuccess("Failed to get bridge IP").stdout().strip();
-        var gatewayIp = gatewayRaw.contains("/")
-                ? gatewayRaw.substring(0, gatewayRaw.indexOf('/'))
-                : gatewayRaw;
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
                 "rm -f /etc/resolv.conf; " +
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")

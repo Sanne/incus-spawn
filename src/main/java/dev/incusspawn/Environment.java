@@ -100,21 +100,10 @@ public final class Environment {
     public static final String INCUS_CLIENT;
     public static final String INCUS_SERVER;
     static {
-        String client = "unknown", server = "unknown";
-        try {
-            var pb = new ProcessBuilder("incus", "version");
-            pb.redirectErrorStream(true);
-            var p = pb.start();
-            var output = new String(p.getInputStream().readAllBytes()).strip();
-            if (p.waitFor() == 0 && !output.isEmpty()) {
-                for (var line : output.lines().toList()) {
-                    if (line.startsWith("Client version:"))
-                        client = line.substring("Client version:".length()).strip();
-                    else if (line.startsWith("Server version:"))
-                        server = line.substring("Server version:".length()).strip();
-                }
-            }
-        } catch (Exception ignored) {}
+        // Probe the Incus daemon via REST API to get the server version.
+        // INCUS_CLIENT is not meaningful without the CLI binary; we report the API version instead.
+        String client = "REST API";
+        String server = dev.incusspawn.incus.IncusClient.daemonVersion();
         INCUS_CLIENT = client;
         INCUS_SERVER = server;
     }

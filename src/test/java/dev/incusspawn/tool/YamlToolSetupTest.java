@@ -35,6 +35,7 @@ class YamlToolSetupTest {
     void executesAllStepsInOrder() {
         var incus = mock(IncusClient.class);
         when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+        when(incus.shellExecInteractiveAsUser(anyString(), anyString(), anyString())).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var def = new ToolDef();
@@ -62,9 +63,9 @@ class YamlToolSetupTest {
         order.verify(incus).shellExecInteractive(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo root-step"));
 
-        // 2. run_as_user -> shellExecInteractive with su -l agentuser -c
-        order.verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("su"), eq("-l"), eq("agentuser"), eq("-c"), eq("echo user-step"));
+        // 2. run_as_user -> shellExecInteractiveAsUser with the script directly (su - user -c)
+        order.verify(incus).shellExecInteractiveAsUser(eq(CONTAINER),
+                eq("agentuser"), eq("echo user-step"));
 
         // 3. writeFile -> shellExec with sh -c (heredoc)
         order.verify(incus).shellExec(eq(CONTAINER),

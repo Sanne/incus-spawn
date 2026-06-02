@@ -144,7 +144,7 @@ public final class HostResourceSetup {
     }
 
     private static void removeExistingDevice(IncusClient incus, String container, String devName) {
-        incus.exec("config", "device", "remove", container, devName);
+        incus.deviceRemove(container, devName);
     }
 
     public static void removeBuildDevices(IncusClient incus, String container, List<ImageDef.HostResource> resources) {

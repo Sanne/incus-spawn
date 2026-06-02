@@ -43,8 +43,7 @@ public class ShellCommand implements Runnable {
         }
 
         // Start if stopped
-        var info = incus.exec("list", name, "--format=csv", "--columns=s");
-        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
@@ -59,8 +58,7 @@ public class ShellCommand implements Runnable {
 
     private void fixCaMismatch(String container) {
         // Ensure the container is running so we can push the cert
-        var info = incus.exec("list", container, "--format=csv", "--columns=s");
-        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             HostResourceSetup.removeStaleDevices(incus, container);
             incus.start(container);
             incus.waitForReady(container);

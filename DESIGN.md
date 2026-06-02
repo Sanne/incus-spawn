@@ -384,7 +384,7 @@ The git remote helper is split into two processes:
 
 1. **`git-remote-isx`** (bash script): installed alongside `isx` in `$PATH`. Git discovers it automatically when a remote URL uses the `isx://` scheme. The script handles the text-based git remote helper protocol (advertising the `connect` capability), then `exec`s `isx git-remote-helper` to handle the actual transport.
 
-2. **`isx git-remote-helper`** (Java/picocli command): validates the instance is running, validates the requested service against an allowlist, and launches `incus exec <instance> -- su -l agentuser -c "<service> '<path>'"` with inherited stdin/stdout so the git pack protocol flows directly between the host git process and the container git process.
+2. **`isx git-remote-helper`** (Java/picocli command): validates the instance is running, validates the requested service against an allowlist, and uses `IncusClient.execBidirectional` to run `<service> '<path>'` inside the container with stdin/stdout forwarded over WebSocket. The git pack protocol flows directly between the host git process and the container git process.
 
 The bash `exec` replaces the shell process with the Java process before any data flows through stdin. This is critical: Java's `BufferedInputStream` would consume bytes from the stdin pipe that are meant for the git pack protocol, corrupting the stream. By having bash handle only the text protocol exchange (a few short lines) and then `exec`-replacing itself, the Java process inherits the raw file descriptors with no buffered-ahead data.
 
@@ -416,6 +416,12 @@ Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repo
 - `ImageDefTest` — image definition loading, parent chain, descriptions, fingerprinting
 - `BuildCommandTest` — `.claude.json` trust configuration, skill deduplication across inheritance chains, shell quoting, GitHub URL parsing
 - `GitRemoteUtilsTest` — URL normalization (SSH/HTTPS/case), protocol-lenient matching, reference device naming (hash-based, truncation, collision resistance), host repo matching across multiple remotes
+- `IncusApiTest` — REST API request/response parsing, exec body format, default exec environment, LOGIN_PATH_PREFIX
+
+**Live tests** (`sg incus-admin -c "mvn test"`, requires Incus daemon + cached test image):
+- `IncusApiLiveTest` — REST protocol against real Incus: all endpoints, exec capture/stream, device ops, copy, launch, logs
+- `IncusClientSmokeTest` — high-level API: pollUntilReady, shellExec, execBidirectional, execPty, runAsUser, copy, filePush, filePushRecursive (directory placement + permission preservation), login PATH
+- `BuildPipelineSmokeTest` — full buildFromScratch + buildFromParent operation sequence
 
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
 - `TemplateBuildIT` — builds actual images, verifies metadata and agentuser
@@ -448,7 +454,7 @@ The solution: containers now run in Vertex mode with `CLAUDE_CODE_USE_VERTEX=1`,
 **Fragility and mitigation:** The standard-to-Vertex translation path uses an allowlist (`VERTEX_ALLOWED_FIELDS` in `MitmProxy.java`) that may drift as Anthropic adds new standard fields. However, the primary traffic flow (Vertex passthrough) doesn't use the allowlist — the Vertex SDK already formats the body correctly. The allowlist only affects the fallback translation path. The `anthropic_version: "vertex-2023-10-16"` value is hardcoded in the translation path — this matches the Anthropic Vertex SDK and has been stable since Vertex support launched. The Vertex passthrough path doesn't set this value; the SDK does it itself.
 
 ### Git remote helper: bash + Java split
-The git remote helper is split into a bash shim and a Java command rather than implementing the full protocol in Java. The reason is stdin buffering: Java's `BufferedInputStream` (used by `System.in` and `ProcessBuilder`) reads ahead into an internal buffer. In the git remote helper protocol, the initial text exchange ("capabilities", "connect git-upload-pack") is followed by a binary pack protocol stream on the same stdin pipe. If Java reads even one byte too many during the text phase, the binary stream is corrupted. The bash shim handles only the text protocol (a few short lines via `read`), then `exec`-replaces itself with the Java process. The Java process inherits raw file descriptors with no buffered-ahead data and can safely pipe stdin/stdout through `incus exec` to the container's git process.
+The git remote helper is split into a bash shim and a Java command rather than implementing the full protocol in Java. The reason is stdin buffering: Java's `BufferedInputStream` (used by `System.in` and `ProcessBuilder`) reads ahead into an internal buffer. In the git remote helper protocol, the initial text exchange ("capabilities", "connect git-upload-pack") is followed by a binary pack protocol stream on the same stdin pipe. If Java reads even one byte too many during the text phase, the binary stream is corrupted. The bash shim handles only the text protocol (a few short lines via `read`), then `exec`-replaces itself with the Java process. The Java process inherits raw file descriptors with no buffered-ahead data and can safely use `execBidirectional` (WebSocket-based stdin/stdout forwarding) to pipe the git pack protocol to the container.
 
 The alternative — implementing the full protocol in Java with careful single-byte reads — is fragile and would need to be re-validated with every JDK update that touches `System.in` buffering behaviour.
 

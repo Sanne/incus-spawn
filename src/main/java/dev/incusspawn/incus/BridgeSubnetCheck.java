@@ -17,8 +17,7 @@ public final class BridgeSubnetCheck {
     private BridgeSubnetCheck() {}
 
     public static String resolveBridgeCidr(IncusClient incus) {
-        var result = incus.exec("network", "get", "incusbr0", "ipv4.address");
-        return result.assertSuccess("Failed to get bridge IP").stdout().strip();
+        return incus.networkConfigGet("incusbr0", "ipv4.address");
     }
 
     public static List<String> getHostRoutes() {
@@ -98,8 +97,7 @@ public final class BridgeSubnetCheck {
         }
         var newSubnet = findNonConflictingSubnet(bridgeCidr, routes);
         if (newSubnet != null) {
-            incus.exec("network", "set", "incusbr0", "ipv4.address", newSubnet)
-                    .assertSuccess("Failed to reconfigure bridge subnet");
+            incus.networkConfigSet("incusbr0", "ipv4.address", newSubnet);
         }
         return new ConflictResult(true, conflict, bridgeCidr, newSubnet);
     }

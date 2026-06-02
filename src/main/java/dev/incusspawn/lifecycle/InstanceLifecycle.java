@@ -26,7 +26,7 @@ public final class InstanceLifecycle {
                                           String cpu, String memory, String disk) {
         incus.configSet(name, "limits.cpu", cpu);
         incus.configSet(name, "limits.memory", memory);
-        incus.exec("config", "device", "set", name, "root", "size=" + disk);
+        incus.deviceConfigSet(name, "root", "size", disk);
     }
 
     public static void configureNetwork(IncusClient incus, String name, NetworkMode mode) {
@@ -40,11 +40,7 @@ public final class InstanceLifecycle {
             }
             case AIRGAP -> {
                 System.out.println("Enabling network airgap...");
-                var result = incus.exec("network", "detach", "incusbr0", name);
-                if (!result.success()) {
-                    incus.exec("config", "device", "override", name, "eth0");
-                    incus.exec("config", "device", "remove", name, "eth0");
-                }
+                incus.networkDetach(name, "incusbr0");
             }
         }
     }

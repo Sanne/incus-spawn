@@ -12,8 +12,6 @@ import static org.mockito.Mockito.*;
 
 class ProxyHealthCheckTest {
 
-    private static final IncusClient.ExecResult OK_EMPTY = new IncusClient.ExecResult(0, "", "");
-
     @Test
     void isHealthyReturnsTrueWhenServerResponds() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -40,10 +38,8 @@ class ProxyHealthCheckTest {
     @Test
     void checkReturnsNotRunningWhenNoProxyNoDns() {
         var incus = mock(IncusClient.class);
-        when(incus.exec("network", "get", "incusbr0", "ipv4.address"))
-                .thenReturn(new IncusClient.ExecResult(0, "10.0.0.1/24", ""));
-        when(incus.exec("network", "get", "incusbr0", "raw.dnsmasq"))
-                .thenReturn(OK_EMPTY);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn("");
 
         var status = ProxyHealthCheck.check(incus);
         assertEquals(ProxyHealthCheck.ProxyStatus.NOT_RUNNING, status);
@@ -52,11 +48,9 @@ class ProxyHealthCheckTest {
     @Test
     void checkReturnsStaleDnsWhenDnsOverridesPresent() {
         var incus = mock(IncusClient.class);
-        when(incus.exec("network", "get", "incusbr0", "ipv4.address"))
-                .thenReturn(new IncusClient.ExecResult(0, "10.0.0.1/24", ""));
-        when(incus.exec("network", "get", "incusbr0", "raw.dnsmasq"))
-                .thenReturn(new IncusClient.ExecResult(0,
-                        "address=/api.anthropic.com/10.0.0.1\naddress=/github.com/10.0.0.1", ""));
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq"))
+                .thenReturn("address=/api.anthropic.com/10.0.0.1\naddress=/github.com/10.0.0.1");
 
         var status = ProxyHealthCheck.check(incus);
         assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, status);

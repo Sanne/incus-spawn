@@ -38,7 +38,7 @@ public class Container {
 
     /** Run a shell snippet as a specific user with a login shell. Fails on non-zero exit. */
     public void runAsUser(String user, String script, String failureMessage) {
-        int exitCode = incus.shellExecInteractive(name, "su", "-l", user, "-c", script);
+        int exitCode = incus.shellExecInteractiveAsUser(name, user, script);
         if (exitCode != 0) {
             throw new IncusException(failureMessage + " (exit code " + exitCode + ")");
         }
