@@ -271,26 +271,42 @@ public class IncusClient {
         propagateTerminfo(container);
 
         try {
-            List<String> args;
-            var cdPrefix = workdir != null
-                    ? "cd " + Container.shellQuote(workdir) + " 2>/dev/null; "
-                    : "";
+            var uidGid = getUserUidGid(container, user);
+            var homeDir = "/home/" + user;
+            var targetCwd = workdir != null ? workdir : homeDir;
+
+            var args = new ArrayList<String>();
+            args.add("exec");
+            args.add(container);
+            args.add("--force-interactive");
+            args.add("--user");
+            args.add(uidGid.uid);
+            args.add("--group");
+            args.add(uidGid.gid);
+            args.add("--cwd");
+            args.add(targetCwd);
+            args.add("--env");
+            args.add("HOME=" + homeDir);
+            args.add("--");
 
             if (shellCommand != null) {
-                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
-                        cdPrefix + shellCommand + " || exec bash --login");
+                args.add("bash");
+                args.add("--login");
+                args.add("-c");
+                args.add(shellCommand + " || exec bash --login");
             } else if (inTmux) {
-                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
-                        cdPrefix + "exec bash --login");
+                args.add("bash");
+                args.add("--login");
             } else if (shouldAutoAttachTmux(container)) {
-                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
-                        cdPrefix
-                        + "if command -v tmux >/dev/null 2>&1; then "
+                args.add("bash");
+                args.add("--login");
+                args.add("-c");
+                args.add("if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
             } else {
-                args = List.of("exec", container, "--force-interactive", "--", "su", "-", user, "-c",
-                        cdPrefix + "exec bash --login");
+                args.add("bash");
+                args.add("--login");
             }
             return execInteractive(args);
         } finally {
@@ -315,6 +331,24 @@ public class IncusClient {
         if (bs == null) return false;
         var tmux = bs.getToolInstances().get("tmux");
         return tmux != null && Boolean.parseBoolean(tmux.getParameterValues().get("auto_attach"));
+    }
+
+    private record UidGid(String uid, String gid) {}
+
+    private UidGid getUserUidGid(String container, String username) {
+        var result = shellExec(container, "id", "-u", username);
+        if (!result.success()) {
+            throw new IncusException("Failed to get UID for user " + username);
+        }
+        var uid = result.stdout().strip();
+
+        result = shellExec(container, "id", "-g", username);
+        if (!result.success()) {
+            throw new IncusException("Failed to get GID for user " + username);
+        }
+        var gid = result.stdout().strip();
+
+        return new UidGid(uid, gid);
     }
 
     private String setTmuxSubnetWarning() {
