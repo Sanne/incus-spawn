@@ -4,6 +4,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -72,6 +73,7 @@ public class BranchCommand implements Runnable {
         if (networkMode != NetworkMode.AIRGAP) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return;
             BridgeSubnetCheck.warnIfConflict(incus);
+            FirewalldCheck.warnIfNotRunning();
             if (checkCaMismatch(resolvedSource)) return;
         }
 

@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -37,6 +38,7 @@ public class ShellCommand implements Runnable {
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return;
             BridgeSubnetCheck.warnIfConflict(incus);
+            FirewalldCheck.warnIfNotRunning();
             fixCaMismatch(name);
         }
 

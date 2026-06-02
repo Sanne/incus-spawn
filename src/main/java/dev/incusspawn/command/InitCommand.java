@@ -262,6 +262,25 @@ public class InitCommand implements Runnable {
             return;
         }
 
+        // Ensure firewalld is actually running — permanent rules are written to disk
+        // but not loaded into the kernel unless the daemon is active.
+        var activeCheck = runHostQuiet("systemctl", "is-active", "--quiet", "firewalld");
+        if (activeCheck != 0) {
+            System.out.println("  firewalld is installed but not running. Starting and enabling it...");
+            var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
+            if (startResult != 0) {
+                System.err.println("  Error: failed to start firewalld.");
+                System.err.println("  Run manually: sudo systemctl enable --now firewalld");
+                System.err.println("  Then re-run: isx init");
+                return;
+            }
+            System.out.println("  firewalld started and enabled.");
+            if (ProxyService.isActive()) {
+                System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
+                ProxyService.restart();
+            }
+        }
+
         // Add incusbr0 to the trusted zone and enable masquerading so container
         // traffic is NAT'd to the internet. Both are --permanent so they survive reboots.
         System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
