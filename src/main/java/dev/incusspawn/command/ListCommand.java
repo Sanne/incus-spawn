@@ -239,7 +239,7 @@ public class ListCommand implements Runnable {
 
             try (var runner = TuiRunner.create(TuiConfig.builder()
                     .bindings(ShiftTabBindings.createWithBacktab())
-                    .tickRate(Duration.ofSeconds(1))
+                    .tickRate(Duration.ofMillis(100))
                     .build())) {
                 runner.run(
                         (event, tui) -> handleEvent(event, tui, instanceTableState),
