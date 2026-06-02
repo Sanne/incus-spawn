@@ -38,6 +38,7 @@ import dev.tamboui.tui.TuiRunner;
 import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.TickEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
@@ -238,6 +239,7 @@ public class ListCommand implements Runnable {
 
             try (var runner = TuiRunner.create(TuiConfig.builder()
                     .bindings(ShiftTabBindings.createWithBacktab())
+                    .tickRate(Duration.ofSeconds(1))
                     .build())) {
                 runner.run(
                         (event, tui) -> handleEvent(event, tui, instanceTableState),
@@ -415,6 +417,10 @@ public class ListCommand implements Runnable {
     // --- Event handling ---
 
     private boolean handleEvent(Event event, TuiRunner tui, TableState tableState) {
+        if (event instanceof TickEvent) {
+            return needsRefresh.get() || pendingStatusMessage.get() != null
+                    || !backgroundTasks.getActiveTasks().isEmpty();
+        }
         if (!(event instanceof KeyEvent key)) return false;
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
