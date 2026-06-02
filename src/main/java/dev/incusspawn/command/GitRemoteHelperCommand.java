@@ -85,9 +85,8 @@ public class GitRemoteHelperCommand implements Callable<Integer> {
                 System.err.println("Error: instance '" + instance + "' does not exist.");
                 return false;
             }
-            var result = incus.exec("list", instance, "--format=csv", "--columns=s");
-            var status = result.success() ? result.stdout().strip() : "UNKNOWN";
-            if (!"RUNNING".equalsIgnoreCase(status)) {
+            var status = incus.getInstanceStatus(instance);
+            if (!"Running".equalsIgnoreCase(status)) {
                 System.err.println("Error: instance '" + instance + "' is not running (status: " + status + ").");
                 System.err.println("Start it first: isx shell " + instance);
                 return false;

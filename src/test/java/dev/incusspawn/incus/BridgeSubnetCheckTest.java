@@ -96,8 +96,7 @@ class BridgeSubnetCheckTest {
     @Test
     void detectAndFixNoConflict() {
         var incus = mock(IncusClient.class);
-        when(incus.exec("network", "get", "incusbr0", "ipv4.address"))
-                .thenReturn(new IncusClient.ExecResult(0, "172.20.0.1/24", ""));
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
         var result = BridgeSubnetCheck.detectAndFix(incus);
         assertFalse(result.conflictDetected());
@@ -108,8 +107,7 @@ class BridgeSubnetCheckTest {
     @Test
     void detectConflictDiagnosticReturnsNullWhenNoConflict() {
         var incus = mock(IncusClient.class);
-        when(incus.exec("network", "get", "incusbr0", "ipv4.address"))
-                .thenReturn(new IncusClient.ExecResult(0, "172.20.0.1/24", ""));
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
         var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         assertNull(diagnostic);

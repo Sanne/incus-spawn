@@ -215,8 +215,7 @@ public class MitmProxy {
 
     /** Resolve the Incus bridge gateway IP (e.g. "10.166.11.1"). */
     public static String resolveGatewayIp(IncusClient incus) {
-        var result = incus.exec("network", "get", "incusbr0", "ipv4.address");
-        var addr = result.assertSuccess("Failed to get bridge IP").stdout().strip();
+        var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
         if (addr.contains("/")) {
             addr = addr.substring(0, addr.indexOf('/'));
         }
@@ -243,20 +242,22 @@ public class MitmProxy {
                         "address=/" + d + "/::"))
 
                 .collect(java.util.stream.Collectors.joining("\n"));
-        incus.exec("network", "set", "incusbr0", "raw.dnsmasq", dnsmasqConfig)
-                .assertSuccess("Failed to configure bridge DNS overrides");
+        incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
         System.out.println("  DNS overrides: " + interceptedDomains().size() +
                 " domains -> " + gatewayIp + " (via bridge dnsmasq)");
     }
 
     /** Clear bridge-level DNS overrides, restoring normal DNS resolution. */
     public static void clearBridgeDns(IncusClient incus) {
-        incus.exec("network", "set", "incusbr0", "raw.dnsmasq", "");
+        incus.networkConfigSet("incusbr0", "raw.dnsmasq", "");
     }
 
     public static String getDnsOverrides(IncusClient incus) {
-        var result = incus.exec("network", "get", "incusbr0", "raw.dnsmasq");
-        return result.success() ? result.stdout().strip() : "";
+        try {
+            return incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     // --- Lifecycle ---

@@ -58,8 +58,8 @@ public final class GuiPassthrough {
 
         System.out.println("Enabling GUI passthrough...");
         // Remove first in case the source already had these devices (incus copy carries them over).
-        incus.exec("config", "device", "remove", name, "gpu");
-        incus.exec("config", "device", "remove", name, "xdg-runtime");
+        incus.deviceRemove(name, "gpu");
+        incus.deviceRemove(name, "xdg-runtime");
         incus.deviceAdd(name, "gpu", "gpu");
         // Mount to /mnt/host-xdg instead of /run/user/<uid> — systemd-logind
         // mounts its own tmpfs at /run/user/<uid> which would hide this device.
@@ -86,13 +86,13 @@ public final class GuiPassthrough {
      * Clears devices, environment keys, metadata, and profile.d/tmpfiles.d scripts.
      */
     public static void removeGui(IncusClient incus, String name) {
-        incus.exec("config", "device", "remove", name, "gpu");
-        incus.exec("config", "device", "remove", name, "xdg-runtime");
-        incus.exec("config", "unset", name, Metadata.GUI_ENABLED);
-        incus.exec("config", "unset", name, "environment.WAYLAND_DISPLAY");
-        incus.exec("config", "unset", name, "environment.XDG_RUNTIME_DIR");
+        incus.deviceRemove(name, "gpu");
+        incus.deviceRemove(name, "xdg-runtime");
+        incus.configUnset(name, Metadata.GUI_ENABLED);
+        incus.configUnset(name, "environment.WAYLAND_DISPLAY");
+        incus.configUnset(name, "environment.XDG_RUNTIME_DIR");
         for (var key : WAYLAND_ENV.keySet()) {
-            incus.exec("config", "unset", name, "environment." + key);
+            incus.configUnset(name, "environment." + key);
         }
         // Remove profile.d and tmpfiles.d scripts that re-export Wayland env in login shells
         try {

@@ -3069,8 +3069,7 @@ public class ListCommand implements Runnable {
     }
 
     private void fixCaMismatchIfNeeded(String containerName) {
-        var info = incus.exec("list", containerName, "--format=csv", "--columns=s");
-        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
             HostResourceSetup.removeStaleDevices(incus, containerName);
             incus.start(containerName);
             incus.waitForReady(containerName);
@@ -3079,8 +3078,7 @@ public class ListCommand implements Runnable {
     }
 
     private void shellInto(String name) {
-        var info = incus.exec("list", name, "--format=csv", "--columns=s");
-        if (info.success() && info.stdout().strip().equalsIgnoreCase("STOPPED")) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);

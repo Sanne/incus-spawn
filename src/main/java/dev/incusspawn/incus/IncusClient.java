@@ -12,12 +12,15 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Wraps the incus CLI for container/VM lifecycle operations.
+ * Manages Incus container/VM lifecycle operations.
+ * Uses the Incus REST API over Unix socket when available; falls back to the CLI otherwise.
  */
 @ApplicationScoped
 public class IncusClient {
 
     private volatile Boolean needsSg;
+    private volatile boolean apiInitialized;
+    private volatile IncusHttp api;
 
     private boolean needsSg() {
         if (needsSg == null) {
@@ -28,6 +31,18 @@ public class IncusClient {
             }
         }
         return needsSg;
+    }
+
+    private IncusHttp api() {
+        if (!apiInitialized) {
+            synchronized (this) {
+                if (!apiInitialized) {
+                    api = IncusHttp.tryConnect();
+                    apiInitialized = true;
+                }
+            }
+        }
+        return api;
     }
 
     private static boolean detectSgRequirement() {
@@ -372,6 +387,18 @@ public class IncusClient {
     }
 
     public CowPoolProbe probeCowPool() {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/storage-pools?recursion=1");
+            if (!resp.isSuccess()) return new CowPoolProbe(false, null);
+            for (var pool : resp.body().path("metadata")) {
+                var driver = pool.path("driver").asText("");
+                if (COW_DRIVERS.contains(driver)) {
+                    return new CowPoolProbe(true, pool.path("name").asText());
+                }
+            }
+            return new CowPoolProbe(true, null);
+        }
         var result = exec("storage", "list", "--format=csv", "--columns=nD");
         if (!result.success()) return new CowPoolProbe(false, null);
         for (var line : result.stdout().strip().lines().toList()) {
@@ -392,9 +419,62 @@ public class IncusClient {
     }
 
     /**
+     * Get a config value from a named network (e.g. "incusbr0").
+     * Returns empty string if the key is not set.
+     */
+    public String networkConfigGet(String networkName, String key) {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/networks/" + networkName);
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to get network config " + key + " from " + networkName);
+            }
+            var value = resp.body().path("metadata").path("config").path(key);
+            return value.isMissingNode() || value.isNull() ? "" : value.asText();
+        }
+        return exec("network", "get", networkName, key)
+                .assertSuccess("Failed to get network config " + key + " from " + networkName)
+                .stdout().strip();
+    }
+
+    /**
+     * Set a config value on a named network (e.g. "incusbr0").
+     */
+    public void networkConfigSet(String networkName, String key, String value) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("PATCH", "/1.0/networks/" + networkName,
+                    Map.of("config", Map.of(key, value)));
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to set network config " + key + " on " + networkName);
+            }
+            return;
+        }
+        exec("network", "set", networkName, key, value)
+                .assertSuccess("Failed to set network config " + key + " on " + networkName);
+    }
+
+    /**
      * Launch a new container or VM from an image.
+     * Uses the REST API when available; falls back to the CLI (which shows download progress).
      */
     public void launch(String image, String name, boolean vm) {
+        var http = api();
+        if (http != null) {
+            var cowPool = findCowPool();
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("name", name);
+            body.put("type", vm ? "virtual-machine" : "container");
+            body.put("source", Map.of("type", "image", "alias", image));
+            if (cowPool != null) body.put("storage", cowPool);
+            var resp = http.requestAndWait("POST", "/1.0/instances", body);
+            if (!resp.isSuccess()) throw new IncusException("Failed to launch " + name);
+            // Start the instance after creation
+            var startResp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                    Map.of("action", "start", "timeout", 30, "force", false));
+            if (!startResp.isSuccess()) throw new IncusException("Failed to start " + name + " after launch");
+            return;
+        }
         var args = new ArrayList<String>();
         args.add("launch");
         args.add(image);
@@ -418,6 +498,17 @@ public class IncusClient {
      * Automatically selects the best CoW storage pool if available.
      */
     public void copy(String source, String target, String... extraArgs) {
+        var http = api();
+        if (http != null && extraArgs.length == 0) {
+            var cowPool = findCowPool();
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("name", target);
+            body.put("source", Map.of("type", "copy", "source", source));
+            if (cowPool != null) body.put("storage", cowPool);
+            var resp = http.requestAndWait("POST", "/1.0/instances", body);
+            if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
+            return;
+        }
         var args = new ArrayList<String>();
         args.add("copy");
         args.add(source);
@@ -439,6 +530,13 @@ public class IncusClient {
      * Start a stopped container/VM.
      */
     public void start(String name) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                    Map.of("action", "start", "timeout", 30, "force", false));
+            if (!resp.isSuccess()) throw new IncusException("Failed to start " + name);
+            return;
+        }
         exec("start", name).assertSuccess("Failed to start " + name);
     }
 
@@ -446,6 +544,13 @@ public class IncusClient {
      * Stop a running container/VM.
      */
     public void stop(String name) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                    Map.of("action", "stop", "timeout", 30, "force", false));
+            if (!resp.isSuccess()) throw new IncusException("Failed to stop " + name);
+            return;
+        }
         exec("stop", name).assertSuccess("Failed to stop " + name);
     }
 
@@ -453,13 +558,35 @@ public class IncusClient {
      * Restart a container/VM.
      */
     public void restart(String name) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                    Map.of("action", "restart", "timeout", 30, "force", false));
+            if (!resp.isSuccess()) throw new IncusException("Failed to restart " + name);
+            return;
+        }
         exec("restart", name).assertSuccess("Failed to restart " + name);
     }
 
     /**
      * Delete a container/VM.
+     * If force is true, stops the instance first (REST API does not accept delete of a running instance).
      */
     public void delete(String name, boolean force) {
+        var http = api();
+        if (http != null) {
+            if (force) {
+                try {
+                    http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                            Map.of("action", "stop", "timeout", 30, "force", true));
+                } catch (Exception ignored) {
+                    // May already be stopped — proceed to delete.
+                }
+            }
+            var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
+            if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
+            return;
+        }
         var args = new ArrayList<String>();
         args.add("delete");
         args.add(name);
@@ -476,6 +603,13 @@ public class IncusClient {
     }
 
     public void rename(String oldName, String newName) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("POST", "/1.0/instances/" + oldName,
+                    Map.of("name", newName, "migration", false));
+            if (!resp.isSuccess()) throw new IncusException("Failed to rename " + oldName + " to " + newName);
+            return;
+        }
         exec("rename", oldName, newName).assertSuccess("Failed to rename " + oldName + " to " + newName);
     }
 
@@ -483,6 +617,15 @@ public class IncusClient {
      * Set a config key on a container/VM.
      */
     public void configSet(String name, String key, String value) {
+        var http = api();
+        if (http != null) {
+            var resp = http.requestAndWait("PATCH", "/1.0/instances/" + name,
+                    Map.of("config", Map.of(key, value)));
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to set config " + key + " on " + name);
+            }
+            return;
+        }
         exec("config", "set", name, key + "=" + value)
                 .assertSuccess("Failed to set config " + key + " on " + name);
     }
@@ -491,6 +634,19 @@ public class IncusClient {
      * Add a device to a container/VM.
      */
     public void deviceAdd(String container, String deviceName, String type, String... props) {
+        var http = api();
+        if (http != null) {
+            var device = new java.util.LinkedHashMap<String, String>();
+            device.put("type", type);
+            for (var prop : props) {
+                int eq = prop.indexOf('=');
+                if (eq > 0) device.put(prop.substring(0, eq), prop.substring(eq + 1));
+            }
+            var resp = http.requestAndWait("PATCH", "/1.0/instances/" + container,
+                    Map.of("devices", Map.of(deviceName, device)));
+            if (!resp.isSuccess()) throw new IncusException("Failed to add device " + deviceName + " to " + container);
+            return;
+        }
         var args = new ArrayList<String>();
         args.add("config");
         args.add("device");
@@ -504,16 +660,87 @@ public class IncusClient {
 
     /**
      * Remove a device from a container/VM.
+     * Sends a PATCH with the device set to null, which removes it from the devices map.
      */
     public void deviceRemove(String container, String deviceName) {
+        var http = api();
+        if (http != null) {
+            var devicesMap = new java.util.HashMap<String, Object>();
+            devicesMap.put(deviceName, null);
+            var resp = http.requestAndWait("PATCH", "/1.0/instances/" + container,
+                    Map.of("devices", devicesMap));
+            if (!resp.isSuccess()) throw new IncusException("Failed to remove device " + deviceName + " from " + container);
+            return;
+        }
         exec("config", "device", "remove", container, deviceName)
                 .assertSuccess("Failed to remove device " + deviceName + " from " + container);
     }
 
     /**
-     * Get a specific config value.
+     * Set a single property on an existing device without replacing the whole device.
+     * Merges into the current device config via PATCH.
+     */
+    public void deviceConfigSet(String container, String deviceName, String key, String value) {
+        var http = api();
+        if (http != null) {
+            var devicePatch = new java.util.HashMap<String, String>();
+            devicePatch.put(key, value);
+            var resp = http.requestAndWait("PATCH", "/1.0/instances/" + container,
+                    Map.of("devices", Map.of(deviceName, devicePatch)));
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to set device " + deviceName + "." + key + " on " + container);
+            }
+            return;
+        }
+        exec("config", "device", "set", container, deviceName, key + "=" + value)
+                .assertSuccess("Failed to set device " + deviceName + "." + key + " on " + container);
+    }
+
+    /**
+     * Remove (unset) a config key from a container/VM.
+     * Uses null in the REST API PATCH body, which fully removes the key.
+     */
+    public void configUnset(String name, String key) {
+        var http = api();
+        if (http != null) {
+            var configMap = new java.util.HashMap<String, Object>();
+            configMap.put(key, null);
+            var resp = http.requestAndWait("PATCH", "/1.0/instances/" + name,
+                    Map.of("config", configMap));
+            if (!resp.isSuccess()) throw new IncusException("Failed to unset config " + key + " on " + name);
+            return;
+        }
+        exec("config", "unset", name, key)
+                .assertSuccess("Failed to unset config " + key + " on " + name);
+    }
+
+    /**
+     * Get the current status of an instance (e.g. "Running", "Stopped").
+     * Returns empty string if the instance does not exist.
+     */
+    public String getInstanceStatus(String name) {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/instances/" + name);
+            if (!resp.isSuccess()) return "";
+            return resp.body().path("metadata").path("status").asText("");
+        }
+        return exec("list", name, "--format=csv", "--columns=s").stdout().strip();
+    }
+
+    /**
+     * Get a specific config value. Returns empty string if the key is not set.
      */
     public String configGet(String name, String key) {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/instances/" + name);
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to get config " + key + " from " + name);
+            }
+            var value = resp.body().path("metadata").path("config").path(key);
+            return value.isMissingNode() || value.isNull() ? "" : value.asText();
+        }
         return exec("config", "get", name, key)
                 .assertSuccess("Failed to get config " + key + " from " + name)
                 .stdout().strip();
@@ -536,6 +763,12 @@ public class IncusClient {
      */
     public void clearPendingOperation(String name) {
         try {
+            var http = api();
+            if (http != null) {
+                http.requestAndWait("PATCH", "/1.0/instances/" + name,
+                        Map.of("config", Map.of(Metadata.PENDING_OP, "")));
+                return;
+            }
             exec("config", "unset", name, Metadata.PENDING_OP)
                     .assertSuccess("Failed to clear pending-op on " + name);
         } catch (Exception e) {
@@ -559,6 +792,22 @@ public class IncusClient {
      * Returns a list of maps with keys: name, status, type.
      */
     public List<Map<String, String>> list() {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/instances?recursion=1");
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
+            }
+            var result = new ArrayList<Map<String, String>>();
+            for (var instance : resp.body().path("metadata")) {
+                result.add(Map.of(
+                        "name", instance.path("name").asText(""),
+                        "status", instance.path("status").asText(""),
+                        "type", instance.path("type").asText("")
+                ));
+            }
+            return result;
+        }
         var result = exec("list", "--format=csv", "--columns=nst")
                 .assertSuccess("Failed to list instances");
         if (result.stdout().isBlank()) {
@@ -577,10 +826,19 @@ public class IncusClient {
     }
 
     /**
-     * List all instances with full details as JSON.
-     * Returns the raw JSON string from 'incus list --format=json'.
+     * List all instances with full details as a JSON array.
+     * Uses recursion=2 to include network state for running instances,
+     * matching the output format of 'incus list --format=json'.
      */
     public String listJson() {
+        var http = api();
+        if (http != null) {
+            var resp = http.get("/1.0/instances?recursion=2");
+            if (!resp.isSuccess()) {
+                throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
+            }
+            return resp.body().path("metadata").toString();
+        }
         return exec("list", "--format=json")
                 .assertSuccess("Failed to list instances")
                 .stdout();
@@ -590,6 +848,10 @@ public class IncusClient {
      * Check if an instance exists.
      */
     public boolean exists(String name) {
+        var http = api();
+        if (http != null) {
+            return http.get("/1.0/instances/" + name).isSuccess();
+        }
         return exec("info", name).success();
     }
 
@@ -597,6 +859,12 @@ public class IncusClient {
      * Push a file into a container.
      */
     public void filePush(String source, String container, String destPath) {
+        var http = api();
+        if (http != null) {
+            var resp = http.filePush(container, destPath, java.nio.file.Path.of(source));
+            if (!resp.isSuccess()) throw new IncusException("Failed to push file to " + container + destPath);
+            return;
+        }
         exec("file", "push", source, container + destPath)
                 .assertSuccess("Failed to push file to " + container);
     }
@@ -605,6 +873,11 @@ public class IncusClient {
      * Push a directory recursively into a container.
      */
     public void filePushRecursive(String sourceDir, String container, String destPath) {
+        var http = api();
+        if (http != null) {
+            http.filePushRecursive(container, destPath, java.nio.file.Path.of(sourceDir));
+            return;
+        }
         exec("file", "push", "-r", sourceDir, container + destPath)
                 .assertSuccess("Failed to push directory to " + container);
     }

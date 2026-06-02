@@ -437,8 +437,7 @@ public class InitCommand implements Runnable {
             System.out.println("  Incus initialized with default storage pool and network.");
         } else {
             // May already be initialized
-            var check = incus.exec("storage", "list");
-            if (check.success() && !check.stdout().isBlank()) {
+            if (incus.probeCowPool().listed()) {
                 System.out.println("  Incus already initialized.");
             } else {
                 System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");
