@@ -1,0 +1,82 @@
+#!/bin/sh
+# incus-spawn appliance boot — starts services in dependency order.
+# Runs as sysinit from BusyBox init (PID 1).
+
+set -eu
+
+#-- Virtual filesystems --#
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /dev/shm
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+mount -t cgroup2 cgroup2 /sys/fs/cgroup
+
+ts() { cut -d' ' -f1 /proc/uptime; }
+echo "incus-spawn: starting... ($(ts)s)"
+
+#-- Remount root with fstab options (noatime) --#
+mount -o remount,noatime,commit=300 /
+
+#-- Hostname --#
+hostname -F /etc/hostname
+
+#-- Sysctl --#
+sysctl -p /etc/sysctl.d/99-incus-spawn.conf 2>/dev/null
+
+#-- Disable IPv6 (QEMU user-mode NAT is IPv4-only) --#
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null
+
+#-- Networking --#
+ip link set lo up
+
+IFACE=""
+for path in /sys/class/net/en* /sys/class/net/eth*; do
+    [ -e "$path" ] || continue
+    IFACE=$(basename "$path")
+    break
+done
+
+if [ -n "$IFACE" ]; then
+    ip link set "$IFACE" up
+    udhcpc -i "$IFACE" -s /usr/share/udhcpc/default.script -q -n -t 5 2>/dev/null || true
+    echo "incus-spawn: network up on $IFACE ($(ts)s)"
+fi
+
+#-- D-Bus (required by Incus) --#
+mkdir -p /run/dbus
+dbus-daemon --system --nofork &
+
+#-- lxcfs (required by Incus for /proc virtualization) --#
+mkdir -p /var/lib/lxcfs
+lxcfs -p /run/lxcfs.pid /var/lib/lxcfs > /var/log/lxcfs.log 2>&1 &
+while [ ! -f /run/lxcfs.pid ]; do sleep 0.01; done
+
+#-- Incus daemon --#
+incusd &
+echo "incus-spawn: incusd started ($(ts)s)"
+
+#-- First-boot initialization (bridge, storage pool, iptables) --#
+/usr/local/sbin/incus-spawn-vm-init
+
+#-- Smoke test (if requested via kernel cmdline) --#
+if grep -q 'isx.smoke_test' /proc/cmdline; then
+    /usr/local/sbin/incus-spawn-smoke-test
+fi
+
+#-- Diagnostics mode (if requested via kernel cmdline) --#
+if grep -q 'isx.diag' /proc/cmdline; then
+    /usr/local/sbin/incus-spawn-diag
+    poweroff -f
+fi
+
+#-- Serial console gettys (only on devices that exist) --#
+for dev in ttyS0 hvc0 ttyAMA0; do
+    [ -c "/dev/$dev" ] && echo "$dev::respawn:/sbin/getty -L 115200 $dev linux" >> /etc/inittab
+done
+kill -HUP 1
+
+echo "=== ISX READY ($(ts)s) ==="

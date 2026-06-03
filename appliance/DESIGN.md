@@ -1,6 +1,6 @@
 # VM Appliance Design
 
-A minimal openSUSE Tumbleweed VM image with Incus pre-installed, built from a declarative recipe. Serves two purposes:
+A minimal Alpine Linux VM image with Incus pre-installed, built from a declarative recipe. Serves two purposes:
 
 1. **Integration testing on CI** -- boots in GitHub Actions via QEMU/KVM to validate the full system (Incus daemon, networking) rather than mocking
 2. **macOS support** -- runs as an invisible Linux VM via Apple Virtualization.framework so macOS users get native Incus containers
@@ -9,16 +9,16 @@ A minimal openSUSE Tumbleweed VM image with Incus pre-installed, built from a de
 
 `build.sh` avoids tools that require block devices or KVM. The entire build runs inside a chroot, making it portable across CI runners, containers, and bare metal:
 
-1. Pull the official openSUSE Tumbleweed container image via podman
+1. Pull the official Alpine Linux edge container image via podman
 2. Extract rootfs to a temporary directory
 3. Copy overlay files (`root/`) into the rootfs
-4. Install packages via chroot (systemd-network, systemd-resolved, Incus, btrfs-progs)
-5. Run `config.sh` to enable services, strip bloat, and configure
+4. Install packages via chroot (`apk add --no-cache`)
+5. Run `config.sh` to strip bloat and configure the appliance
 6. Clean stale state (`/run/*`, `/var/lib/incus/*`) to prevent PID/lock file issues on first boot
 7. Pack the rootfs into a zstd-compressed tarball (`rootfs.tar.zst`)
-7. Build a custom minimal kernel from vanilla kernel.org source (`kernel/build-kernel.sh`)
+8. Build a custom minimal kernel from vanilla kernel.org source (`kernel/build-kernel.sh`)
 
-Output artifacts: `vmlinuz` (~11 MB), `rootfs.tar.zst` (~99 MB). No initrd.
+Output artifacts: `vmlinuz` (~11 MB), `rootfs.tar.zst` (~30-40 MB). No initrd.
 
 No disk images are created during build -- the tarball is unpacked into a btrfs disk image on first use (see Disk Lifecycle below).
 
@@ -34,7 +34,7 @@ Applied on top of `allnoconfig` via `merge_config.sh`. Both x86_64 and aarch64 o
 - **Virtio**: PCI, MMIO, block, network, console, balloon
 - **Filesystems**: btrfs, overlayfs (Incus containers), fuse (lxcfs), tmpfs, procfs, sysfs, devtmpfs
 - **Networking**: TCP/UDP/IPv4/IPv6, UNIX sockets, packet sockets, bridge (with VLAN filtering), veth, macvlan, 802.1Q VLANs, netfilter/iptables (NAT, REDIRECT, CHECKSUM, MASQUERADE, conntrack)
-- **Container isolation**: all namespace types (including time), cgroups v2 (cpu with CFS bandwidth, io with iocost, memory with zswap, pids, cpuset, hugetlb), seccomp, AppArmor
+- **Container isolation**: all namespace types (including time), cgroups v2 (cpu with CFS bandwidth, io with iocost, memory with zswap, pids, cpuset, hugetlb), seccomp
 - **Console**: serial 8250 (ttyS0), AMBA PL011 (ttyAMA0), HVC (hvc0)
 - **Block**: loop devices (Incus btrfs storage pool)
 - **System**: POSIX timers, file locking, BPF JIT, audit
@@ -53,7 +53,7 @@ Applied on top of `allnoconfig` via `merge_config.sh`. Both x86_64 and aarch64 o
 Key dependencies discovered during development:
 - `CONFIG_64BIT=y` -- `allnoconfig` on x86 defaults to 32-bit
 - `CONFIG_FILE_LOCKING=y` -- required by lxcfs PID file locking; without it `flock()` returns ENOSYS
-- `CONFIG_POSIX_TIMERS=y` -- required by dbus-broker metrics; without it `clock_gettime()` fails with assertion crash
+- `CONFIG_POSIX_TIMERS=y` -- required by dbus metrics; without it `clock_gettime()` fails with assertion crash
 - `CONFIG_FAIR_GROUP_SCHED=y` -- dependency for `CONFIG_CFS_BANDWIDTH` (cgroup cpu.weight/cpu.max)
 - `CONFIG_VLAN_8021Q=y` -- dependency for `CONFIG_BRIDGE_VLAN_FILTERING` (Incus bridge)
 - `CONFIG_NETFILTER_XTABLES_LEGACY=y` -- dependency for iptables filter/nat/mangle in kernel 7.x
@@ -63,18 +63,39 @@ Key dependencies discovered during development:
 
 Without initrd, the kernel can't resolve `root=LABEL=...` (label resolution requires udev). The kernel cmdline uses `root=/dev/vda` instead -- the virtio-blk device is always `/dev/vda` since there is exactly one disk. `CONFIG_DEVTMPFS_MOUNT=y` ensures `/dev/vda` exists at boot.
 
+## Init System
+
+The appliance uses **BusyBox init** as PID 1, not systemd or OpenRC. This is the simplest possible init for a single-purpose appliance:
+
+- **`/etc/inittab`** -- declares the boot sequence (`sysinit`), shutdown handler, and serial console gettys (`respawn`)
+- **`/etc/init.d/rcS`** -- linear startup script that starts services in dependency order
+- **`/etc/init.d/rcK`** -- graceful shutdown script
+
+BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) and automatically respawns gettys on serial consoles. The startup script is ~50 lines and the service ordering is fixed — no dependency resolver needed.
+
+### Boot Sequence (`rcS`)
+
+1. Mount virtual filesystems (`/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/run`, `/tmp`)
+2. Remount root with `noatime,commit=300`
+3. Set hostname
+4. Apply sysctl settings (IP forwarding for Incus bridge NAT)
+5. Bring up loopback and DHCP on the first network interface (`udhcpc`)
+6. Start `dbus-daemon` (required by Incus)
+7. Start `lxcfs` (required by Incus for /proc virtualization)
+8. Start `incusd`
+9. Run `incus-spawn-vm-init` (bridge, storage pool, iptables)
+10. Run smoke test if `isx.smoke_test` is on kernel cmdline
+11. Schedule diagnostics dump (30s delay, background)
+12. Echo `=== ISX READY ===` marker
+
 ## Image Stripping
 
-`config.sh` aggressively reduces image size by removing components unnecessary for headless VM container hosting:
+Alpine Linux is minimal by default — no GPU libraries, QEMU tools, or scripting runtimes are pulled in as Incus dependencies. `config.sh` performs light cleanup:
 
-- **GPU/graphics**: LLVM, Mesa, Vulkan, SPIRV, DRI -- pulled in by Incus's QEMU dependency
-- **QEMU tools**: Incus bundles its own; host copies removed
-- **Container tools**: skopeo, umoci, lego, virtiofsd
-- **Scripting runtimes**: Python, Perl
-- **Kernel and boot**: entire `/boot` and `/usr/lib/modules` removed (custom kernel is built separately)
-- **Hardware databases**: PCI/USB/OUI/Bluetooth hwdb files
-- **Package manager**: zypper/rpm removed (appliance is not user-upgradeable)
-- **Docs and locale**: man pages, /usr/share/doc, locale data
+- Strip debug symbols from binaries and shared libraries
+- Remove `/boot/*` and `/usr/lib/modules` (custom kernel is built separately)
+- Remove man pages, docs, locale data
+- Remove `apk` package manager (appliance is immutable)
 
 ## Disk Lifecycle
 
@@ -100,7 +121,7 @@ chmod 755 /mnt
 umount /mnt && losetup -d $LOOP
 ```
 
-The `chmod 755` is required because the container rootfs root directory has `drwx------` (700) permissions, which prevents any non-root service (like systemd-networkd running as `systemd-network` user) from traversing the filesystem.
+The `chmod 755` is required because the container rootfs root directory has `drwx------` (700) permissions, which prevents any non-root service from traversing the filesystem.
 
 Disk images are sparse: a 60 GB image consumes ~540 MB actual disk space on APFS (macOS) or any CoW filesystem.
 
@@ -158,9 +179,9 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 
 ## First-Boot Initialization
 
-`incus-spawn-vm-init` runs as a oneshot systemd service after Incus and systemd-resolved are ready. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`) and:
+`incus-spawn-vm-init` runs from `rcS` after `incusd` is started. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`) and:
 
-1. Waits for the resolved stub resolv.conf (DNS readiness)
+1. Waits for DNS readiness (nameserver entry in `/etc/resolv.conf`, populated by `udhcpc`)
 2. Waits for the Incus daemon to become ready (up to 30 seconds)
 3. Creates the `incusbr0` bridge network with the configured gateway IP and NAT
 4. Creates a btrfs storage pool (`cow`) backed by a loop file, adaptively sized (half of free disk, capped at 30 GB, minimum 1 GB)
@@ -173,12 +194,11 @@ On subsequent boots, the script detects existing configuration and skips creatio
 
 ### Local (`test-boot.sh`)
 
-Boots the appliance image and verifies four checks:
+Boots the appliance image and verifies three checks:
 
 1. Btrfs root filesystem mounted
 2. Incus daemon activated
-3. Network online
-4. systemd multi-user target reached
+3. Appliance ready (`ISX READY` marker — implies network, bridge, and storage pool all succeeded)
 
 Backend selection: vfkit on macOS, QEMU on Linux (with KVM when available). Creates a 4 GB test disk from the rootfs tarball if one doesn't already exist.
 
@@ -186,11 +206,11 @@ Backend selection: vfkit on macOS, QEMU on Linux (with KVM when available). Crea
 
 **Build** (`build-appliance.yml`): separate jobs for x86_64 (`ubuntu-latest`) and aarch64 (`ubuntu-24.04-arm`). Artifacts cached by content hash of `appliance/**` files. Includes kernel compilation (~3-5 minutes with minimal config).
 
-**Integration** (`test-integration.yml`): restores cached build artifacts, creates a btrfs disk image from the tarball, boots via QEMU with KVM, verifies the VM reaches multi-user target, and runs the Incus smoke test.
+**Integration** (`test-integration.yml`): restores cached build artifacts, creates a btrfs disk image from the tarball, boots via QEMU with KVM, verifies the VM reaches `ISX READY` state, and runs the Incus smoke test.
 
 ### Smoke Test
 
-`incus-spawn-smoke-test` runs as a oneshot service gated by the kernel cmdline parameter `isx.smoke_test=1`. It verifies:
+`incus-spawn-smoke-test` runs from `rcS` when the kernel cmdline parameter `isx.smoke_test=1` is present. It verifies:
 
 1. Incus daemon is responsive (`incus info`)
 2. Storage pool `cow` exists
@@ -199,55 +219,59 @@ Backend selection: vfkit on macOS, QEMU on Linux (with KVM when available). Crea
 
 Output goes to the serial console as `=== SMOKE TEST PASSED ===` or `=== SMOKE TEST FAILED: <reason> ===`. CI checks for this marker.
 
-## Boot Timeline
-
-With the custom kernel (no initrd, no modules) and stripped systemd units:
-
-```
-0.019s  kernel exec /sbin/init
-0.079s  systemd starts (library loading)
-1.120s  systemd ready, begins unit startup
-~1.2s   multi-user target reached
-```
-
-The 1.1s systemd initialization gap is the dynamic linker loading distro-compiled systemd shared libraries. Sub-second boot would require a custom systemd build.
-
 ## Services
 
-The appliance runs a minimal set of services:
+The appliance runs a minimal set of daemons, started sequentially by `rcS`:
 
-- **systemd-networkd** — DHCP on the virtio-net interface
-- **systemd-resolved** — DNS stub resolver (receives DHCP nameservers from networkd)
-- **dbus-broker** — D-Bus system bus (required by Incus, networkd, resolved)
+- **udhcpc** — DHCP on the virtio-net interface (BusyBox built-in)
+- **dbus-daemon** — D-Bus system bus (required by Incus)
 - **lxcfs** — per-container /proc virtualization (required by Incus)
-- **incus** — container daemon
-- **incus-startup** — auto-starts containers from previous session
-- **incus-spawn-vm** — first-boot setup (bridge, storage pool, iptables)
-- **serial-getty@hvc0** — serial console for debugging via `vm.sh console`
+- **incusd** — container daemon
+- **getty** — serial console for debugging (respawned by BusyBox init)
 
-No SSH, no logind, no polkit. The appliance is headless and accessed only through the Incus API.
+No SSH, no syslog daemon, no logind, no polkit. The appliance is headless and accessed only through the Incus API.
+
+## Boot Timeline
+
+With the custom kernel (no initrd, no modules), musl libc, and BusyBox init on bare metal with KVM:
+
+```
+0.73s   rcS starts (kernel → init → mount filesystems)
+0.81s   network up (udhcpc DHCP lease)
+0.82s   incusd forked
+2.35s   ISX READY (incusd ready, bridge configured, storage pool online)
+```
+
+First boot is ~3.9s (creates bridge and storage pool). Subsequent boots are ~2.4s (skips creation).
+
+The 1.5s gap between incusd fork and ISX READY is `incus admin waitready` — Go runtime and SQLite database initialization. This is the floor.
 
 ## Boot Diagnostics
 
-`incus-spawn-diag` runs as a oneshot service triggered by a systemd timer 30 seconds after boot. It dumps diagnostic information to the serial console (auto-detected: `ttyS0` on QEMU, `hvc0` on vfkit, `ttyAMA0` on aarch64 QEMU):
+`incus-spawn-diag` collects diagnostic information: process list, kernel messages, Incus status, network interfaces, and DNS configuration.
 
-- Failed systemd services
-- Full journal for lxcfs, incus, incus-spawn-vm, dbus-broker
+Two ways to run it:
 
-Output is always available in `vm.log` (vfkit) or the QEMU serial console log. Zero overhead -- runs once, no persistent process.
+- **From the host** (no login required): `sudo ./appliance/diag.sh` — boots in diagnostic mode, prints results, exits. Disk is not modified.
+- **From inside the VM**: `incus-spawn-diag`
+- **On smoke test failure**: diagnostics are dumped automatically.
 
 ## Debugging
 
-### Serial console login
-
-The appliance has passwordless root login enabled on serial consoles (`ttyS0` for QEMU, `hvc0` for vfkit). On QEMU, connect with `-serial stdio` and press Enter at the login prompt.
-
-### Manual QEMU boot (bypassing test-boot.sh)
-
-`test-boot.sh` filters output through `grep`, which can appear stuck due to buffering. For debugging, boot QEMU directly:
+### Interactive serial console
 
 ```
-sudo timeout 120 qemu-system-x86_64 \
+sudo ./appliance/vm.sh shell
+```
+
+Boots the VM with an interactive serial console. Log in as `root` (no password). Exit with `Ctrl-A X`. Requires stopping a background VM first (`vm.sh stop`).
+
+### Manual QEMU boot
+
+For full control, boot QEMU directly:
+
+```
+sudo qemu-system-x86_64 \
   -machine pc -enable-kvm -cpu host \
   -m 2048 -nographic -no-reboot -nodefaults -serial stdio \
   -kernel appliance/build/vmlinuz \
@@ -307,16 +331,12 @@ done
 
 Arch-specific options (ARM64 UART on x86, ACPI on arm64, KERNEL_ZSTD on arm64) are expected to be absent on the other architecture.
 
-### Enabling serial console login (`enable-console.sh`)
+### Enabling auto-login (`enable-console.sh`)
 
-Patches a disk image for passwordless root auto-login on serial consoles:
+Patches a disk image for auto-login shell on serial consoles (bypasses BusyBox `login`):
 
 ```
 sudo ./enable-console.sh appliance/build/disk.img
 ```
 
-Creates auto-login getty units for ttyS0 and ttyAMA0, removes the root password, and configures PAM. After patching, boot with QEMU `-serial stdio` and press Enter to get a root shell.
-
-### Zypper RPM caching
-
-RPM downloads are cached in `/var/cache/incus-spawn-zypp` (configurable via `ZYPP_CACHE_DIR`). First build downloads ~1.5 GB; subsequent builds reuse cached RPMs. Clear the cache to force fresh downloads: `sudo rm -rf /var/cache/incus-spawn-zypp`
+Modifies `/etc/inittab` getty entries to use `-n -l /bin/sh` flags and removes the root password. After patching, boot with QEMU `-serial stdio` and press Enter to get a root shell.

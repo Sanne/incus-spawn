@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 # Diagnostic dump for debugging boot issues.
-# Triggered by incus-spawn-diag.timer (30s after boot).
+# Scheduled 30s after boot by rcS.
 # Output goes to the serial console (ttyS0 on QEMU, hvc0 on vfkit).
 
 CONSOLE=""
@@ -11,14 +11,14 @@ done
 
 exec > "$CONSOLE" 2>&1
 echo "=== incus-spawn diagnostics ==="
-echo "--- failed services ---"
-systemctl --no-pager --failed 2>&1
-echo "--- lxcfs (full) ---"
-journalctl -u lxcfs --no-pager 2>&1
-echo "--- incus (full) ---"
-journalctl -u incus --no-pager 2>&1
-echo "--- incus-spawn-vm ---"
-journalctl -u incus-spawn-vm --no-pager 2>&1
-echo "--- dbus-broker ---"
-journalctl -u dbus-broker --no-pager -n 10 2>&1
+echo "--- processes ---"
+ps aux 2>&1
+echo "--- dmesg (last 30 lines) ---"
+dmesg | tail -30 2>&1
+echo "--- incusd check ---"
+incus info 2>&1 || echo "incusd not responding"
+echo "--- network ---"
+ip addr 2>&1
+echo "--- resolv.conf ---"
+cat /etc/resolv.conf 2>&1
 echo "=== end diagnostics ==="

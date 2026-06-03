@@ -96,10 +96,10 @@ jobs:
             -append "root=/dev/vda rw console=ttyS0 mitigations=off isx.smoke_test=1" \
             > vm-console.log 2>&1 || true
 
-          if grep -q 'Reached target.*Multi-User' vm-console.log; then
-            echo "VM reached multi-user target"
+          if grep -q 'ISX READY' vm-console.log; then
+            echo "VM reached ISX READY"
           else
-            echo "::error::VM did not reach multi-user target"
+            echo "::error::VM did not reach ISX READY"
             tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
             exit 1
           fi

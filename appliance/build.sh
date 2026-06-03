@@ -7,9 +7,9 @@ set -euo pipefail
 # unpacked into a btrfs disk image on first use by vm.sh.
 #
 # Strategy:
-#   1. Pull openSUSE Tumbleweed container image via podman
+#   1. Pull Alpine Linux edge container image via podman
 #   2. Copy overlay files, install packages via chroot
-#   3. Run config.sh to strip bloat and configure services
+#   3. Run config.sh to configure the appliance
 #   4. Pack rootfs into a compressed tarball
 #   5. Build custom minimal kernel from kernel.org source
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(mkdir -p "${1:-$SCRIPT_DIR/build}" && cd "${1:-$SCRIPT_DIR/build}" && pwd)"
-CONTAINER_IMAGE="registry.opensuse.org/opensuse/tumbleweed:latest"
+CONTAINER_IMAGE="docker.io/alpine:edge"
 
 echo "Building incus-spawn appliance..."
 echo "  Target: $TARGET_DIR"
@@ -27,7 +27,6 @@ echo
 ROOTFS_DIR=$(mktemp -d)
 cleanup() {
     echo "Cleaning up..."
-    umount "$ROOTFS_DIR/var/cache/zypp" 2>/dev/null || true
     umount "$ROOTFS_DIR/dev" 2>/dev/null || true
     umount "$ROOTFS_DIR/proc" 2>/dev/null || true
     umount "$ROOTFS_DIR/sys" 2>/dev/null || true
@@ -53,30 +52,20 @@ if [ -d "$SCRIPT_DIR/root" ]; then
     cp -a "$SCRIPT_DIR/root"/* "$ROOTFS_DIR/"
 fi
 
-ZYPP_CACHE="${ZYPP_CACHE_DIR:-/var/cache/incus-spawn-zypp}"
-mkdir -p "$ZYPP_CACHE"
-mkdir -p "$ROOTFS_DIR/var/cache/zypp"
-mount --bind "$ZYPP_CACHE" "$ROOTFS_DIR/var/cache/zypp"
-
 echo "==> Installing packages..."
-chroot "$ROOTFS_DIR" /bin/bash -c "
-set -euo pipefail
-# Skip appdata/appstream metadata download — only needed for GUI package managers.
-# The large appdata.xml.gz frequently times out on CDN edge nodes in CI.
-if command -v sed >/dev/null 2>&1; then
-    sed -i 's/^type=yast2/type=rpm-md/' /etc/zypp/repos.d/*.repo 2>/dev/null || true
-fi
-zypper --non-interactive refresh
-zypper --non-interactive install --no-recommends \
-    systemd \
-    systemd-network \
-    systemd-resolved \
-    iproute2 \
-    iptables \
+chroot "$ROOTFS_DIR" /bin/sh -c "
+set -eu
+apk add --no-cache \
     incus \
+    incus-client \
+    lxcfs \
+    dbus \
     btrfs-progs \
+    iptables \
+    nftables \
+    iproute2 \
     ca-certificates \
-    ca-certificates-mozilla
+    util-linux
 "
 echo "    Size after packages: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 
@@ -89,8 +78,6 @@ if [ -f "$SCRIPT_DIR/config.sh" ]; then
 fi
 
 echo "==> Final cleanup..."
-umount "$ROOTFS_DIR/var/cache/zypp" 2>/dev/null || true
-rm -rf "$ROOTFS_DIR/var/cache/zypp" "$ROOTFS_DIR/var/log/zypp"
 rm -rf "$ROOTFS_DIR/usr/share/man" "$ROOTFS_DIR/usr/share/doc" "$ROOTFS_DIR/usr/share/info"
 rm -rf "$ROOTFS_DIR/tmp/"* "$ROOTFS_DIR/var/tmp/"*
 rm -rf "$ROOTFS_DIR/run/"*

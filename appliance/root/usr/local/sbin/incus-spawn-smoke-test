@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 # Smoke test for the Incus appliance.
 # Verifies that Incus daemon, storage pool, and bridge are functional.
-# Only runs when isx.smoke_test=1 is on the kernel cmdline.
+# Called from rcS when isx.smoke_test is on the kernel cmdline.
 # Output goes to the serial console for CI verification.
 
-set -euo pipefail
+set -eu
 
 CONSOLE=""
 for dev in /dev/ttyS0 /dev/hvc0 /dev/ttyAMA0; do
@@ -16,6 +16,7 @@ exec > "$CONSOLE" 2>&1
 
 fail() {
     echo "=== SMOKE TEST FAILED: $1 ==="
+    /usr/local/sbin/incus-spawn-diag
     exit 1
 }
 

@@ -1,0 +1,8 @@
+# incus-spawn appliance — BusyBox init configuration
+#
+# Gettys are started by rcS (not here) to avoid errors on non-existent devices.
+# BusyBox init opens the device in the id field before executing the command,
+# which produces "can't open" errors for devices that don't exist on this backend.
+
+::sysinit:/etc/init.d/rcS
+::shutdown:/etc/init.d/rcK

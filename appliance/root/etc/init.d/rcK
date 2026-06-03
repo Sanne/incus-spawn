@@ -1,0 +1,11 @@
+#!/bin/sh
+# incus-spawn appliance shutdown — graceful stop of all services.
+# Runs as shutdown action from BusyBox init.
+
+echo "incus-spawn: shutting down..."
+
+incus admin shutdown --timeout 10 2>/dev/null || true
+killall lxcfs 2>/dev/null || true
+killall dbus-daemon 2>/dev/null || true
+
+sync

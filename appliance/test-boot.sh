@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Boot the appliance image and verify it reaches multi-user target.
+# Boot the appliance image and verify it reaches ISX READY state.
 #
 # On macOS: uses vfkit (Apple Virtualization.framework)
 # On Linux: uses QEMU (with KVM if available)
@@ -72,9 +72,9 @@ boot_vfkit() {
     local pid=$!
     local elapsed=0
     while [ "$elapsed" -lt "$((TIMEOUT * 10))" ]; do
-        if grep -q 'Multi-User' "$LOGFILE" 2>/dev/null; then
+        if grep -q 'ISX READY' "$LOGFILE" 2>/dev/null; then
             local ms=$((elapsed * 100))
-            echo "  multi-user target reached in ~${ms}ms"
+            echo "  ISX READY in ~${ms}ms"
             sleep 5
             break
         fi
@@ -123,9 +123,9 @@ boot_qemu() {
             echo "  QEMU exited unexpectedly"
             break
         fi
-        if grep -q 'Multi-User' "$LOGFILE" 2>/dev/null; then
+        if grep -q 'ISX READY' "$LOGFILE" 2>/dev/null; then
             local ms=$((elapsed * 100))
-            echo "  multi-user target reached in ~${ms}ms"
+            echo "  ISX READY in ~${ms}ms"
             sleep 5
             break
         fi
@@ -162,9 +162,8 @@ check() {
 }
 
 check "BTRFS\|btrfs"                  "btrfs root mounted"
-check "Incus.*Hypervisor"             "Incus activated"
-check "Network Management"            "network online"
-check "Multi-User"                    "multi-user target reached"
+check "Incus.*Hypervisor\|incusd"     "Incus activated"
+check "ISX READY"                     "appliance ready (implies network, bridge, storage)"
 
 echo
 if [ "$FAIL" -eq 0 ]; then

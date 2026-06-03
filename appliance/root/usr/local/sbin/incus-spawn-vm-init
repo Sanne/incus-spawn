@@ -1,13 +1,13 @@
-#!/bin/bash
+#!/bin/sh
 # incus-spawn VM boot initialization script.
-# Runs as a oneshot systemd service after Incus is ready.
+# Called from rcS after incusd is started.
 # Reads configuration from kernel command line parameters.
 
-set -euo pipefail
+set -eu
 
 parse_cmdline() {
     local key="$1"
-    local escaped="${key//./\\.}"
+    local escaped=$(echo "$key" | sed 's/\./\\./g')
     sed -rn "s/.*${escaped}=([^ ]+).*/\1/p" /proc/cmdline
 }
 
@@ -21,22 +21,8 @@ SHARED_DIR=$(parse_cmdline "isx.shared")
 
 echo "incus-spawn-vm-init: gateway=${GATEWAY_IP} mitm=${MITM_PORT}"
 
-# Wait for DNS resolution to be available (resolved writes the stub resolv.conf)
-for i in $(seq 1 15); do
-    [ -f /run/systemd/resolve/stub-resolv.conf ] && break
-    sleep 1
-done
-
 # Wait for Incus daemon
-INCUS_READY=false
-for i in $(seq 1 30); do
-    if incus info > /dev/null 2>&1; then
-        INCUS_READY=true
-        break
-    fi
-    sleep 1
-done
-if [ "$INCUS_READY" != "true" ]; then
+if ! incus admin waitready --timeout 30; then
     echo "incus-spawn-vm-init: ERROR: Incus daemon not ready after 30s" >&2
     exit 1
 fi
@@ -56,12 +42,20 @@ fi
 if ! incus storage show cow > /dev/null 2>&1; then
     LOOP_FILE="/var/lib/incus/disks/cow.img"
     mkdir -p "$(dirname "$LOOP_FILE")"
-    DISK_FREE=$(df --output=avail / | tail -1)
+    DISK_FREE=$(df / | tail -1 | awk '{print $4}')
     POOL_SIZE=$(( DISK_FREE / 1024 / 2 ))
     [ "$POOL_SIZE" -gt 30720 ] && POOL_SIZE=30720
     [ "$POOL_SIZE" -lt 1024 ] && POOL_SIZE=1024
     truncate -s "${POOL_SIZE}M" "$LOOP_FILE"
     incus storage create cow btrfs source="$LOOP_FILE" size="${POOL_SIZE}MiB"
+fi
+
+# Ensure default profile has root disk and NIC
+if ! incus profile device get default root pool > /dev/null 2>&1; then
+    incus profile device add default root disk path=/ pool=cow
+fi
+if ! incus profile device get default eth0 network > /dev/null 2>&1; then
+    incus profile device add default eth0 nic network=incusbr0
 fi
 
 # Configure iptables: redirect port 443 on gateway to MITM proxy port

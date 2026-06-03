@@ -1,6 +1,0 @@
-[Unit]
-Description=Boot diagnostics dump
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/incus-spawn-diag

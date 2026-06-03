@@ -70,6 +70,7 @@ ensure_disk() {
             sudo mkdir -p /mnt/isx-disk
             sudo mount -o loop '$DISK_IMG' /mnt/isx-disk
             zstd -d '$APPLIANCE_DIR/rootfs.tar.zst' --stdout | sudo tar xf - -C /mnt/isx-disk
+            sudo chmod 755 /mnt/isx-disk
             sudo umount /mnt/isx-disk
 REMOTE
     else
@@ -233,13 +234,57 @@ cmd_console() {
     tail -f "$LOG_FILE"
 }
 
+cmd_shell() {
+    is_running && die "VM is running in background. Stop it first: $(basename "$0") stop"
+    check_artifacts
+    ensure_disk
+    local backend
+    backend=$(detect_backend)
+    echo "Starting interactive VM (exit with Ctrl-A X)..."
+
+    case "$backend" in
+        vfkit) die "Interactive shell not supported with vfkit. Use QEMU on Linux." ;;
+        qemu)
+            local arch qemu_bin machine_args console
+            arch=$(uname -m)
+            qemu_bin="qemu-system-$arch"
+            console="ttyS0"
+            case "$arch" in
+                x86_64)
+                    machine_args="-machine pc -cpu qemu64"
+                    [ -e /dev/kvm ] && machine_args="-machine pc -cpu host -enable-kvm"
+                    ;;
+                aarch64)
+                    machine_args="-machine virt -cpu cortex-a57"
+                    [ -e /dev/kvm ] && machine_args="-machine virt -cpu host -enable-kvm"
+                    console="ttyAMA0"
+                    ;;
+                *) die "Unsupported architecture: $arch" ;;
+            esac
+            $qemu_bin \
+                $machine_args \
+                -m "$MEMORY" \
+                -smp "$CPUS" \
+                -nographic \
+                -no-reboot \
+                -nodefaults \
+                -serial stdio \
+                -kernel "$APPLIANCE_DIR/vmlinuz" \
+                -drive file="$DISK_IMG",format=raw,if=virtio \
+                -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+                -append "root=/dev/vda rw rootflags=commit=300 console=$console mitigations=off isx.gateway=${ISX_GATEWAY:-10.166.11.1} isx.mitm_port=${ISX_MITM_PORT:-18443}"
+            ;;
+    esac
+}
+
 case "${1:-}" in
     start)   cmd_start ;;
     stop)    cmd_stop ;;
     status)  cmd_status ;;
     console) cmd_console ;;
+    shell)   cmd_shell ;;
     *)
-        echo "Usage: $(basename "$0") {start|stop|status|console}"
+        echo "Usage: $(basename "$0") {start|stop|status|console|shell}"
         exit 1
         ;;
 esac
