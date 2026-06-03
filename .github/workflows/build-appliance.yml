@@ -1,0 +1,112 @@
+name: Build Appliance Image
+
+on:
+  push:
+    paths:
+      - 'appliance/**'
+    branches: [main]
+  pull_request:
+    paths:
+      - 'appliance/**'
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      cache_key_x86_64:
+        description: Cache key for x86_64 appliance image
+        value: ${{ jobs.build_x86_64.outputs.cache_key }}
+      cache_key_aarch64:
+        description: Cache key for aarch64 appliance image
+        value: ${{ jobs.build_aarch64.outputs.cache_key }}
+
+jobs:
+  build_x86_64:
+    runs-on: ubuntu-latest
+    outputs:
+      cache_key: ${{ steps.cache_key.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute cache key
+        id: cache_key
+        run: echo "key=appliance-x86_64-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached image
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: appliance/build/
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman zstd build-essential flex bison bc libelf-dev libssl-dev
+
+      - name: Build appliance image
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo appliance/build.sh appliance/build
+
+      - name: Report image size
+        run: ls -lh appliance/build/
+
+      - name: Cache built image
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: appliance/build/
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appliance-x86_64
+          path: appliance/build/
+          retention-days: 30
+
+  build_aarch64:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      cache_key: ${{ steps.cache_key.outputs.key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute cache key
+        id: cache_key
+        run: echo "key=appliance-aarch64-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached image
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: appliance/build/
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman zstd build-essential flex bison bc libelf-dev libssl-dev
+
+      - name: Build appliance image
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo appliance/build.sh appliance/build
+
+      - name: Report image size
+        run: ls -lh appliance/build/
+
+      - name: Cache built image
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: appliance/build/
+          key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appliance-aarch64
+          path: appliance/build/
+          retention-days: 30

@@ -48,3 +48,7 @@ nb-configuration.xml
 stderr.txt
 stdout.txt
 META-INF/
+
+# Appliance build output
+appliance/build/
+appliance/kernel/vmlinuz

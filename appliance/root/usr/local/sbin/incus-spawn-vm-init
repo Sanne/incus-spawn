@@ -1,0 +1,83 @@
+#!/bin/bash
+# incus-spawn VM boot initialization script.
+# Runs as a oneshot systemd service after Incus is ready.
+# Reads configuration from kernel command line parameters.
+
+set -euo pipefail
+
+parse_cmdline() {
+    local key="$1"
+    local escaped="${key//./\\.}"
+    sed -rn "s/.*${escaped}=([^ ]+).*/\1/p" /proc/cmdline
+}
+
+GATEWAY_IP=$(parse_cmdline "isx.gateway")
+MITM_PORT=$(parse_cmdline "isx.mitm_port")
+SHARED_DIR=$(parse_cmdline "isx.shared")
+
+: "${GATEWAY_IP:=10.166.11.1}"
+: "${MITM_PORT:=18443}"
+: "${SHARED_DIR:=/mnt/host}"
+
+echo "incus-spawn-vm-init: gateway=${GATEWAY_IP} mitm=${MITM_PORT}"
+
+# Wait for DNS resolution to be available (resolved writes the stub resolv.conf)
+for i in $(seq 1 15); do
+    [ -f /run/systemd/resolve/stub-resolv.conf ] && break
+    sleep 1
+done
+
+# Wait for Incus daemon
+INCUS_READY=false
+for i in $(seq 1 30); do
+    if incus info > /dev/null 2>&1; then
+        INCUS_READY=true
+        break
+    fi
+    sleep 1
+done
+if [ "$INCUS_READY" != "true" ]; then
+    echo "incus-spawn-vm-init: ERROR: Incus daemon not ready after 30s" >&2
+    exit 1
+fi
+
+# Ensure bridge exists and has the expected gateway IP
+BRIDGE_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null || true)
+if [ -z "$BRIDGE_IP" ]; then
+    incus network create incusbr0 ipv4.address="${GATEWAY_IP}/24" ipv4.nat=true ipv6.address=none
+elif [ "$BRIDGE_IP" != "${GATEWAY_IP}/24" ]; then
+    echo "incus-spawn-vm-init: updating bridge from ${BRIDGE_IP} to ${GATEWAY_IP}/24"
+    incus network set incusbr0 ipv4.address="${GATEWAY_IP}/24"
+else
+    echo "incus-spawn-vm-init: bridge already configured at ${BRIDGE_IP}"
+fi
+
+# Ensure btrfs CoW storage pool exists
+if ! incus storage show cow > /dev/null 2>&1; then
+    LOOP_FILE="/var/lib/incus/disks/cow.img"
+    mkdir -p "$(dirname "$LOOP_FILE")"
+    DISK_FREE=$(df --output=avail / | tail -1)
+    POOL_SIZE=$(( DISK_FREE / 1024 / 2 ))
+    [ "$POOL_SIZE" -gt 30720 ] && POOL_SIZE=30720
+    [ "$POOL_SIZE" -lt 1024 ] && POOL_SIZE=1024
+    truncate -s "${POOL_SIZE}M" "$LOOP_FILE"
+    incus storage create cow btrfs source="$LOOP_FILE" size="${POOL_SIZE}MiB"
+fi
+
+# Configure iptables: redirect port 443 on gateway to MITM proxy port
+ACTUAL_GW=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1)
+if [ -n "$ACTUAL_GW" ]; then
+    if ! iptables -t nat -C PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+        -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT" 2>/dev/null; then
+        iptables -t nat -A PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+            -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT"
+    fi
+fi
+
+# Symlink isx binary from shared directory if available
+if [ -d "$SHARED_DIR" ] && [ -f "$SHARED_DIR/isx" ]; then
+    ln -sf "$SHARED_DIR/isx" /usr/local/bin/isx
+    echo "incus-spawn-vm-init: isx binary linked from ${SHARED_DIR}/isx"
+fi
+
+echo "incus-spawn-vm-init: ready"

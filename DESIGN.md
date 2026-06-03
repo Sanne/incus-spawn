@@ -472,6 +472,10 @@ Auto-remote management requires explicit `host-paths` or `repo-paths` configurat
 ### Fedora-specific
 The base image and package management are Fedora-specific (`dnf`, `images:fedora/44`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
 
+## VM Appliance
+
+A minimal openSUSE Tumbleweed VM image with Incus pre-installed, providing CI integration testing and macOS support. Custom kernel from kernel.org source (zero modules, no initrd) boots to multi-user in ~1.2s via Apple Virtualization.framework (vfkit) on macOS or QEMU with KVM on Linux. The build produces a rootfs tarball (~99 MB) and kernel (~11 MB); a writable btrfs disk image is created on first boot. See [`appliance/DESIGN.md`](appliance/DESIGN.md) for full architecture details.
+
 ## Security Considerations
 
 ### Container vs VM Trade-off

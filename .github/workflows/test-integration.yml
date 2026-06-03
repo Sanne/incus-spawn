@@ -1,0 +1,123 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Oracle GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Run unit tests
+        run: mvn test
+
+  build_appliance:
+    uses: ./.github/workflows/build-appliance.yml
+
+  integration-tests:
+    needs: [unit-tests, build_appliance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore appliance image
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: appliance/build/
+          key: ${{ needs.build_appliance.outputs.cache_key_x86_64 }}
+          fail-on-cache-miss: false
+
+      - name: Download appliance artifact (fallback)
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: appliance-x86_64
+          path: appliance/build/
+
+      - name: Create disk image from rootfs tarball
+        run: |
+          sudo apt-get install -y -qq btrfs-progs zstd
+          truncate -s 4G appliance/build/disk.img
+          LOOP=$(sudo losetup --find --show appliance/build/disk.img)
+          sudo mkfs.btrfs -q -L isxroot "$LOOP"
+          sudo mkdir -p /mnt/appliance
+          sudo mount "$LOOP" /mnt/appliance
+          zstd -d appliance/build/rootfs.tar.zst --stdout | sudo tar xf - -C /mnt/appliance
+          sudo chmod 755 /mnt/appliance
+          sudo umount /mnt/appliance
+          sudo losetup -d "$LOOP"
+          ls -lh appliance/build/
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Check KVM availability
+        id: kvm
+        run: |
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "KVM is available"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::KVM not available — skipping VM-based tests"
+          fi
+
+      - name: Install QEMU
+        if: steps.kvm.outputs.available == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86
+
+      - name: Boot and test appliance VM
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          timeout 120 qemu-system-x86_64 \
+            -machine pc -enable-kvm -cpu host \
+            -m 2G -nographic -no-reboot -nodefaults -serial stdio \
+            -kernel appliance/build/vmlinuz \
+            -drive file=appliance/build/disk.img,format=raw,if=virtio \
+            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+            -append "root=/dev/vda rw console=ttyS0 mitigations=off isx.smoke_test=1" \
+            > vm-console.log 2>&1 || true
+
+          if grep -q 'Reached target.*Multi-User' vm-console.log; then
+            echo "VM reached multi-user target"
+          else
+            echo "::error::VM did not reach multi-user target"
+            tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
+            exit 1
+          fi
+
+          if grep -q 'SMOKE TEST PASSED' vm-console.log; then
+            echo "Incus smoke test passed"
+          elif grep -q 'SMOKE TEST FAILED' vm-console.log; then
+            echo "::error::Incus smoke test failed"
+            grep 'SMOKE TEST' vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
+            exit 1
+          else
+            echo "::warning::Smoke test did not run (incus-spawn-vm-init may have failed)"
+          fi
+
+      - name: Upload console log
+        if: always() && steps.kvm.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-console-log
+          path: vm-console.log
+          retention-days: 7

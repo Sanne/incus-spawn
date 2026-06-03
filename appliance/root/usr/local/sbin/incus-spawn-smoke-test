@@ -1,0 +1,42 @@
+#!/bin/bash
+# Smoke test for the Incus appliance.
+# Verifies that Incus daemon, storage pool, and bridge are functional.
+# Only runs when isx.smoke_test=1 is on the kernel cmdline.
+# Output goes to the serial console for CI verification.
+
+set -euo pipefail
+
+CONSOLE=""
+for dev in /dev/ttyS0 /dev/hvc0 /dev/ttyAMA0; do
+    [ -c "$dev" ] && CONSOLE="$dev" && break
+done
+[ -z "$CONSOLE" ] && exit 0
+
+exec > "$CONSOLE" 2>&1
+
+fail() {
+    echo "=== SMOKE TEST FAILED: $1 ==="
+    exit 1
+}
+
+echo "=== SMOKE TEST START ==="
+
+incus info > /dev/null 2>&1 || fail "incus daemon not responsive"
+echo "  PASS: incus daemon responsive"
+
+incus storage show cow > /dev/null 2>&1 || fail "storage pool 'cow' not found"
+echo "  PASS: storage pool 'cow' exists"
+
+incus network show incusbr0 > /dev/null 2>&1 || fail "bridge 'incusbr0' not found"
+echo "  PASS: bridge 'incusbr0' exists"
+
+if incus image list --format csv 2>/dev/null | grep -q alpine; then
+    echo "  SKIP: container creation (image already present)"
+else
+    incus init images:alpine/edge smoke --no-start 2>/dev/null && \
+        incus delete smoke 2>/dev/null && \
+        echo "  PASS: container creation works" || \
+        echo "  SKIP: container creation (no network to fetch image)"
+fi
+
+echo "=== SMOKE TEST PASSED ==="

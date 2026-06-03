@@ -1,0 +1,24 @@
+#!/bin/bash
+# Diagnostic dump for debugging boot issues.
+# Triggered by incus-spawn-diag.timer (30s after boot).
+# Output goes to the serial console (ttyS0 on QEMU, hvc0 on vfkit).
+
+CONSOLE=""
+for dev in /dev/ttyS0 /dev/hvc0 /dev/ttyAMA0; do
+    [ -c "$dev" ] && CONSOLE="$dev" && break
+done
+[ -z "$CONSOLE" ] && exit 0
+
+exec > "$CONSOLE" 2>&1
+echo "=== incus-spawn diagnostics ==="
+echo "--- failed services ---"
+systemctl --no-pager --failed 2>&1
+echo "--- lxcfs (full) ---"
+journalctl -u lxcfs --no-pager 2>&1
+echo "--- incus (full) ---"
+journalctl -u incus --no-pager 2>&1
+echo "--- incus-spawn-vm ---"
+journalctl -u incus-spawn-vm --no-pager 2>&1
+echo "--- dbus-broker ---"
+journalctl -u dbus-broker --no-pager -n 10 2>&1
+echo "=== end diagnostics ==="
