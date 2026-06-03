@@ -438,10 +438,11 @@ public class InitCommand implements Runnable {
                 System.out.println("  Cannot connect to the Incus daemon.");
                 System.out.println("  This usually means the 'incus-admin' group membership is not active in this shell.");
                 System.out.println();
-                System.out.println("  Please do one of the following:");
+                System.out.println("  To continue init in this session:");
                 System.out.println("    - Run: newgrp incus-admin");
-                System.out.println("    - Or log out and log back in");
-                System.out.println("  Then re-run 'isx init' to continue.");
+                System.out.println("    - Then re-run 'isx init'");
+                System.out.println();
+                System.out.println("  After init completes, log out and log back in for the proxy service to work.");
                 System.exit(1);
             }
             // Unknown error — continue anyway (daemon may start during init)

@@ -268,7 +268,21 @@ public final class ProxyService {
             if (!output.isBlank()) {
                 System.err.println("Recent logs:");
                 System.err.println(output);
-                if (output.contains("status=127")) {
+                if (output.contains("could not determine Incus bridge gateway IP")) {
+                    System.err.println();
+                    System.err.println("The proxy cannot access Incus. The systemd user manager was started");
+                    System.err.println("before you were added to the 'incus-admin' group.");
+                    System.err.println();
+                    System.err.println("Fix: Restart the systemd user manager to pick up new group membership:");
+                    System.err.println("     systemctl --user exit    # WARNING: ends your session immediately");
+                    System.err.println("     # Then log back in and run:");
+                    System.err.println("     systemctl --user restart " + SERVICE_NAME);
+                    System.err.println();
+                    System.err.println("(Note: Logging out/in is not sufficient when user lingering is enabled)");
+                    System.err.println();
+                    System.err.println("Alternatively, start the proxy manually instead:");
+                    System.err.println("     isx proxy start");
+                } else if (output.contains("status=127")) {
                     System.err.println();
                     System.err.println("Exit code 127 usually means the Java binary was not found.");
                     System.err.println("If isx was installed as a JVM wrapper, ensure Java "
