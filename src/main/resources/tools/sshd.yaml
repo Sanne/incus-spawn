@@ -3,6 +3,7 @@ description: OpenSSH server for remote access
 
 packages:
   - openssh-server
+  - nmap-ncat
 
 run:
   - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config

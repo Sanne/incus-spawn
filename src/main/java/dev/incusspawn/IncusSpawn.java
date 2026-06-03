@@ -26,7 +26,8 @@ import picocli.CommandLine.IVersionProvider;
                 CompletionCommand.class,
                 TemplatesCommand.class,
                 InstancesCommand.class,
-                GitRemoteHelperCommand.class
+                GitRemoteHelperCommand.class,
+                SshProxyCommand.class
         }
 )
 public class IncusSpawn implements Runnable {

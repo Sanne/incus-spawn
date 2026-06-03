@@ -38,10 +38,6 @@ public final class Environment {
         return sshDir().resolve("config");
     }
 
-    public static Path sshKnownHostsFile() {
-        return sshDir().resolve("known_hosts");
-    }
-
     public static Path downloadCacheDir() {
         return home().resolve(".cache/incus-spawn/downloads");
     }

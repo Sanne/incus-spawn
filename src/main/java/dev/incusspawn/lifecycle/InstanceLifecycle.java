@@ -201,26 +201,22 @@ public final class InstanceLifecycle {
             return;
         }
 
-        // Harvest host key and configure ssh alias
+        // Configure SSH ProxyCommand entry for seamless access
         boolean hostConfigured = false;
         if (SshKeyManager.exists()) {
             try {
-                hostConfigured = SshKeyManager.harvestHostKey(incus, name);
+                hostConfigured = SshKeyManager.addHostEntry(name);
             } catch (Exception e) {
-                System.err.println("  Warning: failed to harvest SSH host key: " + e.getMessage());
+                System.err.println("  Warning: failed to configure SSH host entry: " + e.getMessage());
             }
         }
 
-        var ipResult = incus.shellExec(name, "hostname", "-I");
-        if (ipResult.success()) {
-            var ip = ipResult.stdout().strip().split("\\s+")[0];
-            if (hostConfigured && includeConfigured) {
-                System.out.println("  SSH access: ssh " + name);
-            } else if (SshKeyManager.exists()) {
-                System.out.println("  SSH access: ssh -i ~/.config/incus-spawn/ssh/id_ed25519 agentuser@" + ip);
-            } else {
-                System.out.println("  SSH access: ssh agentuser@" + ip);
-            }
+        if (hostConfigured && includeConfigured) {
+            System.out.println("  SSH access: ssh " + name);
+        } else if (hostConfigured) {
+            System.out.println("  SSH access: ssh -F ~/.config/incus-spawn/ssh/config " + name);
+        } else {
+            System.out.println("  SSH is available — connect with: isx shell " + name);
         }
     }
 

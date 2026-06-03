@@ -250,6 +250,7 @@ public class CompletionCommand implements Runnable {
                     'templates:manage template definitions'
                     'instances:list connectable instance names'
                     'git-remote-helper:git remote helper for isx:// URLs (used by git)'
+                    'ssh-proxy:SSH ProxyCommand that tunnels through Incus exec API'
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
@@ -268,6 +269,7 @@ public class CompletionCommand implements Runnable {
                     templates)  _isx_templates ;;
                     instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                     git-remote-helper) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance' '2:service' '3:path' ;;
+                    ssh-proxy) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance:_isx_instances' ;;
                   esac ;;
               esac
             }
@@ -292,14 +294,14 @@ public class CompletionCommand implements Runnable {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build project branch shell list destroy update-all proxy completion templates instances git-remote-helper"
+              local commands="init build project branch shell list destroy update-all proxy completion templates instances git-remote-helper ssh-proxy"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper)
+                  init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper|ssh-proxy)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -436,6 +438,14 @@ public class CompletionCommand implements Runnable {
                     esac
                   fi
                   ;;
+                ssh-proxy)
+                  case "$prev" in
+                    ssh-proxy)
+                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                      return ;;
+                  esac
+                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                  ;;
                 init|update-all|instances|git-remote-helper)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
@@ -462,7 +472,7 @@ public class CompletionCommand implements Runnable {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -485,6 +495,7 @@ public class CompletionCommand implements Runnable {
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
             complete -c isx -f -n __isx_no_subcommand -a git-remote-helper -d 'Git remote helper for isx:// URLs (used by git)'
+            complete -c isx -f -n __isx_no_subcommand -a ssh-proxy       -d 'SSH ProxyCommand that tunnels through Incus exec API'
 
             # ── branch ───────────────────────────────────────────────────────────────────
 
@@ -559,5 +570,9 @@ public class CompletionCommand implements Runnable {
 
             complete -c isx -f -n '__isx_using_subcommand completion' -a 'bash zsh fish' -d 'Shell type'
             complete -c isx -f -n '__isx_using_subcommand completion' -l install -d 'Print installation instructions'
+
+            # ── ssh-proxy ────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand ssh-proxy' -a '(__isx_instances)' -d 'Instance name'
             """;
 }
