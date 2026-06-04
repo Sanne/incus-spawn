@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
 
 public final class ProxyService {
 
@@ -52,7 +53,7 @@ public final class ProxyService {
 
                 [Service]
                 Type=simple
-                ExecStart=%s proxy start
+                ExecStart=/usr/bin/sg incus-admin -c "exec %s proxy start"
                 Restart=on-failure
                 RestartSec=5
 
@@ -150,11 +151,11 @@ public final class ProxyService {
         boolean needsRestart = false;
         try {
             var content = Files.readString(Environment.proxyServiceFile());
-            var expected = "ExecStart=" + isxPath + " proxy start";
+            var expected = execStartLine(isxPath);
             if (!content.contains(expected)) {
                 var updated = content.replaceFirst(
-                        "ExecStart=\\S+ proxy start",
-                        "ExecStart=" + isxPath + " proxy start");
+                        "ExecStart=.*proxy start.*",
+                        Matcher.quoteReplacement(expected));
                 if (!updated.equals(content)) {
                     Files.writeString(Environment.proxyServiceFile(), updated);
                     runQuiet("systemctl", "--user", "daemon-reload");
@@ -181,16 +182,17 @@ public final class ProxyService {
 
     public static void upgradeIfNeeded() {
         if (!Files.exists(Environment.proxyServiceFile())) return;
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) return;
         try {
             var content = Files.readString(Environment.proxyServiceFile());
-            if (content.contains("proxy start")) return;
             if (!content.contains("ExecStart=")) return;
-            var updated = content.replaceFirst(
-                    "ExecStart=(\\S+)\\s+proxy\\b(?!\\s+start)",
-                    "ExecStart=$1 proxy start");
+            var expected = execStartLine(isxPath);
+            if (content.contains(expected)) return;
+            var updated = content.replaceFirst("ExecStart=.*proxy.*", Matcher.quoteReplacement(expected));
             if (updated.equals(content)) return;
             Files.writeString(Environment.proxyServiceFile(), updated);
-            System.out.println("Updated proxy service to use 'isx proxy start'.");
+            System.out.println("Updated proxy service ExecStart.");
             runQuiet("systemctl", "--user", "daemon-reload");
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         } catch (IOException e) {
@@ -298,6 +300,10 @@ public final class ProxyService {
             return fallback.toString();
         }
         return null;
+    }
+
+    private static String execStartLine(String isxPath) {
+        return "ExecStart=/usr/bin/sg incus-admin -c \"exec " + isxPath + " proxy start\"";
     }
 
     private static void runQuiet(String... command) {

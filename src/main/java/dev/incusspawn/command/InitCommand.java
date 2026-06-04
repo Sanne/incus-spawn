@@ -108,6 +108,8 @@ public class InitCommand extends BaseCommand {
 
         installGitRemoteShim();
 
+        MitmProxy.configureBridgeDns(incus);
+
         boolean proxyServiceInstalled = offerProxyService();
 
         System.out.println("\n=== Init complete! ===");
@@ -349,6 +351,9 @@ public class InitCommand extends BaseCommand {
         // Only traffic to the gateway IP is redirected (intercepted domains resolve
         // there via dnsmasq); traffic to other IPs (e.g. maven repos) passes through.
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var config = SpawnConfig.load();
+        config.setIncusBridgeGateway(gatewayIp);
+        config.save();
         System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
                 + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
         runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",

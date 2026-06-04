@@ -213,13 +213,20 @@ public class MitmProxy {
                 claude.getVertexProjectId());
     }
 
-    /** Resolve the Incus bridge gateway IP (e.g. "10.166.11.1"). */
+    /** Resolve the Incus bridge gateway IP (e.g. "10.166.11.1").
+     *  Tries the Incus API first, falls back to the cached value in config. */
     public static String resolveGatewayIp(IncusClient incus) {
-        var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
-        if (addr.contains("/")) {
-            addr = addr.substring(0, addr.indexOf('/'));
+        try {
+            var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
+            if (addr.contains("/")) {
+                addr = addr.substring(0, addr.indexOf('/'));
+            }
+            return addr;
+        } catch (Exception e) {
+            var cached = SpawnConfig.load().getIncusBridgeGateway();
+            if (!cached.isEmpty()) return cached;
+            throw e;
         }
-        return addr;
     }
 
     /** The set of domains intercepted by this proxy. */
@@ -232,24 +239,31 @@ public class MitmProxy {
      * incusbr0 resolve intercepted domains to the gateway IP.
      */
     public static void configureBridgeDns(IncusClient incus) {
-        var gatewayIp = resolveGatewayIp(incus);
-        // Set A records to the gateway IP and block AAAA records (return ::)
-        // to prevent IPv6 connections from bypassing the proxy.
-        var dnsmasqConfig = interceptedDomains().stream()
-                .sorted()
-                .flatMap(d -> java.util.stream.Stream.of(
-                        "address=/" + d + "/" + gatewayIp,
-                        "address=/" + d + "/::"))
-
-                .collect(java.util.stream.Collectors.joining("\n"));
-        incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
-        System.out.println("  DNS overrides: " + interceptedDomains().size() +
-                " domains -> " + gatewayIp + " (via bridge dnsmasq)");
+        try {
+            var gatewayIp = resolveGatewayIp(incus);
+            var dnsmasqConfig = interceptedDomains().stream()
+                    .sorted()
+                    .flatMap(d -> java.util.stream.Stream.of(
+                            "address=/" + d + "/" + gatewayIp,
+                            "address=/" + d + "/::"))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
+            System.out.println("  DNS overrides: " + interceptedDomains().size() +
+                    " domains -> " + gatewayIp + " (via bridge dnsmasq)");
+        } catch (Exception e) {
+            System.err.println("Warning: could not configure bridge DNS overrides: " + e.getMessage());
+            System.err.println("If DNS was configured during 'isx init', containers will still work.");
+            System.err.println("Otherwise, re-run 'isx init' or start the proxy manually after 'newgrp incus-admin'.");
+        }
     }
 
     /** Clear bridge-level DNS overrides, restoring normal DNS resolution. */
     public static void clearBridgeDns(IncusClient incus) {
-        incus.networkConfigSet("incusbr0", "raw.dnsmasq", "");
+        try {
+            incus.networkConfigSet("incusbr0", "raw.dnsmasq", "");
+        } catch (Exception e) {
+            System.err.println("Warning: could not clear bridge DNS overrides: " + e.getMessage());
+        }
     }
 
     public static String getDnsOverrides(IncusClient incus) {

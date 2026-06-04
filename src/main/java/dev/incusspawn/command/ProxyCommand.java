@@ -58,6 +58,9 @@ public class ProxyCommand extends BaseCommand {
                 defaultValue = {"18080"})
         int healthPort;
 
+        @Option(name = "gateway-ip", description = "Incus bridge gateway IP (skips Incus API lookup)")
+        String gatewayIpOption;
+
         @Option(name = "debug", description = "Log full API request/response details for traffic inspection",
                 hasValue = false)
         boolean debug;
@@ -84,12 +87,16 @@ public class ProxyCommand extends BaseCommand {
             }
 
             String gatewayIp;
-            try {
-                gatewayIp = MitmProxy.resolveGatewayIp(incus);
-            } catch (Exception e) {
-                System.err.println("Error: could not determine Incus bridge gateway IP.");
-                System.err.println("Is Incus running? Try 'incus network list'.");
-                return CommandResult.valueOf(1);
+            if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
+                gatewayIp = gatewayIpOption;
+            } else {
+                try {
+                    gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                } catch (Exception e) {
+                    System.err.println("Error: could not determine Incus bridge gateway IP.");
+                    System.err.println("Is Incus running? Try 'incus network list'.");
+                    return CommandResult.valueOf(1);
+                }
             }
 
             installLogTee();
