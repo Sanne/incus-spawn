@@ -24,11 +24,11 @@ import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
-import jakarta.enterprise.inject.Instance;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import dev.incusspawn.RuntimeServices;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
 import java.io.IOException;
 import java.net.URI;
@@ -47,53 +47,45 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 
-@Command(
+@CommandDefinition(
         name = "build",
         description = "Build or rebuild a template image (e.g. tpl-minimal, tpl-java)",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class BuildCommand implements Callable<Integer> {
+public class BuildCommand extends BaseCommand {
 
-    @Parameters(index = "0", description = "Name of the template (e.g. tpl-minimal, tpl-java)",
-            arity = "0..1")
+    @Argument(description = "Name of the template (e.g. tpl-minimal, tpl-java)",
+            required = false)
     String name;
 
-    @Option(names = "--all", description = "Rebuild all defined templates")
+    @Option(name = "all", hasValue = false, description = "Rebuild all defined templates")
     boolean all;
 
-    @Option(names = "--out-of-sync", description = "Rebuild templates that are out of sync (definition or isx version changed)")
+    @Option(name = "out-of-sync", hasValue = false, description = "Rebuild templates that are out of sync (definition or isx version changed)")
     boolean outOfSync;
 
-    @Option(names = "--with-parents", description = "Rebuild the template and all its parents unconditionally")
+    @Option(name = "with-parents", hasValue = false, description = "Rebuild the template and all its parents unconditionally")
     boolean withParents;
 
-    @Option(names = "--with-descendants", description = "Rebuild the template and all templates inheriting from it")
+    @Option(name = "with-descendants", hasValue = false, description = "Rebuild the template and all templates inheriting from it")
     boolean withDescendants;
 
-    @Option(names = "--missing", description = "Build only templates that don't exist yet")
+    @Option(name = "missing", hasValue = false, description = "Build only templates that don't exist yet")
     boolean missing;
 
-    @Option(names = "--vm", description = "Build as a VM instead of a container")
+    @Option(name = "vm", hasValue = false, description = "Build as a VM instead of a container")
     boolean vm;
 
-    @Option(names = "--yes", description = "Skip interactive confirmations (for TUI integration)")
+    @Option(name = "yes", hasValue = false, description = "Skip interactive confirmations (for TUI integration)")
     boolean yes;
 
-    @Inject
     IncusClient incus;
-
-    @Inject
     ToolDefLoader toolDefLoader;
+    Iterable<ToolSetup> toolSetups;
 
-    @Inject
-    Instance<ToolSetup> toolSetups;
-
-    @Inject
-    picocli.CommandLine.IFactory factory;
 
     private static Path dnfCacheDir() { return Environment.dnfCacheDir(); }
 
@@ -120,8 +112,11 @@ public class BuildCommand implements Callable<Integer> {
     private volatile String[] activeBuild;
 
     @Override
-    public Integer call() {
-        if (!InitCommand.requireInit(factory)) return 0;
+    protected CommandResult doExecute() throws Exception {
+        this.incus = RuntimeServices.incus();
+        this.toolDefLoader = RuntimeServices.toolDefLoader();
+        this.toolSetups = RuntimeServices.toolSetups();
+        if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             var build = activeBuild;
@@ -136,48 +131,48 @@ public class BuildCommand implements Callable<Integer> {
             if (withParents) {
                 if (name == null) {
                     System.err.println("Usage: isx build <template-name> --with-parents");
-                    return 1;
+                    return CommandResult.valueOf(1);
                 }
                 var imageDef = defs.get(name);
                 if (imageDef == null) {
                     System.err.println("Unknown image: " + name);
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                    return 1;
+                    return CommandResult.valueOf(1);
                 }
                 buildWithParents(imageDef, defs);
-                return 0;
+                return CommandResult.SUCCESS;
             }
             if (withDescendants) {
                 if (name == null) {
                     System.err.println("Usage: isx build <template-name> --with-descendants");
-                    return 1;
+                    return CommandResult.valueOf(1);
                 }
                 var imageDef = defs.get(name);
                 if (imageDef == null) {
                     System.err.println("Unknown image: " + name);
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                    return 1;
+                    return CommandResult.valueOf(1);
                 }
                 buildWithDescendants(imageDef, defs);
-                return 0;
+                return CommandResult.SUCCESS;
             }
             if (missing) {
                 buildMissing(defs);
-                return 0;
+                return CommandResult.SUCCESS;
             }
             if (outOfSync) {
                 buildAll(defs, true);
-                return 0;
+                return CommandResult.SUCCESS;
             }
             if (all) {
                 buildAll(defs, false);
-                return 0;
+                return CommandResult.SUCCESS;
             }
 
             if (name == null) {
                 System.err.println("Usage: isx build <image-name>  or  isx build --all");
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                return 1;
+                return CommandResult.valueOf(1);
             }
 
             var imageDef = defs.get(name);
@@ -195,12 +190,12 @@ public class BuildCommand implements Callable<Integer> {
             if (imageDef == null) {
                 System.err.println("Unknown image: " + name);
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                return 1;
+                return CommandResult.valueOf(1);
             }
             build(imageDef, defs);
-            return 0;
+            return CommandResult.SUCCESS;
         } catch (BuildFailedException e) {
-            return 1;
+            return CommandResult.valueOf(1);
         }
     }
 

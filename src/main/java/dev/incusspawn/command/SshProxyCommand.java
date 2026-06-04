@@ -1,37 +1,34 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.incus.IncusClient;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
 
-import java.util.concurrent.Callable;
-
-@Command(
+@CommandDefinition(
         name = "ssh-proxy",
         description = "SSH ProxyCommand that tunnels through the Incus exec API",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class SshProxyCommand implements Callable<Integer> {
+public class SshProxyCommand extends BaseCommand {
 
-    @Parameters(index = "0", description = "Instance name")
+    @Argument(description = "Instance name", required = true)
     String instance;
 
-    @Inject
-    IncusClient incus;
-
     @Override
-    public Integer call() {
-        if (!checkInstanceRunning()) {
-            return 1;
+    protected CommandResult doExecute() throws Exception {
+        var incus = dev.incusspawn.RuntimeServices.incus();
+
+        if (!checkInstanceRunning(incus)) {
+            return CommandResult.valueOf(1);
         }
 
-        return incus.execBidirectional(instance, 0, 0, "/",
+        int exitCode = incus.execBidirectional(instance, 0, 0, "/",
                 new String[]{"nc", "localhost", "22"},
                 System.in, System.out, System.err);
+        return CommandResult.valueOf(exitCode);
     }
 
-    private boolean checkInstanceRunning() {
+    private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
         try {
             var status = incus.getInstanceStatus(instance);
             if (status.isEmpty()) {

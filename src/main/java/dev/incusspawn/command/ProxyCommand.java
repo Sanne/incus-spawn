@@ -2,15 +2,15 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
-import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.proxy.ApiTrafficLog;
 import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Option;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -19,11 +19,11 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-@Command(
+@CommandDefinition(
         name = "proxy",
         description = "Manage the MITM authentication proxy",
-        mixinStandardHelpOptions = true,
-        subcommands = {
+        generateHelp = true,
+        groupCommands = {
                 ProxyCommand.Start.class,
                 ProxyCommand.Stop.class,
                 ProxyCommand.Status.class,
@@ -33,37 +33,39 @@ import java.nio.file.Path;
                 ProxyCommand.Dump.class
         }
 )
-public class ProxyCommand {
+public class ProxyCommand extends BaseCommand {
+
+    @Override
+    protected CommandResult doExecute() throws Exception {
+        System.out.println(commandInvocation.getHelpInfo());
+        return CommandResult.SUCCESS;
+    }
 
     static Path logFile() { return Environment.proxyLogFile(); }
 
-    @Command(
+    @CommandDefinition(
             name = "start",
             description = "Start the MITM authentication proxy (required for non-airgapped containers)",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Start implements Runnable {
+    public static class Start extends BaseCommand {
 
-        @Option(names = "--port", description = "MITM TLS proxy port (default: ${DEFAULT-VALUE})",
-                defaultValue = "18443")
+        @Option(name = "port", description = "MITM TLS proxy port (default: 18443)",
+                defaultValue = {"18443"})
         int port;
 
-        @Option(names = "--health-port", description = "Health check HTTP port (default: ${DEFAULT-VALUE})",
-                defaultValue = "18080")
+        @Option(name = "health-port", description = "Health check HTTP port (default: 18080)",
+                defaultValue = {"18080"})
         int healthPort;
 
-        @Option(names = "--debug", description = "Log full API request/response details for traffic inspection")
+        @Option(name = "debug", description = "Log full API request/response details for traffic inspection",
+                hasValue = false)
         boolean debug;
 
-        @Inject
-        IncusClient incus;
-
-        @Inject
-        picocli.CommandLine.IFactory factory;
-
         @Override
-        public void run() {
-            if (!InitCommand.requireInit(factory)) return;
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
+            if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
             var config = dev.incusspawn.config.SpawnConfig.load();
             var claude = config.getClaude();
             var apiKey = claude.getApiKey();
@@ -71,13 +73,13 @@ public class ProxyCommand {
 
             if (apiKey.isBlank() && !claude.isUseVertex()) {
                 System.err.println("Error: no Claude API key configured. Run 'isx init' first.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             if (claude.isUseVertex()) {
                 if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
                     System.err.println("Error: Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
-                    return;
+                    return CommandResult.valueOf(1);
                 }
             }
 
@@ -87,7 +89,7 @@ public class ProxyCommand {
             } catch (Exception e) {
                 System.err.println("Error: could not determine Incus bridge gateway IP.");
                 System.err.println("Is Incus running? Try 'incus network list'.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             installLogTee();
@@ -136,6 +138,7 @@ public class ProxyCommand {
                 System.err.println("Is another proxy already running? Check port " + port + ".");
                 System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
             }
+            return CommandResult.SUCCESS;
         }
 
         private void installLogTee() {
@@ -150,26 +153,23 @@ public class ProxyCommand {
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "status",
             description = "Check if the MITM TLS proxy is running",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Status implements Runnable {
-
-        @Inject
-        IncusClient incus;
+    public static class Status extends BaseCommand {
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             String gatewayIp;
             try {
                 gatewayIp = MitmProxy.resolveGatewayIp(incus);
             } catch (Exception e) {
                 System.err.println("Could not determine Incus bridge gateway IP.");
                 System.err.println("Is Incus running? Try 'incus network list'.");
-                System.exit(1);
-                return;
+                return CommandResult.valueOf(1);
             }
 
             var status = ProxyHealthCheck.check(incus);
@@ -207,46 +207,44 @@ public class ProxyCommand {
                         System.err.println("Start it with: isx proxy start");
                         System.err.println("Or install as a service: isx proxy install");
                     }
-                    System.exit(1);
+                    return CommandResult.valueOf(1);
                 }
                 case STALE_DNS -> {
                     System.err.println("Proxy is not running, but DNS overrides are still active.");
                     System.err.println("Start the proxy to restore connectivity: isx proxy start");
-                    System.exit(2);
+                    return CommandResult.valueOf(2);
                 }
             }
+            return CommandResult.SUCCESS;
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "stop",
             description = "Stop the proxy (handles both systemd service and manual processes)",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Stop implements Runnable {
-
-        @Inject
-        IncusClient incus;
+    public static class Stop extends BaseCommand {
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             ProxyService.stop();
             MitmProxy.clearBridgeDns(incus);
+            return CommandResult.SUCCESS;
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "install",
             description = "Install the proxy as a systemd user service (auto-starts on boot)",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Install implements Runnable {
-
-        @Inject
-        IncusClient incus;
+    public static class Install extends BaseCommand {
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             if (ProxyService.isActive()) {
                 ProxyService.upgradeIfNeeded();
                 if (ProxyService.reinstallIfChanged(incus)) {
@@ -254,46 +252,44 @@ public class ProxyCommand {
                 } else {
                     System.out.println("Proxy service is already installed and running.");
                 }
-                return;
+                return CommandResult.SUCCESS;
             }
             ProxyService.install();
+            return CommandResult.SUCCESS;
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "uninstall",
             description = "Stop and remove the systemd proxy service",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Uninstall implements Runnable {
-
-        @Inject
-        IncusClient incus;
+    public static class Uninstall extends BaseCommand {
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             if (ProxyService.uninstall()) {
                 MitmProxy.clearBridgeDns(incus);
             }
+            return CommandResult.SUCCESS;
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "logs",
             description = "Follow the proxy log file in real time (like tail -f)",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Logs implements Runnable {
-
-        @Inject
-        IncusClient incus;
+    public static class Logs extends BaseCommand {
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             if (!Files.exists(logFile())) {
                 System.err.println("No proxy log file found at " + logFile());
                 System.err.println("The proxy has not been started yet, or logs have been cleared.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             // Show version and runtime at the beginning
@@ -317,29 +313,32 @@ public class ProxyCommand {
             } catch (IOException | InterruptedException e) {
                 System.err.println("Failed to tail log file: " + e.getMessage());
             }
+            return CommandResult.SUCCESS;
         }
     }
 
-    @Command(
+    @CommandDefinition(
             name = "dump",
             description = "Run a local pass-through proxy to capture host-side API traffic for debugging",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Dump implements Runnable {
+    public static class Dump extends BaseCommand {
 
-        @Option(names = "--port", description = "Local HTTP port (default: ${DEFAULT-VALUE})",
-                defaultValue = "19080")
+        @Option(name = "port", description = "Local HTTP port (default: 19080)",
+                defaultValue = {"19080"})
         int port;
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
             try {
                 var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("host"));
                 var proxy = new DumpProxy(port, debugLog);
                 proxy.start();
             } catch (IOException e) {
                 System.err.println("Failed to start dump proxy: " + e.getMessage());
+                return CommandResult.valueOf(1);
             }
+            return CommandResult.SUCCESS;
         }
     }
 

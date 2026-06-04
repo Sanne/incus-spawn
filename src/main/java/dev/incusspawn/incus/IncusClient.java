@@ -2,7 +2,6 @@ package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.incusspawn.config.BuildSource;
-import jakarta.enterprise.context.ApplicationScoped;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,7 +19,6 @@ import java.util.Set;
  * Manages Incus container/VM lifecycle operations.
  * Uses the Incus REST API over Unix socket (Linux) or HTTPS (macOS/remote).
  */
-@ApplicationScoped
 public class IncusClient {
 
     private volatile boolean apiInitialized;

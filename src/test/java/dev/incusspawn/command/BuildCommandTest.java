@@ -8,7 +8,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
-import jakarta.enterprise.inject.Instance;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 

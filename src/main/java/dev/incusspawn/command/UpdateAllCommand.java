@@ -1,35 +1,30 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.Metadata;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
 
 import java.util.ArrayList;
 
-@Command(
+@CommandDefinition(
         name = "update-all",
         description = "Update all templates (system packages, git repos, dependencies)",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class UpdateAllCommand implements Runnable {
-
-    @Inject
-    IncusClient incus;
-
-    @Inject
-    picocli.CommandLine.IFactory factory;
+public class UpdateAllCommand extends BaseCommand {
 
     @Override
-    public void run() {
-        if (!InitCommand.requireInit(factory)) return;
+    protected CommandResult doExecute() throws Exception {
+        if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
+        var incus = RuntimeServices.incus();
         var instances = incus.list();
         var templates = new ArrayList<String>();
 
         // Collect base images first, then project images (order matters for dependencies)
         for (var instance : instances) {
             var name = instance.get("name");
-            var type = getType(name);
+            var type = Metadata.getType(incus, name);
             if (Metadata.TYPE_BASE.equals(type)) {
                 templates.add(0, name); // bases first
             } else if (Metadata.TYPE_PROJECT.equals(type)) {
@@ -39,21 +34,22 @@ public class UpdateAllCommand implements Runnable {
 
         if (templates.isEmpty()) {
             System.out.println("No templates found. Run 'isx build' first.");
-            return;
+            return CommandResult.valueOf(1);
         }
 
         System.out.println("Updating " + templates.size() + " template(s)...\n");
 
         for (var name : templates) {
             System.out.println("--- Updating " + name + " ---");
-            updateImage(name);
+            updateImage(incus, name);
             System.out.println();
         }
 
         System.out.println("All templates updated.");
+        return CommandResult.SUCCESS;
     }
 
-    private void updateImage(String name) {
+    private void updateImage(dev.incusspawn.incus.IncusClient incus, String name) {
         incus.start(name);
         incus.waitForReady(name);
 
@@ -72,14 +68,6 @@ public class UpdateAllCommand implements Runnable {
 
         incus.stop(name);
         System.out.println("  Done.");
-    }
-
-    private String getType(String name) {
-        try {
-            return incus.configGet(name, Metadata.TYPE);
-        } catch (Exception e) {
-            return "";
-        }
     }
 
 }

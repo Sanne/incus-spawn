@@ -3,12 +3,10 @@ package dev.incusspawn.tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
-import jakarta.enterprise.context.Dependent;
 
 import java.io.IOException;
 import java.nio.file.Files;
 
-@Dependent
 public class ClaudeSetup implements ToolSetup {
 
     private static final String DOWNLOAD_BASE_URL = "https://downloads.claude.ai/claude-code-releases";

@@ -1,35 +1,37 @@
 package dev.incusspawn.command;
 
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
-@Command(
+@CommandDefinition(
         name = "completion",
         description = "Print shell completion script",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class CompletionCommand implements Runnable {
+public class CompletionCommand extends BaseCommand {
 
     enum Shell { bash, zsh, fish }
 
-    @Parameters(index = "0", description = "Shell type: bash, zsh, fish", arity = "0..1", defaultValue = "bash")
+    @Argument(description = "Shell type: bash, zsh, fish", required = false, defaultValue = {"bash"})
     Shell shell;
 
-    @Option(names = "--install", description = "Print installation instructions instead of the script")
+    @Option(name = "install", description = "Print installation instructions instead of the script", hasValue = false)
     boolean install;
 
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
         if (install) {
             printInstallInstructions();
-            return;
+            return CommandResult.SUCCESS;
         }
         switch (shell) {
             case zsh  -> System.out.println(ZSH_COMPLETION);
             case bash -> System.out.println(BASH_COMPLETION);
             case fish -> System.out.println(FISH_COMPLETION);
         }
+        return CommandResult.SUCCESS;
     }
 
     private void printInstallInstructions() {

@@ -8,9 +8,9 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyService;
-import jakarta.inject.Inject;
-import picocli.CommandLine;
-import picocli.CommandLine.Command;
+import dev.incusspawn.RuntimeServices;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
 
 import java.io.Console;
 import java.io.IOException;
@@ -23,18 +23,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
-@Command(
+@CommandDefinition(
         name = "init",
         description = "One-time host setup: install Incus, configure auth, test connectivity",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class InitCommand implements Runnable {
+public class InitCommand extends BaseCommand {
 
-    @Inject
-    IncusClient incus;
-
-    @Inject
-    CommandLine.IFactory factory;
+    private IncusClient incus;
 
     /**
      * Check if init has been run. If not, print a warning and auto-launch init.
@@ -42,7 +38,7 @@ public class InitCommand implements Runnable {
      *
      * @return true if init is complete (either already or just ran), false if user aborted
      */
-    public static boolean requireInit(CommandLine.IFactory factory) {
+    public static boolean requireInit() {
         if (!requireLinux()) return false;
         if (hasBeenInitialized()) return true;
 
@@ -51,8 +47,13 @@ public class InitCommand implements Runnable {
         System.out.println("  Running 'isx init' to configure Incus, authentication, and the MITM proxy...");
         System.out.println();
 
-        var exitCode = new CommandLine(InitCommand.class, factory).execute();
-        return exitCode == 0 && hasBeenInitialized();
+        try {
+            var result = new InitCommand().doExecute();
+            return result.getResultValue() == 0 && hasBeenInitialized();
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -85,9 +86,10 @@ public class InitCommand implements Runnable {
     }
 
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
+        this.incus = RuntimeServices.incus();
         if (!requireLinux()) {
-            System.exit(1);
+            return CommandResult.valueOf(1);
         }
         System.out.println("=== incus-spawn init ===\n");
 
@@ -117,6 +119,7 @@ public class InitCommand implements Runnable {
             System.out.println("  2. Start the auth proxy:  isx proxy start");
         }
         System.out.println("  3. Launch the TUI:        isx");
+        return CommandResult.SUCCESS;
     }
 
     /**

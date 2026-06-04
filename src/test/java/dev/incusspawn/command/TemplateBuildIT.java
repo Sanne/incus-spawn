@@ -1,9 +1,10 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
+import org.aesh.AeshRuntimeRunner;
 import org.junit.jupiter.api.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -18,11 +19,7 @@ class TemplateBuildIT {
 
     private static final String TEST_MINIMAL = "test-tpl-minimal";
 
-    @Inject
-    IncusClient incus;
-
-    @Inject
-    picocli.CommandLine.IFactory factory;
+    private IncusClient incus = RuntimeServices.incus();
 
     @AfterAll
     static void cleanup() {
@@ -43,8 +40,11 @@ class TemplateBuildIT {
             incus.delete(TEST_MINIMAL, true);
         }
 
-        var exitCode = new picocli.CommandLine(BuildCommand.class, factory)
-                .execute(TEST_MINIMAL);
+        var result = AeshRuntimeRunner.builder()
+                .command(BuildCommand.class)
+                .args(new String[]{TEST_MINIMAL})
+                .execute();
+        int exitCode = result != null ? result.getResultValue() : 1;
         assertEquals(0, exitCode, "Build command should succeed");
         assertTrue(incus.exists(TEST_MINIMAL), "Image should exist after build");
     }

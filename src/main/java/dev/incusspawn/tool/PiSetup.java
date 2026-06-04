@@ -1,11 +1,9 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.incus.Container;
-import jakarta.enterprise.context.Dependent;
 
 import java.util.List;
 
-@Dependent
 public class PiSetup implements ToolSetup {
 
     @Override

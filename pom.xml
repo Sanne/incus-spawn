@@ -39,6 +39,7 @@
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.5.5</surefire-plugin.version>
         <tamboui.version>0.3.0</tamboui.version>
+        <aesh.version>3.10</aesh.version>
     </properties>
 
     <dependencyManagement>
@@ -56,11 +57,18 @@
     <dependencies>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-picocli</artifactId>
+            <artifactId>quarkus-arc</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-arc</artifactId>
+            <groupId>org.aesh</groupId>
+            <artifactId>aesh</artifactId>
+            <version>${aesh.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.aesh</groupId>
+                    <artifactId>readline</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -76,7 +84,7 @@
         </dependency>
         <dependency>
             <groupId>dev.tamboui</groupId>
-            <artifactId>tamboui-picocli</artifactId>
+            <artifactId>tamboui-tui</artifactId>
             <version>${tamboui.version}</version>
         </dependency>
         <dependency>
@@ -155,6 +163,13 @@
                 <version>${compiler-plugin.version}</version>
                 <configuration>
                     <parameters>true</parameters>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.aesh</groupId>
+                            <artifactId>aesh-processor</artifactId>
+                            <version>${aesh.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <plugin>

@@ -2,7 +2,6 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
-import jakarta.enterprise.context.Dependent;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,7 +18,6 @@ import java.util.Map;
  * → project-local ({@code .incus-spawn/tools/}). Later definitions with the
  * same name override earlier ones.
  */
-@Dependent
 public class ToolDefLoader {
 
     private static final String RESOURCE_DIR = "tools/";

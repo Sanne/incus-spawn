@@ -54,10 +54,10 @@ import dev.tamboui.widgets.scrollbar.Scrollbar;
 import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
 import dev.tamboui.widgets.scrollbar.ScrollbarState;
 import dev.tamboui.widgets.table.TableState;
-import jakarta.enterprise.inject.Instance;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
+import dev.incusspawn.RuntimeServices;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Option;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -67,33 +67,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-@Command(
+@CommandDefinition(
         name = "list",
         description = "List all incus-spawn environments",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class ListCommand implements Runnable {
+public class ListCommand extends BaseCommand {
 
-    @Option(names = "--plain", description = "Plain text output (no TUI)")
+    @Option(name = "plain", hasValue = false, description = "Plain text output (no TUI)")
     boolean plain;
 
-    @Inject
-    IncusClient incus;
+    private IncusClient incus;
 
-    @Inject
-    ToolDefLoader toolDefLoader;
+    private ToolDefLoader toolDefLoader;
 
-    @Inject
-    Instance<ToolAction> toolActions;
+    private BackgroundTaskManager backgroundTasks;
 
-    @Inject
-    picocli.CommandLine.IFactory factory;
-
-    @Inject
-    BackgroundTaskManager backgroundTasks;
-
-    @Inject
-    InstanceLockManager lockManager;
+    private InstanceLockManager lockManager;
 
     // Background operation state
     private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
@@ -177,8 +167,16 @@ public class ListCommand implements Runnable {
     private List<InstanceInfo> rowToEntry;
     private TableState instanceTableState;
 
+    public void executeDirect() {
+        try { doExecute(); } catch (Exception e) { System.err.println("Error: " + e.getMessage()); }
+    }
+
     @Override
-    public void run() {
+    protected CommandResult doExecute() {
+        this.incus = RuntimeServices.incus();
+        this.toolDefLoader = RuntimeServices.toolDefLoader();
+        this.backgroundTasks = RuntimeServices.backgroundTasks();
+        this.lockManager = RuntimeServices.lockManager();
         reloadData();
         if (plain) {
             if (entries.isEmpty() && templateEntries.stream().noneMatch(t -> !"not built".equals(t.buildStatus))) {
@@ -190,6 +188,7 @@ public class ListCommand implements Runnable {
         } else {
             runTuiLoop();
         }
+        return CommandResult.SUCCESS;
     }
 
     // --- TUI lifecycle ---
@@ -279,8 +278,8 @@ public class ListCommand implements Runnable {
                         returnToTemplate = buildTarget;
                     }
                     try {
-                        int exitCode = new picocli.CommandLine(BuildCommand.class, factory)
-                                .execute(args);
+                        var buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
+                        int exitCode = buildResult != null ? buildResult.getResultValue() : 1;
                         statusMessage = exitCode == 0
                                 ? buildStatusMessage(pendingBuildArgs, true)
                                 : buildStatusMessage(pendingBuildArgs, false);
@@ -290,8 +289,8 @@ public class ListCommand implements Runnable {
                 }
                 case EDIT_TEMPLATE -> {
                     returnToTemplate = pendingActionTarget;
-                    new picocli.CommandLine(TemplatesCommand.Edit.class, factory)
-                            .execute(pendingActionTarget);
+                    try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget; editCmd.doExecute(); }
+                    catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                 }
                 case EXECUTE_ACTION -> {
                     var result = pendingToolAction.execute(pendingToolActionContext);
@@ -2328,13 +2327,6 @@ public class ListCommand implements Runnable {
                         addActionIfAllowed(actions, action, instance);
                     }
                 }
-            }
-        }
-
-        // CDI-declared actions
-        for (var action : toolActions) {
-            if (tools.contains(action.toolName())) {
-                addActionIfAllowed(actions, action, instance);
             }
         }
 

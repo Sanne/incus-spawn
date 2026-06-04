@@ -1,6 +1,5 @@
 package dev.incusspawn.tui;
 
-import jakarta.enterprise.context.ApplicationScoped;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -15,7 +14,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * Manages background tasks for TUI operations (delete, stop, etc.).
  * Tasks run on virtual threads and update their state asynchronously.
  */
-@ApplicationScoped
 public class BackgroundTaskManager {
 
     private final Map<String, BackgroundTask> tasks = new ConcurrentHashMap<>();

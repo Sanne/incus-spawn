@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
@@ -13,68 +14,70 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
-@Command(
+
+@CommandDefinition(
         name = "branch",
         description = "Create a new instance from an existing one",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class BranchCommand implements Runnable {
+public class BranchCommand extends BaseCommand {
 
-    @Parameters(index = "0", description = "Name for the new instance")
+    @Argument(description = "Name for the new instance", required = true)
     String name;
 
-    @Option(names = "--from", description = "Source instance to branch from (auto-detected from cwd if omitted)")
+    @Option(name = "from", description = "Source instance to branch from (auto-detected from cwd if omitted)")
     String source;
 
-    @Option(names = "--gui", description = "Enable GUI passthrough (Wayland + GPU + audio)")
+    @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio)", hasValue = false)
     boolean gui;
 
-    @Option(names = "--airgap", description = "Disable network access (complete isolation)")
+    @Option(name = "airgap", description = "Disable network access (complete isolation)", hasValue = false)
     boolean airgap;
 
-    @Option(names = "--proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)")
+    @Option(name = "proxy-only", description = "Restrict network to host proxy only (Claude + GitHub via proxy)", hasValue = false)
     boolean proxyOnly;
 
-    @Option(names = "--inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
+    @Option(name = "inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
 
-    @Option(names = "--cpu", description = "CPU core limit (default: adaptive)")
+    @Option(name = "cpu", description = "CPU core limit (default: adaptive)")
     Integer cpuLimit;
 
-    @Option(names = "--memory", description = "Memory limit, e.g. '8GB' (default: adaptive)")
+    @Option(name = "memory", description = "Memory limit, e.g. '8GB' (default: adaptive)")
     String memoryLimit;
 
-    @Option(names = "--disk", description = "Disk size limit (default: adaptive)")
+    @Option(name = "disk", description = "Disk size limit (default: adaptive)")
     String diskLimit;
 
-    @Option(names = "--no-start", description = "Don't start the instance after creation")
+    @Option(name = "no-start", description = "Don't start the instance after creation", hasValue = false)
     boolean noStart;
 
-    @Inject
-    IncusClient incus;
+    private IncusClient incus;
 
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
+        this.incus = RuntimeServices.incus();
+
         var resolvedSource = resolveSource();
-        if (resolvedSource == null) return;
+        if (resolvedSource == null) return CommandResult.valueOf(1);
 
         if (incus.exists(name)) {
             System.err.println("Error: an instance named '" + name + "' already exists.");
-            return;
+            return CommandResult.valueOf(1);
         }
 
         var networkMode = resolveNetworkMode();
         if (networkMode != NetworkMode.AIRGAP) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) return;
+            if (!ProxyHealthCheck.checkOrWarn(incus)) return CommandResult.valueOf(1);
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewalldCheck.warnIfNotRunning();
-            if (checkCaMismatch(resolvedSource)) return;
+            if (checkCaMismatch(resolvedSource)) return CommandResult.valueOf(1);
         }
 
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
@@ -106,7 +109,7 @@ public class BranchCommand implements Runnable {
 
         if (noStart) {
             System.out.println("Branch '" + name + "' created (not started).");
-            return;
+            return CommandResult.SUCCESS;
         }
 
         incus.start(name);
@@ -115,6 +118,7 @@ public class BranchCommand implements Runnable {
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser");
+        return CommandResult.SUCCESS;
     }
 
     private String resolveSource() {

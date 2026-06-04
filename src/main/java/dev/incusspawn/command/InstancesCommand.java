@@ -1,24 +1,24 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.incus.IncusClient;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
+import dev.incusspawn.RuntimeServices;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
 
-@Command(
+@CommandDefinition(
         name = "instances",
         description = "List connectable instance names (excludes templates)",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class InstancesCommand implements Runnable {
-
-    @Inject
-    IncusClient incus;
+public class InstancesCommand extends BaseCommand {
 
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
+        var incus = RuntimeServices.incus();
+
         incus.list().stream()
                 .map(m -> m.get("name"))
                 .filter(name -> !name.startsWith("tpl-"))
                 .forEach(System.out::println);
+        return CommandResult.SUCCESS;
     }
 }

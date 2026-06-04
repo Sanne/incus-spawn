@@ -1,7 +1,6 @@
 package dev.incusspawn.tui;
 
 import dev.incusspawn.Environment;
-import jakarta.enterprise.context.ApplicationScoped;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -38,7 +37,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * The global lock is held only for the brief file syscalls; per-instance
  * fcntl locks provide the long-running mutual exclusion.
  */
-@ApplicationScoped
 public class FlockInstanceLockManager implements InstanceLockManager {
 
     private record HeldLock(FileChannel channel, FileLock lock) {}

@@ -1,46 +1,45 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.git.GitRemoteUtils;
-import dev.incusspawn.incus.IncusClient;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Argument;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
-import java.util.concurrent.Callable;
 
-@Command(
+@CommandDefinition(
         name = "git-remote-helper",
         description = "Git remote helper for isx:// URLs (invoked by git, not directly)",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class GitRemoteHelperCommand implements Callable<Integer> {
+public class GitRemoteHelperCommand extends BaseCommand {
 
     private static final Set<String> ALLOWED_SERVICES = Set.of("git-upload-pack", "git-receive-pack");
 
-    @Parameters(index = "0", description = "Instance name")
+    @Argument(index = "0", description = "Instance name", required = true)
     String instance;
 
-    @Parameters(index = "1", description = "Git service (git-upload-pack or git-receive-pack)")
+    @Argument(index = "1", description = "Git service (git-upload-pack or git-receive-pack)", required = true)
     String service;
 
-    @Parameters(index = "2", description = "Repository path inside the container")
+    @Argument(index = "2", description = "Repository path inside the container", required = true)
     String path;
 
-    @Inject
-    IncusClient incus;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation invocation) throws InterruptedException {
+        var incus = dev.incusspawn.RuntimeServices.incus();
+
         if (!ALLOWED_SERVICES.contains(service)) {
             System.err.println("Error: unknown git service: " + service);
-            return 1;
+            return CommandResult.valueOf(1);
         }
 
-        if (!checkInstanceRunning()) {
-            return 1;
+        if (!checkInstanceRunning(incus)) {
+            return CommandResult.valueOf(1);
         }
 
         var resolvedPath = GitRemoteUtils.expandContainerTilde(path);
@@ -62,12 +61,12 @@ public class GitRemoteHelperCommand implements Callable<Integer> {
         int exitCode = incus.execBidirectional(instance, 1000, 1000, "/home/agentuser",
                 new String[]{service, resolvedPath}, System.in, System.out, stderrOut);
         if (exitCode != 0 && stderrCapture.toString().contains("not a git repository")) {
-            printRepoHints();
+            printRepoHints(incus);
         }
-        return exitCode;
+        return CommandResult.valueOf(exitCode);
     }
 
-    private boolean checkInstanceRunning() {
+    private boolean checkInstanceRunning(dev.incusspawn.incus.IncusClient incus) {
         try {
             if (!incus.exists(instance)) {
                 System.err.println("Error: instance '" + instance + "' does not exist.");
@@ -86,7 +85,7 @@ public class GitRemoteHelperCommand implements Callable<Integer> {
         }
     }
 
-    private void printRepoHints() {
+    private void printRepoHints(dev.incusspawn.incus.IncusClient incus) {
         var repos = GitRemoteUtils.collectReposForInstance(instance, incus);
         if (repos.isEmpty()) return;
 

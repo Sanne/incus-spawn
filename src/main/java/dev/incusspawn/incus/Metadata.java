@@ -40,6 +40,14 @@ public final class Metadata {
 
     private Metadata() {}
 
+    public static String getType(IncusClient incus, String name) {
+        try {
+            return incus.configGet(name, TYPE);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     public static String now() {
         return LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }

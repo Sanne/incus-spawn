@@ -1,51 +1,55 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ProjectConfig;
-import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
 
-@Command(
+@CommandDefinition(
         name = "project",
         description = "Manage project templates",
-        mixinStandardHelpOptions = true,
-        subcommands = {
+        generateHelp = true,
+        groupCommands = {
                 ProjectCommand.Create.class,
                 ProjectCommand.Update.class
         }
 )
-public class ProjectCommand {
+public class ProjectCommand extends BaseCommand {
 
-    @Command(
+    @Override
+    protected CommandResult doExecute() throws Exception {
+        System.out.println(commandInvocation.getHelpInfo());
+        return CommandResult.SUCCESS;
+    }
+
+    @CommandDefinition(
             name = "create",
             description = "Create a project template from a parent base image",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Create implements Runnable {
+    public static class Create extends BaseCommand {
 
-        @Parameters(index = "0", description = "Name of the project template")
+        @Argument(required = true, description = "Name of the project template")
         String name;
 
-        @Option(names = "--config", description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
+        @Option(name = "config", description = "Path to incus-spawn.yaml (default: auto-detect from cwd)")
         Path configPath;
 
-        @Inject
-        IncusClient incus;
-
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             var projectConfig = loadConfig();
             var imageName = name != null ? name : projectConfig.getName();
 
             if (imageName == null || imageName.isBlank()) {
                 System.err.println("Error: project name is required (either as argument or in incus-spawn.yaml 'name' field).");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             var parent = projectConfig.getParent();
@@ -53,7 +57,7 @@ public class ProjectCommand {
 
             if (!incus.exists(parent)) {
                 System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             if (incus.exists(imageName)) {
@@ -93,6 +97,7 @@ public class ProjectCommand {
             incus.stop(imageName);
 
             System.out.println("Project template " + imageName + " created successfully.");
+            return CommandResult.SUCCESS;
         }
 
         private ProjectConfig loadConfig() {
@@ -110,27 +115,25 @@ public class ProjectCommand {
 
     }
 
-    @Command(
+    @CommandDefinition(
             name = "update",
             description = "Update a project template (system packages, git repos, dependencies)",
-            mixinStandardHelpOptions = true
+            generateHelp = true
     )
-    public static class Update implements Runnable {
+    public static class Update extends BaseCommand {
 
-        @Parameters(index = "0", description = "Name of the project template to update")
+        @Argument(required = true, description = "Name of the project template to update")
         String name;
 
-        @Option(names = "--config", description = "Path to incus-spawn.yaml")
+        @Option(name = "config", description = "Path to incus-spawn.yaml")
         Path configPath;
 
-        @Inject
-        IncusClient incus;
-
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
             if (!incus.exists(name)) {
                 System.err.println("Error: image '" + name + "' does not exist.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             System.out.println("Updating project template: " + name);
@@ -172,6 +175,7 @@ public class ProjectCommand {
             incus.stop(name);
 
             System.out.println("Project template " + name + " updated successfully.");
+            return CommandResult.SUCCESS;
         }
 
     }

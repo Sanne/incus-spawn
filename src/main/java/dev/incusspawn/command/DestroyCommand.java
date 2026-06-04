@@ -1,44 +1,43 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.git.AutoRemoteService;
-import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.ssh.SshKeyManager;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
-@Command(
+@CommandDefinition(
         name = "destroy",
         description = "Destroy a clone environment",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class DestroyCommand implements Runnable {
+public class DestroyCommand extends BaseCommand {
 
-    @Parameters(index = "0", description = "Name of the environment to destroy")
+    @Argument(description = "Name of the environment to destroy", required = true)
     String name;
 
-    @Option(names = "--force", description = "Force destruction, even for templates")
+    @Option(name = "force", description = "Force destruction, even for templates", hasValue = false)
     boolean force;
 
-    @Inject
-    IncusClient incus;
-
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
+        var incus = RuntimeServices.incus();
+
         if (!incus.exists(name)) {
             System.err.println("Error: no instance named '" + name + "' found.");
-            return;
+            return CommandResult.valueOf(1);
         }
 
         // Safety check: refuse to destroy templates without --force
-        var type = getType(name);
+        var type = Metadata.getType(incus, name);
         if ((Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) && !force) {
             System.err.println("Error: '" + name + "' is a template (type: " + type + ").");
             System.err.println("Destroying templates affects all branches derived from them.");
             System.err.println("Use --force if you really want to destroy it.");
-            return;
+            return CommandResult.valueOf(1);
         }
 
         System.out.println("Destroying " + name + "...");
@@ -46,13 +45,6 @@ public class DestroyCommand implements Runnable {
         AutoRemoteService.removeRemotes(name);
         SshKeyManager.cleanupInstance(name);
         System.out.println("Destroyed " + name + ".");
-    }
-
-    private String getType(String name) {
-        try {
-            return incus.configGet(name, Metadata.TYPE);
-        } catch (Exception e) {
-            return "";
-        }
+        return CommandResult.SUCCESS;
     }
 }

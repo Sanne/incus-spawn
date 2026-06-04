@@ -1,45 +1,44 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewalldCheck;
-import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
-import jakarta.inject.Inject;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Parameters;
+import dev.incusspawn.config.HostResourceSetup;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
 
-@Command(
+@CommandDefinition(
         name = "shell",
         description = "Open a shell in an existing clone",
-        mixinStandardHelpOptions = true
+        generateHelp = true
 )
-public class ShellCommand implements Runnable {
+public class ShellCommand extends BaseCommand {
 
-    @Parameters(index = "0", description = "Name of the clone to connect to")
+    @Argument(description = "Name of the clone to connect to", required = true)
     String name;
 
-    @Inject
-    IncusClient incus;
-
     @Override
-    public void run() {
+    protected CommandResult doExecute() throws Exception {
+        var incus = RuntimeServices.incus();
+
         if (!incus.exists(name)) {
             System.err.println("Error: no instance named '" + name + "' found.");
             System.err.println("Run 'incus-spawn list' to see available environments.");
-            return;
+            return CommandResult.valueOf(1);
         }
 
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) return;
+            if (!ProxyHealthCheck.checkOrWarn(incus)) return CommandResult.valueOf(1);
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewalldCheck.warnIfNotRunning();
-            fixCaMismatch(name);
+            fixCaMismatch(incus, name);
         }
 
         // Start if stopped
@@ -54,9 +53,10 @@ public class ShellCommand implements Runnable {
 
         System.out.println("Connecting to " + name + "...\n");
         incus.interactiveShell(name, "agentuser");
+        return CommandResult.SUCCESS;
     }
 
-    private void fixCaMismatch(String container) {
+    private void fixCaMismatch(dev.incusspawn.incus.IncusClient incus, String container) {
         // Ensure the container is running so we can push the cert
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             HostResourceSetup.removeStaleDevices(incus, container);

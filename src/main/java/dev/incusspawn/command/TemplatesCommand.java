@@ -2,9 +2,10 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.TemplateValidator;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Option;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,38 +14,39 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-@Command(
+@CommandDefinition(
         name = "templates",
         description = "Manage template definitions",
-        mixinStandardHelpOptions = true,
-        subcommands = {
+        generateHelp = true,
+        groupCommands = {
                 TemplatesCommand.ListSub.class,
                 TemplatesCommand.Edit.class,
                 TemplatesCommand.New.class
         }
 )
-public class TemplatesCommand implements Runnable {
+public class TemplatesCommand extends BaseCommand {
 
     @Override
-    public void run() {
-        new ListSub().run();
+    protected CommandResult doExecute() throws Exception {
+        return new ListSub().doExecute();
     }
 
     // ── list ────────────────────────────────────────────────────────────────────
 
-    @Command(name = "list", description = "List available template names",
-            mixinStandardHelpOptions = true)
-    public static class ListSub implements Runnable {
+    @CommandDefinition(name = "list", description = "List available template names",
+            generateHelp = true)
+    public static class ListSub extends BaseCommand {
 
-        @Option(names = {"-v", "--verbose"}, description = "Show source and description")
+        @Option(shortName = 'v', name = "verbose", description = "Show source and description",
+                hasValue = false)
         boolean verbose;
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
             var defs = ImageDef.loadAll();
             if (!verbose) {
                 defs.keySet().forEach(System.out::println);
-                return;
+                return CommandResult.SUCCESS;
             }
             int maxName = defs.keySet().stream().mapToInt(String::length).max().orElse(10);
             int maxSource = defs.values().stream().mapToInt(d -> d.getSource().length()).max().orElse(7);
@@ -54,20 +56,21 @@ public class TemplatesCommand implements Runnable {
                 var def = entry.getValue();
                 System.out.printf(fmt, entry.getKey(), def.getSource(), def.getDescription());
             }
+            return CommandResult.SUCCESS;
         }
     }
 
     // ── edit ────────────────────────────────────────────────────────────────────
 
-    @Command(name = "edit", description = "Edit a template definition in your editor",
-            mixinStandardHelpOptions = true)
-    public static class Edit implements Runnable {
+    @CommandDefinition(name = "edit", description = "Edit a template definition in your editor",
+            generateHelp = true)
+    public static class Edit extends BaseCommand {
 
-        @Parameters(index = "0", description = "Template name (e.g. tpl-java)")
+        @Argument(required = true, description = "Template name (e.g. tpl-java)")
         String name;
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
             name = normalizeName(name);
 
             var defs = ImageDef.loadAll();
@@ -75,7 +78,7 @@ public class TemplatesCommand implements Runnable {
             if (def == null) {
                 System.err.println("Template '" + name + "' not found.");
                 System.err.println("Available templates: " + String.join(", ", defs.keySet()));
-                return;
+                return CommandResult.valueOf(1);
             }
 
             boolean isBuiltinCopy = false;
@@ -98,7 +101,7 @@ public class TemplatesCommand implements Runnable {
                         copyBuiltinResource(filename, editPath);
                     } catch (IOException e) {
                         System.err.println("Failed to copy built-in template: " + e.getMessage());
-                        return;
+                        return CommandResult.valueOf(1);
                     }
                     isBuiltinCopy = true;
                 }
@@ -107,6 +110,7 @@ public class TemplatesCommand implements Runnable {
             }
 
             editLoop(editPath, name, isBuiltinCopy);
+            return CommandResult.SUCCESS;
         }
 
         private void copyBuiltinResource(String filename, Path target) throws IOException {
@@ -122,20 +126,20 @@ public class TemplatesCommand implements Runnable {
 
     // ── new ─────────────────────────────────────────────────────────────────────
 
-    @Command(name = "new", description = "Create a new template definition",
-            mixinStandardHelpOptions = true)
-    public static class New implements Runnable {
+    @CommandDefinition(name = "new", description = "Create a new template definition",
+            generateHelp = true)
+    public static class New extends BaseCommand {
 
-        @Parameters(index = "0", description = "Template name (e.g. my-app or tpl-my-app)",
-                arity = "0..1")
+        @Argument(required = false, description = "Template name (e.g. my-app or tpl-my-app)")
         String name;
 
-        @Option(names = "--project",
-                description = "Create in project-local directory (.incus-spawn/images/)")
+        @Option(name = "project",
+                description = "Create in project-local directory (.incus-spawn/images/)",
+                hasValue = false)
         boolean project;
 
         @Override
-        public void run() {
+        protected CommandResult doExecute() throws Exception {
             var templateName = name != null ? normalizeName(name) : null;
 
             var defs = ImageDef.loadAll();
@@ -143,7 +147,7 @@ public class TemplatesCommand implements Runnable {
                 System.err.println("Template '" + templateName + "' already exists (source: "
                         + defs.get(templateName).getSource() + ").");
                 System.err.println("Use 'isx templates edit " + templateName + "' to modify it.");
-                return;
+                return CommandResult.valueOf(1);
             }
 
             var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
@@ -154,7 +158,7 @@ public class TemplatesCommand implements Runnable {
 
             if (Files.exists(targetPath)) {
                 System.err.println("File already exists: " + targetPath);
-                return;
+                return CommandResult.valueOf(1);
             }
 
             try {
@@ -164,11 +168,12 @@ public class TemplatesCommand implements Runnable {
                 Files.writeString(targetPath, skeleton);
             } catch (IOException e) {
                 System.err.println("Failed to create template file: " + e.getMessage());
-                return;
+                return CommandResult.valueOf(1);
             }
 
             System.out.println("Created " + targetPath);
             editLoop(targetPath, templateName, false);
+            return CommandResult.SUCCESS;
         }
     }
 
