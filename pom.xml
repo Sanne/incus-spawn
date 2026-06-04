@@ -39,7 +39,7 @@
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.5.6</surefire-plugin.version>
         <tamboui.version>0.3.0</tamboui.version>
-        <aesh.version>3.10</aesh.version>
+        <aesh.version>3.11</aesh.version>
     </properties>
 
     <dependencyManagement>
