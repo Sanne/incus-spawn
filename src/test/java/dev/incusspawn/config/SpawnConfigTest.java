@@ -94,6 +94,30 @@ class SpawnConfigTest {
     }
 
     @Test
+    void deserializeIncusBridgeGateway() throws Exception {
+        var yaml = """
+                incus-bridge-gateway: "10.166.11.1"
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertEquals("10.166.11.1", config.getIncusBridgeGateway());
+    }
+
+    @Test
+    void incusBridgeGatewayDefaultsToEmpty() throws Exception {
+        var config = YAML.readValue("{}", SpawnConfig.class);
+        assertEquals("", config.getIncusBridgeGateway());
+    }
+
+    @Test
+    void incusBridgeGatewaySetterHandlesNull() {
+        var config = new SpawnConfig();
+        config.setIncusBridgeGateway(null);
+        assertEquals("", config.getIncusBridgeGateway());
+        config.setIncusBridgeGateway("10.1.2.3");
+        assertEquals("10.1.2.3", config.getIncusBridgeGateway());
+    }
+
+    @Test
     void deserializeSearchPaths() throws Exception {
         var yaml = """
                 searchPaths:

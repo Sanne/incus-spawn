@@ -222,7 +222,7 @@ public class MitmProxy {
                 addr = addr.substring(0, addr.indexOf('/'));
             }
             return addr;
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             var cached = SpawnConfig.load().getIncusBridgeGateway();
             if (!cached.isEmpty()) return cached;
             throw e;

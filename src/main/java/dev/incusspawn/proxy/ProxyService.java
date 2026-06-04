@@ -53,13 +53,13 @@ public final class ProxyService {
 
                 [Service]
                 Type=simple
-                ExecStart=/usr/bin/sg incus-admin -c "exec %s proxy start"
+                %s
                 Restart=on-failure
                 RestartSec=5
 
                 [Install]
                 WantedBy=default.target
-                """.formatted(isxPath);
+                """.formatted(execStartLine(isxPath));
 
         try {
             Files.createDirectories(Environment.proxyServiceFile().getParent());
@@ -303,7 +303,8 @@ public final class ProxyService {
     }
 
     private static String execStartLine(String isxPath) {
-        return "ExecStart=/usr/bin/sg incus-admin -c \"exec " + isxPath + " proxy start\"";
+        var quoted = isxPath.replace("'", "'\\''");
+        return "ExecStart=/usr/bin/sg incus-admin -c \"exec '" + quoted + "' proxy start\"";
     }
 
     private static void runQuiet(String... command) {
