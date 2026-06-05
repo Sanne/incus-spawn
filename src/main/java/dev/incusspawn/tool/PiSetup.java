@@ -15,7 +15,7 @@ public class PiSetup implements ToolSetup {
     public List<String> packages() {
         // fd-find (provides 'fd') and ripgrep (provides 'rg') are pre-installed so
         // pi's tools-manager finds them in PATH and skips downloading them on first run.
-        return List.of("nodejs", "npm", "fd-find", "ripgrep");
+        return List.of("nodejs", "fd-find", "ripgrep");
     }
 
     @Override
@@ -28,7 +28,7 @@ public class PiSetup implements ToolSetup {
     private void installBinary(Container c) {
         System.out.println("Installing Pi coding agent...");
         c.runInteractive("Failed to install Pi coding agent",
-                "npm", "install", "-g", "@earendil-works/pi-coding-agent");
+                "npm", "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent");
     }
 
     private void configureSettings(Container c) {

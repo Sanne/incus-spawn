@@ -22,7 +22,7 @@ class PiSetupTest {
     void declaresRequiredPackages() {
         // fd-find and ripgrep are pre-installed so pi's tools-manager finds them
         // in PATH and skips downloading them on first run.
-        assertEquals(java.util.List.of("nodejs", "npm", "fd-find", "ripgrep"), new PiSetup().packages());
+        assertEquals(java.util.List.of("nodejs", "fd-find", "ripgrep"), new PiSetup().packages());
     }
 
     @Test
@@ -34,7 +34,7 @@ class PiSetupTest {
         new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
         verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("npm"), eq("install"), eq("-g"), eq("@earendil-works/pi-coding-agent"));
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("@earendil-works/pi-coding-agent"));
     }
 
     @Test
