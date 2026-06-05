@@ -19,8 +19,10 @@ class PiSetupTest {
     }
 
     @Test
-    void declaresNodejsAndNpmPackages() {
-        assertEquals(java.util.List.of("nodejs", "npm"), new PiSetup().packages());
+    void declaresRequiredPackages() {
+        // fd-find and ripgrep are pre-installed so pi's tools-manager finds them
+        // in PATH and skips downloading them on first run.
+        assertEquals(java.util.List.of("nodejs", "npm", "fd-find", "ripgrep"), new PiSetup().packages());
     }
 
     @Test
