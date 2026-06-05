@@ -36,6 +36,11 @@ public class Container {
         }
     }
 
+    /** Run a shell snippet as a specific user with a login shell. Returns the result for inspection. */
+    public IncusClient.ExecResult shAsUser(String user, String script) {
+        return incus.execInContainer(name, user, script);
+    }
+
     /** Run a shell snippet as a specific user with a login shell. Fails on non-zero exit. */
     public void runAsUser(String user, String script, String failureMessage) {
         int exitCode = incus.shellExecInteractiveAsUser(name, user, script);
