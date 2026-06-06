@@ -34,7 +34,7 @@ class PiSetupTest {
         new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
         verify(incus).shellExecInteractive(eq(CONTAINER),
-                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("@earendil-works/pi-coding-agent"));
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@earendil-works/pi-coding-agent"));
     }
 
     @Test
