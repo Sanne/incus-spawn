@@ -627,8 +627,12 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
         incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+        incus.pollUntilReady(buildName, 30,
+                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'");
         incus.restart(buildName);
         waitForReady(buildName);
+        incus.pollUntilReady(buildName, 30,
+                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'");
 
         var container = new Container(incus, buildName);
 
