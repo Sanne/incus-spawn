@@ -24,7 +24,26 @@ public final class ProxyHealthCheck {
 
     private ProxyHealthCheck() {}
 
+    private record CacheEntry(IncusClient client, ProxyStatus status, long timestamp) {}
+    private static volatile CacheEntry cache;
+    private static final long CACHE_TTL_MS = 2000;
+
     public static ProxyStatus check(IncusClient incus) {
+        var entry = cache;
+        if (entry != null && entry.client == incus
+                && (System.currentTimeMillis() - entry.timestamp) < CACHE_TTL_MS) {
+            return entry.status;
+        }
+        var result = checkUncached(incus);
+        cache = new CacheEntry(incus, result, System.currentTimeMillis());
+        return result;
+    }
+
+    public static void invalidateCache() {
+        cache = null;
+    }
+
+    private static ProxyStatus checkUncached(IncusClient incus) {
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         if (isHealthy(gatewayIp)) {
             return ProxyStatus.RUNNING;
@@ -44,8 +63,8 @@ public final class ProxyHealthCheck {
         try {
             var url = URI.create("http://" + gatewayIp + ":" + port + "/health").toURL();
             var conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(2000);
-            conn.setReadTimeout(2000);
+            conn.setConnectTimeout(500);
+            conn.setReadTimeout(500);
             conn.setRequestMethod("GET");
             return conn.getResponseCode() == 200;
         } catch (Exception e) {

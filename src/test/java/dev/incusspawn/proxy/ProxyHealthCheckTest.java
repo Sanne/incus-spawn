@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import com.sun.net.httpserver.HttpServer;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.incus.IncusClient;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
@@ -11,6 +12,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ProxyHealthCheckTest {
+
+    @AfterEach
+    void clearCache() {
+        ProxyHealthCheck.invalidateCache();
+    }
 
     @Test
     void isHealthyReturnsTrueWhenServerResponds() throws Exception {
