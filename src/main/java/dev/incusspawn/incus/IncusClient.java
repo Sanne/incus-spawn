@@ -134,9 +134,11 @@ public class IncusClient {
     }
 
     /**
-     * Poll a command inside a container until it succeeds or retries are exhausted.
+     * Poll a command inside a container until it succeeds or the timeout expires.
+     * @param timeoutSeconds maximum wait time in seconds; polls every 200ms for fast detection.
      */
-    public boolean pollUntilReady(String name, int maxAttempts, String... command) {
+    public boolean pollUntilReady(String name, int timeoutSeconds, String... command) {
+        int maxAttempts = timeoutSeconds * 5;
         for (int i = 0; i < maxAttempts; i++) {
             try {
                 if (shellExec(name, command).success()) return true;
@@ -144,7 +146,7 @@ public class IncusClient {
                 // Container may not be Running yet — treat any exec failure as not-ready and retry.
             }
             try {
-                Thread.sleep(1000);
+                Thread.sleep(200);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -154,7 +156,9 @@ public class IncusClient {
     }
 
     public void waitForReady(String name) {
-        pollUntilReady(name, 30, "true");
+        if (!pollUntilReady(name, 30, "echo", "ready")) {
+            throw new IncusException("Container " + name + " failed to become ready after 30 seconds");
+        }
     }
 
     /**

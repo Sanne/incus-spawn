@@ -989,7 +989,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void waitForReady(String container) {
-        if (!incus.pollUntilReady(container, 30, "true")) {
+        if (!incus.pollUntilReady(container, 30, "echo", "ready")) {
             throw new RuntimeException(
                     "Container " + container + " failed to become ready after 30 seconds");
         }
