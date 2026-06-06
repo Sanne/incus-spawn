@@ -555,6 +555,15 @@ public class BuildCommand extends BaseCommand {
         incus.copy(parentSource, buildName);
         incus.start(buildName);
         waitForReady(buildName);
+
+        // Re-apply DNS fix — systemd-resolved can re-enable after copy+start
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        new Container(incus, buildName).sh(
+                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
+                "rm -f /etc/resolv.conf; " +
+                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
+                .assertSuccess("Failed to fix DNS after copy");
+
         waitForNetwork(buildName);
 
         mountDnfCache(buildName);
@@ -627,12 +636,16 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
         incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
-        incus.pollUntilReady(buildName, 30,
-                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'");
+        if (!incus.pollUntilReady(buildName, 30,
+                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
+            System.err.println("Warning: systemd did not reach running/degraded before restart — continuing anyway");
+        }
         incus.restart(buildName);
         waitForReady(buildName);
-        incus.pollUntilReady(buildName, 30,
-                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'");
+        if (!incus.pollUntilReady(buildName, 30,
+                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
+            System.err.println("Warning: systemd did not reach running/degraded after restart — DNS setup may fail");
+        }
 
         var container = new Container(incus, buildName);
 
