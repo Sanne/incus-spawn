@@ -241,12 +241,20 @@ public class MitmProxy {
     public static void configureBridgeDns(IncusClient incus) {
         try {
             var gatewayIp = resolveGatewayIp(incus);
-            var dnsmasqConfig = interceptedDomains().stream()
+            var overrides = interceptedDomains().stream()
                     .sorted()
                     .flatMap(d -> java.util.stream.Stream.of(
                             "address=/" + d + "/" + gatewayIp,
                             "address=/" + d + "/::"))
                     .collect(java.util.stream.Collectors.joining("\n"));
+
+            // Preserve any existing server= lines (upstream DNS forwarders).
+            var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+            var servers = existing.lines()
+                    .filter(l -> l.startsWith("server="))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
+
             incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
             System.out.println("  DNS overrides: " + interceptedDomains().size() +
                     " domains -> " + gatewayIp + " (via bridge dnsmasq)");
