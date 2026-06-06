@@ -39,6 +39,8 @@ if $NATIVE; then
             exit 1
         fi
         export JAVA_HOME="$GRAALVM_HOME"
+        PLIST="$(cd "$SCRIPT_DIR" && pwd)/src/main/resources/Info.plist"
+        NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.additional-build-args-append=-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=$PLIST"
     fi
     "$SCRIPT_DIR/mvnw" package $NATIVE_ARGS
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."

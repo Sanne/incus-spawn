@@ -6,6 +6,9 @@ on:
       - 'v*'
 
 jobs:
+  appliance:
+    uses: ./.github/workflows/build-appliance.yml
+
   build:
     strategy:
       matrix:
@@ -59,7 +62,7 @@ jobs:
           path: target/incus-spawn-linux-${{ matrix.arch }}
 
   release:
-    needs: build
+    needs: [build, appliance]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,12 +77,26 @@ jobs:
         with:
           path: artifacts
 
+      - name: Prepare appliance artifacts
+        run: |
+          for arch in x86_64 aarch64; do
+            dir="artifacts/appliance-${arch}"
+            if [ -d "$dir" ]; then
+              cp "$dir/vmlinuz" "artifacts/vmlinuz-${arch}"
+              cp "$dir/disk.img.gz" "artifacts/disk-${arch}.img.gz"
+            fi
+          done
+
       - name: Create GitHub Release
         run: |
           gh release create $GITHUB_REF_NAME \
             artifacts/uber-jar/incus-spawn-runner.jar \
             artifacts/native-amd64/incus-spawn-linux-amd64 \
             artifacts/native-aarch64/incus-spawn-linux-aarch64 \
+            artifacts/vmlinuz-x86_64 \
+            artifacts/vmlinuz-aarch64 \
+            artifacts/disk-x86_64.img.gz \
+            artifacts/disk-aarch64.img.gz \
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -46,6 +46,14 @@ public class IncusClient {
     }
 
     /**
+     * Probe whether an Incus daemon is reachable (via socket or HTTPS remote).
+     * Does not cache — each call performs a fresh connection attempt.
+     */
+    public static boolean isReachable() {
+        return IncusApi.tryConnect() != null;
+    }
+
+    /**
      * Probe the daemon and return its version string, or "unknown" if unreachable.
      * Used for informational display (isx version, proxy status). Static so it can
      * be called at class-init time from Environment.java.

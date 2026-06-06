@@ -93,6 +93,85 @@ public final class Environment {
     }
 
     public static final String OS_NAME = System.getProperty("os.name").toLowerCase();
+
+    public static boolean isMacOS() {
+        return OS_NAME.contains("mac");
+    }
+
+    public static boolean isLinux() {
+        return OS_NAME.contains("linux");
+    }
+
+    // --- VM state paths (under ~/.local/state/incus-spawn/) ---
+
+    public static Path vmStateDir() {
+        return home().resolve(".local/state/incus-spawn");
+    }
+
+    public static Path vmPidFile() {
+        return vmStateDir().resolve("vm.pid");
+    }
+
+    public static Path vmLogFile() {
+        return vmStateDir().resolve("vm.log");
+    }
+
+    public static Path vmRestUriFile() {
+        return vmStateDir().resolve("vm.rest-uri");
+    }
+
+    public static Path vmDiskImage() {
+        return vmStateDir().resolve("disk.img");
+    }
+
+    public static Path vmDummyInitrd() {
+        return vmStateDir().resolve("empty-initrd");
+    }
+
+    // --- VM appliance artifact paths ---
+
+    public static Path applianceDir() {
+        var envDir = System.getenv("ISX_APPLIANCE_DIR");
+        if (envDir != null && !envDir.isBlank()) {
+            return Path.of(envDir);
+        }
+        return home().resolve(".local/share/incus-spawn/appliance");
+    }
+
+    public static Path applianceKernel() {
+        return applianceDir().resolve("vmlinuz");
+    }
+
+    public static Path applianceRootfs() {
+        return applianceDir().resolve("rootfs.tar.zst");
+    }
+
+    public static Path applianceDiskImage() {
+        return applianceDir().resolve("disk.img.gz");
+    }
+
+    // --- Incus client config paths (used by HttpsTransport on macOS) ---
+
+    public static Path incusConfigDir() {
+        return home().resolve(".config/incus");
+    }
+
+    public static Path incusConfigFile() {
+        return incusConfigDir().resolve("config.yml");
+    }
+
+    public static Path incusClientCert() {
+        return incusConfigDir().resolve("client.crt");
+    }
+
+    public static Path incusClientKey() {
+        return incusConfigDir().resolve("client.key");
+    }
+
+    public static Path incusServerCertsDir() {
+        return incusConfigDir().resolve("servercerts");
+    }
+
     public static final String INCUS_CLIENT;
     public static final String INCUS_SERVER;
     static {
