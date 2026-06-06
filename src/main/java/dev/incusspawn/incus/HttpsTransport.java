@@ -37,6 +37,7 @@ class HttpsTransport implements IncusTransport {
         this.wsBaseUrl = this.baseUrl.replace("https://", "wss://");
         this.httpClient = HttpClient.newBuilder()
                 .sslContext(sslContext)
+                .connectTimeout(java.time.Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
     }
@@ -141,20 +142,73 @@ class HttpsTransport implements IncusTransport {
             var tmf = javax.net.ssl.TrustManagerFactory.getInstance(
                     javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(ts);
-            return tmf.getTrustManagers()[0];
+            var tms = tmf.getTrustManagers();
+            if (tms.length == 0 || !(tms[0] instanceof javax.net.ssl.X509TrustManager x509tm)) {
+                throw new IllegalStateException("TrustManagerFactory did not produce an X509TrustManager");
+            }
+            return skipHostnameVerification(x509tm);
         } catch (Exception e) {
-            return buildPermissiveTrustManager();
+            throw new RuntimeException("Failed to load Incus server certificates from " + serverCertsDir, e);
         }
     }
 
     /** Permissive TrustManager — accepts any server cert. Logs a warning on first use. */
     private static javax.net.ssl.TrustManager buildPermissiveTrustManager() {
         System.err.println("Warning: no Incus server certificates found — TLS verification disabled for remote connection");
-        return new javax.net.ssl.X509TrustManager() {
+        return skipHostnameVerification(new javax.net.ssl.X509TrustManager() {
             public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
             public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
             public java.security.cert.X509Certificate[] getAcceptedIssuers() {
                 return new java.security.cert.X509Certificate[0];
+            }
+        });
+    }
+
+    /**
+     * Wraps a trust manager in an X509ExtendedTrustManager that validates
+     * the certificate chain but skips hostname verification. Incus self-signed
+     * certs don't include the VM's DHCP IP in their SANs, so hostname
+     * verification would always fail.
+     *
+     * When the SSLEngine sees an X509ExtendedTrustManager, it delegates
+     * hostname checking entirely to it rather than doing its own check.
+     * By calling the 2-arg checkServerTrusted (without engine/socket),
+     * we get chain validation without hostname matching — scoped to this
+     * SSLContext only, no global system properties needed.
+     */
+    private static javax.net.ssl.X509ExtendedTrustManager skipHostnameVerification(
+            javax.net.ssl.X509TrustManager delegate) {
+        return new javax.net.ssl.X509ExtendedTrustManager() {
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType, javax.net.ssl.SSLEngine engine)
+                    throws java.security.cert.CertificateException {
+                delegate.checkServerTrusted(chain, authType);
+            }
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType, java.net.Socket socket)
+                    throws java.security.cert.CertificateException {
+                delegate.checkServerTrusted(chain, authType);
+            }
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType) throws java.security.cert.CertificateException {
+                delegate.checkServerTrusted(chain, authType);
+            }
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType, javax.net.ssl.SSLEngine engine)
+                    throws java.security.cert.CertificateException {
+                delegate.checkClientTrusted(chain, authType);
+            }
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType, java.net.Socket socket)
+                    throws java.security.cert.CertificateException {
+                delegate.checkClientTrusted(chain, authType);
+            }
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                    String authType) throws java.security.cert.CertificateException {
+                delegate.checkClientTrusted(chain, authType);
+            }
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return delegate.getAcceptedIssuers();
             }
         };
     }
@@ -272,7 +326,8 @@ class HttpsTransport implements IncusTransport {
 
         @Override
         public void close() {
-            try { ws.sendClose(WebSocket.NORMAL_CLOSURE, ""); } catch (Exception ignored) {}
+            try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join(); } catch (Exception ignored) {}
+            ws.abort();
         }
     }
 }

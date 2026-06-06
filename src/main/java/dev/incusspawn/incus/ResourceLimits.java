@@ -38,7 +38,7 @@ public final class ResourceLimits {
         return "100GB";
     }
 
-    private static long totalMemoryBytes() {
+    public static long totalMemoryBytes() {
         try {
             var meminfo = Files.readString(Path.of("/proc/meminfo"));
             for (var line : meminfo.split("\n")) {
@@ -48,6 +48,17 @@ public final class ResourceLimits {
                 }
             }
         } catch (IOException | NumberFormatException e) {
+            // fall through to macOS path
+        }
+        try {
+            var pb = new ProcessBuilder("sysctl", "-n", "hw.memsize");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            if (process.waitFor() == 0 && !output.isBlank()) {
+                return Long.parseLong(output);
+            }
+        } catch (Exception e) {
             // fall through
         }
         return -1;
