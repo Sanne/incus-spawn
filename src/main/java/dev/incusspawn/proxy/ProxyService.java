@@ -33,6 +33,10 @@ public final class ProxyService {
     private static final int REQUIRED_JAVA_MAJOR = 25;
 
     public static boolean install() {
+        if (Environment.isMacOS()) {
+            return installMacOs();
+        }
+
         var isxPath = resolveIsxPath();
         if (isxPath == null) {
             System.err.println("Could not find 'isx' in PATH.");
@@ -167,8 +171,9 @@ public final class ProxyService {
         }
 
         if (!needsRestart) {
-            var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-            var info = ProxyHealthCheck.fetchProxyInfo(gatewayIp);
+            var healthIp = dev.incusspawn.Environment.isMacOS()
+                    ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
+            var info = ProxyHealthCheck.fetchProxyInfo(healthIp);
             var drift = ProxyHealthCheck.checkVersionDrift(info);
             needsRestart = !drift.isEmpty();
         }
@@ -305,6 +310,151 @@ public final class ProxyService {
     private static String execStartLine(String isxPath) {
         var quoted = isxPath.replace("'", "'\\''");
         return "ExecStart=/usr/bin/sg incus-admin -c \"exec '" + quoted + "' proxy start\"";
+    }
+
+    // --- macOS launchd support ---
+
+    private static final String VM_LABEL = "dev.incusspawn.vm";
+    private static final String PROXY_LABEL = "dev.incusspawn.proxy";
+
+    private static Path launchAgentsDir() {
+        return Path.of(System.getProperty("user.home"), "Library", "LaunchAgents");
+    }
+
+    private static Path vmPlistFile() {
+        return launchAgentsDir().resolve(VM_LABEL + ".plist");
+    }
+
+    private static Path proxyPlistFile() {
+        return launchAgentsDir().resolve(PROXY_LABEL + ".plist");
+    }
+
+    public static boolean isMacOsServiceInstalled() {
+        return Files.exists(proxyPlistFile());
+    }
+
+    public static boolean isMacOsServiceActive() {
+        try {
+            var pb = new ProcessBuilder("launchctl", "print", "gui/" + getUid() + "/" + PROXY_LABEL);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static boolean installMacOs() {
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) {
+            System.err.println("Could not find 'isx' in PATH.");
+            return false;
+        }
+
+        var logDir = Environment.vmStateDir();
+        try {
+            Files.createDirectories(launchAgentsDir());
+
+            var path = System.getenv("PATH");
+            if (path == null || path.isBlank()) {
+                path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+            }
+
+            // VM agent — starts the VM on login
+            var vmPlist = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                    <plist version="1.0">
+                    <dict>
+                        <key>Label</key><string>%s</string>
+                        <key>ProgramArguments</key>
+                        <array>
+                            <string>%s</string>
+                            <string>vm</string>
+                            <string>start</string>
+                        </array>
+                        <key>RunAtLoad</key><true/>
+                        <key>EnvironmentVariables</key>
+                        <dict>
+                            <key>PATH</key><string>%s</string>
+                        </dict>
+                        <key>StandardOutPath</key><string>%s/vm-service.log</string>
+                        <key>StandardErrorPath</key><string>%s/vm-service.log</string>
+                    </dict>
+                    </plist>
+                    """.formatted(VM_LABEL, isxPath, path, logDir, logDir);
+            Files.writeString(vmPlistFile(), vmPlist);
+
+            // Proxy agent — starts the proxy on login
+            var proxyPlist = """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                    <plist version="1.0">
+                    <dict>
+                        <key>Label</key><string>%s</string>
+                        <key>ProgramArguments</key>
+                        <array>
+                            <string>%s</string>
+                            <string>proxy</string>
+                            <string>start</string>
+                        </array>
+                        <key>RunAtLoad</key><true/>
+                        <key>KeepAlive</key><true/>
+                        <key>ThrottleInterval</key><integer>10</integer>
+                        <key>EnvironmentVariables</key>
+                        <dict>
+                            <key>PATH</key><string>%s</string>
+                        </dict>
+                        <key>StandardOutPath</key><string>%s/proxy-service.log</string>
+                        <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
+                    </dict>
+                    </plist>
+                    """.formatted(PROXY_LABEL, isxPath, path, logDir, logDir);
+            Files.writeString(proxyPlistFile(), proxyPlist);
+        } catch (IOException e) {
+            System.err.println("Failed to write launchd plist: " + e.getMessage());
+            return false;
+        }
+
+        System.out.println("  Installing VM service...");
+        runQuiet("launchctl", "bootout", "gui/" + getUid(), vmPlistFile().toString());
+        runQuiet("launchctl", "bootstrap", "gui/" + getUid(), vmPlistFile().toString());
+
+        System.out.println("  Installing proxy service...");
+        runQuiet("launchctl", "bootout", "gui/" + getUid(), proxyPlistFile().toString());
+        runQuiet("launchctl", "bootstrap", "gui/" + getUid(), proxyPlistFile().toString());
+
+        if (isMacOsServiceActive()) {
+            System.out.println("  Services installed and running.");
+            return true;
+        } else {
+            System.out.println("  Services installed (proxy will start when VM is ready).");
+            return true;
+        }
+    }
+
+    public static void uninstallMacOs() {
+        runQuiet("launchctl", "bootout", "gui/" + getUid(), proxyPlistFile().toString());
+        runQuiet("launchctl", "bootout", "gui/" + getUid(), vmPlistFile().toString());
+        try { Files.deleteIfExists(proxyPlistFile()); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(vmPlistFile()); } catch (IOException ignored) {}
+        System.out.println("  macOS services uninstalled.");
+    }
+
+    private static String getUid() {
+        try {
+            var pb = new ProcessBuilder("id", "-u");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var uid = new String(process.getInputStream().readAllBytes()).strip();
+            if (uid.isEmpty() || !uid.chars().allMatch(Character::isDigit)) {
+                throw new RuntimeException("unexpected id -u output: " + uid);
+            }
+            return uid;
+        } catch (Exception e) {
+            throw new RuntimeException("Cannot determine current UID — launchd service install/uninstall requires a valid UID", e);
+        }
     }
 
     private static void runQuiet(String... command) {

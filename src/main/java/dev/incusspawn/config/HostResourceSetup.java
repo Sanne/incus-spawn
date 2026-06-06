@@ -3,6 +3,7 @@ package dev.incusspawn.config;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -40,6 +41,18 @@ public final class HostResourceSetup {
         if (source.startsWith("~/")) return System.getProperty("user.home") + source.substring(1);
         if (source.equals("~")) return System.getProperty("user.home");
         return source;
+    }
+
+    public static String translateForVm(String hostPath) {
+        if (!Environment.isMacOS()) return hostPath;
+        var home = System.getProperty("user.home");
+        if (hostPath.startsWith(home + "/")) {
+            return "/host" + hostPath.substring(home.length());
+        }
+        if (hostPath.equals(home)) {
+            return "/host";
+        }
+        return hostPath;
     }
 
     static String deviceName(String containerPath) {
@@ -225,11 +238,12 @@ public final class HostResourceSetup {
         }
         var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
         var devName = deviceName(containerPath);
-        incus.deviceAdd(container, devName, "disk",
-                "source=" + expandedSource,
+        var args = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + translateForVm(expandedSource),
                 "path=" + containerPath,
-                "readonly=true",
-                "shift=true");
+                "readonly=true"));
+        if (!Environment.isMacOS()) args.add("shift=true");
+        incus.deviceAdd(container, devName, "disk", args.toArray(String[]::new));
         System.out.println("  Mounted " + hr.getSource() + " -> " + containerPath + " (readonly)");
     }
 
@@ -246,11 +260,13 @@ public final class HostResourceSetup {
             return;
         }
 
-        incus.deviceAdd(container.name(), overlayDeviceName(containerPath), "disk",
-                "source=" + expandedSource,
+        var overlayArgs = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + translateForVm(expandedSource),
                 "path=" + lowerDir,
-                "readonly=true",
-                "shift=true");
+                "readonly=true"));
+        if (!Environment.isMacOS()) overlayArgs.add("shift=true");
+        incus.deviceAdd(container.name(), overlayDeviceName(containerPath), "disk",
+                overlayArgs.toArray(String[]::new));
 
         container.exec("mkdir", "-p", upperDir, workDir, containerPath);
         container.exec("chown", "agentuser:agentuser", upperDir);
@@ -272,11 +288,13 @@ public final class HostResourceSetup {
             return;
         }
 
-        incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
-                "source=" + expandedSource,
+        var devArgs = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + translateForVm(expandedSource),
                 "path=" + lowerDir,
-                "readonly=true",
-                "shift=true");
+                "readonly=true"));
+        if (!Environment.isMacOS()) devArgs.add("shift=true");
+        incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
+                devArgs.toArray(String[]::new));
     }
 
     private static void chownHomeParents(Container container, String containerPath) {

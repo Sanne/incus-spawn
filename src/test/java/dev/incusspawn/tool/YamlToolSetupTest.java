@@ -157,7 +157,7 @@ class YamlToolSetupTest {
         // Verify download was attempted (before the run commands)
         verify(downloadCache).download("https://example.com/tool.tar.gz", "abc123");
         // The run command should NOT have been called since downloads failed first
-        verify(incus, never()).shellExecInteractive(eq(CONTAINER),
+        verify(incus, never()).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo after-download"));
     }
 

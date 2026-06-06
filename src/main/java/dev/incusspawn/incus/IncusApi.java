@@ -394,6 +394,43 @@ class IncusApi {
     IncusClient.ExecResult execCapture(String instance, List<String> command,
                                        Integer uid, Integer gid, String cwd,
                                        Map<String, String> env) {
+        if (transport instanceof HttpsTransport) {
+            return execCaptureRecordOutput(instance, command, uid, gid, cwd, env);
+        }
+        return execCaptureWebSocket(instance, command, uid, gid, cwd, env);
+    }
+
+    private IncusClient.ExecResult execCaptureRecordOutput(String instance, List<String> command,
+                                                           Integer uid, Integer gid, String cwd,
+                                                           Map<String, String> env) {
+        var body = buildExecBody(command, uid, gid, cwd, env, false, 0, 0);
+        body.put("wait-for-websocket", false);
+        body.put("record-output", true);
+
+        var postResp = post("/1.0/instances/" + instance + "/exec", body);
+        if (!postResp.isAsync()) throw new IncusException(
+                "exec POST failed (" + postResp.statusCode() + "): " +
+                postResp.body().path("error").asText());
+
+        var opPath = "/1.0/operations/" + postResp.body().path("metadata").path("id").asText();
+        // The wait response contains the completed operation metadata including
+        // output log paths. Read them from the wait response directly — a separate
+        // GET risks a 404 if the operation is garbage collected between calls.
+        var waitResp = get(opPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS);
+        if (!waitResp.isSuccess()) throw new IncusException(
+                "exec operation lost: " + waitResp.body().path("error").asText());
+        var opMeta = waitResp.body().path("metadata");
+        int exitCode = opMeta.path("metadata").path("return").asInt(0);
+        var output = opMeta.path("metadata").path("output");
+        var stdout = output.has("1") ? getText(output.path("1").asText()) : "";
+        var stderr = output.has("2") ? getText(output.path("2").asText()) : "";
+
+        return new IncusClient.ExecResult(exitCode, stdout, stderr);
+    }
+
+    private IncusClient.ExecResult execCaptureWebSocket(String instance, List<String> command,
+                                                        Integer uid, Integer gid, String cwd,
+                                                        Map<String, String> env) {
         var postResp = post("/1.0/instances/" + instance + "/exec",
                 buildExecBody(command, uid, gid, cwd, env, false, 0, 0));
         if (!postResp.isAsync()) throw new IncusException(
@@ -408,10 +445,8 @@ class IncusApi {
         var stdoutBuf = new ByteArrayOutputStream();
         var stderrBuf = new ByteArrayOutputStream();
 
-        // Close stdin — many commands don't read it and we don't need to send data.
         wsCloseOnly(opPath, fds.path("0").asText());
 
-        // Read stdout and stderr concurrently with virtual threads.
         var stdoutThread = Thread.ofVirtual().start(() ->
                 wsCollect(opPath, fds.path("1").asText(), stdoutBuf));
         var stderrThread = Thread.ofVirtual().start(() ->

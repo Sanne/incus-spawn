@@ -163,10 +163,20 @@ public class MitmProxy {
     // CA fingerprint computed at startup for the health endpoint
     private String caFingerprint = "";
 
+    private final String healthBindAddress;
+
     public MitmProxy(String bindAddress, int mitmPort, int healthPort,
                      String anthropicApiKey, String ghToken,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
+        this(bindAddress, mitmPort, healthPort, bindAddress, anthropicApiKey, ghToken,
+                useVertex, vertexRegion, vertexProjectId);
+    }
+
+    public MitmProxy(String bindAddress, int mitmPort, int healthPort, String healthBindAddress,
+                     String anthropicApiKey, String ghToken,
+                     boolean useVertex, String vertexRegion, String vertexProjectId) {
         this.bindAddress = bindAddress;
+        this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
         this.anthropicApiKey = anthropicApiKey;
@@ -268,7 +278,12 @@ public class MitmProxy {
     /** Clear bridge-level DNS overrides, restoring normal DNS resolution. */
     public static void clearBridgeDns(IncusClient incus) {
         try {
-            incus.networkConfigSet("incusbr0", "raw.dnsmasq", "");
+            // Only remove address= overrides, preserve server= forwarders
+            var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+            var servers = existing.lines()
+                    .filter(l -> l.startsWith("server="))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            incus.networkConfigSet("incusbr0", "raw.dnsmasq", servers);
         } catch (Exception e) {
             System.err.println("Warning: could not clear bridge DNS overrides: " + e.getMessage());
         }
@@ -356,7 +371,7 @@ public class MitmProxy {
         // Health check HTTP server (plain, no TLS)
         healthHttpServer = vertx.createHttpServer()
                 .requestHandler(this::handleHealthCheck);
-        healthHttpServer.listen(healthPort, bindAddress)
+        healthHttpServer.listen(healthPort, healthBindAddress)
                 .toCompletionStage().toCompletableFuture().get();
 
         if (onReady != null) {
@@ -364,7 +379,7 @@ public class MitmProxy {
         }
 
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
-        System.out.println("Health endpoint on " + bindAddress + ":" + healthPort + "/health");
+        System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
         System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");

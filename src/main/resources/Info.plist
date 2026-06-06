@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.incusspawn</string>
+    <key>CFBundleName</key>
+    <string>incus-spawn</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>incus-spawn runs Linux containers inside a lightweight virtual machine on your Mac. Local network access is required so that containers can reach the network and communicate with the host.</string>
+    <key>NSHomeDirectoryUsageDescription</key>
+    <string>incus-spawn mounts your home directory read-only inside the VM to enable host file sharing. No data is modified. Agents run inside sandboxed containers, and each container only receives access to the specific paths you explicitly configure (such as a project directory or a build cache). Containers never see your full home directory.</string>
+</dict>
+</plist>

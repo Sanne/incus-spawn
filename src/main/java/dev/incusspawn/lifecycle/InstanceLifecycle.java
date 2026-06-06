@@ -83,7 +83,8 @@ public final class InstanceLifecycle {
                 System.out.println("Mounting inbox: " + inboxPath.toAbsolutePath() +
                         " -> /home/agentuser/inbox (read-only)");
                 incus.deviceAdd(name, "inbox", "disk",
-                        "source=" + inboxPath.toAbsolutePath(),
+                        "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(
+                                inboxPath.toAbsolutePath().toString()),
                         "path=/home/agentuser/inbox",
                         "readonly=true");
             } else {

@@ -426,7 +426,10 @@ public class BuildCommand extends BaseCommand {
             System.exit(1);
         }
 
-        ProxyHealthCheck.requireProxy(incus);
+        var dnsOverrides = MitmProxy.getDnsOverrides(incus);
+        if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
+            ProxyHealthCheck.requireProxy(incus);
+        }
 
         buildChain(imageDef, defs);
     }
@@ -637,13 +640,32 @@ public class BuildCommand extends BaseCommand {
 
         waitForReady(buildName);
 
+        var container = new Container(incus, buildName);
+
+        // Install CA cert before security configs — update-ca-trust triggers
+        // setxattr calls that conflict with security.syscalls.intercept.
+        System.out.println("Installing MITM proxy CA certificate...");
+        var ca = CertificateAuthority.loadOrCreate();
+        container.sh(
+                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
+                ca.caCertPem() +
+                "CERTEOF")
+                .assertSuccess("Failed to install MITM CA certificate");
+        container.exec("update-ca-trust")
+                .assertSuccess("Failed to update CA trust");
+
         // UID mapping for Wayland passthrough, nested containers with syscall
         // interception for container runtimes, and no dropped capabilities since
         // the container itself is the security boundary.
         incus.configSet(buildName, "raw.idmap", "both 1000 1000");
         incus.configSet(buildName, "security.nesting", "true");
         incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
-        incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        if (Environment.isLinux()) {
+            // Combined mknod+setxattr intercepts crash the LXC monitor when
+            // systemd triggers both during boot (seccomp_notify concurrency bug).
+            // setxattr is only needed for SELinux relabeling, not in the VM.
+            incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
         if (!incus.pollUntilReady(buildName, 30,
                 "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
@@ -656,26 +678,16 @@ public class BuildCommand extends BaseCommand {
             System.err.println("Warning: systemd did not reach running/degraded after restart — DNS setup may fail");
         }
 
-        var container = new Container(incus, buildName);
-
         // systemd-resolved (127.0.0.53) doesn't work reliably inside Incus
         // containers. Point resolv.conf at the bridge gateway's dnsmasq instead.
+        // Done after restart because systemd-resolved re-enables on restart.
         System.out.println("Replacing systemd-resolved with direct DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
+                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to configure DNS");
-
-        System.out.println("Installing MITM proxy CA certificate...");
-        var ca = CertificateAuthority.loadOrCreate();
-        container.sh(
-                "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
-                ca.caCertPem() +
-                "CERTEOF")
-                .assertSuccess("Failed to install MITM CA certificate");
-        container.exec("update-ca-trust")
-                .assertSuccess("Failed to update CA trust");
 
         waitForNetwork(buildName);
 
@@ -702,10 +714,10 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Creating agentuser...");
         container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
                 .assertSuccess("Failed to create agentuser");
+        container.exec("chown", "-R", "agentuser:agentuser", "/home/agentuser")
+                .assertSuccess("Failed to set home directory ownership");
         container.exec("mkdir", "-p", "/home/agentuser/inbox")
                 .assertSuccess("Failed to create inbox directory");
-        container.exec("chown", "agentuser:agentuser", "/home/agentuser/inbox")
-                .assertSuccess("Failed to set inbox ownership");
         container.sh(
                 "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
                 .assertSuccess("Failed to configure passwordless sudo");
@@ -1181,6 +1193,7 @@ public class BuildCommand extends BaseCommand {
      * downloads when building a parent→child image chain.
      */
     private void mountDnfCache(String container) {
+        if (!Environment.isLinux()) return;
         try {
             Files.createDirectories(dnfCacheDir());
         } catch (IOException e) {
@@ -1194,6 +1207,7 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void unmountDnfCache(String container) {
+        if (!Environment.isLinux()) return;
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
     }
 
@@ -1544,9 +1558,12 @@ public class BuildCommand extends BaseCommand {
             var containerPath = GitRemoteUtils.referenceContainerPath(repoName, cloneUrl);
             var deviceName = GitRemoteUtils.referenceDeviceName(repoName, cloneUrl);
             container.exec("mkdir", "-p", containerPath);
-            incus.deviceAdd(container.name(), deviceName, "disk",
-                    "source=" + hostPath, "path=" + containerPath,
-                    "readonly=true", "shift=true");
+            var refArgs = new java.util.ArrayList<>(java.util.List.of(
+                    "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
+                    "path=" + containerPath,
+                    "readonly=true"));
+            if (!Environment.isMacOS()) refArgs.add("shift=true");
+            incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
             return new RepoReference(deviceName, containerPath);
         } catch (Exception e) {
