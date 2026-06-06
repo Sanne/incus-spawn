@@ -21,6 +21,13 @@ echo "incus-spawn: starting... ($(ts)s)"
 #-- Remount root with fstab options (noatime) --#
 mount -o remount,noatime,commit=300 /
 
+#-- Expand btrfs to fill disk (disk may have been extended after image creation) --#
+btrfs filesystem resize max / 2>/dev/null || true
+
+#-- Mount host filesystem via virtio-fs (macOS shares ~ read-only) --#
+mkdir -p /host
+mount -t virtiofs -o ro hostfs /host 2>/dev/null || true
+
 #-- Hostname --#
 hostname -F /etc/hostname
 
@@ -44,6 +51,21 @@ if [ -n "$IFACE" ]; then
     ip link set "$IFACE" up
     udhcpc -i "$IFACE" -s /usr/share/udhcpc/default.script -q -n -t 5 2>/dev/null || true
     echo "incus-spawn: network up on $IFACE ($(ts)s)"
+fi
+
+#-- Clock (vfkit VMs have no RTC) --#
+# Seed from kernel cmdline so TLS works immediately at boot.
+HOST_TIME=$(sed -En 's/.*isx\.time=([^ ]+).*/\1/p' /proc/cmdline)
+if [ -n "$HOST_TIME" ]; then
+    date -s "@$HOST_TIME" >/dev/null 2>&1
+fi
+
+# qemu-guest-agent over virtio-vsock keeps the clock synced with the host,
+# including after sleep/resume. vfkit sends guest-set-time via --timesync.
+VSOCK_PORT=$(sed -En 's/.*isx\.ga_vsock=([^ ]+).*/\1/p' /proc/cmdline)
+if [ -n "$VSOCK_PORT" ] && [ -x /usr/bin/qemu-ga ]; then
+    qemu-ga -m vsock-listen -p "2:$VSOCK_PORT" -l /var/log/qemu-ga.log -d 2>/dev/null || true
+    echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
 fi
 
 #-- D-Bus (required by Incus) --#

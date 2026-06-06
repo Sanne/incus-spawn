@@ -7,19 +7,36 @@ set -eu
 
 parse_cmdline() {
     local key="$1"
-    local escaped=$(echo "$key" | sed 's/\./\\./g')
-    sed -rn "s/.*${escaped}=([^ ]+).*/\1/p" /proc/cmdline
+    for param in $(cat /proc/cmdline); do
+        case "$param" in
+            ${key}=*) echo "${param#*=}"; return ;;
+        esac
+    done
 }
 
 GATEWAY_IP=$(parse_cmdline "isx.gateway")
 MITM_PORT=$(parse_cmdline "isx.mitm_port")
 SHARED_DIR=$(parse_cmdline "isx.shared")
+PROXY_MODE=$(parse_cmdline "isx.proxy")
 
 : "${GATEWAY_IP:=10.166.11.1}"
 : "${MITM_PORT:=18443}"
-: "${SHARED_DIR:=/mnt/host}"
+: "${SHARED_DIR:=/host}"
+: "${PROXY_MODE:=local}"
 
-echo "incus-spawn-vm-init: gateway=${GATEWAY_IP} mitm=${MITM_PORT}"
+echo "incus-spawn-vm-init: gateway=${GATEWAY_IP} mitm=${MITM_PORT} proxy=${PROXY_MODE}"
+
+# Ensure newuidmap/newgidmap exist (required by LXC user namespaces)
+if ! command -v newuidmap > /dev/null 2>&1; then
+    apk add --no-cache shadow-subids > /dev/null 2>&1 || true
+fi
+
+# Ensure subuid/subgid ranges exist for root
+for f in /etc/subuid /etc/subgid; do
+    if ! grep -q '^root:' "$f" 2>/dev/null; then
+        printf 'root:1000:1\nroot:1000000:1000000000\n' >> "$f"
+    fi
+done
 
 # Wait for Incus daemon
 if ! incus admin waitready --timeout 30; then
@@ -31,6 +48,8 @@ fi
 BRIDGE_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null || true)
 if [ -z "$BRIDGE_IP" ]; then
     incus network create incusbr0 ipv4.address="${GATEWAY_IP}/24" ipv4.nat=true ipv6.address=none
+    incus network set incusbr0 raw.dnsmasq "server=8.8.8.8
+server=8.8.4.4"
 elif [ "$BRIDGE_IP" != "${GATEWAY_IP}/24" ]; then
     echo "incus-spawn-vm-init: updating bridge from ${BRIDGE_IP} to ${GATEWAY_IP}/24"
     incus network set incusbr0 ipv4.address="${GATEWAY_IP}/24"
@@ -58,14 +77,48 @@ if ! incus profile device get default eth0 network > /dev/null 2>&1; then
     incus profile device add default eth0 nic network=incusbr0
 fi
 
-# Configure iptables: redirect port 443 on gateway to MITM proxy port
+# Configure iptables: redirect port 443 on gateway to MITM proxy port.
+# In "local" mode (Linux), proxy runs inside the VM — use REDIRECT.
+# In "remote" mode (macOS), proxy runs on the host — use DNAT to the
+# VM's default gateway (which is the macOS host IP).
 ACTUAL_GW=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1)
 if [ -n "$ACTUAL_GW" ]; then
-    if ! iptables -t nat -C PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
-        -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT" 2>/dev/null; then
-        iptables -t nat -A PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
-            -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT"
+    if [ "$PROXY_MODE" = "remote" ]; then
+        # Get the external gateway (DHCP-assigned), not the Incus bridge gateway.
+        # Exclude routes via incusbr0 which is the container bridge.
+        HOST_GW=$(ip route | grep default | grep -v incusbr0 | awk '{print $3}' | head -1)
+        if [ -n "$HOST_GW" ]; then
+            if ! iptables -t nat -C PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+                -p tcp --dport 443 -j DNAT --to-destination "$HOST_GW:$MITM_PORT" 2>/dev/null; then
+                iptables -t nat -A PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+                    -p tcp --dport 443 -j DNAT --to-destination "$HOST_GW:$MITM_PORT"
+            fi
+        fi
+    else
+        if ! iptables -t nat -C PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+            -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT" 2>/dev/null; then
+            iptables -t nat -A PREROUTING -i incusbr0 -d "$ACTUAL_GW" \
+                -p tcp --dport 443 -j REDIRECT --to-port "$MITM_PORT"
+        fi
     fi
+fi
+
+# Enable HTTPS API access so the macOS host can connect
+incus config set core.https_address :8443
+
+# Generate a trust token for the macOS host to add its client certificate.
+# The token is printed to the serial console where the Java host reads it.
+# Syntax: `incus config trust add <name>` (name is a positional argument).
+TRUST_OUTPUT=$(incus config trust add incus-spawn 2>&1) || true
+# The output is typically two lines:
+#   Client incus-spawn certificate add token:
+#   eyJjbGllbnRfbmFtZSI6Imlu...
+# Extract the token (last non-empty line that isn't a label).
+TOKEN_VALUE=$(echo "$TRUST_OUTPUT" | grep -v '^$' | grep -v ':$' | tail -1)
+if [ -n "$TOKEN_VALUE" ] && ! echo "$TOKEN_VALUE" | grep -q 'Error\|Usage\|--'; then
+    echo "ISX_TRUST_TOKEN=$TOKEN_VALUE"
+else
+    echo "incus-spawn-vm-init: WARNING: could not generate trust token: $TRUST_OUTPUT"
 fi
 
 # Symlink isx binary from shared directory if available
@@ -73,5 +126,8 @@ if [ -d "$SHARED_DIR" ] && [ -f "$SHARED_DIR/isx" ]; then
     ln -sf "$SHARED_DIR/isx" /usr/local/bin/isx
     echo "incus-spawn-vm-init: isx binary linked from ${SHARED_DIR}/isx"
 fi
+
+# Persistent cache directory for DNF packages (shared across builds)
+mkdir -p /var/cache/incus-spawn/dnf
 
 echo "incus-spawn-vm-init: ready"

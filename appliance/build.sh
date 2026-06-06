@@ -65,9 +65,20 @@ apk add --no-cache \
     nftables \
     iproute2 \
     ca-certificates \
-    util-linux
+    util-linux \
+    qemu-guest-agent \
+    shadow-subids
 "
 echo "    Size after packages: $(du -sh "$ROOTFS_DIR" | cut -f1)"
+
+# shadow-subids creates empty subuid/subgid; write entries after install.
+# Two ranges: UID 1000 for raw.idmap identity mapping (podman user),
+# and 1000000+ for shifted namespace UIDs. Range must NOT start at 0
+# because Incus rejects subuid ranges that include the host daemon's UID.
+printf 'root:1000:1\nroot:1000000:1000000000\n' > "$ROOTFS_DIR/etc/subuid"
+printf 'root:1000:1\nroot:1000000:1000000000\n' > "$ROOTFS_DIR/etc/subgid"
+# Alpine's newuidmap is not SUID by default; LXC needs it
+chmod u+s "$ROOTFS_DIR/usr/bin/newuidmap" "$ROOTFS_DIR/usr/bin/newgidmap" 2>/dev/null || true
 
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
     echo "==> Running config.sh..."
@@ -95,6 +106,18 @@ echo "==> Creating rootfs tarball..."
 tar cf - -C "$ROOTFS_DIR" . | zstd -T0 -f -o "$TARGET_DIR/rootfs.tar.zst"
 chmod 644 "$TARGET_DIR/rootfs.tar.zst"
 
+echo "==> Creating pre-built disk image..."
+truncate -s 2G "$TARGET_DIR/disk.img"
+mkfs.btrfs -q -L isxroot "$TARGET_DIR/disk.img"
+mkdir -p /mnt/isx-disk
+mount -o loop "$TARGET_DIR/disk.img" /mnt/isx-disk
+zstd -d "$TARGET_DIR/rootfs.tar.zst" --stdout | tar xf - -C /mnt/isx-disk
+chmod 755 /mnt/isx-disk
+umount /mnt/isx-disk
+gzip -9 "$TARGET_DIR/disk.img"
+chmod 644 "$TARGET_DIR/disk.img.gz"
+echo "    Disk image: $(du -sh "$TARGET_DIR/disk.img.gz" | cut -f1) (2G virtual, extends to ${ISX_VM_DISK:-60G} on first use)"
+
 if [ -f "$TARGET_DIR/vmlinuz" ]; then
     echo "==> Kernel already built, skipping (delete vmlinuz to force rebuild)"
 else
@@ -104,4 +127,4 @@ fi
 
 echo
 echo "Build complete!"
-ls -lh "$TARGET_DIR/rootfs.tar.zst" "$TARGET_DIR/vmlinuz"
+ls -lh "$TARGET_DIR/rootfs.tar.zst" "$TARGET_DIR/disk.img.gz" "$TARGET_DIR/vmlinuz"
