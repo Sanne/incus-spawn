@@ -44,6 +44,9 @@ public final class ProxyHealthCheck {
     }
 
     private static ProxyStatus checkUncached(IncusClient incus) {
+        if (dev.incusspawn.Environment.isMacOS()) {
+            if (isHealthy("127.0.0.1")) return ProxyStatus.RUNNING;
+        }
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         if (isHealthy(gatewayIp)) {
             return ProxyStatus.RUNNING;
@@ -162,8 +165,9 @@ public final class ProxyHealthCheck {
 
     static void warnIfDrifted(IncusClient incus) {
         try {
-            var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-            var info = fetchProxyInfo(gatewayIp);
+            var healthIp = dev.incusspawn.Environment.isMacOS()
+                    ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
+            var info = fetchProxyInfo(healthIp);
             var drift = checkVersionDrift(info);
             if (drift.isEmpty()) return;
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";

@@ -8,6 +8,7 @@ import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.vm.VmNetwork;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
@@ -89,6 +90,13 @@ public class ProxyCommand extends BaseCommand {
             String gatewayIp;
             if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
                 gatewayIp = gatewayIpOption;
+            } else if (Environment.isMacOS()) {
+                gatewayIp = VmNetwork.discoverHostBridgeIp();
+                if (gatewayIp == null) {
+                    System.err.println("Error: could not discover VM-facing bridge interface.");
+                    System.err.println("Is the VM running? Try 'isx vm status'.");
+                    return CommandResult.valueOf(1);
+                }
             } else {
                 try {
                     gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -119,7 +127,8 @@ public class ProxyCommand extends BaseCommand {
             System.out.println("  Log file:      " + logFile());
             System.out.println();
 
-            var proxy = new MitmProxy(gatewayIp, port, healthPort, apiKey, ghToken,
+            var healthBindAddress = Environment.isMacOS() ? "127.0.0.1" : gatewayIp;
+            var proxy = new MitmProxy(gatewayIp, port, healthPort, healthBindAddress, apiKey, ghToken,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
 
             if (debug) {
@@ -182,10 +191,11 @@ public class ProxyCommand extends BaseCommand {
             var status = ProxyHealthCheck.check(incus);
             var serviceInstalled = ProxyService.isInstalled();
             var serviceActive = serviceInstalled && ProxyService.isActive();
+            var healthIp = Environment.isMacOS() ? "127.0.0.1" : gatewayIp;
             switch (status) {
                 case RUNNING -> {
                     System.out.println("Proxy is running.");
-                    var proxyInfo = ProxyHealthCheck.fetchProxyInfo(gatewayIp);
+                    var proxyInfo = ProxyHealthCheck.fetchProxyInfo(healthIp);
                     if (proxyInfo != null) {
                         if (!proxyInfo.isLegacy()) {
                             System.out.println("  Version:         " + proxyInfo.version() + " (" + proxyInfo.gitSha() + ")");

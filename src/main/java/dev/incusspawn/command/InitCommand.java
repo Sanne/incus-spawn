@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
@@ -9,6 +10,7 @@ import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
@@ -39,12 +41,12 @@ public class InitCommand extends BaseCommand {
      * @return true if init is complete (either already or just ran), false if user aborted
      */
     public static boolean requireInit() {
-        if (!requireLinux()) return false;
+        if (!requireIncusHost()) return false;
         if (hasBeenInitialized()) return true;
 
         System.out.println();
         System.out.println("\u001B[1;33m  First-time setup required.\u001B[0m");
-        System.out.println("  Running 'isx init' to configure Incus, authentication, and the MITM proxy...");
+        System.out.println("  Running 'isx init'...");
         System.out.println();
 
         try {
@@ -85,9 +87,32 @@ public class InitCommand extends BaseCommand {
         return true;
     }
 
+    /**
+     * Ensure an Incus daemon is reachable.
+     * On Linux: Incus runs natively.
+     * On macOS: auto-start the VM that hosts Incus.
+     */
+    public static boolean requireIncusHost() {
+        if (Environment.isLinux()) {
+            return true;
+        }
+        if (Environment.isMacOS()) {
+            return VmManager.ensureRunning();
+        }
+        System.err.println();
+        System.err.println("\u001B[1;31m  incus-spawn requires Linux or macOS.\u001B[0m");
+        System.err.println("  Detected OS: " + System.getProperty("os.name"));
+        System.err.println();
+        return false;
+    }
+
     @Override
     protected CommandResult doExecute() throws Exception {
+        if (!requireIncusHost()) return CommandResult.valueOf(1);
         this.incus = RuntimeServices.incus();
+        if (Environment.isMacOS()) {
+            return doMacOsInit();
+        }
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
@@ -121,6 +146,44 @@ public class InitCommand extends BaseCommand {
             System.out.println("  2. Start the auth proxy:  isx proxy start");
         }
         System.out.println("  3. Launch the TUI:        isx");
+        return CommandResult.SUCCESS;
+    }
+
+    private CommandResult doMacOsInit() throws Exception {
+        System.out.println("=== incus-spawn init (macOS) ===\n");
+
+        System.out.println("[1/8] Generating MITM CA certificate...");
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var config = SpawnConfig.load();
+        config.setIncusBridgeGateway(gatewayIp);
+        config.save();
+        if (CertificateAuthority.exists()) {
+            System.out.println("  MITM CA certificate already exists.");
+        } else {
+            CertificateAuthority.loadOrCreate();
+            System.out.println("  CA certificate generated.");
+        }
+
+        setupSshKeyPair();
+        setupClaudeAuth();
+        setupGitHubAuth();
+        setupSearchPaths();
+        setupHostPaths();
+
+        installGitRemoteShim();
+
+        var spawnConfig = SpawnConfig.load();
+        if (!spawnConfig.getClaude().getApiKey().isBlank() || spawnConfig.getClaude().isUseVertex()
+                || !spawnConfig.getGithub().getToken().isBlank()) {
+            MitmProxy.configureBridgeDns(incus);
+        }
+
+        offerMacOsServices();
+
+        System.out.println("\n=== Init complete! ===");
+        System.out.println("Next steps:");
+        System.out.println("  1. Build a template:  isx build tpl-java");
+        System.out.println("  2. Launch the TUI:    isx");
         return CommandResult.SUCCESS;
     }
 
@@ -938,6 +1001,26 @@ public class InitCommand extends BaseCommand {
                 "  Example: ~/code\n",
                 "  No host paths configured. Add them later by re-running 'isx init'\n" +
                 "  or editing ~/.config/incus-spawn/config.yaml");
+    }
+
+    private void offerMacOsServices() {
+        if (ProxyService.isMacOsServiceInstalled()) {
+            System.out.println("  macOS services already installed.");
+            return;
+        }
+        System.out.println();
+        System.out.println("  Optional: install VM and proxy as macOS services so they start");
+        System.out.println("  automatically on login and survive reboots.");
+        System.out.println();
+        var console = System.console();
+        if (console == null) return;
+        System.out.print("  Install services? (Y/n): ");
+        var answer = console.readLine().strip();
+        if (answer.equalsIgnoreCase("n")) {
+            System.out.println("  Skipped. Start manually with: isx vm start && isx proxy start");
+            return;
+        }
+        ProxyService.installMacOs();
     }
 
     private boolean offerProxyService() {

@@ -172,14 +172,17 @@ public final class Environment {
         return incusConfigDir().resolve("servercerts");
     }
 
-    public static final String INCUS_CLIENT;
-    public static final String INCUS_SERVER;
-    static {
-        // Probe the Incus daemon via REST API to get the server version.
-        // INCUS_CLIENT is not meaningful without the CLI binary; we report the API version instead.
-        String client = "REST API";
-        String server = dev.incusspawn.incus.IncusClient.daemonVersion();
-        INCUS_CLIENT = client;
-        INCUS_SERVER = server;
+    private static volatile String incusServer;
+
+    public static String incusClient() {
+        return "REST API";
+    }
+
+    public static String incusServer() {
+        var cached = incusServer;
+        if (cached != null) return cached;
+        cached = dev.incusspawn.incus.IncusClient.daemonVersion();
+        incusServer = cached;
+        return cached;
     }
 }
