@@ -14,8 +14,13 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
+            os: linux
             arch: amd64
           - runner: ubuntu-24.04-arm
+            os: linux
+            arch: aarch64
+          - runner: macos-14
+            os: macos
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -38,28 +43,43 @@ jobs:
           mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false
 
       - name: Build uber-jar
-        if: matrix.arch == 'amd64'
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: |
           mvn package -Prelease -DskipTests
           cp target/incus-spawn-*-runner.jar target/incus-spawn-runner.jar
 
-      - name: Build native image
+      - name: Build native image (Linux)
+        if: matrix.os == 'linux'
         run: |
           mvn package -Dnative -DskipTests
           cp target/incus-spawn-*-runner target/incus-spawn-linux-${{ matrix.arch }}
 
+      - name: Build native image (macOS)
+        if: matrix.os == 'macos'
+        run: |
+          mvn package -Dnative -DskipTests
+          cp target/incus-spawn-*-runner target/incus-spawn-macos-${{ matrix.arch }}
+
       - name: Upload uber-jar
-        if: matrix.arch == 'amd64'
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@v5
         with:
           name: uber-jar
           path: target/incus-spawn-runner.jar
 
-      - name: Upload native binary
+      - name: Upload native binary (Linux)
+        if: matrix.os == 'linux'
         uses: actions/upload-artifact@v5
         with:
-          name: native-${{ matrix.arch }}
+          name: native-linux-${{ matrix.arch }}
           path: target/incus-spawn-linux-${{ matrix.arch }}
+
+      - name: Upload native binary (macOS)
+        if: matrix.os == 'macos'
+        uses: actions/upload-artifact@v5
+        with:
+          name: native-macos-${{ matrix.arch }}
+          path: target/incus-spawn-macos-${{ matrix.arch }}
 
   release:
     needs: [build, appliance]
@@ -91,12 +111,14 @@ jobs:
         run: |
           gh release create $GITHUB_REF_NAME \
             artifacts/uber-jar/incus-spawn-runner.jar \
-            artifacts/native-amd64/incus-spawn-linux-amd64 \
-            artifacts/native-aarch64/incus-spawn-linux-aarch64 \
+            artifacts/native-linux-amd64/incus-spawn-linux-amd64 \
+            artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 \
+            artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 \
             artifacts/vmlinuz-x86_64 \
             artifacts/vmlinuz-aarch64 \
             artifacts/disk-x86_64.img.gz \
             artifacts/disk-aarch64.img.gz \
+            src/main/resources/git-remote-isx \
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,8 +135,8 @@ jobs:
           CHANGELOG="* $(date +'%a %b %d %Y') Sanne Grinovero <sanne@hibernate.org> - ${VERSION}-1\n- See https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
           sed -e "s/@VERSION@/$VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
           mkdir -p ~/rpmbuild/{SOURCES,SPECS}
-          cp artifacts/native-amd64/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
-          cp artifacts/native-aarch64/incus-spawn-linux-aarch64 ~/rpmbuild/SOURCES/
+          cp artifacts/native-linux-amd64/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
+          cp artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 ~/rpmbuild/SOURCES/
           cp src/main/resources/git-remote-isx ~/rpmbuild/SOURCES/
           cp /tmp/incus-spawn.spec ~/rpmbuild/SPECS/
           rpmbuild -bs ~/rpmbuild/SPECS/incus-spawn.spec
