@@ -59,7 +59,7 @@ class YamlToolSetupTest {
 
         // Packages are installed in bulk by BuildCommand, not by install().
 
-        // 1. run -> shellExecInteractive with sh -c
+        // 1. run -> runInteractive -> shellExecInteractive with sh -c
         order.verify(incus).shellExecInteractive(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo root-step"));
 
