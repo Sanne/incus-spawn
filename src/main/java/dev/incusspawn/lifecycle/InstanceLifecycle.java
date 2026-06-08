@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -24,8 +25,7 @@ public final class InstanceLifecycle {
 
     public static void applyResourceLimits(IncusClient incus, String name,
                                           String cpu, String memory, String disk) {
-        incus.configSet(name, "limits.cpu", cpu);
-        incus.configSet(name, "limits.memory", memory);
+        incus.configSetAll(name, Map.of("limits.cpu", cpu, "limits.memory", memory));
         incus.deviceConfigSet(name, "root", "size", disk);
     }
 
@@ -46,9 +46,10 @@ public final class InstanceLifecycle {
     }
 
     public static void tagMetadata(IncusClient incus, String name, String type, String parent) {
-        incus.configSet(name, Metadata.TYPE, type);
-        incus.configSet(name, Metadata.PARENT, parent);
-        incus.configSet(name, Metadata.CREATED, Metadata.today());
+        incus.configSetAll(name, Map.of(
+                Metadata.TYPE, type,
+                Metadata.PARENT, parent,
+                Metadata.CREATED, Metadata.today()));
     }
 
     /**
@@ -215,8 +216,8 @@ public final class InstanceLifecycle {
             try {
                 Files.writeString(tmpKey, String.join("\n", keys) + "\n");
                 incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys");
-                incus.shellExec(name, "chown", "agentuser:agentuser", "/home/agentuser/.ssh/authorized_keys");
-                incus.shellExec(name, "chmod", "600", "/home/agentuser/.ssh/authorized_keys");
+                incus.shellExec(name, "sh", "-c",
+                        "chown agentuser:agentuser /home/agentuser/.ssh/authorized_keys && chmod 600 /home/agentuser/.ssh/authorized_keys");
             } finally {
                 Files.deleteIfExists(tmpKey);
             }

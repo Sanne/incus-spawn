@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -585,6 +586,24 @@ public class IncusClient {
         }
     }
 
+    public void configSetAll(String name, Map<String, String> config) {
+        if (config.isEmpty()) return;
+        var resp = http().requestAndWait("PATCH", "/1.0/instances/" + name,
+                Map.of("config", config));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to set config on " + name);
+        }
+    }
+
+    public void configUpdate(String name, Map<String, Object> config) {
+        if (config.isEmpty()) return;
+        var resp = http().requestAndWait("PATCH", "/1.0/instances/" + name,
+                Map.of("config", config));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to update config on " + name);
+        }
+    }
+
     /**
      * Add a device to a container/VM.
      */
@@ -608,6 +627,13 @@ public class IncusClient {
     public void deviceRemove(String container, String deviceName) {
         var resp = http().removeDevice(container, deviceName);
         if (!resp.isSuccess()) throw new IncusException("Failed to remove device " + deviceName + " from " + container);
+    }
+
+    public void devicesRemoveAll(String container, Collection<String> deviceNames) {
+        if (deviceNames.isEmpty()) return;
+        var resp = http().removeDevices(container, deviceNames);
+        if (!resp.isSuccess()) throw new IncusException(
+                "Failed to remove devices " + deviceNames + " from " + container);
     }
 
     /**

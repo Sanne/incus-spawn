@@ -196,6 +196,29 @@ class IncusApi {
         return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody);
     }
 
+    ApiResponse removeDevices(String instanceName, java.util.Collection<String> deviceNames) {
+        var getResp = get("/1.0/instances/" + instanceName);
+        if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
+
+        var metadata = getResp.body().path("metadata");
+        var devicesNode = JSON.createObjectNode();
+        metadata.path("devices").fields().forEachRemaining(e -> {
+            if (!deviceNames.contains(e.getKey())) devicesNode.set(e.getKey(), e.getValue());
+        });
+
+        var putBody = JSON.createObjectNode();
+        putBody.put("architecture", metadata.path("architecture").asText());
+        putBody.set("config", metadata.path("config").deepCopy());
+        putBody.put("description", metadata.path("description").asText(""));
+        putBody.set("devices", devicesNode);
+        putBody.put("ephemeral", metadata.path("ephemeral").asBoolean(false));
+        var profiles = putBody.putArray("profiles");
+        metadata.path("profiles").forEach(p -> profiles.add(p.asText()));
+        putBody.put("stateful", metadata.path("stateful").asBoolean(false));
+
+        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody);
+    }
+
     ApiResponse patch(String path, Object body) {
         return request("PATCH", path, body);
     }

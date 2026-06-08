@@ -58,8 +58,7 @@ public final class GuiPassthrough {
 
         System.out.println("Enabling GUI passthrough...");
         // Remove first in case the source already had these devices (incus copy carries them over).
-        incus.deviceRemove(name, "gpu");
-        incus.deviceRemove(name, "xdg-runtime");
+        incus.devicesRemoveAll(name, java.util.List.of("gpu", "xdg-runtime"));
         incus.deviceAdd(name, "gpu", "gpu");
         // Mount to /mnt/host-xdg instead of /run/user/<uid> — systemd-logind
         // mounts its own tmpfs at /run/user/<uid> which would hide this device.
@@ -70,9 +69,11 @@ public final class GuiPassthrough {
         // AND via profile.d script (visible to login shells, since su - resets env).
         var uid = InstanceLifecycle.getUid();
         var waylandSocketPath = "/mnt/host-xdg/" + waylandDisplay;
-        incus.configSet(name, "environment.WAYLAND_DISPLAY", waylandSocketPath);
-        incus.configSet(name, "environment.XDG_RUNTIME_DIR", "/run/user/" + uid);
-        WAYLAND_ENV.forEach((k, v) -> incus.configSet(name, "environment." + k, v));
+        var envConfig = new java.util.LinkedHashMap<String, String>();
+        envConfig.put("environment.WAYLAND_DISPLAY", waylandSocketPath);
+        envConfig.put("environment.XDG_RUNTIME_DIR", "/run/user/" + uid);
+        WAYLAND_ENV.forEach((k, v) -> envConfig.put("environment." + k, v));
+        incus.configSetAll(name, envConfig);
         if (!pushWaylandFiles(incus, name, waylandSocketPath, uid)) {
             System.err.println("Warning: GUI devices configured but profile.d scripts failed to install.");
             System.err.println("GUI may not work in login shells.");
@@ -86,14 +87,17 @@ public final class GuiPassthrough {
      * Clears devices, environment keys, metadata, and profile.d/tmpfiles.d scripts.
      */
     public static void removeGui(IncusClient incus, String name) {
-        incus.deviceRemove(name, "gpu");
-        incus.deviceRemove(name, "xdg-runtime");
-        incus.configUnset(name, Metadata.GUI_ENABLED);
-        incus.configUnset(name, "environment.WAYLAND_DISPLAY");
-        incus.configUnset(name, "environment.XDG_RUNTIME_DIR");
+        incus.devicesRemoveAll(name, java.util.List.of("gpu", "xdg-runtime"));
+
+        var configUnsets = new java.util.LinkedHashMap<String, Object>();
+        configUnsets.put(Metadata.GUI_ENABLED, null);
+        configUnsets.put("environment.WAYLAND_DISPLAY", null);
+        configUnsets.put("environment.XDG_RUNTIME_DIR", null);
         for (var key : WAYLAND_ENV.keySet()) {
-            incus.configUnset(name, "environment." + key);
+            configUnsets.put("environment." + key, null);
         }
+        incus.configUpdate(name, configUnsets);
+
         // Remove profile.d and tmpfiles.d scripts that re-export Wayland env in login shells
         try {
             pushTempFile(incus, name, "", "/etc/profile.d/wayland.sh");
