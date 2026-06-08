@@ -253,15 +253,24 @@ class IncusApi {
 
     /**
      * Push a single file into an instance at the given path.
-     * The file is written as root (uid=0, gid=0) with mode 0644.
+     * The file is written as root (uid=0, gid=0) with mode derived from source.
      */
     ApiResponse filePush(String instanceName, String destPath, Path sourceFile) {
+        return filePush(instanceName, destPath, sourceFile, "0", "0", null);
+    }
+
+    /**
+     * Push a single file with explicit ownership and mode, avoiding a
+     * separate chown/chmod exec round trip.
+     */
+    ApiResponse filePush(String instanceName, String destPath, Path sourceFile,
+                         String uid, String gid, String mode) {
         try {
             var content = Files.readAllBytes(sourceFile);
             var extraHeaders = Map.of(
-                    "X-Incus-uid", "0",
-                    "X-Incus-gid", "0",
-                    "X-Incus-mode", posixModeString(sourceFile),
+                    "X-Incus-uid", uid,
+                    "X-Incus-gid", gid,
+                    "X-Incus-mode", mode != null ? mode : posixModeString(sourceFile),
                     "X-Incus-type", "file");
             return requestRaw("POST", filesPath(instanceName, destPath),
                     "application/octet-stream", extraHeaders, content);

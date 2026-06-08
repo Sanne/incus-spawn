@@ -7,7 +7,7 @@ set -euo pipefail
 # unpacked into a btrfs disk image on first use by vm.sh.
 #
 # Strategy:
-#   1. Pull Alpine Linux edge container image via podman
+#   1. Pull Alpine Linux stable container image via podman
 #   2. Copy overlay files, install packages via chroot
 #   3. Run config.sh to configure the appliance
 #   4. Pack rootfs into a compressed tarball
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(mkdir -p "${1:-$SCRIPT_DIR/build}" && cd "${1:-$SCRIPT_DIR/build}" && pwd)"
-CONTAINER_IMAGE="docker.io/alpine:edge"
+CONTAINER_IMAGE="docker.io/alpine:3.23"
 
 echo "Building incus-spawn appliance..."
 echo "  Target: $TARGET_DIR"
@@ -56,8 +56,8 @@ echo "==> Installing packages..."
 chroot "$ROOTFS_DIR" /bin/sh -c "
 set -eu
 apk add --no-cache \
-    incus \
-    incus-client \
+    incus-feature \
+    incus-feature-client \
     lxcfs \
     dbus \
     btrfs-progs \

@@ -112,12 +112,19 @@ public class BranchCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
+        // Pre-fetch config, inject SSH keys, and push terminfo while container
+        // is stopped — the Incus daemon blocks API calls after start
+        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
+        System.out.println("Configuring SSH access...");
+        InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+        InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+
         System.out.println("Starting container...");
         incus.start(name);
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
 
         System.out.println("Branch '" + name + "' is ready.\n");
-        incus.interactiveShell(name, "agentuser");
+        incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
         return CommandResult.SUCCESS;
     }
 

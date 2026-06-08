@@ -182,15 +182,48 @@ public class IncusClient {
     /**
      * Open an interactive shell in a container, inheriting stdio.
      */
-    public int interactiveShell(String container, String user) {
-        var workdir = configGet(container, Metadata.WORKDIR);
-        var shellCmd = configGet(container, Metadata.SHELL_COMMAND);
-        return interactiveShell(container, user,
-                workdir.isBlank() ? null : workdir,
-                shellCmd.isBlank() ? null : shellCmd);
+    /**
+     * Pre-computed data for interactiveShell to avoid REST API calls after
+     * container start (the daemon blocks REST calls during startup).
+     */
+    public record ShellPrep(String workdir, String shellCommand,
+                            boolean autoAttachTmux, String subnetDiagnostic,
+                            boolean terminfoHandled) {
+
+        public static ShellPrep from(IncusClient incus, String container) {
+            var workdir = incus.configGet(container, Metadata.WORKDIR);
+            var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
+            var autoAttach = shouldAutoAttachTmux(incus.configGet(container, Metadata.BUILD_SOURCE));
+            var diag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+            return new ShellPrep(
+                    workdir.isBlank() ? null : workdir,
+                    shellCmd.isBlank() ? null : shellCmd,
+                    autoAttach, diag, false);
+        }
+
+        public static ShellPrep fromPrefetched(String workdir, String shellCommand,
+                                               String buildSourceJson, String subnetDiagnostic,
+                                               boolean terminfoHandled) {
+            return new ShellPrep(
+                    workdir != null && !workdir.isBlank() ? workdir : null,
+                    shellCommand != null && !shellCommand.isBlank() ? shellCommand : null,
+                    shouldAutoAttachTmux(buildSourceJson),
+                    subnetDiagnostic, terminfoHandled);
+        }
+
+        private static boolean shouldAutoAttachTmux(String buildSourceJson) {
+            var bs = BuildSource.fromJson(buildSourceJson);
+            if (bs == null) return false;
+            var tmux = bs.getToolInstances().get("tmux");
+            return tmux != null && Boolean.parseBoolean(tmux.getParameterValues().get("auto_attach"));
+        }
     }
 
-    private int interactiveShell(String container, String user, String workdir, String shellCommand) {
+    public int interactiveShell(String container, String user) {
+        return interactiveShell(container, user, ShellPrep.from(this, container));
+    }
+
+    public int interactiveShell(String container, String user, ShellPrep prep) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 
@@ -200,22 +233,29 @@ public class IncusClient {
         if (inTmux) {
             savedWindowName = hostExecCapture("tmux", "display-message", "-p", "#W");
             hostExecQuiet("tmux", "rename-window", "isx:" + container);
-            savedStatusRight = setTmuxSubnetWarning();
+            if (prep.subnetDiagnostic() != null) {
+                savedStatusRight = hostExecCapture("tmux", "show-option", "-v", "status-right");
+                if (savedStatusRight == null) savedStatusRight = "";
+                hostExecQuiet("tmux", "set-option", "status-right",
+                        "#[bg=yellow,fg=black,bold] ⚠ Bridge subnet conflict — run 'isx init' #[default]");
+            }
         }
 
-        propagateTerminfo(container);
+        if (!prep.terminfoHandled()) {
+            propagateTerminfo(container);
+        }
 
         try {
             var uidGid = getUserUidGid(container, user);
             var homeDir = "/home/" + user;
-            var targetCwd = workdir != null ? workdir : homeDir;
+            var targetCwd = prep.workdir() != null ? prep.workdir() : homeDir;
 
             List<String> shellArgs;
-            if (shellCommand != null) {
-                shellArgs = List.of("bash", "--login", "-c", shellCommand + " || exec bash --login");
+            if (prep.shellCommand() != null) {
+                shellArgs = List.of("bash", "--login", "-c", prep.shellCommand() + " || exec bash --login");
             } else if (inTmux) {
                 shellArgs = List.of("bash", "--login");
-            } else if (shouldAutoAttachTmux(container)) {
+            } else if (prep.autoAttachTmux()) {
                 shellArgs = List.of("bash", "--login", "-c",
                         "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
@@ -245,14 +285,6 @@ public class IncusClient {
         }
     }
 
-    private boolean shouldAutoAttachTmux(String container) {
-        var json = configGet(container, Metadata.BUILD_SOURCE);
-        var bs = BuildSource.fromJson(json);
-        if (bs == null) return false;
-        var tmux = bs.getToolInstances().get("tmux");
-        return tmux != null && Boolean.parseBoolean(tmux.getParameterValues().get("auto_attach"));
-    }
-
     private record UidGid(String uid, String gid) {}
 
     private UidGid getUserUidGid(String container, String username) {
@@ -269,15 +301,6 @@ public class IncusClient {
         var gid = result.stdout().strip();
 
         return new UidGid(uid, gid);
-    }
-
-    private String setTmuxSubnetWarning() {
-        var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(this);
-        if (diagnostic == null) return null;
-        var saved = hostExecCapture("tmux", "show-option", "-v", "status-right");
-        hostExecQuiet("tmux", "set-option", "status-right",
-                "#[bg=yellow,fg=black,bold] ⚠ Bridge subnet conflict — run 'isx init' #[default]");
-        return saved != null ? saved : "";
     }
 
     private static String hostExecCapture(String... command) {
@@ -802,6 +825,15 @@ public class IncusClient {
      */
     public void filePush(String source, String container, String destPath) {
         var resp = http().filePush(container, destPath, Path.of(source));
+        if (!resp.isSuccess()) throw new IncusException("Failed to push file to " + container + destPath);
+    }
+
+    /**
+     * Push a file with explicit ownership and mode, avoiding a chown/chmod exec.
+     */
+    public void filePush(String source, String container, String destPath,
+                         String uid, String gid, String mode) {
+        var resp = http().filePush(container, destPath, Path.of(source), uid, gid, mode);
         if (!resp.isSuccess()) throw new IncusException("Failed to push file to " + container + destPath);
     }
 
