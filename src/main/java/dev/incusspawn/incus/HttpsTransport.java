@@ -315,8 +315,12 @@ class HttpsTransport implements IncusTransport {
 
         @Override
         public void sendData(byte[] data, int offset, int length) throws IOException {
-            // Java's HttpClient automatically masks client frames per RFC 6455.
-            ws.sendBinary(ByteBuffer.wrap(data, offset, length), true).join();
+            try {
+                ws.sendBinary(ByteBuffer.wrap(data, offset, length), true).join();
+            } catch (java.util.concurrent.CompletionException e) {
+                if (e.getCause() instanceof IOException io) throw io;
+                throw new IOException(e);
+            }
         }
 
         @Override
@@ -328,6 +332,7 @@ class HttpsTransport implements IncusTransport {
         public void close() {
             try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join(); } catch (Exception ignored) {}
             ws.abort();
+            queue.offer(CLOSE_SENTINEL);
         }
     }
 }

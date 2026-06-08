@@ -171,9 +171,7 @@ public final class ProxyService {
         }
 
         if (!needsRestart) {
-            var healthIp = dev.incusspawn.Environment.isMacOS()
-                    ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
-            var info = ProxyHealthCheck.fetchProxyInfo(healthIp);
+            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
             var drift = ProxyHealthCheck.checkVersionDrift(info);
             needsRestart = !drift.isEmpty();
         }

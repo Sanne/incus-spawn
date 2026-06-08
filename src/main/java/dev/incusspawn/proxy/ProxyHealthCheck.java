@@ -24,6 +24,12 @@ public final class ProxyHealthCheck {
 
     private ProxyHealthCheck() {}
 
+    /** The IP to query for health checks: localhost on macOS, bridge gateway on Linux. */
+    public static String healthAddress(IncusClient incus) {
+        return dev.incusspawn.Environment.isMacOS()
+                ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
+    }
+
     private record CacheEntry(IncusClient client, ProxyStatus status, long timestamp) {}
     private static volatile CacheEntry cache;
     private static final long CACHE_TTL_MS = 2000;
@@ -165,9 +171,7 @@ public final class ProxyHealthCheck {
 
     static void warnIfDrifted(IncusClient incus) {
         try {
-            var healthIp = dev.incusspawn.Environment.isMacOS()
-                    ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
-            var info = fetchProxyInfo(healthIp);
+            var info = fetchProxyInfo(healthAddress(incus));
             var drift = checkVersionDrift(info);
             if (drift.isEmpty()) return;
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
