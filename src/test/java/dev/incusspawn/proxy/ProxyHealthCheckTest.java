@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.*;
 import static org.mockito.Mockito.*;
 
 class ProxyHealthCheckTest {
@@ -43,6 +44,8 @@ class ProxyHealthCheckTest {
 
     @Test
     void checkReturnsNotRunningWhenNoProxyNoDns() {
+        assumeFalse(ProxyHealthCheck.isHealthy("127.0.0.1"),
+                "A real proxy is running on localhost — cannot test NOT_RUNNING");
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn("");
@@ -53,6 +56,8 @@ class ProxyHealthCheckTest {
 
     @Test
     void checkReturnsStaleDnsWhenDnsOverridesPresent() {
+        assumeFalse(ProxyHealthCheck.isHealthy("127.0.0.1"),
+                "A real proxy is running on localhost — cannot test STALE_DNS");
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
         when(incus.networkConfigGet("incusbr0", "raw.dnsmasq"))
