@@ -90,6 +90,15 @@ public class ClaudeSetup implements ToolSetup {
         System.out.println("Configuring Claude Code for agent use...");
         var settingsJson = """
                 {
+                  "env": {
+                    "DISABLE_AUTOUPDATER": "1",
+                    "DISABLE_TELEMETRY": "1",
+                    "DO_NOT_TRACK": "1",
+                    "DISABLE_ERROR_REPORTING": "1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+                    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+                  },
                   "permissions": {
                     "defaultMode": "bypassPermissions",
                     "allow": [
@@ -104,13 +113,15 @@ public class ClaudeSetup implements ToolSetup {
                       "Agent(*)"
                     ]
                   },
-                  "skipDangerousModePermissionPrompt": true
+                  "skipDangerousModePermissionPrompt": true,
+                  "disableDeepLinkRegistration": true
                 }
                 """;
         var claudeJsonBuilder = new StringBuilder();
         claudeJsonBuilder.append("""
                 {
                   "hasCompletedOnboarding": true,
+                  "hasAcceptedTerms": true,
                   "hasSeenTasksHint": true,
                   "numStartups": 1,
                   "autoUpdates": false,
@@ -138,9 +149,6 @@ public class ClaudeSetup implements ToolSetup {
         c.writeFile("/home/agentuser/.claude.json", claudeJson);
         c.chown("/home/agentuser/.claude", "agentuser:agentuser");
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
-
-        c.appendToProfile("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1");
-        c.appendToProfile("export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1");
     }
 
     /**
