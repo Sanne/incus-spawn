@@ -380,6 +380,7 @@ public class ListCommand extends BaseCommand {
         var storedNames = new java.util.HashSet<String>();
         for (var inst : allInstances) {
             if (templateNames.contains(inst.name)) continue;
+            if (inst.name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
             if (!Metadata.TYPE_BASE.equals(inst.type)) continue;
 
             var buildSource = BuildSource.fromJson(inst.buildSourceJson);

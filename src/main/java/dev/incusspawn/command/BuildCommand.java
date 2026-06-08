@@ -107,7 +107,7 @@ public class BuildCommand extends BaseCommand {
         return true;
     }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
-    private static final String REBUILDING_SUFFIX = "-rebuilding";
+    static final String REBUILDING_SUFFIX = "-rebuilding";
 
     private volatile String[] activeBuild;
 
@@ -535,7 +535,7 @@ public class BuildCommand extends BaseCommand {
         try {
             incus.deleteIfExists(promotedName);
             try { unmountDnfCache(buildName); } catch (Exception ignored) {}
-            incus.stop(buildName);
+            incus.forceStop(buildName);
             incus.rename(buildName, promotedName);
             incus.configSet(promotedName, Metadata.TYPE, Metadata.TYPE_FAILED_BUILD);
             incus.configSet(promotedName, Metadata.PARENT, canonicalName);

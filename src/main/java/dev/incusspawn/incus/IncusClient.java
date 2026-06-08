@@ -527,6 +527,15 @@ public class IncusClient {
     }
 
     /**
+     * Force-stop a container/VM, even if it is in an Error state.
+     */
+    public void forceStop(String name) {
+        var resp = http().requestAndWait("PUT", "/1.0/instances/" + name + "/state",
+                Map.of("action", "stop", "timeout", 30, "force", true));
+        if (!resp.isSuccess()) throw new IncusException("Failed to force-stop " + name);
+    }
+
+    /**
      * Restart a container/VM.
      */
     public void restart(String name) {
