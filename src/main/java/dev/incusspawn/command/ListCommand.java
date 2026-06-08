@@ -3010,14 +3010,17 @@ public class ListCommand extends BaseCommand {
             GuiPassthrough.removeGui(incus, name);
         }
 
+        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
+        InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+        InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         incus.start(name);
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
 
         System.out.println("Branch '" + name + "' is ready.");
         System.out.println("Connecting to " + name + "...\n");
-        incus.interactiveShell(name, "agentuser");
+        incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
         System.out.println();
     }
 

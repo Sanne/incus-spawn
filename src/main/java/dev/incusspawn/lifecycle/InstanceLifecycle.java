@@ -4,6 +4,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
+import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.MitmProxy;
@@ -69,11 +70,76 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Pre-fetch instance metadata that setupRuntime needs, while the container
+     * is still stopped. Reading config from a stopped container avoids lock
+     * contention with the seccomp_notify handler that activates on start.
+     */
+    public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
+        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+        var hasSshKeys = !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
+                || buildSourceJson.contains("\"ssh\"");
+        var workdir = incus.configGet(name, Metadata.WORKDIR);
+        var shellCommand = incus.configGet(name, Metadata.SHELL_COMMAND);
+        var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+        var terminfo = captureHostTerminfo();
+        return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
+                subnetDiag, terminfo);
+    }
+
+    private static String captureHostTerminfo() {
+        var term = System.getenv("TERM");
+        if (term == null || term.isEmpty()) return null;
+        try {
+            var pb = new ProcessBuilder("infocmp", "-x", term);
+            pb.redirectErrorStream(true);
+            var proc = pb.start();
+            var output = new String(proc.getInputStream().readAllBytes()).strip();
+            return proc.waitFor() == 0 && !output.isEmpty() ? output : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Push terminfo source into a stopped container so it can be compiled
+     * during setupRuntime without separate exec calls.
+     */
+    public static void pushTerminfoIfNeeded(IncusClient incus, String name, String terminfo) {
+        if (terminfo == null) return;
+        try {
+            var tmp = Files.createTempFile("isx-terminfo-", ".src");
+            try {
+                Files.writeString(tmp, terminfo + "\n");
+                incus.filePush(tmp.toString(), name, "/tmp/.isx-terminfo.src");
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+        } catch (IOException e) {
+            // best-effort — propagateTerminfo in interactiveShell is the fallback
+        }
+    }
+
+    public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
+                                String workdir, String shellCommand,
+                                String subnetDiagnostic, String terminfo) {
+
+        public IncusClient.ShellPrep toShellPrep() {
+            return IncusClient.ShellPrep.fromPrefetched(
+                    workdir, shellCommand, buildSourceJson, subnetDiagnostic,
+                    terminfo != null);
+        }
+    }
+
+    /**
      * Post-start setup: firewall, inbox, home ownership, SSH keys.
      * GUI is NOT handled here — it must be configured before start.
+     *
+     * @param prefetched config read before start to avoid seccomp lock contention;
+     *                   if null, config is read live (slower on macOS)
      */
     public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, Path inboxPath) {
+                                   NetworkMode networkMode, Path inboxPath,
+                                   RuntimeConfig prefetched) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
         }
@@ -94,17 +160,26 @@ public final class InstanceLifecycle {
         }
 
         // Build a single setup script that handles readiness polling, home
-        // ownership, and tool readiness — all in one exec call. Each additional
-        // exec round trip can block for seconds due to seccomp_notify lock
-        // contention during container startup (mknod interception).
-        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
-        var setupScript = buildSetupScript(buildSourceJson);
+        // ownership, terminfo, and tool readiness — all in one exec call.
+        // Each additional exec round trip blocks for seconds due to
+        // seccomp_notify lock contention during container startup.
+        var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
+                : incus.configGet(name, Metadata.BUILD_SOURCE);
+        var setupScript = buildSetupScript(prefetched, buildSourceJson);
         System.out.println("Waiting for container...");
         if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
             System.err.println("Warning: container setup may not be complete.");
         }
 
-        injectSshKeyIfAvailable(incus, name);
+        if (prefetched == null) {
+            System.out.println("Configuring SSH access...");
+            injectSshKeyIfAvailable(incus, name, null);
+        }
+    }
+
+    public static void setupRuntime(IncusClient incus, String name,
+                                   NetworkMode networkMode, Path inboxPath) {
+        setupRuntime(incus, name, networkMode, inboxPath, null);
     }
 
     /**
@@ -135,8 +210,7 @@ public final class InstanceLifecycle {
                 " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
     }
 
-    public static void awaitToolReadiness(IncusClient incus, String name) {
-        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+    public static void awaitToolReadiness(IncusClient incus, String name, String buildSourceJson) {
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource == null) return;
 
@@ -152,13 +226,16 @@ public final class InstanceLifecycle {
 
     /**
      * Build a shell script that performs all post-start setup in one exec:
-     * home ownership and tool readiness polling. Batching avoids multiple
-     * exec round trips that each block due to seccomp_notify lock contention
-     * during container startup.
+     * home ownership, terminfo compilation, and tool readiness polling.
+     * Batching avoids multiple exec round trips that each block due to
+     * seccomp_notify lock contention during container startup.
      */
-    static String buildSetupScript(String buildSourceJson) {
+    static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson) {
         var sb = new StringBuilder();
         sb.append("chown agentuser:agentuser /home/agentuser");
+        if (prefetched != null && prefetched.terminfo() != null) {
+            sb.append("; tic -x /tmp/.isx-terminfo.src 2>/dev/null; rm -f /tmp/.isx-terminfo.src");
+        }
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource != null) {
             for (var tool : buildSource.getTools().values()) {
@@ -170,9 +247,16 @@ public final class InstanceLifecycle {
         return sb.toString();
     }
 
-    public static void injectSshKeyIfAvailable(IncusClient incus, String name) {
-        var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
-        if (!check.success()) return;
+    /**
+     * @param hasSshKeys pre-fetched from stopped container config; null to check live
+     */
+    public static void injectSshKeyIfAvailable(IncusClient incus, String name, Boolean hasSshKeys) {
+        if (hasSshKeys != null) {
+            if (!hasSshKeys) return;
+        } else {
+            var check = incus.shellExec(name, "test", "-f", "/home/agentuser/.ssh/authorized_keys");
+            if (!check.success()) return;
+        }
 
         // Ensure managed key infrastructure exists (creates lazily for pre-existing installs)
         boolean includeConfigured = false;
@@ -216,9 +300,10 @@ public final class InstanceLifecycle {
             var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
             try {
                 Files.writeString(tmpKey, String.join("\n", keys) + "\n");
-                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys");
-                incus.shellExec(name, "sh", "-c",
-                        "chown agentuser:agentuser /home/agentuser/.ssh/authorized_keys && chmod 600 /home/agentuser/.ssh/authorized_keys");
+                // Push with agentuser ownership (uid=1000) and mode 0600 directly,
+                // avoiding a separate chown+chmod exec round trip
+                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys",
+                        "1000", "1000", "0600");
             } finally {
                 Files.deleteIfExists(tmpKey);
             }
