@@ -1,17 +1,30 @@
 package dev.incusspawn.vm;
 
 import dev.incusspawn.Environment;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.*;
 
 class VmManagerTest {
+
+    @TempDir Path tempHome;
+    private String originalHome;
+
+    @BeforeEach
+    void isolateEnvironment() {
+        originalHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempHome.toString());
+    }
+
+    @AfterEach
+    void restoreEnvironment() {
+        System.setProperty("user.home", originalHome);
+    }
 
     @Test
     void detectCpusReturnsAtLeastOne() {
@@ -70,8 +83,6 @@ class VmManagerTest {
 
     @Test
     void checkArtifactsThrowsWhenNoKernel() {
-        assumeFalse(Files.exists(Environment.applianceKernel()),
-                "Appliance kernel exists — cannot test missing artifact");
         var ex = assertThrows(VmException.class, VmManager::checkArtifacts);
         assertTrue(ex.getMessage().contains("vmlinuz"));
     }
@@ -103,8 +114,6 @@ class VmManagerTest {
 
     @Test
     void ensureDiskThrowsWhenNoCompressedImage() {
-        assumeFalse(Files.exists(Environment.vmDiskImage()) || Files.exists(Environment.applianceDiskImage()),
-                "Disk image exists — cannot test missing artifact");
         var ex = assertThrows(VmException.class, VmManager::ensureDisk);
         assertTrue(ex.getMessage().contains("disk.img.gz"));
     }

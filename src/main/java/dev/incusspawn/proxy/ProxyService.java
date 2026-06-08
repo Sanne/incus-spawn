@@ -171,9 +171,7 @@ public final class ProxyService {
         }
 
         if (!needsRestart) {
-            var healthIp = dev.incusspawn.Environment.isMacOS()
-                    ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
-            var info = ProxyHealthCheck.fetchProxyInfo(healthIp);
+            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
             var drift = ProxyHealthCheck.checkVersionDrift(info);
             needsRestart = !drift.isEmpty();
         }
@@ -449,6 +447,7 @@ public final class ProxyService {
             var process = pb.start();
             return new String(process.getInputStream().readAllBytes()).strip();
         } catch (Exception e) {
+            System.err.println("Warning: could not determine UID, falling back to 501");
             return "501";
         }
     }

@@ -346,6 +346,23 @@ public class IncusClient {
     }
 
     /**
+     * Return storage pool resource usage as a human-readable string.
+     * Queries the pool's /resources endpoint for disk space details.
+     */
+    public String getStoragePoolUsage(String poolName) {
+        if (poolName == null) return "";
+        var resp = http().get("/1.0/storage-pools/" + poolName + "/resources");
+        if (!resp.isSuccess()) return "(could not query pool resources)";
+        var space = resp.body().path("metadata").path("space");
+        long total = space.path("total").asLong(0);
+        long used = space.path("used").asLong(0);
+        if (total == 0) return "(no space info)";
+        return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
+                poolName, used / (1024 * 1024), total / (1024 * 1024),
+                used * 100 / total);
+    }
+
+    /**
      * Get a config value from a named network (e.g. "incusbr0").
      * Returns empty string if the key is not set.
      */

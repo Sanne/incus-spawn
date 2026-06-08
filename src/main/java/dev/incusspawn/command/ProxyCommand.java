@@ -127,7 +127,7 @@ public class ProxyCommand extends BaseCommand {
             System.out.println("  Log file:      " + logFile());
             System.out.println();
 
-            var healthBindAddress = Environment.isMacOS() ? "127.0.0.1" : gatewayIp;
+            var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
             var proxy = new MitmProxy(gatewayIp, port, healthPort, healthBindAddress, apiKey, ghToken,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
 
@@ -191,7 +191,7 @@ public class ProxyCommand extends BaseCommand {
             var status = ProxyHealthCheck.check(incus);
             var serviceInstalled = ProxyService.isInstalled();
             var serviceActive = serviceInstalled && ProxyService.isActive();
-            var healthIp = Environment.isMacOS() ? "127.0.0.1" : gatewayIp;
+            var healthIp = ProxyHealthCheck.healthAddress(incus);
             switch (status) {
                 case RUNNING -> {
                     System.out.println("Proxy is running.");

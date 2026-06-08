@@ -275,10 +275,15 @@ public class MitmProxy {
         }
     }
 
-    /** Clear bridge-level DNS overrides, restoring normal DNS resolution. */
+    /**
+     * Clear bridge-level DNS overrides, restoring normal DNS resolution.
+     * Only removes address= lines (proxy-specific domain overrides).
+     * Preserves server= lines because the VM's dnsmasq needs explicit
+     * forwarders (set by incus-spawn-vm-init) — without them, containers
+     * inside the VM lose upstream DNS resolution.
+     */
     public static void clearBridgeDns(IncusClient incus) {
         try {
-            // Only remove address= overrides, preserve server= forwarders
             var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
             var servers = existing.lines()
                     .filter(l -> l.startsWith("server="))

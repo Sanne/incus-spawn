@@ -491,6 +491,7 @@ public class BuildCommand extends BaseCommand {
         } catch (Exception e) {
             System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
             System.err.println("\033[1mBuild failed for " + canonicalName + ": " + e.getMessage() + "\033[0m");
+            printBuildDiagnostics(tempName);
             promoteToFailedInstance(tempName, canonicalName);
             activeBuild = null;
             throw new BuildFailedException(canonicalName);
@@ -531,6 +532,28 @@ public class BuildCommand extends BaseCommand {
         }
 
         return false;
+    }
+
+    private void printBuildDiagnostics(String buildName) {
+        try {
+            var status = incus.getInstanceStatus(buildName);
+            System.err.println("  Container status: " + (status.isEmpty() ? "(unknown)" : status));
+
+            var log = incus.getLog(buildName);
+            if (!log.isBlank()) {
+                var lines = log.lines().toList();
+                var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
+                System.err.println("  LXC log (last " + tail.size() + " lines):");
+                tail.forEach(l -> System.err.println("    " + l));
+            }
+
+            var pool = incus.findCowPool();
+            if (pool != null) {
+                System.err.println("  " + incus.getStoragePoolUsage(pool));
+            }
+        } catch (Exception diag) {
+            System.err.println("  (could not collect diagnostics: " + diag.getMessage() + ")");
+        }
     }
 
     private void promoteToFailedInstance(String buildName, String canonicalName) {
@@ -661,9 +684,6 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(buildName, "security.nesting", "true");
         incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
         if (Environment.isLinux()) {
-            // Combined mknod+setxattr intercepts crash the LXC monitor when
-            // systemd triggers both during boot (seccomp_notify concurrency bug).
-            // setxattr is only needed for SELinux relabeling, not in the VM.
             incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
@@ -1562,7 +1582,7 @@ public class BuildCommand extends BaseCommand {
                     "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
                     "path=" + containerPath,
                     "readonly=true"));
-            if (!Environment.isMacOS()) refArgs.add("shift=true");
+            HostResourceSetup.addShiftIfSupported(refArgs);
             incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
             return new RepoReference(deviceName, containerPath);
