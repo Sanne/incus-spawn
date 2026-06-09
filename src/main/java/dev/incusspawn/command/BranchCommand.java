@@ -112,8 +112,8 @@ public class BranchCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
+        System.out.println("Starting container...");
         incus.start(name);
-        waitForReady(name);
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);
 
         System.out.println("Branch '" + name + "' is ready.\n");
@@ -191,10 +191,5 @@ public class BranchCommand extends BaseCommand {
         return true;
     }
 
-    private void waitForReady(String container) {
-        if (!incus.pollUntilReady(container, 30, "true")) {
-            System.err.println("Warning: instance " + container + " may not be fully ready.");
-        }
-    }
 
 }

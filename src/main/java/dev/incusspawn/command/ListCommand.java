@@ -3011,7 +3011,6 @@ public class ListCommand extends BaseCommand {
         }
 
         incus.start(name);
-        incus.waitForReady(name);
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox);

@@ -91,10 +91,17 @@ public final class InstanceLifecycle {
             }
         }
 
-        var uid = getUid();
-        incus.shellExec(name, "chown", uid + ":" + uid, "/home/agentuser");
+        // Build a single setup script that handles readiness polling, home
+        // ownership, and tool readiness — all in one exec call. Each additional
+        // exec round trip can block for seconds due to seccomp_notify lock
+        // contention during container startup (mknod interception).
+        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+        var setupScript = buildSetupScript(buildSourceJson);
+        System.out.println("Waiting for container...");
+        if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
+            System.err.println("Warning: container setup may not be complete.");
+        }
 
-        awaitToolReadiness(incus, name);
         injectSshKeyIfAvailable(incus, name);
     }
 
@@ -114,16 +121,13 @@ public final class InstanceLifecycle {
 
         System.out.println("Applying proxy-only firewall rules...");
 
-        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT");
-        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-m", "conntrack",
-                "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT");
-        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
-                "-p", "tcp", "--dport", String.valueOf(mitmPort), "-j", "ACCEPT");
-        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
-                "-p", "tcp", "--dport", String.valueOf(healthPort), "-j", "ACCEPT");
-        incus.shellExec(name, "iptables", "-A", "OUTPUT", "-d", gatewayIp,
-                "-p", "udp", "--dport", "53", "-j", "ACCEPT");
-        incus.shellExec(name, "iptables", "-P", "OUTPUT", "DROP");
+        incus.shellExec(name, "sh", "-c", String.join(" && ",
+                "iptables -A OUTPUT -o lo -j ACCEPT",
+                "iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+                "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + mitmPort + " -j ACCEPT",
+                "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + healthPort + " -j ACCEPT",
+                "iptables -A OUTPUT -d " + gatewayIp + " -p udp --dport 53 -j ACCEPT",
+                "iptables -P OUTPUT DROP"));
 
         System.out.println("  Outbound traffic restricted to " + gatewayIp +
                 " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
@@ -142,6 +146,26 @@ public final class InstanceLifecycle {
                 System.err.println("Warning: " + toolName + " did not become ready in time.");
             }
         }
+    }
+
+    /**
+     * Build a shell script that performs all post-start setup in one exec:
+     * home ownership and tool readiness polling. Batching avoids multiple
+     * exec round trips that each block due to seccomp_notify lock contention
+     * during container startup.
+     */
+    static String buildSetupScript(String buildSourceJson) {
+        var sb = new StringBuilder();
+        sb.append("chown agentuser:agentuser /home/agentuser");
+        var buildSource = BuildSource.fromJson(buildSourceJson);
+        if (buildSource != null) {
+            for (var tool : buildSource.getTools().values()) {
+                if (tool.getReady() == null || tool.getReady().isBlank()) continue;
+                sb.append("; i=0; while ! ").append(tool.getReady())
+                  .append(" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 75 ] && break; sleep 0.2; done");
+            }
+        }
+        return sb.toString();
     }
 
     public static void injectSshKeyIfAvailable(IncusClient incus, String name) {

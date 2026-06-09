@@ -678,6 +678,17 @@ public class BuildCommand extends BaseCommand {
 
         mountDnfCache(buildName);
 
+        // Strip packages from the base Fedora image that are unnecessary
+        // in a container before upgrading — fewer packages to upgrade.
+        System.out.println("Removing unnecessary base image packages...");
+        container.sh(
+                "dnf remove -y --setopt=clean_requirements_on_remove=True " +
+                "glibc-all-langpacks geolite2-city geolite2-country " +
+                "git-core-doc upower zvbi rtkit libcanberra " +
+                "2>/dev/null; " +
+                "dnf install -y --setopt=keepcache=true glibc-langpack-en 2>/dev/null; true")
+                .assertSuccess("Failed to clean up base image packages");
+
         System.out.println("Updating system packages...");
         container.runInteractive("Failed to update system packages",
                 "dnf", "-y", "--setopt=keepcache=true", "upgrade", "--refresh");
@@ -691,6 +702,32 @@ public class BuildCommand extends BaseCommand {
                 "systemctl mask systemd-resolved 2>/dev/null; " +
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
                 .assertSuccess("Failed to finalize DNS configuration");
+
+        // Mask services that are unnecessary inside a system container.
+        // systemd-udevd triggers device discovery on boot, causing mknod
+        // syscalls that hit seccomp_notify and block the Incus daemon's
+        // per-instance lock for seconds. Devices come from the host via
+        // devtmpfs — udev is redundant.
+        System.out.println("Disabling unnecessary container services...");
+        container.sh(
+                "systemctl mask " +
+                "systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket " +
+                "systemd-udev-trigger.service systemd-udev-settle.service " +
+                "systemd-udev-load-credentials.service " +
+                "systemd-homed.service systemd-pcrlock-file-system.service " +
+                "systemd-pcrlock-firmware-code.service systemd-pcrlock-firmware-config.service " +
+                "systemd-pcrlock-machine-id.service systemd-pcrlock-make-policy.service " +
+                "systemd-pcrlock-secureboot-authority.service systemd-pcrlock-secureboot-policy.service " +
+                "systemd-tpm2-clear.service " +
+                "2>/dev/null; " +
+                "systemctl disable " +
+                "systemd-time-wait-sync.service systemd-timesyncd.service " +
+                "systemd-boot-update.service systemd-boot-check-no-failures.service " +
+                "systemd-boot-clear-sysfail.service systemd-sysupdate.timer systemd-sysupdate-reboot.timer " +
+                "unbound-anchor.timer fstrim.timer " +
+                "selinux-autorelabel-mark.service " +
+                "2>/dev/null; true")
+                .assertSuccess("Failed to disable unnecessary services");
 
         System.out.println("Creating agentuser...");
         container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
