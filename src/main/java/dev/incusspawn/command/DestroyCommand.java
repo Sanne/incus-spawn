@@ -19,9 +19,6 @@ public class DestroyCommand extends BaseCommand {
     @Argument(description = "Name of the environment to destroy", required = true)
     String name;
 
-    @Option(name = "force", description = "Force destruction, even for templates", hasValue = false)
-    boolean force;
-
     @Override
     protected CommandResult doExecute() throws Exception {
         var incus = RuntimeServices.incus();
@@ -31,13 +28,12 @@ public class DestroyCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        // Safety check: refuse to destroy templates without --force
+        // Informational message for templates
         var type = Metadata.getType(incus, name);
-        if ((Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) && !force) {
-            System.err.println("Error: '" + name + "' is a template (type: " + type + ").");
-            System.err.println("Destroying templates affects all branches derived from them.");
-            System.err.println("Use --force if you really want to destroy it.");
-            return CommandResult.valueOf(1);
+        if (Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) {
+            System.out.println("Note: '" + name + "' is a template (type: " + type + ").");
+            System.out.println("Destroying it means you won't be able to create new branches from it");
+            System.out.println("until you rebuild it. Existing branches are not affected.");
         }
 
         System.out.println("Destroying " + name + "...");
