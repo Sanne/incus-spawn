@@ -872,8 +872,7 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Removing unnecessary packages...");
         container.sh(
                 "dnf remove -y --setopt=clean_requirements_on_remove=True " +
-                String.join(" ", pkgs) + " 2>/dev/null; true")
-                .assertSuccess("Failed to remove packages");
+                String.join(" ", pkgs) + " 2>/dev/null; true");
     }
 
     private void maskServices(Container container, ImageDef imageDef) {
@@ -881,8 +880,7 @@ public class BuildCommand extends BaseCommand {
         if (services.isEmpty()) return;
         System.out.println("Masking unnecessary services...");
         container.sh(
-                "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true")
-                .assertSuccess("Failed to mask services");
+                "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
     }
 
     /**

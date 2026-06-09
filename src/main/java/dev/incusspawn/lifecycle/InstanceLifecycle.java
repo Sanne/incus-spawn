@@ -162,8 +162,8 @@ public final class InstanceLifecycle {
         if (buildSource != null) {
             for (var tool : buildSource.getTools().values()) {
                 if (tool.getReady() == null || tool.getReady().isBlank()) continue;
-                sb.append("; i=0; while ! ").append(tool.getReady())
-                  .append(" >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 75 ] && break; sleep 0.2; done");
+                sb.append("; i=0; while ! (").append(tool.getReady())
+                  .append(") >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 75 ] && break; sleep 0.2; done");
             }
         }
         return sb.toString();
