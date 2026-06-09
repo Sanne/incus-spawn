@@ -170,6 +170,12 @@ public final class VmManager {
             return false;
         }
 
+        try {
+            IncusRemoteSetup.ensureCertExists();
+        } catch (java.io.IOException e) {
+            System.err.println("Warning: could not ensure client certificate: " + e.getMessage());
+        }
+
         var backend = detectBackend();
         int cpus = detectCpus();
         int memoryMiB = detectMemoryMiB();

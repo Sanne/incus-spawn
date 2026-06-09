@@ -14,20 +14,19 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.Base64;
-import java.util.regex.Pattern;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
-import javax.net.ssl.X509TrustManager;
 
 /**
  * One-time setup of the Incus HTTPS remote for macOS.
  * <p>
- * The Incus daemon inside the VM enables HTTPS on port 8443 and prints a
- * trust token to the serial console (vm.log) during boot. This class
- * generates client certificates, reads that token, adds our cert to the
- * daemon's trust store, and writes the local Incus client config.
+ * The VM reads the host's client certificate directly from the virtio-fs
+ * shared directory ({@code /host/.config/incus-spawn/vm/client.crt}) and
+ * adds it to the Incus trust store on every boot. This class generates
+ * the client certificate, saves the server certificate, and writes the
+ * local Incus client config.
  */
 public final class IncusRemoteSetup {
 
@@ -35,7 +34,6 @@ public final class IncusRemoteSetup {
 
     private static final String REMOTE_NAME = "isx-vm";
     private static final int INCUS_PORT = 8443;
-    private static final Pattern TRUST_TOKEN_PATTERN = Pattern.compile("ISX_TRUST_TOKEN=(.+)");
 
     public static boolean isConfigured() {
         if (!Files.exists(Environment.incusConfigFile())) return false;
@@ -50,9 +48,22 @@ public final class IncusRemoteSetup {
     }
 
     /**
+     * Ensure the client certificate exists, generating it if needed.
+     * Call this before starting the VM so the cert is available via
+     * virtio-fs when the VM boots.
+     */
+    public static void ensureCertExists() throws IOException {
+        Files.createDirectories(Environment.incusConfigDir());
+        if (!Files.exists(Environment.incusClientCert())) {
+            generateClientCertificate();
+        }
+    }
+
+    /**
      * Configure the Incus remote for the VM at the given IP.
-     * The VM must already be running with HTTPS enabled on port 8443
-     * and a trust token printed to the VM log.
+     * The VM must already be running with HTTPS enabled on port 8443.
+     * The VM trusts our client cert via virtio-fs, so no trust token
+     * exchange is needed.
      */
     public static void configure(String vmIp) throws IOException {
         System.err.println("Configuring Incus remote for VM at " + vmIp + "...");
@@ -60,36 +71,19 @@ public final class IncusRemoteSetup {
         Files.createDirectories(Environment.incusConfigDir());
         Files.createDirectories(Environment.incusServerCertsDir());
 
-        // Step 1: Generate client certificate if not present
-        if (!Files.exists(Environment.incusClientCert())) {
-            generateClientCertificate();
-        }
+        ensureCertExists();
 
-        // Step 2: Wait for the Incus HTTPS API to be reachable
         System.err.println("  Waiting for Incus HTTPS API on " + vmIp + ":" + INCUS_PORT + "...");
         if (!waitForPort(vmIp, INCUS_PORT, 60)) {
             throw new IOException("Incus HTTPS API not reachable at " + vmIp + ":" + INCUS_PORT
                     + " after 60s. Check 'isx vm console' for boot logs.");
         }
 
-        // Step 3: Read trust token from VM log
-        var trustToken = readTrustToken();
-        if (trustToken == null) {
-            throw new IOException("No trust token found in VM log (" + Environment.vmLogFile() + ").\n"
-                    + "The VM appliance may need to be rebuilt with the latest incus-spawn-vm-init.");
-        }
-        System.err.println("  Trust token found.");
-
-        // Step 4: Add our client certificate using the trust token
-        var baseUrl = "https://" + vmIp + ":" + INCUS_PORT;
-        addClientTrust(baseUrl, trustToken);
-
-        // Step 5: Save the server certificate for future TLS verification
         saveServerCert(vmIp);
 
-        // Step 6: Write the client config
         writeClientConfig(vmIp);
 
+        var baseUrl = "https://" + vmIp + ":" + INCUS_PORT;
         System.err.println("  Incus remote '" + REMOTE_NAME + "' configured at " + baseUrl);
     }
 
@@ -100,7 +94,7 @@ public final class IncusRemoteSetup {
 
     // --- Certificate generation ---
 
-    private static void generateClientCertificate() throws IOException {
+    static void generateClientCertificate() throws IOException {
         System.err.println("  Generating Incus client certificate...");
         try {
             generateCertWithOpenssl();
@@ -187,47 +181,7 @@ public final class IncusRemoteSetup {
         }
     }
 
-    // --- Trust token ---
-
-    static String readTrustToken() {
-        var logFile = Environment.vmLogFile();
-        if (!Files.exists(logFile)) return null;
-        try {
-            var content = Files.readString(logFile);
-            var matcher = TRUST_TOKEN_PATTERN.matcher(content);
-            if (matcher.find()) {
-                return matcher.group(1).strip();
-            }
-        } catch (IOException ignored) {}
-        return null;
-    }
-
-    // --- Incus API ---
-
-    private static void addClientTrust(String baseUrl, String trustToken) throws IOException {
-        var body = "{\"type\":\"client\",\"name\":\"incus-spawn\""
-                + ",\"trust_token\":\"" + trustToken + "\"}";
-
-        var client = buildClientCertHttpClient();
-        var request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/1.0/certificates"))
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .header("Content-Type", "application/json")
-                .timeout(Duration.ofSeconds(10))
-                .build();
-        try {
-            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 400
-                    && !response.body().contains("already exists")
-                    && !response.body().contains("already trusted")) {
-                throw new IOException("Failed to add client certificate: HTTP "
-                        + response.statusCode() + " — " + response.body());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted", e);
-        }
-    }
+    // --- Server cert & config ---
 
     private static void saveServerCert(String vmIp) {
         try {
@@ -323,62 +277,6 @@ public final class IncusRemoteSetup {
             throw new IOException("Interrupted running " + command[0]);
         }
         return output;
-    }
-
-    private static HttpClient buildClientCertHttpClient() {
-        try {
-            var certPath = Environment.incusClientCert();
-            var keyPath = Environment.incusClientKey();
-
-            var certFactory = java.security.cert.CertificateFactory.getInstance("X.509");
-            java.security.cert.Certificate clientCert;
-            try (var is = Files.newInputStream(certPath)) {
-                clientCert = certFactory.generateCertificate(is);
-            }
-
-            var keyPem = Files.readString(keyPath);
-            var keyB64 = keyPem
-                    .replaceAll("-----BEGIN[^-]+-----", "")
-                    .replaceAll("-----END[^-]+-----", "")
-                    .replaceAll("\\s+", "");
-            var keyBytes = Base64.getDecoder().decode(keyB64);
-            var keySpec = new java.security.spec.PKCS8EncodedKeySpec(keyBytes);
-            java.security.PrivateKey privateKey;
-            try {
-                privateKey = java.security.KeyFactory.getInstance("EC").generatePrivate(keySpec);
-            } catch (Exception e) {
-                privateKey = java.security.KeyFactory.getInstance("RSA").generatePrivate(keySpec);
-            }
-
-            var ks = java.security.KeyStore.getInstance("PKCS12");
-            ks.load(null, null);
-            ks.setKeyEntry("incus-client", privateKey, new char[0],
-                    new java.security.cert.Certificate[]{clientCert});
-            var kmf = javax.net.ssl.KeyManagerFactory.getInstance(
-                    javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm());
-            kmf.init(ks, new char[0]);
-
-            var sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(kmf.getKeyManagers(), new TrustManager[]{new PermissiveTrustManager()}, null);
-
-            return HttpClient.newBuilder()
-                    .sslContext(sslContext)
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .build();
-        } catch (Exception e) {
-            throw new VmException("Failed to create HTTP client with client certificate: " + e.getMessage());
-        }
-    }
-
-    private static class PermissiveTrustManager extends X509ExtendedTrustManager {
-        @Override public void checkClientTrusted(X509Certificate[] c, String a) {}
-        @Override public void checkServerTrusted(X509Certificate[] c, String a) {}
-        @Override public void checkClientTrusted(X509Certificate[] c, String a, java.net.Socket s) {}
-        @Override public void checkServerTrusted(X509Certificate[] c, String a, java.net.Socket s) {}
-        @Override public void checkClientTrusted(X509Certificate[] c, String a, javax.net.ssl.SSLEngine e) {}
-        @Override public void checkServerTrusted(X509Certificate[] c, String a, javax.net.ssl.SSLEngine e) {}
-        @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
     }
 
     private static class CertCapturingTrustManager extends X509ExtendedTrustManager {

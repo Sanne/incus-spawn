@@ -106,19 +106,17 @@ fi
 # Enable HTTPS API access so the macOS host can connect
 incus config set core.https_address :8443
 
-# Generate a trust token for the macOS host to add its client certificate.
-# The token is printed to the serial console where the Java host reads it.
-# Syntax: `incus config trust add <name>` (name is a positional argument).
-TRUST_OUTPUT=$(incus config trust add incus-spawn 2>&1) || true
-# The output is typically two lines:
-#   Client incus-spawn certificate add token:
-#   eyJjbGllbnRfbmFtZSI6Imlu...
-# Extract the token (last non-empty line that isn't a label).
-TOKEN_VALUE=$(echo "$TRUST_OUTPUT" | grep -v '^$' | grep -v ':$' | tail -1)
-if [ -n "$TOKEN_VALUE" ] && ! echo "$TOKEN_VALUE" | grep -q 'Error\|Usage\|--'; then
-    echo "ISX_TRUST_TOKEN=$TOKEN_VALUE"
+# Trust the host's client certificate via the virtio-fs shared directory.
+# The host generates its cert in ~/.config/incus-spawn/vm/client.crt,
+# which is visible here at $SHARED_DIR/.config/incus-spawn/vm/client.crt.
+HOST_CERT="${SHARED_DIR}/.config/incus-spawn/vm/client.crt"
+if [ -f "$HOST_CERT" ]; then
+    incus config trust add-certificate "$HOST_CERT" --name incus-spawn 2>/dev/null \
+        || true
+    echo "incus-spawn-vm-init: host certificate trusted"
 else
-    echo "incus-spawn-vm-init: WARNING: could not generate trust token: $TRUST_OUTPUT"
+    echo "incus-spawn-vm-init: WARNING: no host certificate at $HOST_CERT"
+    echo "incus-spawn-vm-init: run 'isx init' on the host first"
 fi
 
 # Symlink isx binary from shared directory if available
