@@ -114,7 +114,7 @@ public class ClaudeSetup implements ToolSetup {
                     ]
                   },
                   "skipDangerousModePermissionPrompt": true,
-                  "disableDeepLinkRegistration": true
+                  "disableDeepLinkRegistration": "disable"
                 }
                 """;
         var claudeJsonBuilder = new StringBuilder();
