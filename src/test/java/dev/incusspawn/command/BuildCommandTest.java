@@ -978,6 +978,44 @@ class BuildCommandTest {
         assertTrue(result.isEmpty(), "Already-seen descendant should be skipped");
     }
 
+    // --- diagnoseCrashCause ---
+
+    @Test
+    void diagnoseCrashCauseDetectsOom() {
+        var dmesg = "[0.000000] oom-kill:constraint=CONSTRAINT_NONE,nodemask=...\n"
+                + "[0.000000] Out of memory: Killed process 1234";
+        assertEquals("out of memory — the kernel killed the container because the VM ran out of RAM",
+                BuildCommand.diagnoseCrashCause(dmesg));
+    }
+
+    @Test
+    void diagnoseCrashCauseDetectsMemoryCgroupOom() {
+        var dmesg = "[0.000000] Memory cgroup out of memory: Killed process 456";
+        assertEquals("out of memory — the kernel killed the container because the VM ran out of RAM",
+                BuildCommand.diagnoseCrashCause(dmesg));
+    }
+
+    @Test
+    void diagnoseCrashCauseDetectsPidsLimit() {
+        var dmesg = "[0.000000] cgroup: fork rejected by pids controller in /lxc.payload.tpl-build";
+        assertEquals("process limit exceeded — the container hit the cgroup process (PID) limit",
+                BuildCommand.diagnoseCrashCause(dmesg));
+    }
+
+    @Test
+    void diagnoseCrashCauseReturnsNullForUnknown() {
+        var dmesg = "[0.000000] some unrelated kernel message";
+        assertNull(BuildCommand.diagnoseCrashCause(dmesg));
+    }
+
+    @Test
+    void diagnoseCrashCauseOomTakesPriorityOverPids() {
+        var dmesg = "[0.000000] oom-kill:constraint=CONSTRAINT_NONE\n"
+                + "[0.000000] cgroup: fork rejected by pids controller in /lxc.payload.test";
+        assertEquals("out of memory — the kernel killed the container because the VM ran out of RAM",
+                BuildCommand.diagnoseCrashCause(dmesg));
+    }
+
     // --- resolveTools ---
 
     @Test

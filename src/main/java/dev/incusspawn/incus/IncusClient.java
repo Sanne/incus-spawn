@@ -385,6 +385,41 @@ public class IncusClient {
                 used * 100 / total);
     }
 
+    public String getServerMemoryUsage() {
+        var resp = http().get("/1.0/resources");
+        if (!resp.isSuccess()) return "";
+        var mem = resp.body().path("metadata").path("memory");
+        long total = mem.path("total").asLong(0);
+        long used = mem.path("used").asLong(0);
+        if (total == 0) return "";
+        return "Server memory: %dMiB used / %dMiB total (%d%% used)".formatted(
+                used / (1024 * 1024), total / (1024 * 1024),
+                used * 100 / total);
+    }
+
+    /**
+     * Query the kernel ring buffer (dmesg) for OOM or cgroup events
+     * mentioning a specific container. Requires a running container
+     * to exec into (any will do — dmesg shows host-level events).
+     * Returns matching lines, or empty string if nothing found or
+     * no running container is available.
+     */
+    public String queryDmesgForContainer(String containerName) {
+        try {
+            var instances = list();
+            var running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .map(i -> i.get("name"))
+                    .findFirst().orElse(null);
+            if (running == null) return "";
+            var result = shellExec(running, "sh", "-c",
+                    "dmesg | grep 'lxc.payload." + containerName + "' | tail -10");
+            return result.success() ? result.stdout().strip() : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /**
      * Get a config value from a named network (e.g. "incusbr0").
      * Returns empty string if the key is not set.

@@ -551,9 +551,40 @@ public class BuildCommand extends BaseCommand {
             if (pool != null) {
                 System.err.println("  " + incus.getStoragePoolUsage(pool));
             }
+
+            var mem = incus.getServerMemoryUsage();
+            if (!mem.isEmpty()) {
+                System.err.println("  " + mem);
+            }
+
+            if ("Error".equals(status)) {
+                var dmesg = incus.queryDmesgForContainer(buildName);
+                if (!dmesg.isEmpty()) {
+                    var cause = diagnoseCrashCause(dmesg);
+                    if (cause != null) {
+                        System.err.println("  Cause: " + cause);
+                    }
+                    System.err.println("  Kernel log (dmesg):");
+                    dmesg.lines().forEach(l -> System.err.println("    " + l));
+                }
+            }
         } catch (Exception diag) {
             System.err.println("  (could not collect diagnostics: " + diag.getMessage() + ")");
         }
+    }
+
+    static String diagnoseCrashCause(String dmesg) {
+        boolean oom = dmesg.lines().anyMatch(l ->
+                l.contains("oom-kill:") || l.contains("Out of memory") || l.contains("Memory cgroup out of memory"));
+        if (oom) {
+            return "out of memory — the kernel killed the container because the VM ran out of RAM";
+        }
+        boolean pidsLimit = dmesg.lines().anyMatch(l ->
+                l.contains("fork rejected by pids controller"));
+        if (pidsLimit) {
+            return "process limit exceeded — the container hit the cgroup process (PID) limit";
+        }
+        return null;
     }
 
     private void promoteToFailedInstance(String buildName, String canonicalName) {
