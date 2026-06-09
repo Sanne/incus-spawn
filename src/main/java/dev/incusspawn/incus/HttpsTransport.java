@@ -49,6 +49,7 @@ class HttpsTransport implements IncusTransport {
     static HttpsTransport fromClientConfig() {
         var home = System.getProperty("user.home", "");
         var configPaths = List.of(
+                Path.of(home, ".config", "incus-spawn", "vm", "config.yml"),
                 Path.of(home, ".config", "incus", "config.yml"),
                 Path.of(home, ".local", "share", "incus", "config.yml")
         );

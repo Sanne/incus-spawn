@@ -153,7 +153,7 @@ public final class Environment {
     // --- Incus client config paths (used by HttpsTransport on macOS) ---
 
     public static Path incusConfigDir() {
-        return home().resolve(".config/incus");
+        return configDir().resolve("vm");
     }
 
     public static Path incusConfigFile() {

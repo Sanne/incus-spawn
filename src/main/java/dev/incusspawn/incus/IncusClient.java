@@ -481,7 +481,7 @@ public class IncusClient {
      * Launch a new container or VM from an image.
      * The image may be a local alias ("my-image") or a remote reference
      * ("images:fedora/44"). Remote references are resolved by reading the
-     * Incus client config (~/.config/incus/config.yml) to get the server
+     * Incus client config (~/.config/incus-spawn/vm/config.yml) to get the server
      * URL and protocol — the REST API does not understand the "remote:alias"
      * CLI shorthand and needs the full server URL instead.
      */

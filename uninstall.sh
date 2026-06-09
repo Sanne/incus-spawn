@@ -11,7 +11,6 @@ CACHE_DIR="$HOME/.cache/incus-spawn"
 STATE_DIR="$HOME/.local/state/incus-spawn"
 APPLIANCE_DIR="$HOME/.local/share/incus-spawn"
 SYSTEMD_SERVICE="$HOME/.config/systemd/user/${SERVICE_NAME}.service"
-INCUS_CONFIG="$HOME/.config/incus"
 
 # macOS launchd plist paths
 LAUNCHD_VM_PLIST="$HOME/Library/LaunchAgents/dev.incusspawn.vm.plist"
@@ -45,7 +44,7 @@ echo "  - Appliance:         $APPLIANCE_DIR/"
 if $IS_MACOS; then
     echo "  - VM:                stop running VM, remove disk image"
     echo "  - LaunchAgents:      VM and proxy services"
-    echo "  - Incus config:      $INCUS_CONFIG/"
+    echo "  - VM client config:  $CONFIG_DIR/vm/"
     echo "  - TCC permissions:   reset home folder and local network approvals"
 else
     echo "  - Systemd service:   $SYSTEMD_SERVICE"
@@ -110,14 +109,11 @@ if $IS_MACOS; then
     # Stop any proxy process on the health port
     lsof -t -i :18080 2>/dev/null | xargs kill 2>/dev/null || true
 
-    # Remove only incus-spawn artifacts from Incus client config
-    if [ -d "$INCUS_CONFIG" ]; then
-        echo "Removing incus-spawn artifacts from $INCUS_CONFIG/..."
-        rm -f "$INCUS_CONFIG/servercerts/isx-vm.crt"
-        rm -f "$INCUS_CONFIG/client.crt" "$INCUS_CONFIG/client.key"
-        rm -f "$INCUS_CONFIG/config.yml"
-        rmdir "$INCUS_CONFIG/servercerts" 2>/dev/null || true
-        rmdir "$INCUS_CONFIG" 2>/dev/null || true
+    # Remove VM client config (certs, remote config)
+    VM_CONFIG="$CONFIG_DIR/vm"
+    if [ -d "$VM_CONFIG" ]; then
+        echo "Removing VM client config ($VM_CONFIG/)..."
+        rm -rf "$VM_CONFIG"
     fi
 
     # Reset TCC permissions so dialogs appear on next install.
