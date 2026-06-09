@@ -29,7 +29,9 @@ class ImageDefTest {
         assertTrue(minimal.isRoot());
         assertNotNull(minimal.getImage());
         assertEquals("images:fedora/44", minimal.getImage());
-        assertTrue(minimal.getPackages().isEmpty());
+        assertTrue(minimal.getPackages().contains("glibc-langpack-en"));
+        assertFalse(minimal.getRemovePackages().isEmpty());
+        assertFalse(minimal.getMaskServices().isEmpty());
         assertTrue(minimal.getTools().isEmpty());
     }
 

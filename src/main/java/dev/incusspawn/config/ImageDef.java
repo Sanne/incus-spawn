@@ -77,6 +77,8 @@ public class ImageDef {
     private String image = "images:fedora/44";
     private String parent;
     private List<String> packages = List.of();
+    @JsonProperty("remove_packages")
+    private List<String> removePackages = List.of();
     @JsonDeserialize(using = ImageDef.ToolsDeserializer.class)
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolDef.ToolRef.Serializer.class)
     private List<ToolDef.ToolRef> tools = List.of();
@@ -87,6 +89,8 @@ public class ImageDef {
     private List<PackageRepo> packageRepos = List.of();
     @JsonProperty("host-resources")
     private List<HostResource> hostResources = List.of();
+    @JsonProperty("mask_services")
+    private List<String> maskServices = List.of();
     private boolean gui;
     private String workdir;
     @JsonProperty("shell-command")
@@ -105,6 +109,8 @@ public class ImageDef {
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getPackages() { return packages; }
     public void setPackages(List<String> packages) { this.packages = packages; }
+    public List<String> getRemovePackages() { return removePackages; }
+    public void setRemovePackages(List<String> removePackages) { this.removePackages = removePackages; }
     public List<ToolDef.ToolRef> getTools() { return tools; }
     public void setTools(List<ToolDef.ToolRef> tools) { this.tools = tools; }
     public List<RepoEntry> getRepos() { return repos; }
@@ -115,6 +121,8 @@ public class ImageDef {
     public void setPackageRepos(List<PackageRepo> packageRepos) { this.packageRepos = packageRepos; }
     public List<HostResource> getHostResources() { return hostResources; }
     public void setHostResources(List<HostResource> hostResources) { this.hostResources = hostResources; }
+    public List<String> getMaskServices() { return maskServices; }
+    public void setMaskServices(List<String> maskServices) { this.maskServices = maskServices; }
     public boolean isGui() { return gui; }
     public void setGui(boolean gui) { this.gui = gui; }
     public String getWorkdir() { return workdir; }
