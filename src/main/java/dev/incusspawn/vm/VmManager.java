@@ -44,8 +44,15 @@ public final class VmManager {
         var env = System.getenv("ISX_VM_CPUS");
         if (env != null && !env.isBlank()) {
             try {
-                return Integer.parseInt(env);
-            } catch (NumberFormatException ignored) {}
+                int val = Integer.parseInt(env);
+                if (val < 1) {
+                    System.err.println("Warning: ISX_VM_CPUS=" + env + " is invalid, using 1");
+                    return 1;
+                }
+                return val;
+            } catch (NumberFormatException e) {
+                System.err.println("Warning: ISX_VM_CPUS=" + env + " is not a number, ignoring");
+            }
         }
         int available = Runtime.getRuntime().availableProcessors();
         return Math.max(1, available - 2);
@@ -55,8 +62,15 @@ public final class VmManager {
         var env = System.getenv("ISX_VM_MEMORY");
         if (env != null && !env.isBlank()) {
             try {
-                return Integer.parseInt(env);
-            } catch (NumberFormatException ignored) {}
+                int val = Integer.parseInt(env);
+                if (val < 2048) {
+                    System.err.println("Warning: ISX_VM_MEMORY=" + env + " is below minimum, using 2048 MiB");
+                    return 2048;
+                }
+                return val;
+            } catch (NumberFormatException e) {
+                System.err.println("Warning: ISX_VM_MEMORY=" + env + " is not a number, ignoring");
+            }
         }
         long totalBytes = ResourceLimits.totalMemoryBytes();
         if (totalBytes <= 0) {
