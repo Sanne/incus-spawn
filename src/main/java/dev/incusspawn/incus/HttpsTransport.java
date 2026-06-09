@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 
 /**
@@ -306,8 +305,8 @@ class HttpsTransport implements IncusTransport {
         @Override
         public byte[] readPayload() throws IOException {
             try {
-                var payload = queue.poll(120, TimeUnit.SECONDS);
-                return (payload == null || payload == CLOSE_SENTINEL) ? null : payload;
+                var payload = queue.take();
+                return payload == CLOSE_SENTINEL ? null : payload;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return null;
