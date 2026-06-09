@@ -57,7 +57,7 @@ jobs:
       - name: Build native image (macOS)
         if: matrix.os == 'macos'
         run: |
-          mvn package -Dnative -DskipTests
+          mvn package -Dnative -DskipTests -Dmacos.info.plist="$(pwd)/src/main/resources/Info.plist"
           cp target/incus-spawn-*-runner target/incus-spawn-macos-${{ matrix.arch }}
 
       - name: Upload uber-jar

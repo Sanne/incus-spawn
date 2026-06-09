@@ -519,19 +519,21 @@ public final class VmManager {
         }
 
         System.out.println("Extracting disk image (first run)...");
+        var tmp = Environment.vmDiskImage().resolveSibling("disk.img.tmp");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var gzIn = new GZIPInputStream(Files.newInputStream(compressed), 64 * 1024);
-                 var out = Files.newOutputStream(Environment.vmDiskImage())) {
+                 var out = Files.newOutputStream(tmp)) {
                 gzIn.transferTo(out);
             }
-            try (var raf = new RandomAccessFile(Environment.vmDiskImage().toFile(), "rw")) {
+            try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
                 raf.setLength(parseDiskSize(diskSize()));
             }
+            Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
             System.out.println("Disk image ready: " + humanSize(Files.size(Environment.vmDiskImage()))
                     + " (" + diskSize() + " virtual)");
         } catch (IOException e) {
-            try { Files.deleteIfExists(Environment.vmDiskImage()); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             throw new VmException("Failed to extract disk image: " + e.getMessage());
         }
     }
