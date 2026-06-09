@@ -262,19 +262,24 @@ class IncusApiLiveTest {
     }
 
     @Test
-    void launchFromAlias() throws Exception {
+    void launchFromImage() throws Exception {
         if (skip()) return;
+
+        var imagesResp = http.get("/1.0/images?recursion=1");
+        if (imagesResp.body().path("metadata").size() == 0) {
+            System.out.println("Skipping launch test: no local images."); return;
+        }
+        var fingerprint = imagesResp.body().path("metadata").get(0).path("fingerprint").asText();
 
         String name = "isx-launch-test-" + System.currentTimeMillis() % 10000;
         try {
-            // Create from image alias (like incus launch)
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
             createBody.put("type", "container");
-            createBody.put("source", java.util.Map.of("type", "image", "alias", "test-alpine"));
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             var createResp = http.requestAndWait("POST", "/1.0/instances", createBody);
-            assertTrue(createResp.isSuccess(), "Create from alias should succeed");
+            assertTrue(createResp.isSuccess(), "Create from image should succeed");
 
             // Then start (this is what our launch() does)
             var startResp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
