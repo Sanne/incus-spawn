@@ -418,6 +418,202 @@ public class IncusClient {
     }
 
     /**
+     * Get the last N lines of the kernel ring buffer (dmesg).
+     * Requires a running container to exec into (any will do — dmesg shows host-level events).
+     */
+    public String getDmesgTail(int lines) {
+        try {
+            var instances = list();
+            var running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .map(i -> i.get("name"))
+                    .findFirst().orElse(null);
+            if (running == null) return "(no running container to query dmesg)";
+            var result = shellExec(running, "sh", "-c", "dmesg | tail -" + lines);
+            return result.success() ? result.stdout().strip() : "(dmesg query failed)";
+        } catch (Exception e) {
+            return "(error querying dmesg: " + e.getMessage() + ")";
+        }
+    }
+
+    /**
+     * Get system uptime from /proc/uptime via a running container.
+     */
+    public String getSystemUptime() {
+        try {
+            var instances = list();
+            var running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .map(i -> i.get("name"))
+                    .findFirst().orElse(null);
+            if (running == null) return "(no running container)";
+            var result = shellExec(running, "cat", "/proc/uptime");
+            if (!result.success()) return "(could not read uptime)";
+            var parts = result.stdout().strip().split("\\s+");
+            if (parts.length == 0 || parts[0].isEmpty()) {
+                return "(malformed uptime data)";
+            }
+            var uptimeSeconds = (long) Double.parseDouble(parts[0]);
+            long days = uptimeSeconds / 86400;
+            long hours = (uptimeSeconds % 86400) / 3600;
+            long minutes = (uptimeSeconds % 3600) / 60;
+            if (days > 0) {
+                return "%d days, %d hours, %d minutes".formatted(days, hours, minutes);
+            } else if (hours > 0) {
+                return "%d hours, %d minutes".formatted(hours, minutes);
+            } else {
+                return "%d minutes".formatted(minutes);
+            }
+        } catch (Exception e) {
+            return "(error: " + e.getMessage() + ")";
+        }
+    }
+
+    /**
+     * Get CPU information from /1.0/resources.
+     */
+    public String getCpuInfo() {
+        var resp = http().get("/1.0/resources");
+        if (!resp.isSuccess()) return "(could not query resources)";
+        var cpu = resp.body().path("metadata").path("cpu");
+        int total = cpu.path("total").asInt(0);
+        if (total == 0) return "(no CPU info)";
+        // CPU usage is not directly available from /1.0/resources, only architecture and count
+        var arch = cpu.path("architecture").asText("unknown");
+        return "%d CPU cores (%s)".formatted(total, arch);
+    }
+
+    /**
+     * Get swap usage from /1.0/resources.
+     */
+    public String getSwapUsage() {
+        var resp = http().get("/1.0/resources");
+        if (!resp.isSuccess()) return "(could not query resources)";
+        var mem = resp.body().path("metadata").path("memory");
+        long swapTotal = mem.path("swap_total").asLong(0);
+        long swapUsed = mem.path("swap_used").asLong(0);
+        if (swapTotal == 0) return "no swap configured";
+        return "%dMiB used / %dMiB total (%d%% used)".formatted(
+                swapUsed / (1024 * 1024), swapTotal / (1024 * 1024),
+                swapUsed * 100 / swapTotal);
+    }
+
+    /**
+     * Get memory usage for a specific container from /1.0/instances/{name}/state.
+     */
+    public long getContainerMemoryUsage(String name) {
+        var resp = http().get("/1.0/instances/" + name + "/state");
+        if (!resp.isSuccess()) return 0;
+        return resp.body().path("metadata").path("memory").path("usage").asLong(0);
+    }
+
+    /**
+     * Get comprehensive system diagnostics suitable for 'isx vm status'.
+     * Returns a formatted multi-line status report including CPU, memory, disk,
+     * containers, kernel log, and uptime.
+     */
+    public String getSystemDiagnostics(String poolName) {
+        var sb = new StringBuilder();
+
+        // Fetch /1.0/resources once for CPU, memory, and swap
+        var resourcesResp = http().get("/1.0/resources");
+        if (resourcesResp.isSuccess()) {
+            var metadata = resourcesResp.body().path("metadata");
+
+            // CPU
+            var cpu = metadata.path("cpu");
+            int cpuTotal = cpu.path("total").asInt(0);
+            if (cpuTotal > 0) {
+                var arch = cpu.path("architecture").asText("unknown");
+                sb.append("CPU: ").append("%d CPU cores (%s)".formatted(cpuTotal, arch)).append("\n");
+            } else {
+                sb.append("CPU: (no CPU info)\n");
+            }
+
+            // Memory
+            var mem = metadata.path("memory");
+            long memTotal = mem.path("total").asLong(0);
+            long memUsed = mem.path("used").asLong(0);
+            if (memTotal > 0) {
+                sb.append("Memory: %dMiB used / %dMiB total (%d%% used)".formatted(
+                        memUsed / (1024 * 1024), memTotal / (1024 * 1024),
+                        memUsed * 100 / memTotal)).append("\n");
+            }
+
+            // Swap
+            long swapTotal = mem.path("swap_total").asLong(0);
+            long swapUsed = mem.path("swap_used").asLong(0);
+            if (swapTotal == 0) {
+                sb.append("Swap: no swap configured\n");
+            } else {
+                sb.append("Swap: %dMiB used / %dMiB total (%d%% used)".formatted(
+                        swapUsed / (1024 * 1024), swapTotal / (1024 * 1024),
+                        swapUsed * 100 / swapTotal)).append("\n");
+            }
+        } else {
+            sb.append("CPU: (could not query resources)\n");
+            sb.append("Memory: (could not query resources)\n");
+            sb.append("Swap: (could not query resources)\n");
+        }
+
+        // Disk
+        var diskUsage = getStoragePoolUsage(poolName);
+        if (!diskUsage.isEmpty()) {
+            sb.append("Disk: ").append(diskUsage.replace(poolName + " pool: ", "")).append("\n");
+        }
+
+        // Containers - use recursion=2 to get memory usage in one API call
+        try {
+            var resp = http().get("/1.0/instances?recursion=2");
+            if (!resp.isSuccess()) {
+                sb.append("Containers: (error listing: ").append(resp.body().path("error").asText()).append(")\n");
+            } else {
+                var instancesJson = resp.body().path("metadata");
+                int totalCount = 0;
+                var runningInstances = new ArrayList<Map<String, Object>>();
+
+                for (var instance : instancesJson) {
+                    totalCount++;
+                    if ("Running".equals(instance.path("status").asText())) {
+                        var name = instance.path("name").asText("");
+                        var memUsage = instance.path("state").path("memory").path("usage").asLong(0);
+                        runningInstances.add(Map.of("name", name, "memory", memUsage));
+                    }
+                }
+
+                sb.append("\nContainers: ").append(runningInstances.size()).append(" running / ")
+                  .append(totalCount).append(" total\n");
+
+                if (!runningInstances.isEmpty()) {
+                    sb.append("\nRunning containers:\n");
+                    for (var container : runningInstances) {
+                        sb.append("  ").append(container.get("name")).append(": ")
+                          .append((long)container.get("memory") / (1024 * 1024)).append(" MiB\n");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            sb.append("Containers: (error listing: ").append(e.getMessage()).append(")\n");
+        }
+
+        // Uptime
+        sb.append("\nUptime: ").append(getSystemUptime()).append("\n");
+
+        // Kernel log (last 20 lines)
+        sb.append("\nKernel log (last 20 lines):\n");
+        var dmesg = getDmesgTail(20);
+        if (dmesg.isEmpty()) {
+            sb.append("  (no output)\n");
+        } else {
+            for (var line : dmesg.split("\n")) {
+                sb.append("  ").append(line).append("\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    /**
      * Get a config value from a named network (e.g. "incusbr0").
      * Returns empty string if the key is not set.
      */

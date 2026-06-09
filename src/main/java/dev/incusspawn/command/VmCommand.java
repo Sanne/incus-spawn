@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -66,14 +67,17 @@ public class VmCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "status",
-            description = "Show VM status",
+            description = "Show VM status and system diagnostics",
             generateHelp = true
     )
     public static class Status extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (Environment.isLinux()) {
-                printLinuxMessage();
+                // On Linux, show comprehensive system diagnostics
+                var incus = RuntimeServices.incus();
+                var pool = incus.findCowPool();
+                System.out.println(incus.getSystemDiagnostics(pool));
                 return CommandResult.SUCCESS;
             }
             System.out.println(VmManager.status());
