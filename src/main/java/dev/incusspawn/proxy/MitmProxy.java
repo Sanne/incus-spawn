@@ -247,40 +247,72 @@ public class MitmProxy {
     /**
      * Configure bridge-level DNS overrides via dnsmasq so all containers on
      * incusbr0 resolve intercepted domains to the gateway IP.
+     * DNS overrides are durable — they persist across proxy restarts so
+     * containers never silently bypass the proxy.
      */
     public static void configureBridgeDns(IncusClient incus) {
+        var gatewayIp = resolveGatewayIp(incus);
+        var overrides = interceptedDomains().stream()
+                .sorted()
+                .flatMap(d -> java.util.stream.Stream.of(
+                        "address=/" + d + "/" + gatewayIp,
+                        "address=/" + d + "/::"))
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+        var servers = existing.lines()
+                .filter(l -> l.startsWith("server="))
+                .collect(java.util.stream.Collectors.joining("\n"));
+        var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
+
+        incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
+        System.out.println("  DNS overrides: " + interceptedDomains().size() +
+                " domains -> " + gatewayIp + " (via bridge dnsmasq)");
+    }
+
+    /**
+     * Configure bridge DNS with retries and exponential backoff.
+     * On macOS the VM/Incus may not be reachable immediately at proxy startup
+     * (e.g. launchd starts the proxy before the VM is ready). Retries in the
+     * background so the proxy itself starts immediately.
+     */
+    public static void configureBridgeDnsWithRetry(IncusClient incus) {
         try {
-            var gatewayIp = resolveGatewayIp(incus);
-            var overrides = interceptedDomains().stream()
-                    .sorted()
-                    .flatMap(d -> java.util.stream.Stream.of(
-                            "address=/" + d + "/" + gatewayIp,
-                            "address=/" + d + "/::"))
-                    .collect(java.util.stream.Collectors.joining("\n"));
-
-            // Preserve any existing server= lines (upstream DNS forwarders).
-            var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-            var servers = existing.lines()
-                    .filter(l -> l.startsWith("server="))
-                    .collect(java.util.stream.Collectors.joining("\n"));
-            var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
-
-            incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
-            System.out.println("  DNS overrides: " + interceptedDomains().size() +
-                    " domains -> " + gatewayIp + " (via bridge dnsmasq)");
+            configureBridgeDns(incus);
+            return;
         } catch (Exception e) {
             System.err.println("Warning: could not configure bridge DNS overrides: " + e.getMessage());
-            System.err.println("If DNS was configured during 'isx init', containers will still work.");
-            System.err.println("Otherwise, re-run 'isx init' or start the proxy manually after 'newgrp incus-admin'.");
+            System.err.println("  Will retry in the background until successful.");
         }
+
+        var thread = new Thread(() -> {
+            long delaySec = 2;
+            long maxDelaySec = 60;
+            while (true) {
+                try {
+                    Thread.sleep(delaySec * 1000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                try {
+                    configureBridgeDns(incus);
+                    System.out.println("  DNS overrides applied successfully after retry.");
+                    return;
+                } catch (Exception e) {
+                    System.err.println("Warning: DNS override retry failed (" + delaySec + "s backoff): " + e.getMessage());
+                    delaySec = Math.min(delaySec * 2, maxDelaySec);
+                }
+            }
+        }, "dns-override-retry");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /**
      * Clear bridge-level DNS overrides, restoring normal DNS resolution.
-     * Only removes address= lines (proxy-specific domain overrides).
-     * Preserves server= lines because the VM's dnsmasq needs explicit
-     * forwarders (set by incus-spawn-vm-init) — without them, containers
-     * inside the VM lose upstream DNS resolution.
+     * Only used during full proxy uninstall — normal stop leaves overrides
+     * in place so containers never silently bypass the proxy.
      */
     public static void clearBridgeDns(IncusClient incus) {
         try {

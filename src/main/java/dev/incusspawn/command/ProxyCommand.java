@@ -143,12 +143,11 @@ public class ProxyCommand extends BaseCommand {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.out.println("\nStopping proxy...");
-                MitmProxy.clearBridgeDns(incus);
                 proxy.stop();
             }));
 
             try {
-                proxy.start(() -> MitmProxy.configureBridgeDns(incus));
+                proxy.start(() -> MitmProxy.configureBridgeDnsWithRetry(incus));
             } catch (Exception e) {
                 System.err.println("Failed to start proxy: " + e.getMessage());
                 System.err.println("Is another proxy already running? Check port " + port + ".");
@@ -246,9 +245,7 @@ public class ProxyCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var incus = RuntimeServices.incus();
             ProxyService.stop();
-            MitmProxy.clearBridgeDns(incus);
             return CommandResult.SUCCESS;
         }
     }
