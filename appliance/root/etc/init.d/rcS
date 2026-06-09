@@ -34,6 +34,14 @@ hostname -F /etc/hostname
 #-- Sysctl --#
 sysctl -p /etc/sysctl.d/99-incus-spawn.conf 2>/dev/null
 
+#-- Swap (dedicated virtio-blk device) --#
+if [ -b /dev/vdb ]; then
+    if ! blkid /dev/vdb | grep -q swap; then
+        mkswap /dev/vdb >/dev/null
+    fi
+    swapon /dev/vdb
+fi
+
 #-- Disable IPv6 (QEMU user-mode NAT is IPv4-only) --#
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null
 

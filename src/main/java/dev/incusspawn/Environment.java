@@ -124,6 +124,10 @@ public final class Environment {
         return vmStateDir().resolve("disk.img");
     }
 
+    public static Path vmSwapImage() {
+        return vmStateDir().resolve("swap.img");
+    }
+
     public static Path vmDummyInitrd() {
         return vmStateDir().resolve("empty-initrd");
     }

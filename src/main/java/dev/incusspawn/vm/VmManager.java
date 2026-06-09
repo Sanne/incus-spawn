@@ -36,6 +36,7 @@ public final class VmManager {
     private static final String DEFAULT_GATEWAY = "10.166.11.1";
     private static final String DEFAULT_MITM_PORT = "18443";
     private static final String DEFAULT_DISK_SIZE = "60G";
+    private static final String DEFAULT_SWAP_SIZE = "12G";
     private static final int GA_VSOCK_PORT = 1024;
 
     // --- Resource detection ---
@@ -87,6 +88,14 @@ public final class VmManager {
             return env;
         }
         return DEFAULT_DISK_SIZE;
+    }
+
+    public static String swapSize() {
+        var env = System.getenv("ISX_VM_SWAP");
+        if (env != null && !env.isBlank()) {
+            return env;
+        }
+        return DEFAULT_SWAP_SIZE;
     }
 
     static String gatewayIp() {
@@ -155,6 +164,7 @@ public final class VmManager {
         try {
             checkArtifacts();
             ensureDisk();
+            ensureSwap();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
             return false;
@@ -438,6 +448,7 @@ public final class VmManager {
                 "--initrd", Environment.vmDummyInitrd().toString(),
                 "--kernel-cmdline", kernelCmdline("hvc0"),
                 "--device", "virtio-blk,path=" + Environment.vmDiskImage(),
+                "--device", "virtio-blk,path=" + Environment.vmSwapImage(),
                 "--device", "virtio-net,nat,mac=" + VmNetwork.ISX_VM_MAC,
                 "--device", "virtio-serial,logFilePath=" + Environment.vmLogFile(),
                 "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
@@ -495,6 +506,7 @@ public final class VmManager {
                 "-serial", "stdio",
                 "-kernel", Environment.applianceKernel().toString(),
                 "-drive", "id=root,file=" + Environment.vmDiskImage() + ",format=raw,if=virtio",
+                "-drive", "id=swap,file=" + Environment.vmSwapImage() + ",format=raw,if=virtio",
                 "-netdev", "user,id=net0",
                 "-device", "virtio-net-pci,netdev=net0",
                 "-append", kernelCmdline(console)
@@ -549,6 +561,20 @@ public final class VmManager {
         } catch (IOException e) {
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             throw new VmException("Failed to extract disk image: " + e.getMessage());
+        }
+    }
+
+    static void ensureSwap() {
+        var swapImage = Environment.vmSwapImage();
+        if (Files.exists(swapImage)) return;
+
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            try (var raf = new RandomAccessFile(swapImage.toFile(), "rw")) {
+                raf.setLength(parseDiskSize(swapSize()));
+            }
+        } catch (IOException e) {
+            throw new VmException("Failed to create swap image: " + e.getMessage());
         }
     }
 

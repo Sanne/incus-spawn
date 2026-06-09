@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -116,5 +117,34 @@ class VmManagerTest {
     void ensureDiskThrowsWhenNoCompressedImage() {
         var ex = assertThrows(VmException.class, VmManager::ensureDisk);
         assertTrue(ex.getMessage().contains("disk.img.gz"));
+    }
+
+    @Test
+    void swapSizeDefaultIs12G() {
+        if (System.getenv("ISX_VM_SWAP") == null) {
+            assertEquals("12G", VmManager.swapSize());
+        }
+    }
+
+    @Test
+    void ensureSwapCreatesSparseFile() {
+        VmManager.ensureSwap();
+
+        var swapImage = Environment.vmSwapImage();
+        assertTrue(Files.exists(swapImage));
+        assertEquals(12L * 1024 * 1024 * 1024, swapImage.toFile().length());
+    }
+
+    @Test
+    void ensureSwapIsIdempotent() throws Exception {
+        VmManager.ensureSwap();
+        var swapImage = Environment.vmSwapImage();
+        var modifiedFirst = Files.getLastModifiedTime(swapImage);
+
+        Thread.sleep(50);
+        VmManager.ensureSwap();
+        var modifiedSecond = Files.getLastModifiedTime(swapImage);
+
+        assertEquals(modifiedFirst, modifiedSecond);
     }
 }
