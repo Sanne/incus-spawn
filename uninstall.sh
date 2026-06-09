@@ -122,10 +122,10 @@ if $IS_MACOS; then
     # (requires sudo to modify directly, so we prompt the user if needed).
     echo "Resetting macOS permissions..."
     tccutil reset All dev.incusspawn.vm 2>/dev/null || true
-    tccutil reset SystemPolicyAllFiles 2>/dev/null || true
-    tccutil reset SystemPolicyDocumentsFolder 2>/dev/null || true
-    tccutil reset SystemPolicyDesktopFolder 2>/dev/null || true
-    tccutil reset SystemPolicyDownloadsFolder 2>/dev/null || true
+    tccutil reset SystemPolicyAllFiles dev.incusspawn.vm 2>/dev/null || true
+    tccutil reset SystemPolicyDocumentsFolder dev.incusspawn.vm 2>/dev/null || true
+    tccutil reset SystemPolicyDesktopFolder dev.incusspawn.vm 2>/dev/null || true
+    tccutil reset SystemPolicyDownloadsFolder dev.incusspawn.vm 2>/dev/null || true
 
     # Local network permissions are in a system plist (not TCC).
     # Removing the entries requires sudo.

@@ -114,7 +114,7 @@ public final class InstanceLifecycle {
             } finally {
                 Files.deleteIfExists(tmp);
             }
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             // best-effort — propagateTerminfo in interactiveShell is the fallback
         }
     }

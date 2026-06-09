@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ProxyNetworkIT {
 
     private static final String CONTAINER = "isx-proxy-it-" + (System.currentTimeMillis() % 100000);
-    private static final String DUMMY_API_KEY = "sk-ant-test-not-a-real-key";
+    private static final String DUMMY_API_KEY = "test-placeholder-not-a-real-key";
 
     private static IncusClient client;
     private static MitmProxy proxy;
