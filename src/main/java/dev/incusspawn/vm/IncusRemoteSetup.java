@@ -260,6 +260,11 @@ public final class IncusRemoteSetup {
     }
 
     private static void writeClientConfig(String vmIp) throws IOException {
+        var configFile = Environment.incusConfigFile();
+        if (Files.exists(configFile)) {
+            var backup = configFile.resolveSibling("config.yml.bak");
+            Files.copy(configFile, backup, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         var config = "default-remote: " + REMOTE_NAME + "\n"
                 + "remotes:\n"
                 + "  " + REMOTE_NAME + ":\n"
@@ -268,7 +273,7 @@ public final class IncusRemoteSetup {
                 + "  images:\n"
                 + "    addr: https://images.linuxcontainers.org\n"
                 + "    protocol: simplestreams\n";
-        Files.writeString(Environment.incusConfigFile(), config);
+        Files.writeString(configFile, config);
     }
 
     // --- Helpers ---

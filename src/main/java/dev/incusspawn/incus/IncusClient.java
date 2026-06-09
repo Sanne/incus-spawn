@@ -180,9 +180,6 @@ public class IncusClient {
     }
 
     /**
-     * Open an interactive shell in a container, inheriting stdio.
-     */
-    /**
      * Pre-computed data for interactiveShell to avoid REST API calls after
      * container start (the daemon blocks REST calls during startup).
      */

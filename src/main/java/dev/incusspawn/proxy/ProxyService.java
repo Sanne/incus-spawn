@@ -353,6 +353,7 @@ public final class ProxyService {
         var logDir = Environment.vmStateDir();
         try {
             Files.createDirectories(launchAgentsDir());
+            Files.createDirectories(logDir);
 
             var path = System.getenv("PATH");
             if (path == null || path.isBlank()) {

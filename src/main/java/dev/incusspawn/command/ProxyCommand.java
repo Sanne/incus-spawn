@@ -208,10 +208,11 @@ public class ProxyCommand extends BaseCommand {
                             System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
                         }
                     }
-                    System.out.println("  Health endpoint: http://" + gatewayIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health");
+                    System.out.println("  Health endpoint: http://" + healthIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + MitmProxy.DEFAULT_MITM_PORT);
                     if (serviceActive) {
-                        System.out.println("  Managed by:      systemd (incus-spawn-proxy.service)");
+                        var manager = Environment.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
+                        System.out.println("  Managed by:      " + manager);
                     } else {
                         System.out.println("  Managed by:      manual (foreground process)");
                     }

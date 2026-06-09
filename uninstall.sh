@@ -110,10 +110,14 @@ if $IS_MACOS; then
     # Stop any proxy process on the health port
     lsof -t -i :18080 2>/dev/null | xargs kill 2>/dev/null || true
 
-    # Remove Incus client config (certs, remote config)
+    # Remove only incus-spawn artifacts from Incus client config
     if [ -d "$INCUS_CONFIG" ]; then
-        echo "Removing Incus client config ($INCUS_CONFIG/)..."
-        rm -rf "$INCUS_CONFIG"
+        echo "Removing incus-spawn artifacts from $INCUS_CONFIG/..."
+        rm -f "$INCUS_CONFIG/servercerts/isx-vm.crt"
+        rm -f "$INCUS_CONFIG/client.crt" "$INCUS_CONFIG/client.key"
+        rm -f "$INCUS_CONFIG/config.yml"
+        rmdir "$INCUS_CONFIG/servercerts" 2>/dev/null || true
+        rmdir "$INCUS_CONFIG" 2>/dev/null || true
     fi
 
     # Reset TCC permissions so dialogs appear on next install.

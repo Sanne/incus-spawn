@@ -223,5 +223,16 @@
                 <quarkus.native.enabled>true</quarkus.native.enabled>
             </properties>
         </profile>
+        <profile>
+            <id>macos-native</id>
+            <activation>
+                <property>
+                    <name>macos.info.plist</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+ForeignAPISupport,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial,--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist}</quarkus.native.additional-build-args>
+            </properties>
+        </profile>
     </profiles>
 </project>
