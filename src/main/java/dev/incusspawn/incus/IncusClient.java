@@ -683,6 +683,22 @@ public class IncusClient {
     }
 
     /**
+     * Get the container's architecture (e.g. "x86_64", "aarch64").
+     * Throws IncusException if the instance does not exist or has no architecture metadata.
+     */
+    public String getInstanceArchitecture(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to get architecture for instance " + name);
+        }
+        var arch = resp.body().path("metadata").path("architecture").asText("");
+        if (arch.isEmpty()) {
+            throw new IncusException("Instance " + name + " has no architecture metadata");
+        }
+        return arch;
+    }
+
+    /**
      * Mark an instance as having a pending operation.
      * This metadata is visible to all processes.
      */

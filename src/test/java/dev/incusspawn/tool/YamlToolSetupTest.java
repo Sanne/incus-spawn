@@ -21,6 +21,12 @@ class YamlToolSetupTest {
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String CONTAINER = "test-container";
 
+    private static IncusClient mockIncusWithArch() {
+        var incus = mock(IncusClient.class);
+        when(incus.getInstanceArchitecture(CONTAINER)).thenReturn("x86_64");
+        return incus;
+    }
+
     @Test
     void declaresPackages() {
         var def = new ToolDef();
@@ -33,7 +39,7 @@ class YamlToolSetupTest {
 
     @Test
     void executesAllStepsInOrder() {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExecInteractiveAsUser(anyString(), anyString(), anyString())).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -86,7 +92,7 @@ class YamlToolSetupTest {
 
     @Test
     void minimalToolDoesNothing() {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
 
         var def = new ToolDef();
         def.setName("empty");
@@ -94,13 +100,13 @@ class YamlToolSetupTest {
         var setup = new YamlToolSetup(def);
         setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
-        // No interactions with incus for an empty tool
-        verifyNoInteractions(incus);
+        // Only getArchitecture is called for an empty tool (to filter downloads)
+        verify(incus, only()).getInstanceArchitecture(CONTAINER);
     }
 
     @Test
     void packagesOnlyToolHasNoInstallInteractions() {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
 
         var def = new ToolDef();
         def.setName("pkg-only");
@@ -111,13 +117,13 @@ class YamlToolSetupTest {
 
         setup.install(new Container(incus, CONTAINER), java.util.Map.of());
 
-        // Packages are installed in bulk by BuildCommand — install() has nothing to do
-        verifyNoInteractions(incus);
+        // Packages are installed in bulk by BuildCommand — only getArchitecture is called
+        verify(incus, only()).getInstanceArchitecture(CONTAINER);
     }
 
     @Test
     void downloadsExecuteBeforeRunCommands(@TempDir Path tempDir) throws IOException {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
@@ -157,7 +163,7 @@ class YamlToolSetupTest {
 
     @Test
     void extractInContainerPushesArchiveAndExtractsInsideContainer(@TempDir Path tempDir) throws IOException {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
@@ -201,8 +207,9 @@ class YamlToolSetupTest {
 
     @Test
     void downloadWithMatchingArchIsProcessed(@TempDir Path tempDir) throws IOException {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.getInstanceArchitecture(CONTAINER)).thenReturn("x86_64");
 
         var fakeArchive = tempDir.resolve("tool.tar.gz");
         Files.writeString(fakeArchive, "fake");
@@ -211,10 +218,10 @@ class YamlToolSetupTest {
         when(downloadCache.download(anyString(), any())).thenReturn(fakeArchive);
 
         var dl = new ToolDef.DownloadEntry();
-        dl.setUrl("https://example.com/tool-" + YamlToolSetup.canonicalArch() + ".tar.gz");
+        dl.setUrl("https://example.com/tool-x86_64.tar.gz");
         dl.setSha256("abc123");
         dl.setExtract("/opt");
-        dl.setArch(YamlToolSetup.canonicalArch());
+        dl.setArch("x86_64");
 
         var def = new ToolDef();
         def.setName("arch-match");
@@ -232,16 +239,16 @@ class YamlToolSetupTest {
 
     @Test
     void downloadWithNonMatchingArchIsSkipped(@TempDir Path tempDir) throws IOException {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
+        when(incus.getInstanceArchitecture(CONTAINER)).thenReturn("x86_64");
 
         var downloadCache = mock(DownloadCache.class);
 
-        var otherArch = YamlToolSetup.canonicalArch().equals("x86_64") ? "aarch64" : "x86_64";
         var dl = new ToolDef.DownloadEntry();
-        dl.setUrl("https://example.com/tool-" + otherArch + ".tar.gz");
+        dl.setUrl("https://example.com/tool-aarch64.tar.gz");
         dl.setSha256("abc123");
         dl.setExtract("/opt");
-        dl.setArch(otherArch);
+        dl.setArch("aarch64");
 
         var def = new ToolDef();
         def.setName("arch-skip");
@@ -255,7 +262,7 @@ class YamlToolSetupTest {
 
     @Test
     void downloadWithoutArchIsAlwaysProcessed(@TempDir Path tempDir) throws IOException {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var fakeArchive = tempDir.resolve("tool.tar.gz");
@@ -286,7 +293,7 @@ class YamlToolSetupTest {
 
     @Test
     void fileWithoutOwnerSkipsChown() {
-        var incus = mock(IncusClient.class);
+        var incus = mockIncusWithArch();
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var file = new ToolDef.FileEntry();

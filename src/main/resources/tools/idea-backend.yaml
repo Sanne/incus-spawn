@@ -1,5 +1,5 @@
 name: idea-backend
-description: JetBrains IntelliJ IDEA Remote Development backend 2026.1.1
+description: JetBrains IntelliJ IDEA Remote Development backend 2026.1.3
 requires:
   - sshd
 
@@ -14,10 +14,16 @@ parameters:
     pattern: "^[0-9]+[gGmM]$"
 
 downloads:
-  - url: https://download.jetbrains.com/idea/idea-2026.1.1.tar.gz
-    sha256: 7a58d386f2a2e5a8cd7e4591657b4fe599aeac22d960c7accf5f927846507bfb
+  - url: https://download.jetbrains.com/idea/idea-2026.1.3.tar.gz
+    sha256: a6f049716da1d09d9e0ec1500c60bf01a5ff8a0fe2419178dd1ff2fdb2b77563
     extract: /opt
     extract_in_container: true
+    arch: x86_64
+  - url: https://download.jetbrains.com/idea/idea-2026.1.3-aarch64.tar.gz
+    sha256: 7659e791609233c3e6bf67c1bfcc86f5fa1176477ca5815ae6125b0eae84a88b
+    extract: /opt
+    extract_in_container: true
+    arch: aarch64
 
 run:
   - ln -snf /opt/idea-IU-* /opt/idea

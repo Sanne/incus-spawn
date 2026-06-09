@@ -12,38 +12,19 @@ class ClaudeSetupTest {
 
     @Test
     void detectPlatformReturnsLinuxX64OnAmd64() {
-        var original = System.getProperty("os.arch");
-        try {
-            System.setProperty("os.arch", "amd64");
-            assertEquals("linux-x64", ClaudeSetup.detectPlatform());
-
-            System.setProperty("os.arch", "x86_64");
-            assertEquals("linux-x64", ClaudeSetup.detectPlatform());
-        } finally {
-            System.setProperty("os.arch", original);
-        }
+        assertEquals("linux-x64", ClaudeSetup.detectPlatform("amd64"));
+        assertEquals("linux-x64", ClaudeSetup.detectPlatform("x86_64"));
     }
 
     @Test
     void detectPlatformReturnsLinuxArm64() {
-        var original = System.getProperty("os.arch");
-        try {
-            System.setProperty("os.arch", "aarch64");
-            assertEquals("linux-arm64", ClaudeSetup.detectPlatform());
-        } finally {
-            System.setProperty("os.arch", original);
-        }
+        assertEquals("linux-arm64", ClaudeSetup.detectPlatform("aarch64"));
+        assertEquals("linux-arm64", ClaudeSetup.detectPlatform("arm64"));
     }
 
     @Test
     void detectPlatformThrowsOnUnsupportedArch() {
-        var original = System.getProperty("os.arch");
-        try {
-            System.setProperty("os.arch", "sparc");
-            assertThrows(RuntimeException.class, ClaudeSetup::detectPlatform);
-        } finally {
-            System.setProperty("os.arch", original);
-        }
+        assertThrows(RuntimeException.class, () -> ClaudeSetup.detectPlatform("sparc"));
     }
 
     @Test

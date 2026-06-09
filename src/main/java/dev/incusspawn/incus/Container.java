@@ -8,6 +8,7 @@ public class Container {
 
     private final IncusClient incus;
     private final String name;
+    private String architecture;
 
     public Container(IncusClient incus, String name) {
         this.incus = incus;
@@ -84,6 +85,14 @@ public class Container {
     public void appendToProfile(String line) {
         sh("printf '%s\\n' " + shellQuote(line) + " >> /home/agentuser/.bashrc")
                 .assertSuccess("Failed to append to /home/agentuser/.bashrc");
+    }
+
+    /** Get the container's architecture (e.g. "x86_64", "aarch64"). Cached after first lookup. */
+    public String getArchitecture() {
+        if (architecture == null) {
+            architecture = incus.getInstanceArchitecture(name);
+        }
+        return architecture;
     }
 
     public static String shellQuote(String value) {

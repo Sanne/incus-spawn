@@ -61,9 +61,9 @@ public class YamlToolSetup implements ToolSetup {
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
         // 1. Downloads — fetch on host, extract on host, push into container
-        var hostArch = canonicalArch();
+        var containerArch = canonicalArch(container.getArchitecture());
         for (var dl : def.getDownloads()) {
-            if (dl.getArch() != null && !dl.getArch().equals(hostArch)) {
+            if (dl.getArch() != null && !dl.getArch().equals(containerArch)) {
                 continue;
             }
             processDownload(dl, container);
@@ -111,11 +111,11 @@ public class YamlToolSetup implements ToolSetup {
         }
     }
 
-    static String canonicalArch() {
-        return switch (System.getProperty("os.arch")) {
+    static String canonicalArch(String arch) {
+        return switch (arch) {
             case "amd64", "x86_64" -> "x86_64";
-            case "aarch64" -> "aarch64";
-            default -> System.getProperty("os.arch");
+            case "aarch64", "arm64" -> "aarch64";
+            default -> arch;
         };
     }
 

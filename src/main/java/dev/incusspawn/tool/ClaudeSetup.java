@@ -48,7 +48,7 @@ public class ClaudeSetup implements ToolSetup {
                     downloadCache.download(DOWNLOAD_BASE_URL + "/latest", null)).strip();
             System.out.println("  Latest version: " + version);
 
-            var platform = detectPlatform();
+            var platform = detectPlatform(c.getArchitecture());
             var manifestJson = Files.readString(
                     downloadCache.download(DOWNLOAD_BASE_URL + "/" + version + "/manifest.json", null));
             var sha256 = extractChecksum(manifestJson, platform);
@@ -65,12 +65,11 @@ public class ClaudeSetup implements ToolSetup {
         }
     }
 
-    static String detectPlatform() {
-        var arch = System.getProperty("os.arch");
-        return switch (arch) {
+    static String detectPlatform(String containerArch) {
+        return switch (containerArch) {
             case "amd64", "x86_64" -> "linux-x64";
-            case "aarch64" -> "linux-arm64";
-            default -> throw new RuntimeException("Unsupported architecture: " + arch);
+            case "aarch64", "arm64" -> "linux-arm64";
+            default -> throw new RuntimeException("Unsupported architecture: " + containerArch);
         };
     }
 
