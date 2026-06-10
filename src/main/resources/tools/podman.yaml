@@ -3,12 +3,19 @@ description: Podman container runtime configured for Testcontainers
 
 packages:
   - podman
+  - fuse-overlayfs
 
 run:
   - |
     printf '#!/bin/sh\nexec sudo /usr/bin/podman "$@"\n' > /usr/local/bin/podman &&
     chmod +x /usr/local/bin/podman &&
     ln -sf /usr/local/bin/podman /usr/local/bin/docker
+  - |
+    if grep -q '^#\?mount_program' /etc/containers/storage.conf 2>/dev/null; then
+      sed -i 's|^#\?mount_program.*|mount_program = "/usr/bin/fuse-overlayfs"|' /etc/containers/storage.conf
+    elif grep -q '^\[storage.options.overlay\]' /etc/containers/storage.conf 2>/dev/null; then
+      sed -i '/^\[storage.options.overlay\]/a mount_program = "/usr/bin/fuse-overlayfs"' /etc/containers/storage.conf
+    fi
   - |
     systemctl enable --no-reload podman.socket &&
     mkdir -p /run/podman &&

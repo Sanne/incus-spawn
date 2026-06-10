@@ -170,6 +170,13 @@ public class IncusClient {
         }
     }
 
+    public void waitForSystemd(String name) {
+        if (!pollUntilReady(name, 30,
+                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
+            System.err.println("Warning: systemd in " + name + " did not reach running/degraded state — continuing anyway");
+        }
+    }
+
     /**
      * Check connectivity to the Incus daemon.
      * Returns null if connected successfully, or a diagnostic message if not.

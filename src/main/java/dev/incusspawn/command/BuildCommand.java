@@ -617,7 +617,7 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Deriving from parent image '" + parentCanonical + "'...");
         incus.copy(parentSource, buildName);
         incus.start(buildName);
-        waitForReady(buildName);
+        incus.waitForSystemd(buildName);
 
         // Re-apply DNS fix — systemd-resolved can re-enable after copy+start
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -708,26 +708,20 @@ public class BuildCommand extends BaseCommand {
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
 
-        // UID mapping for Wayland passthrough, nested containers with syscall
-        // interception for container runtimes, and no dropped capabilities since
-        // the container itself is the security boundary.
+        // UID mapping for Wayland passthrough, nested containers, and no dropped
+        // capabilities since the container itself is the security boundary.
+        // mknod intercept is NOT enabled: the seccomp_notify handler causes
+        // per-container lock contention during startup, adding 5+ seconds to
+        // every exec call while systemd-tmpfiles processes device nodes.
+        // Podman uses fuse-overlayfs instead of native mknod-based whiteouts.
         incus.configSet(buildName, "raw.idmap", "both 1000 1000");
         incus.configSet(buildName, "security.nesting", "true");
-        incus.configSet(buildName, "security.syscalls.intercept.mknod", "true");
         if (Environment.isLinux()) {
             incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
-        if (!incus.pollUntilReady(buildName, 30,
-                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
-            System.err.println("Warning: systemd did not reach running/degraded before restart — continuing anyway");
-        }
         incus.restart(buildName);
-        waitForReady(buildName);
-        if (!incus.pollUntilReady(buildName, 30,
-                "sh", "-c", "systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded'")) {
-            System.err.println("Warning: systemd did not reach running/degraded after restart — DNS setup may fail");
-        }
+        incus.waitForSystemd(buildName);
 
         // systemd-resolved (127.0.0.53) doesn't work reliably inside Incus
         // containers. Point resolv.conf at the bridge gateway's dnsmasq instead.
