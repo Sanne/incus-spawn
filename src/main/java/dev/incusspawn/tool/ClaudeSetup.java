@@ -62,8 +62,8 @@ public class ClaudeSetup implements ToolSetup {
             c.exec("chmod", "+x", versionBin);
             c.sh("ln -sf " + versionBin + " /home/agentuser/.local/bin/claude");
             c.sh("chown -R agentuser:agentuser"
-                    + " /home/agentuser/.local/share/claude"
-                    + " /home/agentuser/.local/state/claude"
+                    + " /home/agentuser/.local/share"
+                    + " /home/agentuser/.local/state"
                     + " /home/agentuser/.cache");
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
