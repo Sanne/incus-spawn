@@ -15,10 +15,12 @@ public final class ProxyService {
     private ProxyService() {}
 
     public static boolean isInstalled() {
+        if (Environment.isMacOS()) return isMacOsServiceInstalled();
         return Files.exists(Environment.proxyServiceFile());
     }
 
     public static boolean isActive() {
+        if (Environment.isMacOS()) return isMacOsServiceActive();
         try {
             var pb = new ProcessBuilder("systemctl", "--user", "is-active", SERVICE_NAME);
             pb.redirectErrorStream(true);
@@ -92,6 +94,10 @@ public final class ProxyService {
     }
 
     public static boolean uninstall() {
+        if (Environment.isMacOS()) {
+            uninstallMacOs();
+            return true;
+        }
         if (!isInstalled()) {
             System.err.println("Proxy service is not installed.");
             return false;
@@ -115,7 +121,13 @@ public final class ProxyService {
 
     public static boolean restart() {
         System.err.println("Restarting proxy service...");
-        runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+        if (Environment.isMacOS()) {
+            var uid = getUid();
+            runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
+            runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
+        } else {
+            runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+        }
         if (isActive()) {
             System.err.println("Proxy service restarted.");
             return true;
@@ -127,8 +139,13 @@ public final class ProxyService {
     public static void stop() {
         if (isActive()) {
             System.out.println("Stopping proxy service...");
-            runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
-            System.out.println("Proxy service stopped.");
+            if (Environment.isMacOS()) {
+                runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
+                System.out.println("Proxy service stopped (re-enable with: isx proxy install).");
+            } else {
+                runQuiet("systemctl", "--user", "stop", SERVICE_NAME);
+                System.out.println("Proxy service stopped.");
+            }
             return;
         }
 
@@ -148,27 +165,7 @@ public final class ProxyService {
      * and restart if so. Returns true if a restart was performed.
      */
     public static boolean reinstallIfChanged(IncusClient incus) {
-        if (!Files.exists(Environment.proxyServiceFile())) return false;
-        var isxPath = resolveIsxPath();
-        if (isxPath == null) return false;
-
-        boolean needsRestart = false;
-        try {
-            var content = Files.readString(Environment.proxyServiceFile());
-            var expected = execStartLine(isxPath);
-            if (!content.contains(expected)) {
-                var updated = content.replaceFirst(
-                        "ExecStart=.*proxy start.*",
-                        Matcher.quoteReplacement(expected));
-                if (!updated.equals(content)) {
-                    Files.writeString(Environment.proxyServiceFile(), updated);
-                    runQuiet("systemctl", "--user", "daemon-reload");
-                    needsRestart = true;
-                }
-            }
-        } catch (IOException e) {
-            System.err.println("Warning: could not update proxy service file: " + e.getMessage());
-        }
+        var needsRestart = updateSystemdServiceFile();
 
         if (!needsRestart) {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
@@ -183,8 +180,29 @@ public final class ProxyService {
         return false;
     }
 
+    private static boolean updateSystemdServiceFile() {
+        if (Environment.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) return false;
+        try {
+            var content = Files.readString(Environment.proxyServiceFile());
+            var expected = execStartLine(isxPath);
+            if (content.contains(expected)) return false;
+            var updated = content.replaceFirst(
+                    "ExecStart=.*proxy start.*",
+                    Matcher.quoteReplacement(expected));
+            if (updated.equals(content)) return false;
+            Files.writeString(Environment.proxyServiceFile(), updated);
+            runQuiet("systemctl", "--user", "daemon-reload");
+            return true;
+        } catch (IOException e) {
+            System.err.println("Warning: could not update proxy service file: " + e.getMessage());
+            return false;
+        }
+    }
+
     public static void upgradeIfNeeded() {
-        if (!Files.exists(Environment.proxyServiceFile())) return;
+        if (Environment.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return;
         var isxPath = resolveIsxPath();
         if (isxPath == null) return;
         try {
@@ -416,15 +434,16 @@ public final class ProxyService {
             return false;
         }
 
+        var uid = getUid();
         System.out.println("  Installing VM service...");
-        runQuiet("launchctl", "bootout", "gui/" + getUid(), vmPlistFile().toString());
-        runQuiet("launchctl", "bootstrap", "gui/" + getUid(), vmPlistFile().toString());
+        runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
+        runQuiet("launchctl", "bootstrap", "gui/" + uid, vmPlistFile().toString());
 
         System.out.println("  Installing proxy service...");
-        runQuiet("launchctl", "bootout", "gui/" + getUid(), proxyPlistFile().toString());
-        runQuiet("launchctl", "bootstrap", "gui/" + getUid(), proxyPlistFile().toString());
+        runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
+        runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
 
-        if (isMacOsServiceActive()) {
+        if (isActive()) {
             System.out.println("  Services installed and running.");
             return true;
         } else {
@@ -434,8 +453,9 @@ public final class ProxyService {
     }
 
     public static void uninstallMacOs() {
-        runQuiet("launchctl", "bootout", "gui/" + getUid(), proxyPlistFile().toString());
-        runQuiet("launchctl", "bootout", "gui/" + getUid(), vmPlistFile().toString());
+        var uid = getUid();
+        runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
+        runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
         try { Files.deleteIfExists(proxyPlistFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(vmPlistFile()); } catch (IOException ignored) {}
         System.out.println("  macOS services uninstalled.");
