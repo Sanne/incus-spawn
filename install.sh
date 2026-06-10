@@ -119,9 +119,28 @@ fi
 # Install git remote helper shim for isx:// URLs
 install -m 755 "$SCRIPT_DIR/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
+# ── Replace Homebrew installation if present ─────────────────────────────
+BREW_ISX="$(brew --prefix 2>/dev/null)/bin/isx"
+if [ -x "$BREW_ISX" ] && [ "$INSTALL_DIR/$BINARY_NAME" != "$BREW_ISX" ]; then
+    echo "Homebrew installation detected at $BREW_ISX"
+    echo "Replacing with locally built binary..."
+    rm -f "$BREW_ISX"
+    cp "$INSTALL_DIR/$BINARY_NAME" "$BREW_ISX"
+    chmod +x "$BREW_ISX"
+    BREW_GIT_REMOTE="$(brew --prefix)/bin/git-remote-isx"
+    if [ -f "$BREW_GIT_REMOTE" ] || [ -L "$BREW_GIT_REMOTE" ]; then
+        rm -f "$BREW_GIT_REMOTE"
+        cp "$INSTALL_DIR/git-remote-isx" "$BREW_GIT_REMOTE"
+        chmod +x "$BREW_GIT_REMOTE"
+    fi
+fi
+
 echo "Installed. Run 'isx' to get started."
 
-# ── Post-upgrade: update proxy service if running ────────────────────────
+# ── Post-upgrade: restart services if running ────────────────────────────
 if systemctl --user is-active --quiet incus-spawn-proxy 2>/dev/null; then
     "$INSTALL_DIR/$BINARY_NAME" proxy install
+elif [ "$(uname -s)" = "Darwin" ] && launchctl print "gui/$(id -u)/dev.incusspawn.proxy" &>/dev/null; then
+    echo "Restarting macOS proxy service..."
+    launchctl kickstart -k "gui/$(id -u)/dev.incusspawn.proxy"
 fi
