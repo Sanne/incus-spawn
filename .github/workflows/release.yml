@@ -137,6 +137,7 @@ jobs:
           sed -i \
             -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
             -e "0,/sha256 \"[^\"]*\"/{s/sha256 \"[^\"]*\"/sha256 \"${BINARY_SHA}\"/}" \
+            -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx\"|}" \
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
             Formula/incus-spawn.rb
 
