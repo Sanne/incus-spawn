@@ -344,6 +344,7 @@ public class MitmProxy {
      */
     public void start(Runnable onReady) throws Exception {
         stopLatch = new CountDownLatch(1);
+        System.setProperty("vertx.cacheDirBase", System.getProperty("java.io.tmpdir"));
         vertx = Vertx.vertx();
 
         var ca = CertificateAuthority.loadOrCreate();
