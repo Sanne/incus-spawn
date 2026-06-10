@@ -368,16 +368,14 @@ public final class VmManager {
 
     // --- Internal: vfkit ---
 
-    private static final Path VFKIT_APP_BUNDLE = Environment.vmStateDir().resolve("incus-spawn-vm.app");
-
     /**
      * Create a macOS .app bundle wrapper around the vfkit binary. macOS uses the
      * bundle's Info.plist for permission dialog text (home folder access, local
      * network), giving users meaningful descriptions instead of a generic prompt.
      */
     private static String ensureVfkitAppBundle() throws IOException {
-        var macosDir = VFKIT_APP_BUNDLE.resolve("Contents/MacOS");
-        var plistFile = VFKIT_APP_BUNDLE.resolve("Contents/Info.plist");
+        var macosDir = Environment.vfkitAppBundle().resolve("Contents/MacOS");
+        var plistFile = Environment.vfkitAppBundle().resolve("Contents/Info.plist");
         var linkedBin = macosDir.resolve("vfkit");
 
         var vfkitPath = resolveVfkitPath();

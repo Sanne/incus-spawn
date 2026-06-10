@@ -132,6 +132,10 @@ public final class Environment {
         return vmStateDir().resolve("empty-initrd");
     }
 
+    public static Path vfkitAppBundle() {
+        return vmStateDir().resolve("incus-spawn-vm.app");
+    }
+
     // --- VM appliance artifact paths ---
 
     public static Path applianceDir() {
