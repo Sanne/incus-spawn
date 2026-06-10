@@ -55,8 +55,26 @@ public final class VmManager {
                 System.err.println("Warning: ISX_VM_CPUS=" + env + " is not a number, ignoring");
             }
         }
+        if (Environment.isMacOS()) {
+            int pcores = detectPerformanceCores();
+            if (pcores > 0) return pcores;
+        }
         int available = Runtime.getRuntime().availableProcessors();
         return Math.max(1, available - 2);
+    }
+
+    private static int detectPerformanceCores() {
+        try {
+            var pb = new ProcessBuilder("sysctl", "-n", "hw.perflevel0.logicalcpu");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            if (process.waitFor() == 0 && !output.isBlank()) {
+                return Integer.parseInt(output);
+            }
+        } catch (Exception ignored) {
+        }
+        return 0;
     }
 
     public static int detectMemoryMiB() {
