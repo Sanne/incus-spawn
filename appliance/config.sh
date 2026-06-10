@@ -36,7 +36,8 @@ rm -rf /etc/apk /var/cache/apk 2>/dev/null || true
 
 #-- Fstab: remount root with noatime --#
 cat > /etc/fstab << 'EOF'
-/dev/vda / btrfs noatime,commit=300 0 0
+/dev/vda / btrfs noatime,commit=300,compress=zstd:1 0 0
+/dev/vdc /var/lib/incus btrfs noatime,commit=300,compress=zstd:1 0 0
 EOF
 
 #-- Set default locale and hostname --#

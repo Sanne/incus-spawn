@@ -108,6 +108,10 @@ public final class VmManager {
         return DEFAULT_DISK_SIZE;
     }
 
+    static String rootDiskSize() {
+        return "4G";
+    }
+
     public static String swapSize() {
         var env = System.getenv("ISX_VM_SWAP");
         if (env != null && !env.isBlank()) {
@@ -182,6 +186,7 @@ public final class VmManager {
         try {
             checkArtifacts();
             ensureDisk();
+            ensureDataDisk();
             ensureSwap();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
@@ -471,6 +476,7 @@ public final class VmManager {
                 "--kernel-cmdline", kernelCmdline("hvc0"),
                 "--device", "virtio-blk,path=" + Environment.vmDiskImage(),
                 "--device", "virtio-blk,path=" + Environment.vmSwapImage(),
+                "--device", "virtio-blk,path=" + Environment.vmDataImage(),
                 "--device", "virtio-net,nat,mac=" + VmNetwork.ISX_VM_MAC,
                 "--device", "virtio-serial,logFilePath=" + Environment.vmLogFile(),
                 "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
@@ -529,6 +535,7 @@ public final class VmManager {
                 "-kernel", Environment.applianceKernel().toString(),
                 "-drive", "id=root,file=" + Environment.vmDiskImage() + ",format=raw,if=virtio",
                 "-drive", "id=swap,file=" + Environment.vmSwapImage() + ",format=raw,if=virtio",
+                "-drive", "id=data,file=" + Environment.vmDataImage() + ",format=raw,if=virtio",
                 "-netdev", "user,id=net0",
                 "-device", "virtio-net-pci,netdev=net0",
                 "-append", kernelCmdline(console)
@@ -551,14 +558,45 @@ public final class VmManager {
             throw new VmException(Environment.applianceKernel() + " not found.\n"
                     + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
         }
-        if (!Files.exists(Environment.vmDiskImage()) && !Files.exists(Environment.applianceDiskImage())) {
-            throw new VmException("No disk image found.\n"
-                    + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
+        boolean hasDiskVersion = Files.exists(Environment.vmDiskVersion());
+        boolean needsReExtract = hasDiskVersion && !BuildInfo.instance().version()
+                .equals(readVersionFile());
+        if (needsReExtract || (!Files.exists(Environment.vmDiskImage())
+                && !Files.exists(Environment.applianceDiskImage()))) {
+            if (!Files.exists(Environment.applianceDiskImage())) {
+                throw new VmException("No disk image found.\n"
+                        + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
+            }
+        }
+    }
+
+    private static String readVersionFile() {
+        try {
+            return Files.readString(Environment.vmDiskVersion()).strip();
+        } catch (IOException e) {
+            return "";
         }
     }
 
     static void ensureDisk() {
-        if (Files.exists(Environment.vmDiskImage())) return;
+        var currentVersion = BuildInfo.instance().version();
+        var versionFile = Environment.vmDiskVersion();
+
+        if (Files.exists(Environment.vmDiskImage())) {
+            try {
+                if (Files.exists(versionFile)) {
+                    var diskVersion = Files.readString(versionFile).strip();
+                    if (diskVersion.equals(currentVersion)) return;
+                    System.out.println("Appliance version changed (" + diskVersion + " -> "
+                            + currentVersion + "), replacing root disk...");
+                    Files.delete(Environment.vmDiskImage());
+                } else {
+                    return;
+                }
+            } catch (IOException e) {
+                return;
+            }
+        }
 
         var compressed = Environment.applianceDiskImage();
         if (!Files.exists(compressed)) {
@@ -566,7 +604,7 @@ public final class VmManager {
                     + "\nRun 'isx init' to download appliance artifacts.");
         }
 
-        System.out.println("Extracting disk image (first run)...");
+        System.out.println("Extracting root disk image...");
         var tmp = Environment.vmDiskImage().resolveSibling("disk.img.tmp");
         try {
             Files.createDirectories(Environment.vmStateDir());
@@ -575,14 +613,30 @@ public final class VmManager {
                 gzIn.transferTo(out);
             }
             try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
-                raf.setLength(parseDiskSize(diskSize()));
+                raf.setLength(parseDiskSize(rootDiskSize()));
             }
             Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
-            System.out.println("Disk image ready: " + humanSize(Files.size(Environment.vmDiskImage()))
-                    + " (" + diskSize() + " virtual)");
+            Files.writeString(versionFile, currentVersion);
+            System.out.println("Root disk ready: " + humanSize(Files.size(Environment.vmDiskImage()))
+                    + " (" + rootDiskSize() + " virtual)");
         } catch (IOException e) {
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             throw new VmException("Failed to extract disk image: " + e.getMessage());
+        }
+    }
+
+    static void ensureDataDisk() {
+        var dataImage = Environment.vmDataImage();
+        if (Files.exists(dataImage)) return;
+
+        System.out.println("Creating data disk (" + diskSize() + " sparse)...");
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            try (var raf = new RandomAccessFile(dataImage.toFile(), "rw")) {
+                raf.setLength(parseDiskSize(diskSize()));
+            }
+        } catch (IOException e) {
+            throw new VmException("Failed to create data disk: " + e.getMessage());
         }
     }
 

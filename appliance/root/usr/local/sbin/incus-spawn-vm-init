@@ -57,16 +57,10 @@ else
     echo "incus-spawn-vm-init: bridge already configured at ${BRIDGE_IP}"
 fi
 
-# Ensure btrfs CoW storage pool exists
+# Ensure btrfs CoW storage pool exists.
+# Uses the data disk mounted at /var/lib/incus (btrfs subvolumes, no loop file).
 if ! incus storage show cow > /dev/null 2>&1; then
-    LOOP_FILE="/var/lib/incus/disks/cow.img"
-    mkdir -p "$(dirname "$LOOP_FILE")"
-    DISK_FREE=$(df / | tail -1 | awk '{print $4}')
-    POOL_SIZE=$(( DISK_FREE / 1024 / 2 ))
-    [ "$POOL_SIZE" -gt 30720 ] && POOL_SIZE=30720
-    [ "$POOL_SIZE" -lt 1024 ] && POOL_SIZE=1024
-    truncate -s "${POOL_SIZE}M" "$LOOP_FILE"
-    incus storage create cow btrfs source="$LOOP_FILE" size="${POOL_SIZE}MiB"
+    incus storage create cow btrfs source=/var/lib/incus/storage-pools/cow
 fi
 
 # Ensure default profile has root disk and NIC

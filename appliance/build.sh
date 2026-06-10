@@ -19,6 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TARGET_DIR="$(mkdir -p "${1:-$SCRIPT_DIR/build}" && cd "${1:-$SCRIPT_DIR/build}" && pwd)"
 CONTAINER_IMAGE="docker.io/alpine:3.23"
+ISX_ARCH="${ISX_ARCH:-$(uname -m)}"
+ISX_VERSION="${ISX_VERSION:-$(cd "$SCRIPT_DIR/.." && ./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo dev)}"
 
 echo "Building incus-spawn appliance..."
 echo "  Target: $TARGET_DIR"
@@ -34,9 +36,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Extracting container rootfs..."
-podman pull "$CONTAINER_IMAGE"
-CONTAINER_ID=$(podman create "$CONTAINER_IMAGE")
+echo "==> Extracting container rootfs (arch=$ISX_ARCH)..."
+podman pull --arch "$ISX_ARCH" "$CONTAINER_IMAGE"
+CONTAINER_ID=$(podman create --arch "$ISX_ARCH" "$CONTAINER_IMAGE")
 podman export "$CONTAINER_ID" | tar -xC "$ROOTFS_DIR"
 podman rm "$CONTAINER_ID"
 echo "    Base size: $(du -sh "$ROOTFS_DIR" | cut -f1)"
@@ -87,6 +89,9 @@ if [ -f "$SCRIPT_DIR/config.sh" ]; then
     chroot "$ROOTFS_DIR" /config.sh
     rm "$ROOTFS_DIR/config.sh"
 fi
+
+echo "==> Embedding version: $ISX_VERSION"
+echo "$ISX_VERSION" > "$ROOTFS_DIR/etc/isx-version"
 
 echo "==> Final cleanup..."
 rm -rf "$ROOTFS_DIR/usr/share/man" "$ROOTFS_DIR/usr/share/doc" "$ROOTFS_DIR/usr/share/info"

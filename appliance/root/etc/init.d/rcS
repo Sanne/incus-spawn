@@ -18,8 +18,8 @@ mount -t cgroup2 cgroup2 /sys/fs/cgroup
 ts() { cut -d' ' -f1 /proc/uptime; }
 echo "incus-spawn: starting... ($(ts)s)"
 
-#-- Remount root with fstab options (noatime) --#
-mount -o remount,noatime,commit=300 /
+#-- Remount root with fstab options (noatime, compression) --#
+mount -o remount,noatime,commit=300,compress=zstd:1 /
 
 #-- Expand btrfs to fill disk (disk may have been extended after image creation) --#
 btrfs filesystem resize max / 2>/dev/null || true
@@ -40,6 +40,17 @@ if [ -b /dev/vdb ]; then
         mkswap /dev/vdb >/dev/null
     fi
     swapon /dev/vdb
+fi
+
+#-- Data disk: persistent Incus state (survives root disk upgrades) --#
+if [ -b /dev/vdc ]; then
+    if ! blkid /dev/vdc | grep -q btrfs; then
+        echo "incus-spawn: formatting data disk..."
+        mkfs.btrfs -q -L isxdata /dev/vdc
+    fi
+    mkdir -p /var/lib/incus
+    mount -o noatime,commit=300,compress=zstd:1 /dev/vdc /var/lib/incus
+    echo "incus-spawn: data disk mounted ($(ts)s)"
 fi
 
 #-- Disable IPv6 (QEMU user-mode NAT is IPv4-only) --#

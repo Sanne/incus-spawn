@@ -124,6 +124,14 @@ public final class Environment {
         return vmStateDir().resolve("disk.img");
     }
 
+    public static Path vmDataImage() {
+        return vmStateDir().resolve("data.img");
+    }
+
+    public static Path vmDiskVersion() {
+        return vmStateDir().resolve("disk.version");
+    }
+
     public static Path vmSwapImage() {
         return vmStateDir().resolve("swap.img");
     }
