@@ -382,16 +382,53 @@ public class IncusClient {
                 used * 100 / total);
     }
 
+    /**
+     * Read memory stats from /proc/meminfo via container exec.
+     * Returns [MemTotal, MemAvailable, SwapTotal, SwapFree] in kB, or null on failure.
+     */
+    private long[] getMemoryInfo() {
+        try {
+            var instances = list();
+            var running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .map(i -> i.get("name"))
+                    .findFirst().orElse(null);
+            if (running == null) return null;
+            var result = shellExec(running, "sh", "-c",
+                    "awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {print $1, $2}' /dev/.lxc/proc/meminfo 2>/dev/null || awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {print $1, $2}' /proc/meminfo");
+            if (!result.success()) return null;
+            long memTotal = 0, memAvail = 0, swapTotal = 0, swapFree = 0;
+            for (var line : result.stdout().strip().split("\n")) {
+                var parts = line.split("\\s+");
+                if (parts.length < 2) continue;
+                long kB = Long.parseLong(parts[1]);
+                switch (parts[0]) {
+                    case "MemTotal:" -> memTotal = kB;
+                    case "MemAvailable:" -> memAvail = kB;
+                    case "SwapTotal:" -> swapTotal = kB;
+                    case "SwapFree:" -> swapFree = kB;
+                }
+            }
+            if (memTotal == 0) return null;
+            return new long[]{memTotal, memAvail, swapTotal, swapFree};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public String getServerMemoryUsage() {
-        var resp = http().get("/1.0/resources");
-        if (!resp.isSuccess()) return "";
-        var mem = resp.body().path("metadata").path("memory");
-        long total = mem.path("total").asLong(0);
-        long used = mem.path("used").asLong(0);
-        if (total == 0) return "";
-        return "Server memory: %dMiB used / %dMiB total (%d%% used)".formatted(
-                used / (1024 * 1024), total / (1024 * 1024),
-                used * 100 / total);
+        var info = getMemoryInfo();
+        if (info == null) return "";
+        long memUsed = info[0] - info[1];
+        var sb = new StringBuilder();
+        sb.append("Server memory: %dMiB used / %dMiB total (%d%% used)".formatted(
+                memUsed / 1024, info[0] / 1024, memUsed * 100 / info[0]));
+        if (info[2] > 0) {
+            long swapUsed = info[2] - info[3];
+            sb.append(", swap: %dMiB used / %dMiB total".formatted(
+                    swapUsed / 1024, info[2] / 1024));
+        }
+        return sb.toString();
     }
 
     /**
@@ -515,45 +552,42 @@ public class IncusClient {
     public String getSystemDiagnostics(String poolName) {
         var sb = new StringBuilder();
 
-        // Fetch /1.0/resources once for CPU, memory, and swap
+        // CPU from /1.0/resources (reliable)
         var resourcesResp = http().get("/1.0/resources");
         if (resourcesResp.isSuccess()) {
-            var metadata = resourcesResp.body().path("metadata");
-
-            // CPU
-            var cpu = metadata.path("cpu");
+            var cpu = resourcesResp.body().path("metadata").path("cpu");
             int cpuTotal = cpu.path("total").asInt(0);
             if (cpuTotal > 0) {
                 var arch = cpu.path("architecture").asText("unknown");
-                sb.append("CPU: ").append("%d CPU cores (%s)".formatted(cpuTotal, arch)).append("\n");
-            } else {
-                sb.append("CPU: (no CPU info)\n");
+                sb.append("CPU: ").append("%d cores (%s)".formatted(cpuTotal, arch)).append("\n");
             }
+        }
 
-            // Memory
-            var mem = metadata.path("memory");
-            long memTotal = mem.path("total").asLong(0);
-            long memUsed = mem.path("used").asLong(0);
-            if (memTotal > 0) {
-                sb.append("Memory: %dMiB used / %dMiB total (%d%% used)".formatted(
-                        memUsed / (1024 * 1024), memTotal / (1024 * 1024),
-                        memUsed * 100 / memTotal)).append("\n");
-            }
-
-            // Swap
-            long swapTotal = mem.path("swap_total").asLong(0);
-            long swapUsed = mem.path("swap_used").asLong(0);
-            if (swapTotal == 0) {
-                sb.append("Swap: no swap configured\n");
-            } else {
+        // Memory and swap from /proc/meminfo via container exec (resources API doesn't report swap)
+        var memInfo = getMemoryInfo();
+        if (memInfo != null) {
+            long memUsed = memInfo[0] - memInfo[1];
+            sb.append("Memory: %dMiB used / %dMiB total (%d%% used)".formatted(
+                    memUsed / 1024, memInfo[0] / 1024,
+                    memInfo[0] > 0 ? memUsed * 100 / memInfo[0] : 0)).append("\n");
+            if (memInfo[2] > 0) {
+                long swapUsed = memInfo[2] - memInfo[3];
                 sb.append("Swap: %dMiB used / %dMiB total (%d%% used)".formatted(
-                        swapUsed / (1024 * 1024), swapTotal / (1024 * 1024),
-                        swapUsed * 100 / swapTotal)).append("\n");
+                        swapUsed / 1024, memInfo[2] / 1024,
+                        swapUsed * 100 / memInfo[2])).append("\n");
+            } else {
+                sb.append("Swap: no swap configured\n");
             }
-        } else {
-            sb.append("CPU: (could not query resources)\n");
-            sb.append("Memory: (could not query resources)\n");
-            sb.append("Swap: (could not query resources)\n");
+        } else if (resourcesResp.isSuccess()) {
+            var mem = resourcesResp.body().path("metadata").path("memory");
+            long total = mem.path("total").asLong(0);
+            long used = mem.path("used").asLong(0);
+            if (total > 0) {
+                long totalMiB = total / (1024 * 1024);
+                long usedMiB = used / (1024 * 1024);
+                sb.append("Memory: %dMiB used / %dMiB total (%d%% used)".formatted(
+                        usedMiB, totalMiB, used * 100 / total)).append("\n");
+            }
         }
 
         // Disk

@@ -101,14 +101,15 @@ class IncusApi {
                 return "Cannot connect to Incus socket at " + candidate + ": " + e.getMessage();
             }
         }
-        // No socket file found at any candidate path.
+        // No socket file found — check if HTTPS was attempted
+        var httpsTransport = HttpsTransport.fromClientConfig();
+        if (httpsTransport != null) {
+            return "HTTPS remote configured but connection failed.\n\n" +
+                   "The VM may not trust the current client certificate.\n" +
+                   "Re-run 'isx init' to regenerate and trust certificates.";
+        }
         return """
-                Incus socket not found. Checked:
-                  /run/incus/unix.socket
-                  /var/lib/incus/unix.socket
-
-                Ensure Incus is installed and the daemon is running:
-                  sudo systemctl enable --now incus
+                Incus not reachable. No Unix socket found and no HTTPS remote configured.
 
                 First-time setup: run 'isx init'
                 """;

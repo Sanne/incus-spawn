@@ -74,13 +74,21 @@ public class VmCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (Environment.isLinux()) {
-                // On Linux, show comprehensive system diagnostics
                 var incus = RuntimeServices.incus();
                 var pool = incus.findCowPool();
                 System.out.println(incus.getSystemDiagnostics(pool));
                 return CommandResult.SUCCESS;
             }
             System.out.println(VmManager.status());
+            var incus = RuntimeServices.incus();
+            var connError = incus.checkConnectivity();
+            if (connError != null) {
+                System.out.println("\nIncus not reachable: " + connError);
+            } else {
+                var pool = incus.findCowPool();
+                System.out.println();
+                System.out.println(incus.getSystemDiagnostics(pool));
+            }
             return CommandResult.SUCCESS;
         }
     }
