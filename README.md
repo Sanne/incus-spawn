@@ -13,19 +13,24 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ## Requirements
 
-- **Linux** -- Incus system containers require a Linux kernel. macOS and Windows are not yet supported but are on the roadmap (likely via a managed Linux VM).
-- **[Incus](https://linuxcontainers.org/incus/)** -- `isx init` auto-installs via the detected package manager (`dnf`, `apt`, `zypper`, or `pacman`); on other distros, install manually before running init
+- **Linux or macOS (Apple Silicon)** -- On Linux, Incus runs natively. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). Windows is not yet supported.
+- **[Incus](https://linuxcontainers.org/incus/)** -- On Linux, `isx init` auto-installs via the detected package manager (`dnf`, `apt`, `zypper`, or `pacman`); on other distros, install manually before running init. On macOS, Incus runs inside the managed VM.
 
 ## Quick Start
 
-If on a Linux X64 machine, you can install incus-spawn with the following command:
+On macOS (Apple Silicon):
 
 ```shell
-# Install
+brew install Sanne/tap/incus-spawn
+```
+
+On Linux (x86_64):
+
+```shell
 curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
 ```
 
-If on any other machine, you can install incus-spawn with the following command:
+On other Linux architectures:
 
 ```shell
 jbang app install isx@Sanne/incus-spawn
@@ -672,6 +677,14 @@ Details that save time and avoid frustration:
 
 ## Installation
 
+### macOS (Homebrew)
+
+```shell
+brew install Sanne/tap/incus-spawn
+```
+
+Requires Apple Silicon. Updates with `brew upgrade incus-spawn`. See [docs/HOMEBREW.md](docs/HOMEBREW.md) for details.
+
 ### Fedora (DNF)
 
 ```shell
@@ -724,12 +737,13 @@ The script derives the version from the POM snapshot (e.g. `0.1.9-SNAPSHOT` → 
 Pushing the tag triggers a workflow that will:
 1. Set the project version from the tag
 2. Build a self-contained uber-jar (for JBang users)
-3. Build a native binary via container-based GraalVM compilation
-4. Create a GitHub Release with auto-generated release notes and both artifacts attached
-5. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
-6. Bump the POM version to the next snapshot
+3. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64)
+4. Create a GitHub Release with auto-generated release notes and all artifacts attached
+5. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap) with new checksums
+6. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
+7. Bump the POM version to the next snapshot
 
-Users can then install or update via `dnf upgrade` (Fedora), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
+Users can then install or update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
 
 ## Configuration
 
