@@ -36,8 +36,6 @@ public class ClaudeSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         System.out.println("Installing Claude Code...");
-        // Ensure ~/.local/bin is on agentuser's PATH before installing, so
-        // claude is immediately available in interactive shells.
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
                 "chown -R agentuser:agentuser /home/agentuser/.local && " +
                 "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
@@ -56,10 +54,17 @@ public class ClaudeSetup implements ToolSetup {
             var binaryUrl = DOWNLOAD_BASE_URL + "/" + version + "/" + platform + "/claude";
             var cached = downloadCache.download(binaryUrl, sha256);
 
-            var claudeBin = "/home/agentuser/.local/bin/claude";
-            c.filePush(cached.toString(), claudeBin);
-            c.exec("chmod", "+x", claudeBin);
-            c.chown(claudeBin, "agentuser:agentuser");
+            var versionBin = "/home/agentuser/.local/share/claude/versions/" + version;
+            c.sh("mkdir -p /home/agentuser/.local/share/claude/versions"
+                    + " /home/agentuser/.local/state/claude/locks"
+                    + " /home/agentuser/.cache/claude/staging");
+            c.filePush(cached.toString(), versionBin);
+            c.exec("chmod", "+x", versionBin);
+            c.sh("ln -sf " + versionBin + " /home/agentuser/.local/bin/claude");
+            c.sh("chown -R agentuser:agentuser"
+                    + " /home/agentuser/.local/share/claude"
+                    + " /home/agentuser/.local/state/claude"
+                    + " /home/agentuser/.cache/claude");
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
         }
@@ -124,6 +129,9 @@ public class ClaudeSetup implements ToolSetup {
                   "hasSeenTasksHint": true,
                   "numStartups": 1,
                   "autoUpdates": false,
+                  "installMethod": "native",
+                  "officialMarketplaceAutoInstallAttempted": true,
+                  "officialMarketplaceAutoInstalled": true,
                 """);
         if (!SpawnConfig.load().getClaude().isUseVertex()) {
             claudeJsonBuilder.append("""
