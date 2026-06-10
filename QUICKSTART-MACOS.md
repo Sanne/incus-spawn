@@ -2,97 +2,29 @@
 
 ## Who this is for
 
-This guide is for developers who want to experiment with a preview of incus-spawn on a MacBook. 
-
-**Important**: This guide requires setting up your own Linux VM. incus-spawn intends to provide a managed VM solution in the future, so manual VM setup is a temporary requirement during the preview phase.
+Developers on Apple Silicon Macs who want isolated Linux environments for running AI agents, reproducing bugs, or creating dev environments — without managing a VM manually.
 
 ## Prerequisites
 
 - macOS with Apple Silicon (M1/M2/M3/M4)
-- 12+ GB available RAM (recommended for building multiple projects in parallel and leveraging build/dependency caches)
-- 80+ GB disk space (recommended for caching dependencies and multiple project containers)
+- 12+ GB available RAM (recommended for building multiple projects in parallel)
+- 80+ GB disk space (recommended for caching dependencies and multiple containers)
 
-## 1. Install UTM
-
-[UTM](https://mac.getutm.app/) is a free virtual machine application for macOS. Install it using Homebrew:
+## 1. Install incus-spawn
 
 ```shell
-brew install --cask utm
+brew install Sanne/tap/incus-spawn
 ```
 
-Then launch UTM from your Applications folder or via Spotlight.
-
-## 2. Create a Fedora VM
-
-### Download Fedora Workstation
-
-Download the **Fedora Workstation 44 aarch64** ISO from the [official Fedora download page](https://fedoraproject.org/workstation/download/).
-
-**Important**: Choose the **aarch64 (ARM)** version for Apple Silicon.
-
-### Create the VM in UTM
-
-1. Open UTM and click **Create a New Virtual Machine**
-2. Select **Virtualize** (for better performance on Apple Silicon)
-3. Choose **Linux**
-4. Browse and select the Fedora ISO you downloaded
-5. **Configure resources** (optional but recommended for working on multiple projects/branches concurrently with several agents):
-   - **Memory**: 12 GB (12288 MB)
-   - **CPU cores**: 8
-   - **Storage**: 100 GB (sparse allocation — won't consume the full amount immediately, but allows room for aggressive caching of downloads, dependencies, and tools)
-6. Complete the wizard and start the VM
-7. Follow the Fedora installation process (choose Fedora Workstation installation)
-8. Create a user account and complete setup
-9. Configure the user for passwordless login and disable automatic standby/sleep
-10. Reboot the VM when installation finishes
-
-### Post-installation
-
-After logging into Fedora:
+Verify installation:
 
 ```shell
-# Update the system
-sudo dnf upgrade -y
-
-# Install basic development tools
-sudo dnf install -y git curl gh
+isx --version
 ```
 
-## 3. Configure Claude Code in the VM
+## 2. Prepare a GitHub Token
 
-incus-spawn will automatically detect and use Claude Code credentials configured in the VM. Set it up now even though you won't use it directly.
-
-### Install Claude Code CLI
-
-```shell
-curl -fsSL https://claude.ai/install.sh | sh
-```
-
-### Authenticate
-
-```shell
-claude
-```
-
-On first launch, Claude Code will open a browser for OAuth authentication:
-- If the browser opens automatically, log in with your Anthropic/Claude account
-- If not, press `c` to copy the login URL, then paste it into a browser
-
-Once authenticated, test it works:
-
-```shell
-claude --status
-```
-
-You can exit Claude Code after verifying authentication. The credentials are now stored and tested and will be picked up by incus-spawn.
-
-**What's happening**: incus-spawn uses a MITM proxy to inject these credentials into containers transparently, so your API keys never enter the isolated environments.
-
-## 4. Prepare a GitHub Token
-
-incus-spawn will provide GitHub authentication to agents running inside containers. You need a personal access token with appropriate scopes.
-
-### Create a token
+incus-spawn provides GitHub authentication to agents running inside containers. You need a personal access token with appropriate scopes.
 
 **Optional**: Consider generating a personal access token for a dedicated GitHub account, depending on how you want agents to be identified in commits and activity logs.
 
@@ -107,9 +39,9 @@ incus-spawn will provide GitHub authentication to agents running inside containe
 
 **Security note**: Do NOT use an unrestricted personal access token. Create a token with only the specific permissions your agents need. This token will be used by AI agents running in isolated containers.
 
-Keep this token ready — you'll configure it during `isx init` in step 7.
+Keep this token ready — you'll configure it during `isx init` in step 4.
 
-## 5. (Optional) Clone Getting-Started Templates
+## 3. (Optional) Clone Getting-Started Templates
 
 For a smoother first experience, clone a repository with pre-made incus-spawn templates:
 
@@ -118,44 +50,9 @@ cd ~
 git clone https://github.com/Sanne/incus-spawn-templates.git
 ```
 
-This repository contains example image definitions and tools you can use as starting points. You can fork this repository and customize the metadata files to express your preferences about which projects to work on and which tools to have pre-installed into agent containers.
+This repository contains example image definitions and tools you can use as starting points. You can fork it and customize the metadata files to express your preferences about which projects to work on and which tools to have pre-installed into agent containers.
 
-## 6. Install incus-spawn
-
-Add the Fedora COPR repository and install incus-spawn:
-
-```shell
-# Enable the COPR repository
-sudo dnf copr enable sanne/incus-spawn
-
-# Import the GPG key
-sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
-
-# Install incus-spawn
-sudo dnf install incus-spawn
-```
-
-Verify installation:
-
-```shell
-isx --version
-```
-
-## 7. (Optional) Clone Your Projects
-
-Clone the repositories you intend to work on into the VM. The VM will serve as a coordination point for patches between the host (your Mac) and isolated containers.
-
-```shell
-# Example: clone a project you're working on
-cd ~/projects  # or wherever you organize your code
-git clone https://github.com/your-org/your-project.git
-```
-
-**Why this helps**: incus-spawn can automatically set up git remotes between the VM and containers. When agents make changes inside containers, you can easily fetch and review those commits on the VM side using standard git commands like `git fetch` and `git cherry-pick`. The VM acts as a shared cache and coordination layer.
-
-You can configure automatic remote management later in `~/.config/incus-spawn/config.yaml` by setting `host-paths` to point to your project directories. See [Git Remotes](README.md#git-remotes) in the main README for details.
-
-## 8. Initialize incus-spawn
+## 4. Initialize incus-spawn
 
 Run the one-time setup command and follow the interactive prompts:
 
@@ -164,22 +61,35 @@ isx init
 ```
 
 The initialization wizard will:
-- Install and configure Incus (the container system)
-- Set up the MITM TLS proxy for credential injection
-- Configure firewall rules
-- Prompt for your GitHub token (paste the token from step 4)
-- Prompt for Claude Code authentication setup
-- Ask where you stored your local git projects (the ones you cloned in step 7)
-- Create storage pools for copy-on-write branching
+- Generate TLS certificates for the MITM proxy
+- Prompt for your Claude Code API key or Vertex AI configuration
+- Prompt for your GitHub token (paste the token from step 2)
+- Download and start a lightweight Linux VM (via [vfkit](https://github.com/crc-org/vfkit))
+- Install VM and proxy as macOS services (auto-start at login)
 
-Follow all prompts carefully. When asked about the proxy, choose to install it as a systemd service so it starts automatically.
+macOS will show permission dialogs for home folder access and local network connectivity. These are safe to approve:
+- Your home directory is mounted read-only inside the VM (nothing is modified)
+- Agents run in sandboxed containers that only see paths you explicitly configure
+- Network access enables connectivity for the Linux containers
 
-## 9. Next Steps
-
-You're ready to use incus-spawn! Try these commands:
+## 5. Build a Template
 
 ```shell
-# Launch the interactive TUI to manage templates and instances
+isx build tpl-dev
+```
+
+This builds a development template with common tools. Templates form an inheritance chain — `tpl-dev` extends `tpl-minimal`, and any missing parent is built automatically.
+
+For Java development:
+
+```shell
+isx build tpl-java
+```
+
+## 6. Start Using incus-spawn
+
+```shell
+# Launch the interactive TUI
 isx
 
 # Or create an isolated environment from the command line
@@ -192,24 +102,34 @@ Inside the container, try:
 - `gh auth status` — verify GitHub authentication works
 - `git clone https://github.com/your/repo.git` — clone repos (uses HTTPS with injected token)
 
-For more details, see the [main README](README.md).
+When you're done, destroy the branch — the template is unaffected:
+
+```shell
+isx destroy my-experiment
+```
+
+## How It Works
+
+incus-spawn runs a lightweight Linux VM on your Mac using Apple's Virtualization.framework. Inside the VM, Incus manages system containers — full Linux environments with their own init system, networking, and filesystem.
+
+A host-side MITM TLS proxy intercepts HTTPS traffic to specific domains (Anthropic, GitHub, Maven Central, etc.) and injects real credentials. Containers only hold placeholder values — your API keys never enter any container.
+
+Your home directory is mounted read-only in the VM, enabling host file sharing (build caches, project sources) without modifying anything on your Mac.
+
+For more details, see the [main README](README.md) and [DESIGN.md](DESIGN.md).
 
 ---
 
 ## Troubleshooting
 
-**Proxy not running**: Check status with `isx proxy status`. Start it with `isx proxy start`, or install it as a systemd service with `isx proxy install` to start automatically on boot.
+**VM not starting**: Check status with `isx vm status`. The VM log is at `~/.local/state/incus-spawn/vm.log`.
 
-**Authentication not working**: Verify Claude Code auth with `claude --status` and check proxy logs with `isx proxy logs`.
+**Proxy not running**: Check status with `isx proxy status`. Start it with `isx proxy start`. The proxy is installed as a macOS service and should start automatically at login.
 
-**Network issues in containers**: Ensure the proxy is running and the VM has internet access.
+**Authentication not working**: Verify the proxy is running (`isx proxy status`) and check proxy logs with `isx proxy logs`.
 
-For anything else, [open an issue on GitHub](https://github.com/Sanne/incus-spawn/issues) or ping me — happy to help!
+**Network issues in containers**: Ensure the proxy is running. DNS overrides route intercepted domains through the proxy — without it, those domains won't resolve.
 
-## Sources
+**Updating**: Run `brew upgrade incus-spawn` to get the latest version.
 
-- [UTM Virtual Machines](https://mac.getutm.app/)
-- [UTM Homebrew Formula](https://formulae.brew.sh/cask/utm)
-- [Fedora Workstation Download](https://fedoraproject.org/workstation/download/)
-- [Claude Code Authentication Docs](https://code.claude.com/docs/en/authentication)
-- [GitHub Personal Access Tokens](https://github.com/settings/tokens)
+For anything else, [open an issue on GitHub](https://github.com/Sanne/incus-spawn/issues).
