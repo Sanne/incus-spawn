@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.vm.VmNetwork;
+import io.vertx.core.Vertx;
 import org.junit.jupiter.api.*;
 
 import java.net.HttpURLConnection;
@@ -31,6 +32,7 @@ class ProxyNetworkIT {
     private static final String DUMMY_API_KEY = "test-placeholder-not-a-real-key";
 
     private static IncusClient client;
+    private static Vertx vertx;
     private static MitmProxy proxy;
     private static String proxyAddress;
     private static String caFingerprint;
@@ -52,7 +54,8 @@ class ProxyNetworkIT {
         }
         Assumptions.assumeTrue(proxyAddress != null, "Cannot determine proxy bind address");
 
-        proxy = new MitmProxy(proxyAddress, 18443, 18080,
+        vertx = Vertx.vertx();
+        proxy = new MitmProxy(vertx, proxyAddress, 18443, 18080, proxyAddress,
                 DUMMY_API_KEY, "", false, "", "");
 
         Thread.ofPlatform().daemon().start(() -> {
@@ -78,6 +81,9 @@ class ProxyNetworkIT {
     static void tearDown() {
         if (proxy != null) {
             try { proxy.stop(); } catch (Exception ignored) {}
+        }
+        if (vertx != null) {
+            try { vertx.close().toCompletionStage().toCompletableFuture().get(5, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) {}
         }
         if (client != null) {
             try {

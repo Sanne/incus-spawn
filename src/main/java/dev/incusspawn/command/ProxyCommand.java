@@ -9,6 +9,8 @@ import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.vm.VmNetwork;
+import io.quarkus.arc.Arc;
+import io.vertx.core.Vertx;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
@@ -128,7 +130,8 @@ public class ProxyCommand extends BaseCommand {
             System.out.println();
 
             var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
-            var proxy = new MitmProxy(gatewayIp, port, healthPort, healthBindAddress, apiKey, ghToken,
+            var vertx = Arc.container().instance(Vertx.class).get();
+            var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, apiKey, ghToken,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
 
             if (debug) {

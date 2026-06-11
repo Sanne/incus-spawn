@@ -153,7 +153,7 @@ public class MitmProxy {
     private String cachedVertexToken;
     private long vertexTokenExpiryMs;
 
-    private Vertx vertx;
+    private final Vertx vertx;
     private HttpServer mitmServer;
     private HttpServer healthHttpServer;
     private HttpClient upstreamClient;
@@ -165,16 +165,10 @@ public class MitmProxy {
 
     private final String healthBindAddress;
 
-    public MitmProxy(String bindAddress, int mitmPort, int healthPort,
-                     String anthropicApiKey, String ghToken,
+    public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
+                     String healthBindAddress, String anthropicApiKey, String ghToken,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
-        this(bindAddress, mitmPort, healthPort, bindAddress, anthropicApiKey, ghToken,
-                useVertex, vertexRegion, vertexProjectId);
-    }
-
-    public MitmProxy(String bindAddress, int mitmPort, int healthPort, String healthBindAddress,
-                     String anthropicApiKey, String ghToken,
-                     boolean useVertex, String vertexRegion, String vertexProjectId) {
+        this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
@@ -208,14 +202,16 @@ public class MitmProxy {
     }
 
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
-    public static MitmProxy fromConfig(IncusClient incus) {
+    public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var config = SpawnConfig.load();
         var gatewayIp = resolveGatewayIp(incus);
         var claude = config.getClaude();
         return new MitmProxy(
+                vertx,
                 gatewayIp,
                 DEFAULT_MITM_PORT,
                 DEFAULT_HEALTH_PORT,
+                gatewayIp,
                 claude.getApiKey(),
                 config.getGithub().getToken(),
                 claude.isUseVertex(),
@@ -344,7 +340,6 @@ public class MitmProxy {
      */
     public void start(Runnable onReady) throws Exception {
         stopLatch = new CountDownLatch(1);
-        vertx = Vertx.vertx();
 
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
@@ -442,7 +437,6 @@ public class MitmProxy {
             if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-            if (vertx != null) vertx.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
         } catch (Exception e) {
             System.err.println("Error during proxy shutdown: " + e.getMessage());
         } finally {
