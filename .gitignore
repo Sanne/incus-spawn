@@ -52,3 +52,6 @@ META-INF/
 # Appliance build output
 appliance/build/
 appliance/kernel/vmlinuz
+
+# Benchmark artifacts
+bench/results/

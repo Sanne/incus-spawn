@@ -87,3 +87,15 @@ Resolution order for both images and tools (later overrides earlier): built-in -
 ### Download Caching
 
 `DownloadCache` handles host-side download caching with SHA256 verification. Archives are downloaded and extracted on the host, then pushed into containers. This avoids needing tar/curl inside containers.
+
+## Benchmarking
+
+`bench/run.sh` measures native image performance: binary size, startup time, memory (idle and peak RSS), throughput, and latency. See `bench/README.md` for full documentation.
+
+```shell
+bench/run.sh                              # Build native image + benchmark
+bench/run.sh --skip-build                 # Reuse existing binary
+bench/run.sh --label "before-my-change"   # Tag results for comparison
+```
+
+Requires Oracle GraalVM with `native-image`, a running Incus daemon, and a working `isx init` setup. Results are saved as JSON to `bench/results/` and automatically compared with the previous run. Use this before and after changes to the proxy, Vert.x configuration, or native image settings to catch regressions.

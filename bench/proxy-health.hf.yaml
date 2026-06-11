@@ -1,0 +1,25 @@
+name: proxy-health
+http:
+  host: !param TARGET
+  sharedConnections: 50
+phases:
+- warmup:
+    constantRate:
+      usersPerSec: 1000
+      duration: 5s
+      maxSessions: 1100
+      isWarmup: true
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
+- steady:
+    constantRate:
+      usersPerSec: 5000
+      duration: 15s
+      maxSessions: 5500
+      startAfter: warmup
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
