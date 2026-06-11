@@ -12,6 +12,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
+import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import org.aesh.command.CommandDefinition;
@@ -36,6 +37,9 @@ public class BranchCommand extends BaseCommand {
 
     @Option(name = "gui", description = "Enable GUI passthrough (Wayland + GPU + audio)", hasValue = false)
     boolean gui;
+
+    @Option(name = "kvm", description = "Expose /dev/kvm for nested virtualization", hasValue = false)
+    boolean kvm;
 
     @Option(name = "airgap", description = "Disable network access (complete isolation)", hasValue = false)
     boolean airgap;
@@ -105,6 +109,14 @@ public class BranchCommand extends BaseCommand {
             // Clean up inherited GUI devices/env from incus copy
             GuiPassthrough.removeGui(incus, name);
             warnIfTemplateWantsGui(resolvedSource);
+        }
+
+        if (kvm) {
+            if (!KvmPassthrough.configureKvm(incus, name)) {
+                System.err.println("Continuing without KVM — VMs inside this branch will not work.");
+            }
+        } else {
+            KvmPassthrough.removeKvm(incus, name);
         }
 
         if (noStart) {

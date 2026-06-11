@@ -12,6 +12,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.GuiPassthrough;
+import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -105,6 +106,7 @@ public class ListCommand extends BaseCommand {
     private String branchSourceName;
     private TextInputState branchNameInput;
     private boolean branchEnableGui;
+    private boolean branchEnableKvm;
     private NetworkMode branchNetworkMode;
     private boolean branchEnableInbox;
     private TextInputState branchInboxInput;
@@ -261,7 +263,7 @@ public class ListCommand extends BaseCommand {
                     returnToInstance = pendingActionTarget;
                     try {
                         createBranch(branchSourceName, pendingActionTarget,
-                                branchEnableGui, branchNetworkMode,
+                                branchEnableGui, branchEnableKvm, branchNetworkMode,
                                 branchEnableInbox ? branchInboxInput.text().strip() : null,
                                 branchSourceIsVm);
                         statusMessage = "Created branch " + pendingActionTarget;
@@ -751,6 +753,7 @@ public class ListCommand extends BaseCommand {
         var def = imageDefs.get(sourceName);
         branchEnableGui = (def != null && def.isGui())
                 || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED));
+        branchEnableKvm = false;
         branchNetworkMode = NetworkMode.FULL;
         branchEnableInbox = false;
         branchInboxInput = new TextInputState("");
@@ -787,6 +790,10 @@ public class ListCommand extends BaseCommand {
         }
         if (key.hasAlt() && key.isCharIgnoreCase('g')) {
             branchEnableGui = !branchEnableGui;
+            return true;
+        }
+        if (key.hasAlt() && key.isCharIgnoreCase('k')) {
+            branchEnableKvm = !branchEnableKvm;
             return true;
         }
         if (key.hasAlt() && key.isCharIgnoreCase('n')) {
@@ -1573,7 +1580,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        int height = 8;
+        int height = 9;
         if (branchSourceIsVm) height += 2;
         if (branchEnableInbox) height += 1;
         var modalArea = ModalRenderer.centerRect(screen, 54, height);
@@ -1593,6 +1600,7 @@ public class ListCommand extends BaseCommand {
             constraints.add(Constraint.length(1));
             constraints.add(Constraint.length(1));
         }
+        constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
@@ -1628,6 +1636,7 @@ public class ListCommand extends BaseCommand {
 
         row++;
         ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
+        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-k", "KVM passthrough", branchEnableKvm);
         ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), "Alt-n", branchNetworkMode);
         ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
 
@@ -2973,8 +2982,8 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private void createBranch(String source, String name, boolean gui, NetworkMode networkMode,
-                               String inboxPath, boolean vm) {
+    private void createBranch(String source, String name, boolean gui, boolean kvm,
+                               NetworkMode networkMode, String inboxPath, boolean vm) {
         if (incus.exists(name)) {
             throw new RuntimeException("an instance named '" + name + "' already exists.");
         }
@@ -3008,6 +3017,14 @@ public class ListCommand extends BaseCommand {
             }
         } else {
             GuiPassthrough.removeGui(incus, name);
+        }
+
+        if (kvm) {
+            if (!KvmPassthrough.configureKvm(incus, name)) {
+                System.err.println("Continuing without KVM — VMs inside this branch will not work.");
+            }
+        } else {
+            KvmPassthrough.removeKvm(incus, name);
         }
 
         var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
