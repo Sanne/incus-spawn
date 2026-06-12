@@ -113,7 +113,7 @@ public final class IncusRemoteSetup {
 
             var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
             var expiry = new Date(yesterday.getTime() + 3651L * 24 * 60 * 60 * 1000);
-            var serial = new BigInteger(128, SecureRandom.getInstanceStrong());
+            var serial = new BigInteger(128, new SecureRandom());
             var subject = derDistinguishedName("incus-spawn");
 
             // v1 cert (no version tag needed, v1 is the default) — no extensions

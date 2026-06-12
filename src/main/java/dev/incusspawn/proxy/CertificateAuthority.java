@@ -78,7 +78,7 @@ public class CertificateAuthority {
 
             var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
             var expiry = new Date(yesterday.getTime() + 366L * 24 * 60 * 60 * 1000);
-            var serial = new BigInteger(128, SecureRandom.getInstanceStrong());
+            var serial = new BigInteger(128, new SecureRandom());
 
             var algId = sha256WithRsaAid();
             var tbsCert = derSequence(concat(
