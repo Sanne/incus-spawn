@@ -114,7 +114,7 @@ public class ListCommand extends BaseCommand {
     private TextInputState vmCpuInput;
     private TextInputState vmMemoryInput;
     private TextInputState vmDiskInput;
-    private int branchFieldIndex; // 0=name, 1=cpu, 2=memory, 3=disk
+    private int branchFieldIndex;
     // Rename modal state
     private TextInputState renameInput;
     private String renameSourceName;
@@ -788,22 +788,16 @@ public class ListCommand extends BaseCommand {
             tui.quit();
             return true;
         }
-        if (key.hasAlt() && key.isCharIgnoreCase('g')) {
-            branchEnableGui = !branchEnableGui;
-            return true;
-        }
-        if (key.hasAlt() && key.isCharIgnoreCase('k')) {
-            branchEnableKvm = !branchEnableKvm;
-            return true;
-        }
-        if (key.hasAlt() && key.isCharIgnoreCase('n')) {
-            branchNetworkMode = branchNetworkMode.next();
-            return true;
-        }
-        if (key.hasAlt() && key.isCharIgnoreCase('i')) {
-            branchEnableInbox = !branchEnableInbox;
-            if (!branchEnableInbox && branchFieldIndex == inboxFieldIndex()) {
-                branchFieldIndex = 0;
+        // Space: toggle/cycle when on a toggle field
+        if (key.code() == KeyCode.CHAR && key.character() == ' ' && isToggleField(branchFieldIndex)) {
+            if (branchFieldIndex == guiFieldIndex()) {
+                branchEnableGui = !branchEnableGui;
+            } else if (branchFieldIndex == kvmFieldIndex()) {
+                branchEnableKvm = !branchEnableKvm;
+            } else if (branchFieldIndex == networkFieldIndex()) {
+                branchNetworkMode = branchNetworkMode.next();
+            } else if (branchFieldIndex == inboxFieldIndex()) {
+                branchEnableInbox = !branchEnableInbox;
             }
             return true;
         }
@@ -819,44 +813,62 @@ public class ListCommand extends BaseCommand {
             return true;
         }
 
-        var activeInput = activeBranchInput();
-        if (key.isKey(KeyCode.BACKSPACE)) { activeInput.deleteBackward(); return true; }
-        if (key.isKey(KeyCode.DELETE))    { activeInput.deleteForward(); return true; }
-        if (key.isKey(KeyCode.LEFT))      { activeInput.moveCursorLeft(); return true; }
-        if (key.isKey(KeyCode.RIGHT))     { activeInput.moveCursorRight(); return true; }
-        if (key.isKey(KeyCode.HOME))      { activeInput.moveCursorToStart(); return true; }
-        if (key.isKey(KeyCode.END))       { activeInput.moveCursorToEnd(); return true; }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            char ch = key.character();
-            if (branchFieldIndex == 0) {
-                // Name field: letters, digits, hyphens
-                if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
-            } else if (branchFieldIndex == inboxFieldIndex()) {
-                // Inbox path: allow path characters
-                if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
-                    activeInput.insert(ch);
+        // Text-editing keys only apply to text input fields
+        if (!isToggleField(branchFieldIndex)) {
+            var activeInput = activeBranchInput();
+            if (key.isKey(KeyCode.BACKSPACE)) { activeInput.deleteBackward(); return true; }
+            if (key.isKey(KeyCode.DELETE))    { activeInput.deleteForward(); return true; }
+            if (key.isKey(KeyCode.LEFT))      { activeInput.moveCursorLeft(); return true; }
+            if (key.isKey(KeyCode.RIGHT))     { activeInput.moveCursorRight(); return true; }
+            if (key.isKey(KeyCode.HOME))      { activeInput.moveCursorToStart(); return true; }
+            if (key.isKey(KeyCode.END))       { activeInput.moveCursorToEnd(); return true; }
+            if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+                char ch = key.character();
+                if (branchFieldIndex == 0) {
+                    if (Character.isLetterOrDigit(ch) || ch == '-') activeInput.insert(ch);
+                } else if (branchFieldIndex == inboxPathFieldIndex()) {
+                    if (Character.isLetterOrDigit(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+                        activeInput.insert(ch);
+                    }
+                } else {
+                    if (Character.isLetterOrDigit(ch)) activeInput.insert(ch);
                 }
-            } else {
-                // VM resource fields: alphanumeric (e.g. "6GB")
-                if (Character.isLetterOrDigit(ch)) activeInput.insert(ch);
+                return true;
             }
-            return true;
         }
         return true;
     }
 
-    private int inboxFieldIndex() {
+    private int guiFieldIndex() {
         return branchSourceIsVm ? 4 : 1;
     }
 
+    private int kvmFieldIndex() {
+        return guiFieldIndex() + 1;
+    }
+
+    private int networkFieldIndex() {
+        return guiFieldIndex() + 2;
+    }
+
+    private int inboxFieldIndex() {
+        return guiFieldIndex() + 3;
+    }
+
+    private int inboxPathFieldIndex() {
+        return inboxFieldIndex() + 1;
+    }
+
+    private boolean isToggleField(int fieldIndex) {
+        return fieldIndex >= guiFieldIndex() && fieldIndex <= inboxFieldIndex();
+    }
+
     private int maxBranchField() {
-        int max = branchSourceIsVm ? 3 : 0;
-        if (branchEnableInbox) max = branchSourceIsVm ? 4 : 1;
-        return max;
+        return branchEnableInbox ? inboxPathFieldIndex() : inboxFieldIndex();
     }
 
     private TextInputState activeBranchInput() {
-        if (branchFieldIndex == inboxFieldIndex() && branchEnableInbox) return branchInboxInput;
+        if (branchFieldIndex == inboxPathFieldIndex() && branchEnableInbox) return branchInboxInput;
         return switch (branchFieldIndex) {
             case 1 -> vmCpuInput;
             case 2 -> vmMemoryInput;
@@ -1635,10 +1647,10 @@ public class ListCommand extends BaseCommand {
         }
 
         row++;
-        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-g", "GUI passthrough", branchEnableGui);
-        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-k", "KVM passthrough", branchEnableKvm);
-        ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), "Alt-n", branchNetworkMode);
-        ModalRenderer.renderToggle(frame, rows.get(row++), "Alt-i", "Inbox mount", branchEnableInbox);
+        ModalRenderer.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
+        ModalRenderer.renderToggle(frame, rows.get(row++), "KVM passthrough", branchEnableKvm, branchFieldIndex == kvmFieldIndex());
+        ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), branchNetworkMode, branchFieldIndex == networkFieldIndex());
+        ModalRenderer.renderToggle(frame, rows.get(row++), "Inbox mount", branchEnableInbox, branchFieldIndex == inboxFieldIndex());
 
         if (branchEnableInbox) {
             var inboxRow = rows.get(row++);
@@ -1646,7 +1658,7 @@ public class ListCommand extends BaseCommand {
                     "  Path:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG))), inboxRow);
             var pathArea = new dev.tamboui.layout.Rect(
                     inboxRow.x() + 8, inboxRow.y(), inboxRow.width() - 8, 1);
-            if (branchFieldIndex == inboxFieldIndex()) {
+            if (branchFieldIndex == inboxPathFieldIndex()) {
                 TextInput.builder()
                         .placeholder("/path/to/dir")
                         .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
@@ -1663,10 +1675,8 @@ public class ListCommand extends BaseCommand {
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "Enter", "Confirm");
         ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
-        if (branchSourceIsVm || branchEnableInbox) {
-            ModalRenderer.addKey(hintSpans, "Tab", "Next field");
-            ModalRenderer.addKey(hintSpans, "Shift+Tab", "Previous field");
-        }
+        ModalRenderer.addKey(hintSpans, "Tab", "Next");
+        ModalRenderer.addKey(hintSpans, "Space", "Toggle");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 

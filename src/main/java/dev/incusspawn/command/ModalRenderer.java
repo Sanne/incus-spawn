@@ -53,26 +53,29 @@ final class ModalRenderer {
     }
 
     static void renderToggle(Frame frame, Rect area,
-                              String shortcut, String label, boolean enabled) {
+                              String label, boolean enabled, boolean focused) {
         var check = enabled ? "\u25c9" : "\u25cb";
         var checkColor = enabled ? Color.GREEN : Color.GRAY;
+        var prefix = focused ? "\u25b8" : " ";
+        var labelColor = focused ? Color.WHITE : FG;
         frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + shortcut + " ", Style.EMPTY.fg(ACCENT).bg(BG)),
+                Span.styled(" " + prefix + " ", Style.EMPTY.fg(ACCENT).bg(BG)),
                 Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(BG)),
-                Span.styled(label, Style.EMPTY.fg(FG).bg(BG))))), area);
+                Span.styled(label, Style.EMPTY.fg(labelColor).bg(BG))))), area);
     }
 
     static void renderNetworkModeRadio(Frame frame, Rect area,
-                                        String shortcut, NetworkMode selected) {
+                                        NetworkMode selected, boolean focused) {
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled(" " + shortcut + " ", Style.EMPTY.fg(ACCENT).bg(BG)));
+        var prefix = focused ? "\u25b8" : " ";
+        spans.add(Span.styled(" " + prefix + " ", Style.EMPTY.fg(ACCENT).bg(BG)));
         for (NetworkMode mode : NetworkMode.values()) {
             boolean isSelected = (mode == selected);
             var symbol = isSelected ? "\u25c9" : "\u25cb";
             var color = isSelected ? Color.GREEN : Color.GRAY;
             spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(BG)));
             var labelStyle = isSelected
-                    ? Style.EMPTY.bold().fg(FG).bg(BG)
+                    ? Style.EMPTY.bold().fg(focused ? Color.WHITE : FG).bg(BG)
                     : Style.EMPTY.fg(Color.GRAY).bg(BG);
             spans.add(Span.styled(mode.label(), labelStyle));
             spans.add(Span.styled("  ", Style.EMPTY.bg(BG)));
