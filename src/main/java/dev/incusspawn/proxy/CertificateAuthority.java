@@ -189,7 +189,7 @@ public class CertificateAuthority {
 
         var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
         var expiry = new Date(yesterday.getTime() + 3650L * 24 * 60 * 60 * 1000);
-        var serial = new BigInteger(128, SecureRandom.getInstanceStrong());
+        var serial = new BigInteger(128, new SecureRandom());
         var subject = derDistinguishedName("incus-spawn MITM CA");
 
         // keyCertSign (bit 5) | cRLSign (bit 6) → byte value 0x06, with 1 unused trailing bit
