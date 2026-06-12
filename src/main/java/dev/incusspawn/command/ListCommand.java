@@ -801,14 +801,14 @@ public class ListCommand extends BaseCommand {
             }
             return true;
         }
-        // Shift+Tab: cycle backward (check before Tab to avoid matching TAB+Shift)
-        if (ShiftTabBindings.isShiftTab(key)) {
+        // Shift+Tab / Up: cycle backward (check Shift+Tab before Tab to avoid matching TAB+Shift)
+        if (ShiftTabBindings.isShiftTab(key) || key.isKey(KeyCode.UP)) {
             int max = maxBranchField();
             branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
             return true;
         }
-        // Tab: cycle forward
-        if (key.isKey(KeyCode.TAB)) {
+        // Tab / Down: cycle forward
+        if (key.isKey(KeyCode.TAB) || key.isKey(KeyCode.DOWN)) {
             branchFieldIndex = (branchFieldIndex + 1) % (maxBranchField() + 1);
             return true;
         }
@@ -1675,7 +1675,7 @@ public class ListCommand extends BaseCommand {
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "Enter", "Confirm");
         ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
-        ModalRenderer.addKey(hintSpans, "Tab", "Next");
+        ModalRenderer.addKey(hintSpans, "↑↓/Tab", "Navigate");
         ModalRenderer.addKey(hintSpans, "Space", "Toggle");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }

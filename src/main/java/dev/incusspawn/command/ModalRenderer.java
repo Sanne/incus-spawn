@@ -54,7 +54,7 @@ final class ModalRenderer {
 
     static void renderToggle(Frame frame, Rect area,
                               String label, boolean enabled, boolean focused) {
-        var check = enabled ? "\u25c9" : "\u25cb";
+        var check = enabled ? "\u2611" : "\u2610";
         var checkColor = enabled ? Color.GREEN : Color.GRAY;
         var prefix = focused ? "\u25b8" : " ";
         var labelColor = focused ? Color.WHITE : FG;
