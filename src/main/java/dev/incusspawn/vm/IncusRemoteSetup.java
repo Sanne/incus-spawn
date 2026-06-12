@@ -3,6 +3,7 @@ package dev.incusspawn.vm;
 import dev.incusspawn.Environment;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -11,13 +12,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.security.spec.ECGenParameterSpec;
 import java.time.Duration;
-import java.util.Base64;
+import java.util.Date;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
+
+import static dev.incusspawn.DerEncoder.*;
 
 /**
  * One-time setup of the Incus HTTPS remote for macOS.
@@ -92,92 +98,52 @@ public final class IncusRemoteSetup {
         System.err.println("  Updated Incus remote IP to " + newIp);
     }
 
-    // --- Certificate generation ---
+    // --- Certificate generation (pure Java, no external tools) ---
 
     static void generateClientCertificate() throws IOException {
         System.err.println("  Generating Incus client certificate...");
-        try {
-            generateCertWithOpenssl();
-        } catch (IOException e) {
-            generateCertWithKeytool();
-        }
-    }
 
-    private static void generateCertWithOpenssl() throws IOException {
         var certFile = Environment.incusClientCert();
         var keyFile = Environment.incusClientKey();
 
-        var yesterday = java.time.Instant.now().minus(java.time.Duration.ofDays(1));
-        var notBefore = java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss'Z'")
-                .withZone(java.time.ZoneOffset.UTC).format(yesterday);
-
-        var pb = new ProcessBuilder(
-                "openssl", "req", "-x509", "-newkey", "ec",
-                "-pkeyopt", "ec_paramgen_curve:P-384",
-                "-nodes", "-sha384",
-                "-days", "3651",
-                "-not_before", notBefore,
-                "-subj", "/CN=incus-spawn",
-                "-keyout", keyFile.toString(),
-                "-out", certFile.toString()
-        );
-        pb.redirectErrorStream(true);
-        var process = pb.start();
-        var output = new String(process.getInputStream().readAllBytes());
         try {
-            if (process.waitFor() != 0) {
-                throw new IOException("openssl failed: " + output.strip());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted during cert generation");
-        }
+            var keyGen = KeyPairGenerator.getInstance("EC");
+            keyGen.initialize(new ECGenParameterSpec("secp384r1"));
+            var keyPair = keyGen.generateKeyPair();
 
-        setOwnerOnly(certFile);
-        setOwnerOnly(keyFile);
-    }
+            var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
+            var expiry = new Date(yesterday.getTime() + 3651L * 24 * 60 * 60 * 1000);
+            var serial = new BigInteger(128, SecureRandom.getInstanceStrong());
+            var subject = derDistinguishedName("incus-spawn");
 
-    private static void generateCertWithKeytool() throws IOException {
-        var certFile = Environment.incusClientCert();
-        var keyFile = Environment.incusClientKey();
-        var ksFile = Environment.incusConfigDir().resolve("client.p12");
+            // v1 cert (no version tag needed, v1 is the default) — no extensions
+            var algId = sha384WithEcdsaAid();
+            var tbsCert = derSequence(concat(
+                    derInteger(serial),
+                    algId,
+                    subject,                                            // issuer = subject (self-signed)
+                    derSequence(concat(derUtcTime(yesterday), derUtcTime(expiry))),
+                    subject,
+                    keyPair.getPublic().getEncoded()                    // SubjectPublicKeyInfo
+            ));
 
-        try {
-            // Generate keypair in a PKCS12 keystore
-            run("keytool", "-genkeypair",
-                    "-alias", "incus-client",
-                    "-keyalg", "EC", "-groupname", "secp384r1",
-                    "-validity", "3651",
-                    "-startdate", "-1d",
-                    "-dname", "CN=incus-spawn",
-                    "-storetype", "PKCS12",
-                    "-storepass", "changeit",
-                    "-keypass", "changeit",
-                    "-keystore", ksFile.toString());
+            var sig = java.security.Signature.getInstance("SHA384withECDSA");
+            sig.initSign(keyPair.getPrivate());
+            sig.update(tbsCert);
 
-            // Export certificate as PEM
-            var certPem = runCapture("keytool", "-exportcert",
-                    "-alias", "incus-client",
-                    "-keystore", ksFile.toString(),
-                    "-storepass", "changeit",
-                    "-rfc");
-            Files.writeString(certFile, certPem);
+            var certDer = derSequence(concat(
+                    tbsCert,
+                    algId,
+                    derBitString(sig.sign())
+            ));
 
-            // Export private key (keytool can't do this alone, use openssl)
-            var keyOutput = runCapture("openssl", "pkcs12",
-                    "-in", ksFile.toString(),
-                    "-nocerts", "-nodes",
-                    "-passin", "pass:changeit");
-            var keyStart = keyOutput.indexOf("-----BEGIN");
-            if (keyStart >= 0) {
-                keyOutput = keyOutput.substring(keyStart);
-            }
-            Files.writeString(keyFile, keyOutput);
+            Files.writeString(certFile, toPem("CERTIFICATE", certDer));
+            Files.writeString(keyFile, toPem("PRIVATE KEY", keyPair.getPrivate().getEncoded()));
 
             setOwnerOnly(certFile);
             setOwnerOnly(keyFile);
-        } finally {
-            Files.deleteIfExists(ksFile);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IOException("Failed to generate client certificate", e);
         }
     }
 
@@ -202,11 +168,7 @@ public final class IncusRemoteSetup {
 
             if (capturingTm.captured != null) {
                 var certPath = Environment.incusServerCertsDir().resolve(REMOTE_NAME + ".crt");
-                var pem = "-----BEGIN CERTIFICATE-----\n"
-                        + Base64.getMimeEncoder(64, "\n".getBytes()).encodeToString(
-                                capturingTm.captured.getEncoded())
-                        + "\n-----END CERTIFICATE-----\n";
-                Files.writeString(certPath, pem);
+                Files.writeString(certPath, toPem("CERTIFICATE", capturingTm.captured.getEncoded()));
             }
         } catch (Exception e) {
             System.err.println("  Warning: could not save server certificate: " + e.getMessage());
@@ -246,37 +208,6 @@ public final class IncusRemoteSetup {
         try {
             Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
         } catch (Exception ignored) {}
-    }
-
-    private static void run(String... command) throws IOException {
-        var pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
-        var process = pb.start();
-        var output = new String(process.getInputStream().readAllBytes());
-        try {
-            if (process.waitFor() != 0) {
-                throw new IOException(command[0] + " failed: " + output.strip());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted running " + command[0]);
-        }
-    }
-
-    private static String runCapture(String... command) throws IOException {
-        var pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
-        var process = pb.start();
-        var output = new String(process.getInputStream().readAllBytes());
-        try {
-            if (process.waitFor() != 0) {
-                throw new IOException(command[0] + " failed: " + output.strip());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted running " + command[0]);
-        }
-        return output;
     }
 
     private static class CertCapturingTrustManager extends X509ExtendedTrustManager {
