@@ -1594,7 +1594,6 @@ public class ListCommand extends BaseCommand {
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         int height = 9;
         if (branchSourceIsVm) height += 2;
-        if (branchEnableInbox) height += 1;
         var modalArea = ModalRenderer.centerRect(screen, 54, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.ROUNDED)
@@ -1617,9 +1616,6 @@ public class ListCommand extends BaseCommand {
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
-        if (branchEnableInbox) {
-            constraints.add(Constraint.length(1));
-        }
         constraints.add(Constraint.fill());
 
         var rows = Layout.vertical()
@@ -1650,27 +1646,7 @@ public class ListCommand extends BaseCommand {
         ModalRenderer.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
         ModalRenderer.renderToggle(frame, rows.get(row++), "KVM passthrough", branchEnableKvm, branchFieldIndex == kvmFieldIndex());
         ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), branchNetworkMode, branchFieldIndex == networkFieldIndex());
-        ModalRenderer.renderToggle(frame, rows.get(row++), "Inbox mount", branchEnableInbox, branchFieldIndex == inboxFieldIndex());
-
-        if (branchEnableInbox) {
-            var inboxRow = rows.get(row++);
-            frame.renderWidget(Paragraph.from(Line.styled(
-                    "  Path:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG))), inboxRow);
-            var pathArea = new dev.tamboui.layout.Rect(
-                    inboxRow.x() + 8, inboxRow.y(), inboxRow.width() - 8, 1);
-            if (branchFieldIndex == inboxPathFieldIndex()) {
-                TextInput.builder()
-                        .placeholder("/path/to/dir")
-                        .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
-                        .build()
-                        .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
-            } else {
-                var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
-                var fg = branchInboxInput.text().isEmpty() ? ModalRenderer.PLACEHOLDER_FG : Color.GRAY;
-                frame.renderWidget(Paragraph.from(Line.styled(
-                        display, Style.EMPTY.fg(fg).bg(ModalRenderer.INPUT_BG))), pathArea);
-            }
-        }
+        renderInboxField(frame, rows.get(row++));
 
         var hintSpans = new ArrayList<Span>();
         ModalRenderer.addKey(hintSpans, "Enter", "Confirm");
@@ -1694,6 +1670,38 @@ public class ListCommand extends BaseCommand {
         spans.add(Span.styled("Disk ", labelStyle));
         ModalRenderer.renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    private void renderInboxField(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        boolean toggleFocused = branchFieldIndex == inboxFieldIndex();
+        boolean pathFocused = branchFieldIndex == inboxPathFieldIndex();
+        var check = branchEnableInbox ? "☑" : "☐";
+        var checkColor = branchEnableInbox ? Color.GREEN : Color.GRAY;
+        var prefix = toggleFocused ? "▸" : " ";
+        var labelColor = toggleFocused ? Color.WHITE : ModalRenderer.FG;
+
+        int labelWidth = 18;
+        var labelArea = new dev.tamboui.layout.Rect(area.x(), area.y(), labelWidth, 1);
+        frame.renderWidget(Paragraph.from(Line.from(List.of(
+                Span.styled(" " + prefix + " ", Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
+                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(ModalRenderer.BG)),
+                Span.styled("Inbox", Style.EMPTY.fg(labelColor).bg(ModalRenderer.BG))))), labelArea);
+
+        var pathArea = new dev.tamboui.layout.Rect(
+                area.x() + labelWidth, area.y(), area.width() - labelWidth, 1);
+        if (pathFocused && branchEnableInbox) {
+            TextInput.builder()
+                    .placeholder("/path/to/dir")
+                    .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
+                    .build()
+                    .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
+        } else {
+            var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
+            var inputBg = branchEnableInbox ? ModalRenderer.INPUT_BG : ModalRenderer.INPUT_INACTIVE_BG;
+            var fg = branchInboxInput.text().isEmpty() ? ModalRenderer.PLACEHOLDER_FG
+                    : branchEnableInbox ? Color.GRAY : ModalRenderer.PLACEHOLDER_FG;
+            frame.renderWidget(Paragraph.from(Line.styled(display, Style.EMPTY.fg(fg).bg(inputBg))), pathArea);
+        }
     }
 
     // --- Template detail modal ---
