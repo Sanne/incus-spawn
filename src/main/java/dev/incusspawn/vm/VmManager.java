@@ -39,6 +39,9 @@ public final class VmManager {
     private static final String DEFAULT_SWAP_SIZE = "12G";
     private static final int GA_VSOCK_PORT = 1024;
 
+    private static final String LATEST_KNOWN_RELEASE = "0.2.2";
+    private static volatile String resolvedApplianceVersion;
+
     // --- Resource detection ---
 
     public static int detectCpus() {
@@ -128,6 +131,51 @@ public final class VmManager {
     static String mitmPort() {
         var env = System.getenv("ISX_MITM_PORT");
         return (env != null && !env.isBlank()) ? env : DEFAULT_MITM_PORT;
+    }
+
+    // --- Appliance version resolution ---
+
+    static String applianceVersion() {
+        var cached = resolvedApplianceVersion;
+        if (cached != null) return cached;
+
+        var build = BuildInfo.instance();
+        String result;
+        if (!build.isDev()) {
+            result = build.version();
+        } else {
+            var latest = queryLatestGitHubRelease();
+            if (latest != null) {
+                result = latest;
+            } else {
+                System.err.println("Warning: could not query latest release from GitHub, "
+                        + "using fallback version " + LATEST_KNOWN_RELEASE);
+                result = LATEST_KNOWN_RELEASE;
+            }
+        }
+        resolvedApplianceVersion = result;
+        return result;
+    }
+
+    private static String queryLatestGitHubRelease() {
+        try {
+            var client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .followRedirects(HttpClient.Redirect.NEVER)
+                    .build();
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://github.com/Sanne/incus-spawn/releases/latest"))
+                    .timeout(Duration.ofSeconds(10))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            var response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            var location = response.headers().firstValue("location").orElse(null);
+            if (location != null && location.contains("/tag/v")) {
+                var tag = location.substring(location.lastIndexOf("/tag/v") + 6);
+                if (!tag.isBlank()) return tag;
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     // --- Backend detection ---
@@ -559,7 +607,7 @@ public final class VmManager {
                     + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
         }
         boolean hasDiskVersion = Files.exists(Environment.vmDiskVersion());
-        boolean needsReExtract = hasDiskVersion && !BuildInfo.instance().version()
+        boolean needsReExtract = hasDiskVersion && !applianceVersion()
                 .equals(readVersionFile());
         if (needsReExtract || (!Files.exists(Environment.vmDiskImage())
                 && !Files.exists(Environment.applianceDiskImage()))) {
@@ -579,7 +627,7 @@ public final class VmManager {
     }
 
     static void ensureDisk() {
-        var currentVersion = BuildInfo.instance().version();
+        var currentVersion = applianceVersion();
         var versionFile = Environment.vmDiskVersion();
 
         if (Files.exists(Environment.vmDiskImage())) {
@@ -659,7 +707,7 @@ public final class VmManager {
      * the current isx version.
      */
     public static void downloadArtifacts() throws IOException {
-        var version = BuildInfo.instance().version();
+        var version = applianceVersion();
         var arch = normalizeArch();
         var baseUrl = "https://github.com/Sanne/incus-spawn/releases/download/v" + version;
 

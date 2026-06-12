@@ -11,6 +11,12 @@ public record BuildInfo(String version, String gitSha, String runtime) {
 
     public static BuildInfo instance() { return INSTANCE; }
 
+    public boolean isDev() {
+        return version.equals("dev")
+                || version.contains("SNAPSHOT")
+                || version.equals("0.0.0");
+    }
+
     public String incusClient() { return Environment.incusClient(); }
     public String incusServer() { return Environment.incusServer(); }
 
