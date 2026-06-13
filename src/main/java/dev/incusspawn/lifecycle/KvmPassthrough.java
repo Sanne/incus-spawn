@@ -6,7 +6,6 @@ import dev.incusspawn.incus.Metadata;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 
 public final class KvmPassthrough {
 
@@ -36,6 +35,6 @@ public final class KvmPassthrough {
 
     public static void removeKvm(IncusClient incus, String name) {
         incus.devicesRemoveAll(name, List.of("kvm"));
-        incus.configUpdate(name, Map.of(Metadata.KVM_ENABLED, null));
+        incus.configUnset(name, Metadata.KVM_ENABLED);
     }
 }
