@@ -667,6 +667,20 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 ./install.sh --native   # native (requires Docker, Podman, or GraalVM)
 ```
 
+## Website Development
+
+The project website is hosted on GitHub Pages. To preview changes locally:
+
+```shell
+# Build the site (generates _site/ directory from README.md)
+./site/build.sh
+
+# Serve locally
+cd _site && python3 -m http.server 8000
+```
+
+Then open http://localhost:8000 in your browser. The build script converts README.md to HTML and generates the table of contents for the docs page.
+
 ## Releasing
 
 Releases are automated via GitHub Actions. To create a new release, run:

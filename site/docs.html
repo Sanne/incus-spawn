@@ -22,9 +22,47 @@
   </ul>
 </nav>
 
+<div class="docs-container">
+<!-- TOC -->
 <main class="docs-content">
 <!-- README_CONTENT -->
 </main>
+</div>
+
+<script>
+// Highlight current section in TOC based on scroll position
+(function() {
+  const tocLinks = document.querySelectorAll('.docs-toc a');
+  const sections = Array.from(tocLinks).map(link => {
+    const id = link.getAttribute('href').substring(1);
+    return document.getElementById(id);
+  }).filter(Boolean);
+
+  function updateActiveSection() {
+    let current = '';
+    const scrollPos = window.scrollY + 100; // offset for sticky nav
+
+    sections.forEach(section => {
+      const sectionTop = section.offsetTop;
+      if (scrollPos >= sectionTop) {
+        current = section.getAttribute('id');
+      }
+    });
+
+    tocLinks.forEach(link => {
+      link.classList.remove('active');
+      if (link.getAttribute('href') === '#' + current) {
+        link.classList.add('active');
+      }
+    });
+  }
+
+  if (tocLinks.length > 0) {
+    window.addEventListener('scroll', updateActiveSection);
+    updateActiveSection(); // Initial highlight
+  }
+})();
+</script>
 
 <footer class="site-footer">
   <ul class="footer-links">
