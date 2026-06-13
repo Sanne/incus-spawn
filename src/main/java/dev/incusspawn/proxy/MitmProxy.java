@@ -396,6 +396,8 @@ public class MitmProxy {
         upstreamClient = vertx.createHttpClient(clientOptions);
 
         mitmServer = vertx.createHttpServer(serverOptions);
+        mitmServer.exceptionHandler(err ->
+                System.err.println("MITM server error: " + err.getMessage()));
         mitmServer.requestHandler(this::routeRequest);
         mitmServer.listen()
                 .toCompletionStage().toCompletableFuture().get();
@@ -447,24 +449,29 @@ public class MitmProxy {
     // --- Request routing ---
 
     private void routeRequest(HttpServerRequest clientReq) {
-        var domain = extractDomain(clientReq);
-        if (domain == null) {
-            sendError(clientReq.response(), 502, "Unknown domain");
-            return;
-        }
+        try {
+            var domain = extractDomain(clientReq);
+            if (domain == null) {
+                sendError(clientReq.response(), 502, "Unknown domain");
+                return;
+            }
 
-        if (REGISTRY_DOMAINS.contains(domain)) {
-            handleRegistryRequest(clientReq, domain);
-        } else if (MAVEN_DOMAINS.contains(domain)) {
-            handleMavenRequest(clientReq, domain);
-        } else if (GRADLE_DOMAINS.contains(domain)) {
-            handleGradleRequest(clientReq, domain);
-        } else if (INTERCEPTED_DOMAIN_SET.contains(domain)) {
-            handleApiRequest(clientReq, domain);
-        } else {
-            // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
-            // via dnsmasq wildcard — relay transparently without auth injection.
-            relayRequest(clientReq, domain);
+            if (REGISTRY_DOMAINS.contains(domain)) {
+                handleRegistryRequest(clientReq, domain);
+            } else if (MAVEN_DOMAINS.contains(domain)) {
+                handleMavenRequest(clientReq, domain);
+            } else if (GRADLE_DOMAINS.contains(domain)) {
+                handleGradleRequest(clientReq, domain);
+            } else if (INTERCEPTED_DOMAIN_SET.contains(domain)) {
+                handleApiRequest(clientReq, domain);
+            } else {
+                // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
+                // via dnsmasq wildcard — relay transparently without auth injection.
+                relayRequest(clientReq, domain);
+            }
+        } catch (Exception e) {
+            System.err.println("Unexpected error handling request: " + e.getMessage());
+            sendError(clientReq.response(), 502, "Internal proxy error");
         }
     }
 
@@ -1468,8 +1475,12 @@ public class MitmProxy {
     }
 
     private void sendError(HttpServerResponse resp, int statusCode, String message) {
-        if (!resp.ended() && !resp.closed()) {
-            resp.setStatusCode(statusCode).end(message);
+        try {
+            if (!resp.ended() && !resp.closed()) {
+                resp.setStatusCode(statusCode).end(message);
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to send error response: " + e.getMessage());
         }
     }
 

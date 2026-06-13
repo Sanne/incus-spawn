@@ -71,7 +71,10 @@ public class ProxyCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
-            if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
+            if (!InitCommand.hasBeenInitialized()) {
+                System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
+                return CommandResult.valueOf(1);
+            }
             var config = dev.incusspawn.config.SpawnConfig.load();
             var claude = config.getClaude();
             var apiKey = claude.getApiKey();
