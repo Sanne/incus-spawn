@@ -1559,6 +1559,7 @@ public class ListCommand extends BaseCommand {
 
     private void renderModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen,
                               TableState tableState) {
+        ModalRenderer.renderScrim(frame, screen);
         switch (mode) {
             case CONFIRM_DELETE -> {
                 var isAllTemplates = "--all".equals(pendingDeleteName);
@@ -1596,10 +1597,11 @@ public class ListCommand extends BaseCommand {
         if (branchSourceIsVm) height += 2;
         var modalArea = ModalRenderer.centerRect(screen, 54, height);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Branch from '" + branchSourceName + "' ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" Branch from '" + branchSourceName + "' ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -1891,10 +1893,11 @@ public class ListCommand extends BaseCommand {
 
         var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" About incus-spawn ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" About incus-spawn ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -2008,10 +2011,11 @@ public class ListCommand extends BaseCommand {
         var viewLabel = detailViewCompact ? "Compact" : "Tree";
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" " + template.name + " \u2014 " + viewLabel + " ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" " + template.name + " \u2014 " + viewLabel + " ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -2046,10 +2050,11 @@ public class ListCommand extends BaseCommand {
 
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" " + selected.name + " ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" " + selected.name + " ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -2572,10 +2577,11 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
-                .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
-                .title(" Build Templates ")
+                .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" Build Templates ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -2629,10 +2635,11 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
-                .borderType(dev.tamboui.widgets.block.BorderType.ROUNDED)
-                .title(" Actions — " + instanceName + " ")
+                .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
+                .title(ModalRenderer.styledTitle(" Actions — " + instanceName + " ", ModalRenderer.BORDER))
                 .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
                 .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
         ModalRenderer.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);

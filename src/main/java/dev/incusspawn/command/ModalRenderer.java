@@ -7,6 +7,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.tamboui.buffer.Cell;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
+import dev.tamboui.layout.Padding;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
@@ -16,20 +17,22 @@ import dev.tamboui.text.Span;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.block.Title;
 import dev.tamboui.widgets.input.TextInput;
 import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
 
 final class ModalRenderer {
 
-    static final Color BG = Color.rgb(40, 42, 64);
-    static final Color FG = Color.rgb(205, 214, 244);
+    static final Color BG = Color.rgb(55, 60, 95);
+    static final Color FG = Color.rgb(210, 218, 248);
     static final Color BORDER = Color.CYAN;
     static final Color ACCENT = Color.LIGHT_CYAN;
     static final Color WARN = Color.LIGHT_RED;
-    static final Color INPUT_BG = Color.rgb(49, 50, 68);
-    static final Color INPUT_INACTIVE_BG = Color.rgb(40, 40, 55);
-    static final Color PLACEHOLDER_FG = Color.rgb(80, 80, 100);
+    static final Color INPUT_BG = Color.rgb(70, 74, 110);
+    static final Color INPUT_INACTIVE_BG = Color.rgb(48, 52, 78);
+    static final Color PLACEHOLDER_FG = Color.rgb(90, 94, 120);
+    private static final Color SHADOW = Color.rgb(8, 8, 16);
 
     private ModalRenderer() {
     }
@@ -42,9 +45,44 @@ final class ModalRenderer {
         return new Rect(x, y, w, h);
     }
 
+    static void renderScrim(Frame frame, Rect screen) {
+        var buf = frame.buffer();
+        var dimStyle = Style.EMPTY.dim();
+        for (int y = screen.y(); y < screen.bottom(); y++) {
+            for (int x = screen.x(); x < screen.right(); x++) {
+                var cell = buf.get(x, y);
+                if (!cell.isContinuation()) {
+                    buf.set(x, y, cell.patchStyle(dimStyle));
+                }
+            }
+        }
+    }
+
     static void renderBlock(Frame frame, Block block, Rect modalArea) {
+        renderShadow(frame, modalArea);
         frame.buffer().fill(modalArea, new Cell(" ", Style.EMPTY.bg(BG)));
         frame.renderWidget(block, modalArea);
+    }
+
+    private static void renderShadow(Frame frame, Rect area) {
+        var buf = frame.buffer();
+        var shadowCell = new Cell(" ", Style.EMPTY.bg(SHADOW));
+        var bufArea = buf.area();
+        int shadowRight = area.right();
+        int shadowBottom = area.bottom();
+        for (int y = area.y() + 1; y <= shadowBottom && y < bufArea.bottom(); y++) {
+            for (int dx = 0; dx < 2; dx++) {
+                int x = shadowRight + dx;
+                if (x < bufArea.right()) buf.set(x, y, shadowCell);
+            }
+        }
+        for (int x = area.x() + 2; x < shadowRight + 2 && x < bufArea.right(); x++) {
+            if (shadowBottom < bufArea.bottom()) buf.set(x, shadowBottom, shadowCell);
+        }
+    }
+
+    static Title styledTitle(String text, Color color) {
+        return Title.from(Span.styled(text, Style.EMPTY.bold().fg(color)));
     }
 
     static void addKey(List<Span> spans, String key, String label) {
@@ -100,10 +138,11 @@ final class ModalRenderer {
                                   TextInputState inputState) {
         var modalArea = centerRect(screen, 54, 7);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" " + title + " ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(styledTitle(" " + title + " ", BORDER))
                 .borderStyle(Style.EMPTY.fg(BORDER))
                 .style(Style.EMPTY.bg(BG))
+                .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -132,16 +171,16 @@ final class ModalRenderer {
                                     String title, String message, Color borderColor,
                                     String confirmLabel) {
         int modalWidth = 54;
-        int innerWidth = modalWidth - 4; // Account for borders and padding
+        int innerWidth = modalWidth - 6;
         var wrappedLines = wrapText(message, innerWidth);
-        // 2 borders + 1 top spacing + message lines + 1 spacer + 2 buttons area
         int modalHeight = 2 + 1 + wrappedLines.size() + 1 + 2;
         var modalArea = centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(title)
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(styledTitle(title, borderColor))
                 .borderStyle(Style.EMPTY.fg(borderColor))
                 .style(Style.EMPTY.bg(BG))
+                .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -205,10 +244,11 @@ final class ModalRenderer {
         int width = Math.min(lines.stream().mapToInt(String::length).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
-                .title(" Error ")
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(styledTitle(" Error ", WARN))
                 .borderStyle(Style.EMPTY.fg(WARN))
                 .style(Style.EMPTY.bg(BG))
+                .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
@@ -227,12 +267,13 @@ final class ModalRenderer {
     }
 
     static void renderProgressOverlay(Frame frame, Rect screen, String message) {
-        int width = Math.min(message.length() + 6, screen.width() - 4);
+        int width = Math.min(message.length() + 8, screen.width() - 4);
         var modalArea = centerRect(screen, width, 3);
         var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.ROUNDED)
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .borderStyle(Style.EMPTY.fg(ACCENT))
                 .style(Style.EMPTY.bg(BG))
+                .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         frame.renderWidget(Paragraph.from(Line.styled(
