@@ -255,7 +255,7 @@ class HttpsTransport implements IncusTransport {
      * Bridges Java's async {@link WebSocket.Listener} to our synchronous {@link WsConnection}
      * interface. Payloads are queued and consumed by {@link #readPayload()}.
      */
-    private static class HttpsWsConnection implements WsConnection {
+    static class HttpsWsConnection implements WsConnection {
         // Sentinel checked by reference identity (==) to signal connection close.
         private static final byte[] CLOSE_SENTINEL = new byte[0];
 
@@ -325,7 +325,12 @@ class HttpsTransport implements IncusTransport {
 
         @Override
         public void sendClose() throws IOException {
-            ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join();
+            try {
+                ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join();
+            } catch (java.util.concurrent.CompletionException e) {
+                if (e.getCause() instanceof IOException io) throw io;
+                throw new IOException(e);
+            }
         }
 
         @Override
