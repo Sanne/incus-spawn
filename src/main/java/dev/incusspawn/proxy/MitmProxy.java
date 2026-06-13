@@ -396,8 +396,10 @@ public class MitmProxy {
         upstreamClient = vertx.createHttpClient(clientOptions);
 
         mitmServer = vertx.createHttpServer(serverOptions);
-        mitmServer.exceptionHandler(err ->
-                System.err.println("MITM server error: " + err.getMessage()));
+        mitmServer.exceptionHandler(err -> {
+            System.err.println("MITM server error: " + err.getMessage());
+            err.printStackTrace(System.err);
+        });
         mitmServer.requestHandler(this::routeRequest);
         mitmServer.listen()
                 .toCompletionStage().toCompletableFuture().get();
@@ -470,7 +472,10 @@ public class MitmProxy {
                 relayRequest(clientReq, domain);
             }
         } catch (Exception e) {
-            System.err.println("Unexpected error handling request: " + e.getMessage());
+            var domain = extractDomain(clientReq);
+            var path = clientReq.path();
+            System.err.println("Unexpected error handling request to " + domain + path + ": " + e.getMessage());
+            e.printStackTrace(System.err);
             sendError(clientReq.response(), 502, "Internal proxy error");
         }
     }
@@ -493,6 +498,7 @@ public class MitmProxy {
                 handleApiRequestWithBody(clientReq, domain, bodyBuffer);
             } catch (Exception e) {
                 System.err.println("API request error: " + e.getMessage());
+                e.printStackTrace(System.err);
                 sendError(clientReq.response(), 502, "Proxy error");
             }
         }).onFailure(err -> {
@@ -1481,6 +1487,7 @@ public class MitmProxy {
             }
         } catch (Exception e) {
             System.err.println("Failed to send error response: " + e.getMessage());
+            e.printStackTrace(System.err);
         }
     }
 
