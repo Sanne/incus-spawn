@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dev.incusspawn.Environment;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -13,7 +14,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -46,13 +46,7 @@ class HttpsTransport implements IncusTransport {
      * Returns null if the default remote is not HTTPS or the config cannot be loaded.
      */
     static HttpsTransport fromClientConfig() {
-        var home = System.getProperty("user.home", "");
-        var configPaths = List.of(
-                Path.of(home, ".config", "incus-spawn", "vm", "config.yml"),
-                Path.of(home, ".config", "incus", "config.yml"),
-                Path.of(home, ".local", "share", "incus", "config.yml")
-        );
-        for (var configPath : configPaths) {
+        for (var configPath : Environment.incusConfigCandidates()) {
             if (!Files.exists(configPath)) continue;
             try {
                 var yaml = new YAMLMapper();

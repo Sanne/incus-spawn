@@ -1,6 +1,7 @@
 package dev.incusspawn;
 
 import java.nio.file.Path;
+import java.util.List;
 
 // WARNING: This class is configured with --initialize-at-run-time for native image.
 // Do NOT reference its non-constant fields from static field initializers in other classes —
@@ -174,6 +175,18 @@ public final class Environment {
 
     public static Path incusConfigFile() {
         return incusConfigDir().resolve("config.yml");
+    }
+
+    /**
+     * Candidate paths for reading the Incus client config, in priority order:
+     * our own VM config first, then the standard Incus locations.
+     */
+    public static List<Path> incusConfigCandidates() {
+        return List.of(
+                incusConfigFile(),
+                home().resolve(".config/incus/config.yml"),
+                home().resolve(".local/share/incus/config.yml")
+        );
     }
 
     public static Path incusClientCert() {

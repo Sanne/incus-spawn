@@ -775,13 +775,7 @@ public class IncusClient {
      * Returns null if the remote is not found.
      */
     private static RemoteConfig readIncusRemote(String name) {
-        var home = System.getProperty("user.home", "");
-        var candidates = List.of(
-                Environment.incusConfigFile(),
-                Path.of(home, ".config", "incus", "config.yml"),
-                Path.of(home, ".local", "share", "incus", "config.yml")
-        );
-        for (var path : candidates) {
+        for (var path : Environment.incusConfigCandidates()) {
             if (!Files.exists(path)) continue;
             try {
                 var yaml = new YAMLMapper();
