@@ -143,6 +143,7 @@ public class YamlToolSetup implements ToolSetup {
         container.runInteractive("Failed to extract " + filename + " in container",
                 "tar", "xf", containerArchive, "-C", dl.getExtract());
         container.exec("rm", "-f", containerArchive);
+        container.exec("chmod", "-R", "a+rX", dl.getExtract());
 
         for (var linkEntry : dl.getLinks().entrySet()) {
             container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
@@ -154,6 +155,7 @@ public class YamlToolSetup implements ToolSetup {
         var extractDir = Files.createTempDirectory("isx-extract-");
         try {
             extractOnHost(cached, extractDir);
+            ensureWorldReadable(extractDir);
 
             container.exec("mkdir", "-p", dl.getExtract());
             try (var entries = Files.list(extractDir)) {
@@ -172,29 +174,18 @@ public class YamlToolSetup implements ToolSetup {
 
     private static void extractOnHost(Path archive, Path destDir) throws IOException {
         var name = archive.getFileName().toString().toLowerCase();
-        int exitCode;
-        try {
-            if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
-                exitCode = new ProcessBuilder("tar", "xzf", archive.toString(), "-C", destDir.toString())
-                        .inheritIO().start().waitFor();
-            } else if (name.endsWith(".tar.bz2")) {
-                exitCode = new ProcessBuilder("tar", "xjf", archive.toString(), "-C", destDir.toString())
-                        .inheritIO().start().waitFor();
-            } else if (name.endsWith(".tar.xz")) {
-                exitCode = new ProcessBuilder("tar", "xJf", archive.toString(), "-C", destDir.toString())
-                        .inheritIO().start().waitFor();
-            } else if (name.endsWith(".zip")) {
-                exitCode = new ProcessBuilder("unzip", "-q", archive.toString(), "-d", destDir.toString())
-                        .inheritIO().start().waitFor();
-            } else {
-                throw new IOException("Unsupported archive format: " + name);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Extraction interrupted", e);
-        }
-        if (exitCode != 0) {
-            throw new IOException("Extraction failed (exit code " + exitCode + ") for " + archive);
+        var archivePath = archive.toString();
+        var destPath = destDir.toString();
+        if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
+            runProcess("Extraction of " + archive, "tar", "xzf", archivePath, "-C", destPath);
+        } else if (name.endsWith(".tar.bz2")) {
+            runProcess("Extraction of " + archive, "tar", "xjf", archivePath, "-C", destPath);
+        } else if (name.endsWith(".tar.xz")) {
+            runProcess("Extraction of " + archive, "tar", "xJf", archivePath, "-C", destPath);
+        } else if (name.endsWith(".zip")) {
+            runProcess("Extraction of " + archive, "unzip", "-q", archivePath, "-d", destPath);
+        } else {
+            throw new IOException("Unsupported archive format: " + name);
         }
     }
 
@@ -216,6 +207,23 @@ public class YamlToolSetup implements ToolSetup {
                 "  [ \"$(stat -c %U \"$d\")\" = root ] && chown " + Container.shellQuote(owner) + " \"$d\"; " +
                 "  d=$(dirname \"$d\"); " +
                 "done");
+    }
+
+    private static void ensureWorldReadable(Path dir) throws IOException {
+        runProcess("chmod " + dir, "chmod", "-R", "a+rX", dir.toString());
+    }
+
+    private static void runProcess(String label, String... command) throws IOException {
+        try {
+            int exitCode = new ProcessBuilder(command)
+                    .inheritIO().start().waitFor();
+            if (exitCode != 0) {
+                throw new IOException(label + " failed (exit code " + exitCode + ")");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException(label + " interrupted", e);
+        }
     }
 
     private static void deleteRecursive(Path dir) {
