@@ -165,17 +165,24 @@ public final class ProxyService {
      * and restart if so. Returns true if a restart was performed.
      */
     public static boolean reinstallIfChanged(IncusClient incus) {
-        var needsRestart = updateSystemdServiceFile();
-
-        if (!needsRestart) {
-            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            var drift = ProxyHealthCheck.checkVersionDrift(info);
-            needsRestart = !drift.isEmpty();
+        boolean needsReinstall;
+        if (Environment.isMacOS()) {
+            needsReinstall = needsMacOsPlistUpdate();
+        } else {
+            needsReinstall = updateSystemdServiceFile();
         }
 
-        if (needsRestart) {
-            restart();
-            return true;
+        if (!needsReinstall) {
+            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+            var drift = ProxyHealthCheck.checkVersionDrift(info);
+            needsReinstall = !drift.isEmpty();
+        }
+
+        if (needsReinstall) {
+            if (Environment.isMacOS()) {
+                updateMacOsProxyPlist();
+            }
+            return restart();
         }
         return false;
     }
@@ -202,7 +209,14 @@ public final class ProxyService {
     }
 
     public static void upgradeIfNeeded() {
-        if (Environment.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return;
+        if (Environment.isMacOS()) {
+            if (needsMacOsPlistUpdate()) {
+                updateMacOsProxyPlist();
+                restart();
+            }
+            return;
+        }
+        if (!Files.exists(Environment.proxyServiceFile())) return;
         var isxPath = resolveIsxPath();
         if (isxPath == null) return;
         try {
@@ -361,6 +375,61 @@ public final class ProxyService {
         }
     }
 
+    private static String generateProxyPlist(String isxPath) {
+        var path = System.getenv("PATH");
+        if (path == null || path.isBlank()) {
+            path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+        }
+        var logDir = Environment.vmStateDir();
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                <plist version="1.0">
+                <dict>
+                    <key>Label</key><string>%s</string>
+                    <key>ProgramArguments</key>
+                    <array>
+                        <string>%s</string>
+                        <string>proxy</string>
+                        <string>start</string>
+                    </array>
+                    <key>RunAtLoad</key><true/>
+                    <key>KeepAlive</key><true/>
+                    <key>ThrottleInterval</key><integer>10</integer>
+                    <key>EnvironmentVariables</key>
+                    <dict>
+                        <key>PATH</key><string>%s</string>
+                    </dict>
+                    <key>StandardOutPath</key><string>%s/proxy-service.log</string>
+                    <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
+                </dict>
+                </plist>
+                """.formatted(PROXY_LABEL, isxPath, path, logDir, logDir);
+    }
+
+    private static boolean needsMacOsPlistUpdate() {
+        if (!Files.exists(proxyPlistFile())) return true;
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) return false;
+        try {
+            var content = Files.readString(proxyPlistFile());
+            return !content.contains("<string>" + isxPath + "</string>");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static void updateMacOsProxyPlist() {
+        var isxPath = resolveIsxPath();
+        if (isxPath == null) return;
+        try {
+            Files.createDirectories(proxyPlistFile().getParent());
+            Files.writeString(proxyPlistFile(), generateProxyPlist(isxPath));
+        } catch (IOException e) {
+            System.err.println("Warning: could not update proxy plist: " + e.getMessage());
+        }
+    }
+
     public static boolean installMacOs() {
         var isxPath = resolveIsxPath();
         if (isxPath == null) {
@@ -403,31 +472,7 @@ public final class ProxyService {
                     """.formatted(VM_LABEL, isxPath, path, logDir, logDir);
             Files.writeString(vmPlistFile(), vmPlist);
 
-            // Proxy agent — starts the proxy on login
-            var proxyPlist = """
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                    <plist version="1.0">
-                    <dict>
-                        <key>Label</key><string>%s</string>
-                        <key>ProgramArguments</key>
-                        <array>
-                            <string>%s</string>
-                            <string>proxy</string>
-                            <string>start</string>
-                        </array>
-                        <key>RunAtLoad</key><true/>
-                        <key>KeepAlive</key><true/>
-                        <key>ThrottleInterval</key><integer>10</integer>
-                        <key>EnvironmentVariables</key>
-                        <dict>
-                            <key>PATH</key><string>%s</string>
-                        </dict>
-                        <key>StandardOutPath</key><string>%s/proxy-service.log</string>
-                        <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
-                    </dict>
-                    </plist>
-                    """.formatted(PROXY_LABEL, isxPath, path, logDir, logDir);
+            var proxyPlist = generateProxyPlist(isxPath);
             Files.writeString(proxyPlistFile(), proxyPlist);
         } catch (IOException e) {
             System.err.println("Failed to write launchd plist: " + e.getMessage());

@@ -155,6 +155,10 @@ public final class ProxyHealthCheck {
             warnIfDrifted(incus);
             return;
         }
+        if (tryAutoRestart(incus)) {
+            warnIfDrifted(incus);
+            return;
+        }
         System.err.println(formatError(status));
         System.exit(1);
     }
@@ -165,7 +169,31 @@ public final class ProxyHealthCheck {
             warnIfDrifted(incus);
             return true;
         }
+        if (tryAutoRestart(incus)) {
+            warnIfDrifted(incus);
+            return true;
+        }
         System.err.println(formatError(status));
+        return false;
+    }
+
+    public static boolean tryAutoRestart(IncusClient incus) {
+        if (!ProxyService.isInstalled()) return false;
+        System.err.println("Proxy is not running, restarting service...");
+        ProxyService.restart();
+        var addr = healthAddress(incus);
+        for (int i = 0; i < 30; i++) {
+            try { Thread.sleep(500); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            if (isHealthy(addr)) {
+                invalidateCache();
+                System.err.println("Proxy service restarted successfully.");
+                return true;
+            }
+        }
+        System.err.println("Proxy service did not become healthy after restart.");
         return false;
     }
 

@@ -3069,6 +3069,10 @@ public class ListCommand extends BaseCommand {
     private boolean showProxyError() {
         var proxyStatus = ProxyHealthCheck.check(incus);
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) return false;
+        if (ProxyHealthCheck.tryAutoRestart(incus)) {
+            ProxyHealthCheck.invalidateCache();
+            return false;
+        }
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             errorMessage = "The MITM proxy is not running, but DNS overrides\n"
                     + "are still active from a previous session.\n"
