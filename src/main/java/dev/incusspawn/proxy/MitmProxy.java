@@ -449,12 +449,17 @@ public class MitmProxy {
 
     public void stop() {
         try {
-            if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-            if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-            if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            System.err.println("Error during proxy shutdown: " + e.getMessage());
+            try {
+                if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
+            try {
+                if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
+            try {
+                if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
         } finally {
+            // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
             if (stopLatch != null) stopLatch.countDown();
         }
     }

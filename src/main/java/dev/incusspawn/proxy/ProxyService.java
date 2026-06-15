@@ -124,6 +124,7 @@ public final class ProxyService {
         if (Environment.isMacOS()) {
             var uid = getUid();
             runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
+            waitForProxyExit();
             runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
         } else {
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
@@ -232,6 +233,16 @@ public final class ProxyService {
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         } catch (IOException e) {
             System.err.println("Warning: could not check proxy service file: " + e.getMessage());
+        }
+    }
+
+    private static void waitForProxyExit() {
+        for (int i = 0; i < 30; i++) {
+            if (!ProxyHealthCheck.isHealthy("127.0.0.1")) return;
+            try { Thread.sleep(200); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -486,6 +497,7 @@ public final class ProxyService {
 
         System.out.println("  Installing proxy service...");
         runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
+        waitForProxyExit();
         runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
 
         if (isActive()) {

@@ -149,6 +149,16 @@ public class ProxyCommand extends BaseCommand {
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.out.println("\nStopping proxy...");
+                // Force-exit after 10 seconds to prevent indefinite hang, but give enough
+                // time for normal cleanup (server close timeouts are 2s + 1s + 1s = 4s total).
+                // This is a daemon thread, so it dies automatically if shutdown completes normally.
+                var forceExit = new Thread(() -> {
+                    try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
+                    System.err.println("Proxy shutdown exceeded 10 seconds, forcing exit.");
+                    Runtime.getRuntime().halt(0);
+                }, "force-exit");
+                forceExit.setDaemon(true);
+                forceExit.start();
                 proxy.stop();
             }));
 
