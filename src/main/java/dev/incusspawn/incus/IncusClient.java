@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 
 import java.io.IOException;
@@ -776,6 +777,7 @@ public class IncusClient {
     private static RemoteConfig readIncusRemote(String name) {
         var home = System.getProperty("user.home", "");
         var candidates = List.of(
+                Environment.incusConfigFile(),
                 Path.of(home, ".config", "incus", "config.yml"),
                 Path.of(home, ".local", "share", "incus", "config.yml")
         );
