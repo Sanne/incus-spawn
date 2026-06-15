@@ -3069,9 +3069,18 @@ public class ListCommand extends BaseCommand {
     private boolean showProxyError() {
         var proxyStatus = ProxyHealthCheck.check(incus);
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) return false;
+        if (proxyStatus == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS) {
+            if (ProxyHealthCheck.waitForDns(incus)) return false;
+            errorMessage = "The MITM proxy is running but DNS overrides\n"
+                    + "are not yet configured.\n"
+                    + "\n"
+                    + "The proxy is waiting for the VM to become\n"
+                    + "reachable. Check: isx vm status";
+            mode = Mode.ERROR;
+            return true;
+        }
         if (ProxyHealthCheck.tryAutoRestart(incus)) {
-            ProxyHealthCheck.invalidateCache();
-            return false;
+            if (ProxyHealthCheck.waitForDns(incus)) return false;
         }
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             errorMessage = "The MITM proxy is not running, but DNS overrides\n"

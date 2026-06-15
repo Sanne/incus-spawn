@@ -112,13 +112,13 @@ class ProxyHealthCheckTest {
     @Test
     void checkVersionDriftReturnsEmptyWhenMatching() {
         var cliInfo = BuildInfo.instance();
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp", true);
         assertEquals("", ProxyHealthCheck.checkVersionDrift(proxyInfo));
     }
 
     @Test
     void checkVersionDriftDetectsMismatch() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "JVM", "somefp");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "JVM", "somefp", true);
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertFalse(drift.isEmpty());
         assertTrue(drift.contains("0.0.1"));
@@ -126,7 +126,7 @@ class ProxyHealthCheckTest {
 
     @Test
     void checkVersionDriftDetectsLegacy() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "");
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "", true);
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertTrue(drift.contains("pre-versioning"));
     }
@@ -138,8 +138,46 @@ class ProxyHealthCheckTest {
 
     @Test
     void proxyInfoIsLegacyWhenVersionEmpty() {
-        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "runtime", "fp").isLegacy());
-        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "runtime", "fp").isLegacy());
-        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "runtime", "fp").isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "runtime", "fp", true).isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "runtime", "fp", true).isLegacy());
+        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "runtime", "fp", true).isLegacy());
+    }
+
+    @Test
+    void parseProxyInfoDefaultsDnsConfiguredToTrueWhenMissing() {
+        var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\",\"version\":\"0.2.5\"}");
+        assertTrue(info.dnsConfigured());
+    }
+
+    @Test
+    void parseProxyInfoReadsDnsConfiguredFalse() {
+        var info = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":false}");
+        assertFalse(info.dnsConfigured());
+    }
+
+    @Test
+    void parseProxyInfoReadsDnsConfiguredTrue() {
+        var info = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":true}");
+        assertTrue(info.dnsConfigured());
+    }
+
+    @Test
+    void parseProxyInfoRejectsMalformedDnsConfigured() {
+        // String "false" should be rejected (not a boolean), defaulting to false
+        var info1 = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":\"false\"}");
+        assertFalse(info1.dnsConfigured());
+
+        // Number 0 should be rejected (not a boolean), defaulting to false
+        var info2 = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":0}");
+        assertFalse(info2.dnsConfigured());
+
+        // Number 1 should be rejected (not a boolean), defaulting to false
+        var info3 = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":1}");
+        assertFalse(info3.dnsConfigured());
     }
 }

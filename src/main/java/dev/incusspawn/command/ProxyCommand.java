@@ -153,7 +153,7 @@ public class ProxyCommand extends BaseCommand {
             }));
 
             try {
-                proxy.start(() -> MitmProxy.configureBridgeDnsWithRetry(incus));
+                proxy.start(() -> MitmProxy.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true)));
             } catch (Exception e) {
                 System.err.println("Failed to start proxy: " + e.getMessage());
                 System.err.println("Is another proxy already running? Check port " + port + ".");
@@ -198,8 +198,9 @@ public class ProxyCommand extends BaseCommand {
             var serviceActive = serviceInstalled && ProxyService.isActive();
             var healthIp = ProxyHealthCheck.healthAddress(incus);
             switch (status) {
-                case RUNNING -> {
-                    System.out.println("Proxy is running.");
+                case RUNNING, WAITING_FOR_DNS -> {
+                    System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
+                            ? "Proxy is running." : "Proxy is running (waiting for DNS configuration).");
                     var proxyInfo = ProxyHealthCheck.fetchProxyInfo(healthIp);
                     if (proxyInfo != null) {
                         if (!proxyInfo.isLegacy()) {
@@ -208,6 +209,7 @@ public class ProxyCommand extends BaseCommand {
                                 System.out.println("  Runtime:         " + proxyInfo.runtime());
                             }
                         }
+                        System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "configured" : "pending"));
                         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
                         if (!drift.isEmpty()) {
                             System.out.println("  \033[1;33m>>> " + drift + "\033[0m");

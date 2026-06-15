@@ -12,13 +12,17 @@ public final class ProxyHealthCheck {
 
     public enum ProxyStatus {
         RUNNING,
+        WAITING_FOR_DNS,
         NOT_RUNNING,
         STALE_DNS
     }
 
-    public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint) {
+    public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
+                            boolean dnsConfigured) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
+
+    private record HealthResult(boolean healthy, boolean dnsConfigured) {}
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -51,17 +55,37 @@ public final class ProxyHealthCheck {
 
     private static ProxyStatus checkUncached(IncusClient incus) {
         if (dev.incusspawn.Environment.isMacOS()) {
-            if (isHealthy("127.0.0.1")) return ProxyStatus.RUNNING;
+            var result = checkHealth("127.0.0.1");
+            if (result.healthy()) {
+                return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
+            }
         }
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-        if (isHealthy(gatewayIp)) {
-            return ProxyStatus.RUNNING;
+        var result = checkHealth(gatewayIp);
+        if (result.healthy()) {
+            return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
         }
         var dnsOverrides = MitmProxy.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             return ProxyStatus.STALE_DNS;
         }
         return ProxyStatus.NOT_RUNNING;
+    }
+
+    private static HealthResult checkHealth(String addr) {
+        try {
+            var url = URI.create("http://" + addr + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health").toURL();
+            var conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(500);
+            conn.setReadTimeout(500);
+            conn.setRequestMethod("GET");
+            if (conn.getResponseCode() != 200) return new HealthResult(false, false);
+            var body = new String(conn.getInputStream().readAllBytes());
+            var info = parseProxyInfo(body);
+            return new HealthResult(true, info.dnsConfigured());
+        } catch (Exception e) {
+            return new HealthResult(false, false);
+        }
     }
 
     static boolean isHealthy(String gatewayIp) {
@@ -99,13 +123,18 @@ public final class ProxyHealthCheck {
     static ProxyInfo parseProxyInfo(String json) {
         try {
             var node = JSON.readTree(json);
+            var dnsNode = node.get("dnsConfigured");
+            // Default to true only if field is missing (backwards compat with old proxies).
+            // Reject malformed values (non-boolean) to catch serialization bugs.
+            var dnsConfigured = dnsNode == null ? true : (dnsNode.isBoolean() && dnsNode.asBoolean());
             return new ProxyInfo(
                     textOrEmpty(node, "version"),
                     textOrEmpty(node, "gitSha"),
                     textOrEmpty(node, "runtime"),
-                    textOrEmpty(node, "caFingerprint"));
+                    textOrEmpty(node, "caFingerprint"),
+                    dnsConfigured);
         } catch (Exception e) {
-            return new ProxyInfo("", "", "", "");
+            return new ProxyInfo("", "", "", "", true);
         }
     }
 
@@ -145,6 +174,15 @@ public final class ProxyHealthCheck {
                     + "  \033[1misx init\033[0m\n\n"
                     + "Then re-run this command.\n"
                     + separator;
+            case WAITING_FOR_DNS -> separator + "\n"
+                    + "\033[1mThe MITM proxy is running but DNS overrides are not\n"
+                    + "yet configured.\033[0m\n\n"
+                    + "The proxy is waiting for the VM to become reachable so it\n"
+                    + "can configure bridge DNS. Containers cannot reach intercepted\n"
+                    + "domains until this completes.\n\n"
+                    + "Check VM status:  \033[1misx vm status\033[0m\n"
+                    + "Proxy status:     \033[1misx proxy status\033[0m\n"
+                    + separator;
             case RUNNING -> "";
         };
     }
@@ -155,11 +193,15 @@ public final class ProxyHealthCheck {
             warnIfDrifted(incus);
             return;
         }
-        if (tryAutoRestart(incus)) {
-            warnIfDrifted(incus);
-            return;
+        if (status == ProxyStatus.WAITING_FOR_DNS) {
+            if (waitForDns(incus)) { warnIfDrifted(incus); return; }
+            System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
+            System.exit(1);
         }
-        System.err.println(formatError(status));
+        if (tryAutoRestart(incus)) {
+            if (waitForDns(incus)) { warnIfDrifted(incus); return; }
+        }
+        System.err.println(formatError(check(incus)));
         System.exit(1);
     }
 
@@ -169,11 +211,15 @@ public final class ProxyHealthCheck {
             warnIfDrifted(incus);
             return true;
         }
-        if (tryAutoRestart(incus)) {
-            warnIfDrifted(incus);
-            return true;
+        if (status == ProxyStatus.WAITING_FOR_DNS) {
+            if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
+            System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
+            return false;
         }
-        System.err.println(formatError(status));
+        if (tryAutoRestart(incus)) {
+            if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
+        }
+        System.err.println(formatError(check(incus)));
         return false;
     }
 
@@ -194,6 +240,29 @@ public final class ProxyHealthCheck {
             }
         }
         System.err.println("Proxy service did not become healthy after restart.");
+        return false;
+    }
+
+    public static boolean waitForDns(IncusClient incus) {
+        var addr = healthAddress(incus);
+        var result = checkHealth(addr);
+        if (result.healthy() && result.dnsConfigured()) return true;
+        if (!result.healthy()) return false;
+        System.err.println("Waiting for proxy DNS configuration...");
+        for (int i = 0; i < 120; i++) {
+            try { Thread.sleep(500); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            result = checkHealth(addr);
+            if (!result.healthy()) return false;
+            if (result.dnsConfigured()) {
+                invalidateCache();
+                System.err.println("Proxy DNS overrides configured.");
+                return true;
+            }
+        }
+        System.err.println("Proxy DNS overrides were not configured within 60 seconds.");
         return false;
     }
 

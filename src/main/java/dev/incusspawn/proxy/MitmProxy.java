@@ -162,6 +162,7 @@ public class MitmProxy {
     private ApiTrafficLog debugLog;
     // CA fingerprint computed at startup for the health endpoint
     private String caFingerprint = "";
+    private volatile boolean dnsConfigured;
 
     private final String healthBindAddress;
 
@@ -178,6 +179,10 @@ public class MitmProxy {
         this.useVertex = useVertex;
         this.vertexRegion = vertexRegion != null ? vertexRegion : "";
         this.vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
+    }
+
+    public void setDnsConfigured(boolean configured) {
+        this.dnsConfigured = configured;
     }
 
     /**
@@ -272,9 +277,10 @@ public class MitmProxy {
      * (e.g. launchd starts the proxy before the VM is ready). Retries in the
      * background so the proxy itself starts immediately.
      */
-    public static void configureBridgeDnsWithRetry(IncusClient incus) {
+    public static void configureBridgeDnsWithRetry(IncusClient incus, Runnable onDnsConfigured) {
         try {
             configureBridgeDns(incus);
+            if (onDnsConfigured != null) onDnsConfigured.run();
             return;
         } catch (Exception e) {
             System.err.println("Warning: could not configure bridge DNS overrides: " + e.getMessage());
@@ -284,6 +290,7 @@ public class MitmProxy {
         var thread = new Thread(() -> {
             long delaySec = 2;
             long maxDelaySec = 60;
+            int attempt = 1;
             while (true) {
                 try {
                     Thread.sleep(delaySec * 1000);
@@ -291,12 +298,16 @@ public class MitmProxy {
                     Thread.currentThread().interrupt();
                     return;
                 }
+                attempt++;
                 try {
                     configureBridgeDns(incus);
-                    System.out.println("  DNS overrides applied successfully after retry.");
+                    System.out.println("  DNS overrides applied successfully (attempt " + attempt + ").");
+                    if (onDnsConfigured != null) onDnsConfigured.run();
                     return;
                 } catch (Exception e) {
-                    System.err.println("Warning: DNS override retry failed (" + delaySec + "s backoff): " + e.getMessage());
+                    System.err.println("Warning: DNS override attempt " + attempt
+                            + " failed (next retry in " + Math.min(delaySec * 2, maxDelaySec) + "s): "
+                            + e.getMessage());
                     delaySec = Math.min(delaySec * 2, maxDelaySec);
                 }
             }
@@ -1408,7 +1419,8 @@ public class MitmProxy {
                 + ",\"version\":\"" + info.version() + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
                 + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
-                + ",\"caFingerprint\":\"" + caFingerprint + "\"}";
+                + ",\"caFingerprint\":\"" + caFingerprint + "\""
+                + ",\"dnsConfigured\":" + dnsConfigured + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
