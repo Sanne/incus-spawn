@@ -244,11 +244,15 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean waitForDns(IncusClient incus) {
+        return waitForDns(incus, System.err::println);
+    }
+
+    public static boolean waitForDns(IncusClient incus, java.util.function.Consumer<String> log) {
         var addr = healthAddress(incus);
         var result = checkHealth(addr);
         if (result.healthy() && result.dnsConfigured()) return true;
         if (!result.healthy()) return false;
-        System.err.println("Waiting for proxy DNS configuration...");
+        log.accept("Waiting for proxy DNS configuration...");
         for (int i = 0; i < 120; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -258,11 +262,11 @@ public final class ProxyHealthCheck {
             if (!result.healthy()) return false;
             if (result.dnsConfigured()) {
                 invalidateCache();
-                System.err.println("Proxy DNS overrides configured.");
+                log.accept("Proxy DNS overrides configured.");
                 return true;
             }
         }
-        System.err.println("Proxy DNS overrides were not configured within 60 seconds.");
+        log.accept("Proxy DNS overrides were not configured within 60 seconds.");
         return false;
     }
 

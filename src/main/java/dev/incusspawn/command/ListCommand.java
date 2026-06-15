@@ -17,6 +17,7 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tui.BackgroundTaskManager;
@@ -3066,21 +3067,36 @@ public class ListCommand extends BaseCommand {
         System.out.println();
     }
 
+    private volatile boolean proxyRestartInProgress;
+
     private boolean showProxyError() {
         var proxyStatus = ProxyHealthCheck.check(incus);
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.RUNNING) return false;
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS) {
-            if (ProxyHealthCheck.waitForDns(incus)) return false;
-            errorMessage = "The MITM proxy is running but DNS overrides\n"
-                    + "are not yet configured.\n"
-                    + "\n"
-                    + "The proxy is waiting for the VM to become\n"
-                    + "reachable. Check: isx vm status";
-            mode = Mode.ERROR;
+            setStatusMessage("Proxy running, waiting for DNS configuration...");
             return true;
         }
-        if (ProxyHealthCheck.tryAutoRestart(incus)) {
-            if (ProxyHealthCheck.waitForDns(incus)) return false;
+        if (proxyRestartInProgress) {
+            setStatusMessage("Proxy restarting...");
+            return true;
+        }
+        if (ProxyService.isInstalled()) {
+            proxyRestartInProgress = true;
+            setStatusMessage("Proxy not running, restarting service...");
+            var thread = new Thread(() -> {
+                try {
+                    if (ProxyHealthCheck.tryAutoRestart(incus)) {
+                        setStatusMessage("Proxy restarted, waiting for DNS...");
+                    } else {
+                        setStatusMessage("Proxy restart failed. Check: isx proxy status");
+                    }
+                } finally {
+                    proxyRestartInProgress = false;
+                }
+            }, "proxy-auto-restart");
+            thread.setDaemon(true);
+            thread.start();
+            return true;
         }
         if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             errorMessage = "The MITM proxy is not running, but DNS overrides\n"

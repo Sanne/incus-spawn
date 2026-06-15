@@ -58,7 +58,10 @@ class IncusApi {
             try {
                 var http = new IncusApi(httpsTransport);
                 if (http.get("/1.0").isSuccess()) return http;
-            } catch (IncusException ignored) {}
+            } catch (IncusException e) {
+                var root = e.getCause() != null ? e.getCause() : e;
+                System.err.println("Incus HTTPS connection failed: " + root.getMessage());
+            }
         }
         return null;
     }
