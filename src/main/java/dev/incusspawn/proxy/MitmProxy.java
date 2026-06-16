@@ -252,6 +252,12 @@ public class MitmProxy {
      * containers never silently bypass the proxy.
      */
     public static void configureBridgeDns(IncusClient incus) {
+        writeBridgeDns(incus);
+        System.out.println("  DNS overrides: " + interceptedDomains().size() +
+                " domains -> " + resolveGatewayIp(incus) + " (via bridge dnsmasq)");
+    }
+
+    public static void writeBridgeDns(IncusClient incus) {
         var gatewayIp = resolveGatewayIp(incus);
         var overrides = interceptedDomains().stream()
                 .sorted()
@@ -267,8 +273,6 @@ public class MitmProxy {
         var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
 
         incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
-        System.out.println("  DNS overrides: " + interceptedDomains().size() +
-                " domains -> " + gatewayIp + " (via bridge dnsmasq)");
     }
 
     /**
@@ -338,6 +342,13 @@ public class MitmProxy {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    public static boolean isBridgeDnsComplete(IncusClient incus) {
+        var overrides = getDnsOverrides(incus);
+        if (overrides.isEmpty()) return true;
+        return interceptedDomains().stream()
+                .allMatch(d -> overrides.contains("address=/" + d + "/"));
     }
 
     // --- Lifecycle ---
