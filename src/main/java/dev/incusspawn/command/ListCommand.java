@@ -94,7 +94,7 @@ public class ListCommand extends BaseCommand {
     private static final long REFRESH_DEBOUNCE_MS = 1000;
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -136,7 +136,7 @@ public class ListCommand extends BaseCommand {
     // Actions cache (computed once per data refresh, not per render)
     private java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
 
-    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, EDIT_TEMPLATE, EXECUTE_ACTION }
+    private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
     private ToolAction pendingToolAction;
@@ -199,6 +199,7 @@ public class ListCommand extends BaseCommand {
     private void runTuiLoop() {
         while (true) {
             reloadData();
+            var previousAction = pendingAction;
             mode = Mode.BROWSE;
             pendingAction = PendingAction.NONE;
 
@@ -220,6 +221,15 @@ public class ListCommand extends BaseCommand {
                 if (!templateEntries.isEmpty()) templateTableState.select(0);
             }
             returnToTemplate = null;
+
+            if (previousAction == PendingAction.BUILD_THEN_BRANCH) {
+                var tpl = templateEntries.stream()
+                        .filter(t -> t.name.equals(branchSourceName))
+                        .findFirst().orElse(null);
+                if (tpl != null && !"not built".equals(tpl.buildStatus)) {
+                    openBranchModal(tpl.name, tpl.runtime);
+                }
+            }
 
             // If returning from a shell/branch, focus the target instance
             if (returnToInstance != null) {
@@ -272,10 +282,9 @@ public class ListCommand extends BaseCommand {
                         statusMessage = "Failed to create branch " + pendingActionTarget + ": " + e.getMessage();
                     }
                 }
-                case BUILD_TEMPLATE -> {
+                case BUILD_TEMPLATE, BUILD_THEN_BRANCH -> {
                     var args = java.util.Arrays.copyOf(pendingBuildArgs, pendingBuildArgs.length + 1);
                     args[args.length - 1] = "--yes";
-                    // Determine the template name for UI restoration
                     var buildTarget = pendingBuildArgs[0];
                     if (!buildTarget.startsWith("--")) {
                         returnToTemplate = buildTarget;
@@ -286,8 +295,10 @@ public class ListCommand extends BaseCommand {
                         statusMessage = exitCode == 0
                                 ? buildStatusMessage(pendingBuildArgs, true)
                                 : buildStatusMessage(pendingBuildArgs, false);
+                        if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;
                     } catch (Exception e) {
                         statusMessage = "Build failed: " + e.getMessage();
+                        pendingAction = PendingAction.BUILD_TEMPLATE;
                     }
                 }
                 case EDIT_TEMPLATE -> {
@@ -430,6 +441,7 @@ public class ListCommand extends BaseCommand {
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
             case BUILD_MENU -> handleBuildMenuEvent(key, tui);
             case CONFIRM_STOP_FOR_RENAME -> handleConfirmStopForRenameEvent(key, tui, tableState);
+            case CONFIRM_BUILD_FOR_BRANCH -> handleConfirmBuildForBranchEvent(key, tui);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
@@ -519,15 +531,7 @@ public class ListCommand extends BaseCommand {
 
         // F5: Open build menu
         if (key.isKey(KeyCode.F5)) {
-            if (showProxyError()) return true;
-            var def = imageDefs.get(template.name);
-            if (def != null) {
-                var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
-                if (!credError.isEmpty()) {
-                    statusMessage = credError;
-                    return true;
-                }
-            }
+            if (checkBuildPreconditions(template.name)) return true;
             openBuildMenu(template);
             return true;
         }
@@ -535,7 +539,8 @@ public class ListCommand extends BaseCommand {
         // Enter/F4: Branch from template (only if built)
         if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4)) {
             if ("not built".equals(template.buildStatus)) {
-                statusMessage = "Template not built. Press F5 to build it first.";
+                branchSourceName = template.name;
+                mode = Mode.CONFIRM_BUILD_FOR_BRANCH;
                 return true;
             }
             openBranchModal(template.name, template.runtime);
@@ -1111,6 +1116,36 @@ public class ListCommand extends BaseCommand {
         return true;
     }
 
+    private boolean handleConfirmBuildForBranchEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isChar('y') || key.isChar('Y') || key.isKey(KeyCode.ENTER)) {
+            if (checkBuildPreconditions(branchSourceName)) {
+                mode = Mode.BROWSE;
+                return true;
+            }
+            pendingAction = PendingAction.BUILD_THEN_BRANCH;
+            pendingBuildArgs = new String[]{branchSourceName};
+            returnToTemplate = branchSourceName;
+            mode = Mode.BROWSE;
+            tui.quit();
+        } else {
+            mode = Mode.BROWSE;
+        }
+        return true;
+    }
+
+    private boolean checkBuildPreconditions(String templateName) {
+        if (showProxyError()) return true;
+        var def = imageDefs.get(templateName);
+        if (def != null) {
+            var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
+            if (!credError.isEmpty()) {
+                statusMessage = credError;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // --- Rendering ---
 
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
@@ -1575,6 +1610,12 @@ public class ListCommand extends BaseCommand {
                 ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
             }
             case BUILD_MENU -> renderBuildMenu(frame, screen);
+            case CONFIRM_BUILD_FOR_BRANCH -> {
+                ModalRenderer.renderConfirmModal(frame, screen,
+                        " Branch from '" + branchSourceName + "' ",
+                        "Template is not built yet. Build it first?", ModalRenderer.BORDER,
+                        "Build", "y/Enter");
+            }
             case CONFIRM_STOP_FOR_RENAME -> {
                 ModalRenderer.renderConfirmModal(frame, screen,
                         " Rename '" + renameSourceName + "' ",

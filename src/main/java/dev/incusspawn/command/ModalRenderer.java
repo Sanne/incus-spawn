@@ -170,6 +170,12 @@ final class ModalRenderer {
     static void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor,
                                     String confirmLabel) {
+        renderConfirmModal(frame, screen, title, message, borderColor, confirmLabel, "y");
+    }
+
+    static void renderConfirmModal(Frame frame, Rect screen,
+                                    String title, String message, Color borderColor,
+                                    String confirmLabel, String confirmKey) {
         int modalWidth = 54;
         int innerWidth = modalWidth - 6;
         var wrappedLines = wrapText(message, innerWidth);
@@ -202,7 +208,7 @@ final class ModalRenderer {
         }
 
         var btnSpans = new ArrayList<Span>();
-        addKey(btnSpans, "y", confirmLabel);
+        addKey(btnSpans, confirmKey, confirmLabel);
         addKey(btnSpans, "any key", "Cancel");
         frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(rows.size() - 1));
     }
