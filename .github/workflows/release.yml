@@ -297,72 +297,7 @@ jobs:
         continue-on-error: true
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-
-          # Compute SRI hashes from the release artifacts we already have
-          hash_sri() {
-            local hex
-            hex=$(sha256sum "$1" | cut -d' ' -f1)
-            echo "sha256-$(python3 -c "import base64,binascii; print(base64.b64encode(binascii.unhexlify('$hex')).decode())")"
-          }
-
-          HASH_AMD64=$(hash_sri artifacts/native-linux-amd64/incus-spawn-linux-amd64)
-          HASH_AARCH64=$(hash_sri artifacts/native-linux-aarch64/incus-spawn-linux-aarch64)
-          HASH_GIT_REMOTE=$(hash_sri src/main/resources/git-remote-isx)
-
-          # Fork nixpkgs if needed, then clone (shallow)
-          gh repo fork NixOS/nixpkgs --clone=false 2>/dev/null || true
-          FORK_OWNER=$(gh api user -q .login)
-          BRANCH="incus-spawn-${VERSION}"
-          PACKAGE_DIR="pkgs/by-name/in/incus-spawn"
-
-          git clone --depth 1 https://github.com/NixOS/nixpkgs.git /tmp/nixpkgs
-          cd /tmp/nixpkgs
-          git remote add fork "https://x-access-token:${NIXPKGS_TOKEN}@github.com/${FORK_OWNER}/nixpkgs.git"
-          git checkout -B "$BRANCH"
-
-          # Write the package
-          mkdir -p "$PACKAGE_DIR"
-          sed \
-            -e "0,/version = \"[^\"]*\"/s/version = \"[^\"]*\"/version = \"$VERSION\"/" \
-            -e "/x86_64-linux/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_AMD64\"|;}" \
-            -e "/aarch64-linux/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_AARCH64\"|;}" \
-            -e "/git-remote-isx/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_GIT_REMOTE\"|;}" \
-            "$GITHUB_WORKSPACE/packaging/nix/package.nix" > "$PACKAGE_DIR/package.nix"
-          cp "$GITHUB_WORKSPACE/packaging/nix/update.sh" "$PACKAGE_DIR/update.sh"
-          chmod +x "$PACKAGE_DIR/update.sh"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$PACKAGE_DIR"
-
-          # Determine commit message based on whether this is init or update
-          if git log origin/master --oneline -- "$PACKAGE_DIR" 2>/dev/null | head -1 | grep -q .; then
-            COMMIT_MSG="incus-spawn: ${VERSION}"
-            PR_TITLE="incus-spawn: update to ${VERSION}"
-          else
-            COMMIT_MSG="incus-spawn: init at ${VERSION}"
-            PR_TITLE="incus-spawn: init at ${VERSION}"
-          fi
-
-          git commit -m "$COMMIT_MSG" -m "https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
-          git push fork "$BRANCH" --force
-
-          # Open or update PR
-          EXISTING_PR=$(gh pr list --repo NixOS/nixpkgs --head "${FORK_OWNER}:${BRANCH}" --json number -q '.[0].number' 2>/dev/null || true)
-          printf -v PR_BODY '%s\n\n%s\n%s' \
-            '## Summary' \
-            "Add/update [incus-spawn](https://github.com/Sanne/incus-spawn) — CLI tool for managing isolated Incus-based development environments." \
-            "Pre-built GraalVM native binaries. See [release notes](https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION})."
-
-          if [[ -n "$EXISTING_PR" ]]; then
-            gh pr edit "$EXISTING_PR" --repo NixOS/nixpkgs --title "$PR_TITLE" --body "$PR_BODY"
-          else
-            gh pr create --repo NixOS/nixpkgs \
-              --head "${FORK_OWNER}:${BRANCH}" \
-              --base master \
-              --title "$PR_TITLE" \
-              --body "$PR_BODY"
-          fi
+          packaging/nix/submit-nixpkgs-pr.sh "$VERSION"
         env:
           GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
-          NIXPKGS_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}

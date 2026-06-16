@@ -7,43 +7,33 @@
   zlib,
   testers,
   incus-spawn,
+  writeShellScript,
+  curl,
+  jq,
+  common-updater-scripts,
 }:
 
-let
-  stdenv = stdenvNoCC;
-  version = "0.2.2";
-
-  srcs = {
-    x86_64-linux = fetchurl {
-      url = "https://github.com/Sanne/incus-spawn/releases/download/v${version}/incus-spawn-linux-amd64";
-      hash = "sha256-3rFA+JMwjy9FBxBxVsWpg5htku9j2BuBbDvbO75L57I=";
-    };
-    aarch64-linux = fetchurl {
-      url = "https://github.com/Sanne/incus-spawn/releases/download/v${version}/incus-spawn-linux-aarch64";
-      hash = "sha256-b19ZwoXOVgbbKh+Ea3ROCYfTs0O0sm4baNAipSi84HI=";
-    };
-  };
-
-  git-remote-isx = fetchurl {
-    url = "https://github.com/Sanne/incus-spawn/releases/download/v${version}/git-remote-isx";
-    hash = "sha256-I9zmdLzO7VcfLHdgFD2Lvwiq4fkDw885j1JWsL8c+hA=";
-  };
-in
-stdenv.mkDerivation (finalAttrs: {
+stdenvNoCC.mkDerivation (finalAttrs: {
+  version = "0.2.16";
   pname = "incus-spawn";
-  inherit version;
 
-  src = srcs.${stdenv.hostPlatform.system} or (throw "Unsupported platform: ${stdenv.hostPlatform.system}");
+  src =
+    finalAttrs.passthru.sources.${stdenvNoCC.hostPlatform.system}
+      or (throw "Unsupported platform: ${stdenvNoCC.hostPlatform.system}");
 
   dontUnpack = true;
   dontBuild = true;
+  dontStrip = stdenvNoCC.hostPlatform.isDarwin;
+
+  strictDeps = true;
+  __structuredAttrs = true;
 
   nativeBuildInputs = [
-    autoPatchelfHook
     installShellFiles
-  ];
+  ]
+  ++ lib.optional stdenvNoCC.hostPlatform.isLinux autoPatchelfHook;
 
-  buildInputs = [
+  buildInputs = lib.optionals stdenvNoCC.hostPlatform.isLinux [
     zlib
   ];
 
@@ -51,15 +41,16 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
 
     install -Dm755 $src $out/bin/isx
-    install -Dm755 ${git-remote-isx} $out/bin/git-remote-isx
+    install -Dm755 ${finalAttrs.passthru.git-remote-isx} $out/bin/git-remote-isx
 
     runHook postInstall
   '';
 
   # Generate shell completions after autoPatchelfHook has patched the ELF binary.
-  # autoPatchelfHook runs in postFixupHooks, so we use installCheckPhase which
-  # runs after fixup is fully complete.
-  doInstallCheck = true;
+  # On Linux, autoPatchelfHook runs in postFixupHooks so we use installCheckPhase
+  # which runs after fixup is fully complete. On Darwin no patching is needed but
+  # we keep the same phase for consistency.
+  doInstallCheck = stdenvNoCC.buildPlatform.canExecute stdenvNoCC.hostPlatform;
   installCheckPhase = ''
     runHook preInstallCheck
 
@@ -72,11 +63,50 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru = {
+    sources = {
+      "x86_64-linux" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/incus-spawn-linux-amd64";
+        hash = "sha256-a8sEk6PncK9eQGJcQy5F9RiZBTOSLNFDNAOat9VsrII=";
+      };
+      "aarch64-linux" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/incus-spawn-linux-aarch64";
+        hash = "sha256-OOmvRt45zaMcl8SE6ky4X5+q6BpJ8rXtR69UYyrFpYY=";
+      };
+      "aarch64-darwin" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/incus-spawn-macos-aarch64";
+        hash = "sha256-Mp8hM4UXNjRqhF9T8sNJ68qab0oaPuMAowV2QCZzi04=";
+      };
+    };
+
+    git-remote-isx = fetchurl {
+      url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/git-remote-isx";
+      hash = "sha256-I9zmdLzO7VcfLHdgFD2Lvwiq4fkDw885j1JWsL8c+hA=";
+    };
+
     tests.version = testers.testVersion {
       package = incus-spawn;
       command = "isx --version";
     };
-    updateScript = ./update.sh;
+
+    updateScript = writeShellScript "update-incus-spawn" ''
+      set -o errexit
+      export PATH="${
+        lib.makeBinPath [
+          curl
+          jq
+          common-updater-scripts
+        ]
+      }"
+      NEW_VERSION=$(curl --silent https://api.github.com/repos/Sanne/incus-spawn/releases/latest | jq '.tag_name | ltrimstr("v")' --raw-output)
+      if [[ "${finalAttrs.version}" = "$NEW_VERSION" ]]; then
+          echo "incus-spawn is already at $NEW_VERSION"
+          exit 0
+      fi
+      update-source-version incus-spawn "$NEW_VERSION" --source-key="git-remote-isx" --ignore-same-hash
+      for platform in ${lib.escapeShellArgs finalAttrs.meta.platforms}; do
+        update-source-version incus-spawn "$NEW_VERSION" --ignore-same-version --source-key="sources.$platform"
+      done
+    '';
   };
 
   meta = {
@@ -87,13 +117,10 @@ stdenv.mkDerivation (finalAttrs: {
       for credential isolation, and an interactive TUI.
     '';
     homepage = "https://github.com/Sanne/incus-spawn";
-    changelog = "https://github.com/Sanne/incus-spawn/releases/tag/v${version}";
+    changelog = "https://github.com/Sanne/incus-spawn/releases/tag/v${finalAttrs.version}";
     license = lib.licenses.asl20;
     sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
-    platforms = [
-      "x86_64-linux"
-      "aarch64-linux"
-    ];
+    platforms = lib.attrNames finalAttrs.passthru.sources;
     mainProgram = "isx";
     maintainers = with lib.maintainers; [
       galder

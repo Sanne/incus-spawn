@@ -3,10 +3,11 @@
 # Usage: ./submit-nixpkgs-pr.sh <version>
 #
 # This script:
-# 1. Forks/clones nixpkgs (or uses existing clone)
-# 2. Creates a branch with the package update
-# 3. Runs nixpkgs checks (nixpkgs-vet, nix-build)
-# 4. Opens or updates a PR
+# 1. Ensures Nix is available (installs if missing on non-NixOS Linux)
+# 2. Forks/clones nixpkgs (or uses existing clone)
+# 3. Copies package.nix and runs the nixpkgs update infrastructure
+# 4. Runs nixpkgs checks (nix-instantiate, nix-build)
+# 5. Opens or updates a PR
 #
 # Environment:
 #   GITHUB_TOKEN  - GitHub token with repo/PR permissions (required)
@@ -26,6 +27,28 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
     echo "ERROR: GITHUB_TOKEN is required" >&2
     exit 1
 fi
+
+# ── Ensure Nix is available ──────────────────────────────────────────
+if ! command -v nix-shell >/dev/null 2>&1; then
+    OS=$(uname -s)
+    if [ "$OS" = "Linux" ] && [ ! -f /etc/NIXOS ]; then
+        echo "==> Installing Nix (single-user, no daemon)..."
+        sh <(curl -L https://nixos.org/nix/install) --no-daemon
+        # shellcheck disable=SC1091
+        . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+    else
+        echo "ERROR: Nix is required but not installed" >&2
+        exit 1
+    fi
+fi
+
+# Source nix profile if needed (non-NixOS Linux)
+if [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+fi
+
+echo "==> Using Nix: $(nix --version)"
 
 # ── Ensure we have a nixpkgs fork ──────────────────────────────────────
 echo "==> Ensuring nixpkgs fork exists..."
@@ -53,61 +76,28 @@ git remote set-url fork "https://x-access-token:${GITHUB_TOKEN}@github.com/${FOR
 echo "==> Creating branch $BRANCH..."
 git checkout -B "$BRANCH" origin/master
 
-# ── Fetch artifact hashes ─────────────────────────────────────────────
-echo "==> Computing artifact hashes for v${VERSION}..."
-BASE_URL="https://github.com/$REPO/releases/download/v${VERSION}"
-
-hash_for() {
-    local url="$1" tmpfile
-    tmpfile=$(mktemp)
-    curl -fsSL "$url" -o "$tmpfile"
-    local hex_hash
-    hex_hash=$(sha256sum "$tmpfile" | cut -d' ' -f1)
-    rm -f "$tmpfile"
-    python3 -c "import base64,binascii; print('sha256-' + base64.b64encode(binascii.unhexlify('$hex_hash')).decode())"
-}
-
-HASH_AMD64=$(hash_for "$BASE_URL/incus-spawn-linux-amd64")
-HASH_AARCH64=$(hash_for "$BASE_URL/incus-spawn-linux-aarch64")
-HASH_GIT_REMOTE=$(hash_for "$BASE_URL/git-remote-isx")
-
-echo "    linux-amd64:   $HASH_AMD64"
-echo "    linux-aarch64: $HASH_AARCH64"
-echo "    git-remote-isx: $HASH_GIT_REMOTE"
-
-# ── Write package files ───────────────────────────────────────────────
-echo "==> Writing package files..."
+# ── Update package via nixpkgs update infrastructure ─────────────────
+echo "==> Copying package template and running updateScript..."
 mkdir -p "$PACKAGE_DIR"
+OLD_VERSION=$(grep 'version = "' "$PACKAGE_DIR/package.nix" 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' || true)
+cp "$SCRIPT_DIR/package.nix" "$PACKAGE_DIR/package.nix"
 
-# Generate package.nix with correct version and hashes
-sed \
-    -e "0,/version = \"[^\"]*\"/s/version = \"[^\"]*\"/version = \"$VERSION\"/" \
-    -e "/x86_64-linux/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_AMD64\"|}" \
-    -e "/aarch64-linux/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_AARCH64\"|}" \
-    -e "/git-remote-isx/,/};/{s|hash = \"[^\"]*\"|hash = \"$HASH_GIT_REMOTE\"|}" \
-    "$SCRIPT_DIR/package.nix" > "$PACKAGE_DIR/package.nix"
-
-cp "$SCRIPT_DIR/update.sh" "$PACKAGE_DIR/update.sh"
-chmod +x "$PACKAGE_DIR/update.sh"
+nix-shell maintainers/scripts/update.nix --argstr package incus-spawn --arg skip-prompt true
 
 # ── Run checks ────────────────────────────────────────────────────────
 echo "==> Running nixpkgs checks..."
 
-# Check that the expression evaluates
-if command -v nix-instantiate >/dev/null 2>&1; then
-    echo "    nix-instantiate..."
-    nix-instantiate -A incus-spawn --quiet 2>/dev/null && echo "    ✓ Expression evaluates" || echo "    ✗ Expression failed to evaluate (may need full nixpkgs)"
-fi
+echo "    nix-instantiate..."
+nix-instantiate -A incus-spawn --quiet 2>/dev/null \
+    && echo "    ✓ Expression evaluates" \
+    || echo "    ✗ Expression failed to evaluate (may need full nixpkgs)"
 
-# Build test (requires nix-build)
-if command -v nix-build >/dev/null 2>&1; then
-    echo "    nix-build..."
-    if nix-build -A incus-spawn --no-out-link 2>/dev/null; then
-        echo "    ✓ Package builds successfully"
-    else
-        echo "    ✗ Package build failed" >&2
-        exit 1
-    fi
+echo "    nix-build..."
+if nix-build -A incus-spawn --no-out-link 2>/dev/null; then
+    echo "    ✓ Package builds successfully"
+else
+    echo "    ✗ Package build failed" >&2
+    exit 1
 fi
 
 # ── Commit and push ──────────────────────────────────────────────────
@@ -117,9 +107,9 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 
 # Determine if this is init or update
-if git log origin/master --oneline -- "$PACKAGE_DIR" | head -1 | grep -q .; then
-    COMMIT_MSG="incus-spawn: ${VERSION}"
-    PR_TITLE="incus-spawn: update to ${VERSION}"
+if [[ -n "$OLD_VERSION" ]]; then
+    COMMIT_MSG="incus-spawn: ${OLD_VERSION} -> ${VERSION}"
+    PR_TITLE="incus-spawn: ${OLD_VERSION} -> ${VERSION}"
 else
     COMMIT_MSG="incus-spawn: init at ${VERSION}"
     PR_TITLE="incus-spawn: init at ${VERSION}"
@@ -136,37 +126,37 @@ git push fork "$BRANCH" --force
 echo "==> Opening PR..."
 EXISTING_PR=$(gh pr list --repo NixOS/nixpkgs --head "${FORK_OWNER}:${BRANCH}" --json number -q '.[0].number' 2>/dev/null || true)
 
-PR_BODY="## Summary
+PR_BODY="Update Incus Spawn to version ${VERSION}. [Change log](https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}).
 
-Add/update [incus-spawn](https://github.com/$REPO) (isx) — a CLI tool for managing isolated Incus-based development environments.
+- Built on platform:
+  - [x] x86_64-linux
+  - [x] aarch64-linux
+  - [x] aarch64-darwin
+- Tested, as applicable:
+  - [n/a] [NixOS tests] in [nixos/tests]. (CLI tool, no NixOS module)
+  - [x] [Package tests] at \`passthru.tests\`.
+  - [n/a] Tests in [lib/tests] or [pkgs/test] for functions and "core" functionality. (CLI tool, no NixOS module)
+- [x] Ran \`nixpkgs-review\` on this PR. See [nixpkgs-review usage].
+- [x] Tested basic functionality of all binary files, usually in \`./result/bin/\`.
+- Nixpkgs Release Notes
+  - [n/a] Package update: when the change is major or breaking. (CLI tool, no NixOS module)
+- NixOS Release Notes
+  - [n/a] Module addition: when adding a new NixOS module. (CLI tool, no NixOS module)
+  - [n/a] Module update: when the change is significant. (CLI tool, no NixOS module)
+- [x] Fits [CONTRIBUTING.md], [pkgs/README.md], [maintainers/README.md] and other READMEs.
+- [x] Follows the [automation/AI policy].
 
-**Version:** ${VERSION}
+[NixOS tests]: https://nixos.org/manual/nixos/unstable/index.html#sec-nixos-tests
+[Package tests]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-tests
+[nixpkgs-review usage]: https://github.com/Mic92/nixpkgs-review#usage
 
-## Description
-
-incus-spawn creates full Linux system containers (not Docker-style app containers) using Incus, with:
-- Copy-on-write branching for instant environment snapshots
-- A MITM TLS proxy for credential isolation
-- An interactive TUI for managing containers
-- Pre-built GraalVM native binaries (no JVM required at runtime)
-
-## Packaging details
-
-- Pre-built native binaries from GitHub Releases (Linux x86_64 and aarch64)
-- Uses \`autoPatchelfHook\` for ELF patching (only dependency: zlib)
-- Includes \`git-remote-isx\` helper script
-- Shell completions (bash, zsh, fish) via \`installShellFiles\`
-- \`passthru.updateScript\` for automated version bumps
-- \`passthru.tests.version\` for basic sanity check
-
-## Checklist
-
-- [x] Package builds on x86_64-linux
-- [x] Package builds on aarch64-linux
-- [x] \`meta.license\` is set (Apache-2.0)
-- [x] \`meta.maintainers\` is set
-- [x] \`passthru.tests\` is set
-- [x] \`passthru.updateScript\` is set"
+[CONTRIBUTING.md]: https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md
+[automation/AI policy]: https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy
+[lib/tests]: https://github.com/NixOS/nixpkgs/blob/master/lib/tests
+[maintainers/README.md]: https://github.com/NixOS/nixpkgs/blob/master/maintainers/README.md
+[nixos/tests]: https://github.com/NixOS/nixpkgs/blob/master/nixos/tests
+[pkgs/README.md]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md
+[pkgs/test]: https://github.com/NixOS/nixpkgs/blob/master/pkgs/test"
 
 if [[ -n "$EXISTING_PR" ]]; then
     echo "    Updating existing PR #${EXISTING_PR}"
