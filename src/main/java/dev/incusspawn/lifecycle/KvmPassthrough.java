@@ -25,16 +25,21 @@ public final class KvmPassthrough {
         }
 
         System.out.println("Enabling KVM passthrough...");
-        incus.devicesRemoveAll(name, List.of("kvm"));
+        incus.devicesRemoveAll(name, List.of("kvm", "vhost-vsock"));
         incus.deviceAdd(name, "kvm", "unix-char",
                 "source=/dev/kvm",
                 "path=/dev/kvm");
+        if (Files.exists(Path.of("/dev/vhost-vsock"))) {
+            incus.deviceAdd(name, "vhost-vsock", "unix-char",
+                    "source=/dev/vhost-vsock",
+                    "path=/dev/vhost-vsock");
+        }
         incus.configSet(name, Metadata.KVM_ENABLED, "true");
         return true;
     }
 
     public static void removeKvm(IncusClient incus, String name) {
-        incus.devicesRemoveAll(name, List.of("kvm"));
+        incus.devicesRemoveAll(name, List.of("kvm", "vhost-vsock"));
         incus.configUnset(name, Metadata.KVM_ENABLED);
     }
 }
