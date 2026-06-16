@@ -96,8 +96,7 @@ stdenv.mkDerivation (finalAttrs: {
     ];
     mainProgram = "isx";
     maintainers = with lib.maintainers; [
-      # Add your nixpkgs maintainer name here after registering
-      # See https://github.com/NixOS/nixpkgs/blob/master/maintainers/README.md
+      galder
     ];
   };
 })
