@@ -83,6 +83,10 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy.log");
     }
 
+    public static Path proxyLifecycleLogFile() {
+        return home().resolve(".local/state/incus-spawn/proxy-lifecycle.log");
+    }
+
     public static final String PROXY_SERVICE_NAME = "incus-spawn-proxy";
 
     public static Path proxyServiceFile() {

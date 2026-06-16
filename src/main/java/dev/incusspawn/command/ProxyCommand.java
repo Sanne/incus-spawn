@@ -7,6 +7,7 @@ import dev.incusspawn.proxy.ApiTrafficLog;
 import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.vm.VmNetwork;
 import io.quarkus.arc.Arc;
@@ -115,6 +116,7 @@ public class ProxyCommand extends BaseCommand {
             installLogTee();
 
             var build = BuildInfo.instance();
+            ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());
             System.out.println("Starting MITM authentication proxy...");
             System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
             System.out.println("  Runtime:       " + build.runtime());
@@ -165,7 +167,7 @@ public class ProxyCommand extends BaseCommand {
             try {
                 proxy.start(() -> MitmProxy.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true)));
             } catch (Exception e) {
-                System.err.println("Failed to start proxy: " + e.getMessage());
+                ProxyLog.error("Failed to start: " + e.getMessage());
                 System.err.println("Is another proxy already running? Check port " + port + ".");
                 System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
             }

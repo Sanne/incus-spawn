@@ -120,6 +120,7 @@ public final class ProxyService {
     }
 
     public static boolean restart() {
+        ProxyLog.info("Service restarting");
         System.err.println("Restarting proxy service...");
         if (Environment.isMacOS()) {
             var uid = getUid();
@@ -501,9 +502,11 @@ public final class ProxyService {
         runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
 
         if (isActive()) {
+            ProxyLog.info("Service installed and running");
             System.out.println("  Services installed and running.");
             return true;
         } else {
+            ProxyLog.info("Service installed (waiting for VM)");
             System.out.println("  Services installed (proxy will start when VM is ready).");
             return true;
         }

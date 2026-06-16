@@ -280,11 +280,11 @@ public class MitmProxy {
     public static void configureBridgeDnsWithRetry(IncusClient incus, Runnable onDnsConfigured) {
         try {
             configureBridgeDns(incus);
+            ProxyLog.info("DNS overrides configured");
             if (onDnsConfigured != null) onDnsConfigured.run();
             return;
         } catch (Exception e) {
-            System.err.println("Warning: could not configure bridge DNS overrides: " + e.getMessage());
-            System.err.println("  Will retry in the background until successful.");
+            ProxyLog.warn("DNS override failed, will retry in background: " + e.getMessage());
         }
 
         var thread = new Thread(() -> {
@@ -301,13 +301,12 @@ public class MitmProxy {
                 attempt++;
                 try {
                     configureBridgeDns(incus);
-                    System.out.println("  DNS overrides applied successfully (attempt " + attempt + ").");
+                    ProxyLog.info("DNS overrides configured (attempt " + attempt + ")");
                     if (onDnsConfigured != null) onDnsConfigured.run();
                     return;
                 } catch (Exception e) {
-                    System.err.println("Warning: DNS override attempt " + attempt
-                            + " failed (next retry in " + Math.min(delaySec * 2, maxDelaySec) + "s): "
-                            + e.getMessage());
+                    ProxyLog.warn("DNS retry " + attempt + " failed (next in "
+                            + Math.min(delaySec * 2, maxDelaySec) + "s): " + e.getMessage());
                     delaySec = Math.min(delaySec * 2, maxDelaySec);
                 }
             }
@@ -406,14 +405,25 @@ public class MitmProxy {
         }
         upstreamClient = vertx.createHttpClient(clientOptions);
 
-        mitmServer = vertx.createHttpServer(serverOptions);
-        mitmServer.exceptionHandler(err -> {
-            System.err.println("MITM server error: " + err.getMessage());
-            err.printStackTrace(System.err);
-        });
-        mitmServer.requestHandler(this::routeRequest);
-        mitmServer.listen()
-                .toCompletionStage().toCompletableFuture().get();
+        int maxRetries = 30;
+        for (int attempt = 1; ; attempt++) {
+            mitmServer = vertx.createHttpServer(serverOptions);
+            mitmServer.exceptionHandler(err -> {
+                System.err.println("MITM server error: " + err.getMessage());
+                err.printStackTrace(System.err);
+            });
+            mitmServer.requestHandler(this::routeRequest);
+            try {
+                mitmServer.listen()
+                        .toCompletionStage().toCompletableFuture().get();
+                break;
+            } catch (Exception e) {
+                if (attempt >= maxRetries || !isBindException(e)) throw e;
+                if (!ProxyHealthCheck.isHealthy(healthBindAddress)) throw e;
+                ProxyLog.warn("Port " + mitmPort + " in use, previous proxy still running (" + attempt + "/" + maxRetries + ")");
+                Thread.sleep(200);
+            }
+        }
 
         // Health check HTTP server (plain, no TLS)
         healthHttpServer = vertx.createHttpServer()
@@ -425,6 +435,8 @@ public class MitmProxy {
             onReady.run();
         }
 
+        ProxyLog.info("Listening on " + bindAddress + ":" + mitmPort);
+        ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort);
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
         System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
@@ -448,6 +460,7 @@ public class MitmProxy {
     }
 
     public void stop() {
+        ProxyLog.info("Stopping proxy");
         try {
             try {
                 if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
@@ -462,6 +475,15 @@ public class MitmProxy {
             // Guarantee stopLatch is always counted down, even if an unexpected exception occurs
             if (stopLatch != null) stopLatch.countDown();
         }
+    }
+
+    private static boolean isBindException(Exception e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof java.net.BindException) return true;
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     // --- Request routing ---
