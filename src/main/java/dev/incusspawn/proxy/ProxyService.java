@@ -496,6 +496,17 @@ public final class ProxyService {
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
         runQuiet("launchctl", "bootstrap", "gui/" + uid, vmPlistFile().toString());
 
+        // Configure bridge DNS now (from Terminal) so the launchd proxy service
+        // doesn't need to reach the Incus VM API at startup — macOS Sequoia blocks
+        // local network access from ad-hoc-signed binaries under launchd.
+        System.out.println("  Configuring bridge DNS...");
+        try {
+            MitmProxy.configureBridgeDns(new IncusClient());
+        } catch (Exception e) {
+            System.err.println("  Warning: could not configure bridge DNS: " + e.getMessage());
+            System.err.println("  Is the VM running? The proxy will retry DNS at startup.");
+        }
+
         System.out.println("  Installing proxy service...");
         runQuiet("launchctl", "bootout", "gui/" + uid, proxyPlistFile().toString());
         waitForProxyExit();

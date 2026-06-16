@@ -120,7 +120,9 @@ public class ProxyCommand extends BaseCommand {
             System.out.println("Starting MITM authentication proxy...");
             System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
             System.out.println("  Runtime:       " + build.runtime());
-            System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
+            if (!Environment.isMacOS()) {
+                System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
+            }
             System.out.println("  Gateway IP:    " + gatewayIp);
             System.out.println("  MITM port:     " + port);
             System.out.println("  Health port:   " + healthPort);
@@ -164,8 +166,25 @@ public class ProxyCommand extends BaseCommand {
                 proxy.stop();
             }));
 
+            Runnable dnsCallback;
+            if (Environment.isMacOS()) {
+                // On macOS, DNS is configured at install time (from Terminal, where the
+                // native binary can reach the VM). Under launchd, macOS Sequoia blocks
+                // bridge access from ad-hoc-signed binaries, so don't retry on failure.
+                dnsCallback = () -> {
+                    try {
+                        MitmProxy.configureBridgeDns(incus);
+                        ProxyLog.info("DNS overrides configured");
+                    } catch (Exception e) {
+                        ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
+                    }
+                    proxy.setDnsConfigured(true);
+                };
+            } else {
+                dnsCallback = () -> MitmProxy.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true));
+            }
             try {
-                proxy.start(() -> MitmProxy.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true)));
+                proxy.start(dnsCallback);
             } catch (Exception e) {
                 ProxyLog.error("Failed to start: " + e.getMessage());
                 System.err.println("Is another proxy already running? Check port " + port + ".");
