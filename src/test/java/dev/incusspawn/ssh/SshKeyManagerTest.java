@@ -83,6 +83,27 @@ class SshKeyManagerTest {
     }
 
     @Test
+    void addHostEntryWithHostname() {
+        SshKeyManager.addHostEntry("test-instance", "10.0.0.42");
+
+        var content = assertDoesNotThrow(
+                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+        assertTrue(content.contains("Host test-instance"));
+        assertTrue(content.contains("Hostname 10.0.0.42"));
+        assertTrue(content.contains("ProxyCommand"));
+    }
+
+    @Test
+    void addHostEntryWithNullHostnameOmitsDirective() {
+        SshKeyManager.addHostEntry("test-instance", null);
+
+        var content = assertDoesNotThrow(
+                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+        assertTrue(content.contains("Host test-instance"));
+        assertFalse(content.contains("Hostname"));
+    }
+
+    @Test
     void addHostEntryReplacesExistingEntry() {
         SshKeyManager.addHostEntry("test-instance");
         SshKeyManager.addHostEntry("test-instance");

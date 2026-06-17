@@ -169,6 +169,13 @@ public final class SshKeyManager {
      * @return true if the entry was written successfully
      */
     public static boolean addHostEntry(String instanceName) {
+        return addHostEntry(instanceName, null);
+    }
+
+    /**
+     * @param hostname optional IP/hostname for clients that don't support ProxyCommand
+     */
+    public static boolean addHostEntry(String instanceName, String hostname) {
         try {
             ensureManagedConfigExists();
             var content = Files.readString(Environment.sshConfigFile());
@@ -178,6 +185,9 @@ public final class SshKeyManager {
 
             blocks.add("");
             blocks.add("Host " + instanceName);
+            if (hostname != null && !hostname.isEmpty()) {
+                blocks.add("    Hostname " + hostname);
+            }
             blocks.add("    ProxyCommand \"" + isxPath + "\" ssh-proxy " + instanceName);
             blocks.add("    User agentuser");
             blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");

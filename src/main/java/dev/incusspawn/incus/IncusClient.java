@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
@@ -550,6 +551,32 @@ public class IncusClient {
         var resp = http().get("/1.0/instances/" + name + "/state");
         if (!resp.isSuccess()) return 0;
         return resp.body().path("metadata").path("memory").path("usage").asLong(0);
+    }
+
+    /**
+     * Extract the first global IPv4 address from an Incus network state node.
+     */
+    public static String extractIpv4(JsonNode networkNode) {
+        for (var ifaces = networkNode.fields(); ifaces.hasNext(); ) {
+            var iface = ifaces.next();
+            if (iface.getKey().equals("lo")) continue;
+            for (var addr : iface.getValue().path("addresses")) {
+                if ("inet".equals(addr.path("family").asText())
+                        && "global".equals(addr.path("scope").asText())) {
+                    return addr.path("address").asText();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get the IPv4 address for a running container, or null if unavailable.
+     */
+    public String getContainerIpv4(String name) {
+        var resp = http().get("/1.0/instances/" + name + "/state");
+        if (!resp.isSuccess()) return null;
+        return extractIpv4(resp.body().path("metadata").path("network"));
     }
 
     /**

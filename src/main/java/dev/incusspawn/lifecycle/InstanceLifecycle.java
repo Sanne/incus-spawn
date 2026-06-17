@@ -77,7 +77,7 @@ public final class InstanceLifecycle {
     public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
         var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
         var hasSshKeys = !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
-                || buildSourceJson.contains("\"ssh\"");
+                || buildSourceJson.contains("\"sshd\"");
         var workdir = incus.configGet(name, Metadata.WORKDIR);
         var shellCommand = incus.configGet(name, Metadata.SHELL_COMMAND);
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
@@ -175,6 +175,8 @@ public final class InstanceLifecycle {
             System.out.println("Configuring SSH access...");
             injectSshKeyIfAvailable(incus, name, null);
         }
+
+        configureSshHostEntry(incus, name);
     }
 
     public static void setupRuntime(IncusClient incus, String name,
@@ -259,12 +261,10 @@ public final class InstanceLifecycle {
         }
 
         // Ensure managed key infrastructure exists (creates lazily for pre-existing installs)
-        boolean includeConfigured = false;
         try {
             if (!SshKeyManager.exists()) {
                 SshKeyManager.ensureKeyPairExists();
             }
-            includeConfigured = SshKeyManager.ensureSshConfigInclude();
         } catch (Exception ignored) {}
 
         // Collect keys to inject — managed key plus any personal key
@@ -312,14 +312,23 @@ public final class InstanceLifecycle {
             return;
         }
 
-        // Configure SSH ProxyCommand entry for seamless access
+        System.out.println("  SSH keys injected.");
+    }
+
+    /**
+     * Configure the SSH host entry with Hostname directive. Must be called after
+     * the container is started so the IPv4 address is available.
+     */
+    public static void configureSshHostEntry(IncusClient incus, String name) {
+        if (!SshKeyManager.exists()) return;
+
+        boolean includeConfigured = SshKeyManager.ensureSshConfigInclude();
         boolean hostConfigured = false;
-        if (SshKeyManager.exists()) {
-            try {
-                hostConfigured = SshKeyManager.addHostEntry(name);
-            } catch (Exception e) {
-                System.err.println("  Warning: failed to configure SSH host entry: " + e.getMessage());
-            }
+        try {
+            var ipv4 = incus.getContainerIpv4(name);
+            hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
+        } catch (Exception e) {
+            System.err.println("  Warning: failed to configure SSH host entry: " + e.getMessage());
         }
 
         if (hostConfigured && includeConfigured) {
