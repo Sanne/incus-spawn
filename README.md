@@ -2,7 +2,7 @@
 
 Spin up isolated Linux environments in seconds — full system containers with copy-on-write branching and transparent credential isolation. Run AI coding agents, triage untrusted patches, reproduce bug reports — without risking your host.
 
-**Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. incus-spawn solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough. Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
+**Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. incus-spawn solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
 
 **API keys and tokens never enter containers.** A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently — `claude`, `pi`, `gh`, `git`, `curl`, and any other tool work unmodified, with no configuration or wrappers needed inside the environment. Branches run with full internet, proxy-only egress, or completely airgapped. The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice.
 
@@ -14,7 +14,9 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ## Quick Start
 
-Requires **Linux or macOS (Apple Silicon)**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). Windows is not yet supported.
+Requires **Linux or macOS (Apple Silicon)**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status`. Windows and Intel Macs are not yet supported.
+
+**macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
 On macOS (Apple Silicon):
 
@@ -60,7 +62,7 @@ tpl-java  (stopped template, ~2GB)
 
 You can install packages, break things, and destroy a branch when done. The template and other branches are completely unaffected. Sudo works without a password, and shell sessions set the terminal title to `isx:<containername>` so you always know which environment you're in.
 
-Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
+Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
 
 ### Credential Isolation
 
@@ -395,7 +397,7 @@ Three modes are available:
 | Mode | Default? | Description |
 |------|----------|-------------|
 | `readonly` | Yes | Read-only bind mount. Simple, safe. |
-| `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. |
+| `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. **Linux only** — not yet supported on macOS. |
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. For example, `source: ~/.m2/repository` maps to `/home/agentuser/.m2/repository` inside the container.
@@ -762,6 +764,10 @@ Resolution order (later sources override earlier ones with the same name):
 | `isx proxy uninstall` | Stop and remove the systemd proxy service |
 | `isx proxy logs` | View proxy logs |
 | `isx proxy dump` | Run a local pass-through proxy for API traffic capture |
+| `isx vm start` | Start the VM (macOS only) |
+| `isx vm stop` | Stop the VM (macOS only) |
+| `isx vm status` | Show VM status and system diagnostics (macOS only) |
+| `isx vm console` | Follow VM serial console output (macOS only) |
 | `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
 
 Use `isx <command> --help` for detailed options on any command.
