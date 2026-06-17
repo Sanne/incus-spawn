@@ -259,12 +259,11 @@ public final class InstanceLifecycle {
         }
 
         // Ensure managed key infrastructure exists (creates lazily for pre-existing installs)
-        boolean includeConfigured = false;
         try {
             if (!SshKeyManager.exists()) {
                 SshKeyManager.ensureKeyPairExists();
             }
-            includeConfigured = SshKeyManager.ensureSshConfigInclude();
+            SshKeyManager.ensureSshConfigInclude();
         } catch (Exception ignored) {}
 
         // Collect keys to inject — managed key plus any personal key
@@ -323,10 +322,8 @@ public final class InstanceLifecycle {
             }
         }
 
-        if (hostConfigured && includeConfigured) {
+        if (hostConfigured) {
             System.out.println("  SSH access: ssh " + name);
-        } else if (hostConfigured) {
-            System.out.println("  SSH access: ssh -F ~/.config/incus-spawn/ssh/config " + name);
         } else {
             System.out.println("  SSH is available — connect with: isx shell " + name);
         }

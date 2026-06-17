@@ -18,7 +18,8 @@ import java.util.concurrent.TimeUnit;
 public final class SshKeyManager {
 
     private static final String INCLUDE_LINE = "Include ~/.config/incus-spawn/ssh/config";
-    private static final String CONFIG_HEADER = "# Auto-managed by incus-spawn -- do not edit\n";
+    private static final String MARKER_BEGIN = "# isx:begin:";
+    private static final String MARKER_END = "# isx:end:";
     private SshKeyManager() {}
 
     public static boolean exists() {
@@ -152,18 +153,7 @@ public final class SshKeyManager {
     }
 
     /**
-     * Ensure the managed SSH config file exists (creates it with the header if missing).
-     * Also creates the ssh directory if needed.
-     */
-    static void ensureManagedConfigExists() throws IOException {
-        Files.createDirectories(Environment.sshDir());
-        if (!Files.exists(Environment.sshConfigFile())) {
-            Files.writeString(Environment.sshConfigFile(), CONFIG_HEADER);
-        }
-    }
-
-    /**
-     * Add or replace a Host block in the managed SSH config for the given instance.
+     * Add or replace a Host block in ~/.ssh/config for the given instance.
      * Uses a ProxyCommand that tunnels through the Incus exec API, so no direct
      * IP connectivity to the container is required.
      * @return true if the entry was written successfully
@@ -177,26 +167,30 @@ public final class SshKeyManager {
      */
     public static boolean addHostEntry(String instanceName, String hostname) {
         try {
-            ensureManagedConfigExists();
-            var content = Files.readString(Environment.sshConfigFile());
-            var blocks = parseWithoutHostBlocks(content, instanceName);
+            var sshConfig = resolveUserSshConfig();
 
             var isxPath = resolveIsxPath();
 
-            blocks.add("");
-            blocks.add("Host " + instanceName);
+            var block = new ArrayList<String>();
+            block.add(MARKER_BEGIN + instanceName);
+            block.add("Host " + instanceName);
             if (hostname != null && !hostname.isEmpty()) {
-                blocks.add("    Hostname " + hostname);
+                block.add("    Hostname " + hostname);
             }
-            blocks.add("    ProxyCommand \"" + isxPath + "\" ssh-proxy " + instanceName);
-            blocks.add("    User agentuser");
-            blocks.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
-            blocks.add("    IdentitiesOnly yes");
-            blocks.add("    StrictHostKeyChecking no");
-            blocks.add("    UserKnownHostsFile /dev/null");
-            blocks.add("");
+            block.add("    ProxyCommand \"" + isxPath + "\" ssh-proxy " + instanceName);
+            block.add("    User agentuser");
+            block.add("    IdentityFile ~/.config/incus-spawn/ssh/id_ed25519");
+            block.add("    IdentitiesOnly yes");
+            block.add("    StrictHostKeyChecking no");
+            block.add("    UserKnownHostsFile /dev/null");
+            block.add(MARKER_END + instanceName);
 
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            var content = Files.exists(sshConfig) ? Files.readString(sshConfig) : "";
+            var cleaned = removeMarkerBlock(content, instanceName);
+            var newContent = cleaned.stripTrailing().isEmpty()
+                    ? String.join("\n", block) + "\n"
+                    : cleaned.stripTrailing() + "\n\n" + String.join("\n", block) + "\n";
+            writeAtomically(sshConfig, newContent);
             return true;
         } catch (IOException e) {
             System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
@@ -205,46 +199,35 @@ public final class SshKeyManager {
     }
 
     /**
-     * Remove a Host block from the managed SSH config.
+     * Remove a Host block from ~/.ssh/config.
      */
     public static void removeHostEntry(String instanceName) {
-        if (!Files.exists(Environment.sshConfigFile())) return;
         try {
-            var content = Files.readString(Environment.sshConfigFile());
-            var blocks = parseWithoutHostBlocks(content, instanceName);
-            writeAtomically(Environment.sshConfigFile(), String.join("\n", blocks));
+            var sshConfig = resolveUserSshConfig();
+            if (!Files.exists(sshConfig)) return;
+            var content = Files.readString(sshConfig);
+            var cleaned = removeMarkerBlock(content, instanceName);
+            writeAtomically(sshConfig, cleaned);
         } catch (IOException e) {
             System.err.println("  Warning: failed to update SSH config: " + e.getMessage());
         }
     }
 
     /**
-     * Clean up SSH config for a destroyed instance.
+     * Remove a marker-delimited block for the given instance from SSH config content.
      */
-    public static void cleanupInstance(String instanceName) {
-        removeHostEntry(instanceName);
-    }
-
-    /**
-     * Parse the managed SSH config, returning all lines except those belonging to
-     * the named Host block.
-     */
-    private static List<String> parseWithoutHostBlocks(String content, String instanceName) {
+    private static String removeMarkerBlock(String content, String instanceName) {
+        var beginMarker = MARKER_BEGIN + instanceName;
+        var endMarker = MARKER_END + instanceName;
         var result = new ArrayList<String>();
-        var lines = content.lines().toList();
         boolean skipping = false;
 
-        for (var line : lines) {
-            var trimmed = line.strip();
-            if (trimmed.startsWith("Host ")) {
-                skipping = trimmed.substring(5).strip().equals(instanceName);
-                if (!skipping) result.add(line);
-            } else if (skipping) {
-                if (!trimmed.isEmpty() && !trimmed.startsWith("#") && !Character.isWhitespace(line.charAt(0))) {
-                    skipping = false;
-                    result.add(line);
-                }
-            } else {
+        for (var line : content.lines().toList()) {
+            if (line.strip().equals(beginMarker)) {
+                skipping = true;
+            } else if (line.strip().equals(endMarker)) {
+                skipping = false;
+            } else if (!skipping) {
                 result.add(line);
             }
         }
@@ -253,7 +236,22 @@ public final class SshKeyManager {
         while (!result.isEmpty() && result.get(result.size() - 1).isBlank()) {
             result.remove(result.size() - 1);
         }
-        return result;
+        return result.isEmpty() ? "" : String.join("\n", result) + "\n";
+    }
+
+    private static Path resolveUserSshConfig() throws IOException {
+        var sshDir = Environment.home().resolve(".ssh");
+        Files.createDirectories(sshDir);
+        Files.setPosixFilePermissions(sshDir, PosixFilePermissions.fromString("rwx------"));
+        var sshConfig = sshDir.resolve("config");
+        return Files.exists(sshConfig) ? sshConfig.toRealPath() : sshConfig;
+    }
+
+    /**
+     * Clean up SSH config for a destroyed instance.
+     */
+    public static void cleanupInstance(String instanceName) {
+        removeHostEntry(instanceName);
     }
 
     private static String resolveIsxPath() {

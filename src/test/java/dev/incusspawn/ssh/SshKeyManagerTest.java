@@ -66,12 +66,13 @@ class SshKeyManagerTest {
     }
 
     @Test
-    void addHostEntryCreatesConfigFile() {
+    void addHostEntryWritesToUserSshConfig() {
         SshKeyManager.addHostEntry("test-instance");
 
-        var configFile = tempDir.resolve(".config/incus-spawn/ssh/config");
-        assertTrue(Files.exists(configFile));
-        var content = assertDoesNotThrow(() -> Files.readString(configFile));
+        var sshConfig = tempDir.resolve(".ssh/config");
+        assertTrue(Files.exists(sshConfig));
+        var content = assertDoesNotThrow(() -> Files.readString(sshConfig));
+        assertTrue(content.contains("# isx:begin:test-instance"));
         assertTrue(content.contains("Host test-instance"));
         assertTrue(content.contains("ProxyCommand"));
         assertTrue(content.contains("ssh-proxy test-instance"));
@@ -80,6 +81,16 @@ class SshKeyManagerTest {
         assertTrue(content.contains("IdentitiesOnly yes"));
         assertTrue(content.contains("StrictHostKeyChecking no"));
         assertTrue(content.contains("UserKnownHostsFile /dev/null"));
+        assertTrue(content.contains("# isx:end:test-instance"));
+    }
+
+    @Test
+    void addHostEntryWithHostname() {
+        SshKeyManager.addHostEntry("test-instance", "10.0.0.42");
+
+        var content = assertDoesNotThrow(
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
+        assertTrue(content.contains("Hostname 10.0.0.42"));
     }
 
     @Test
@@ -88,7 +99,7 @@ class SshKeyManagerTest {
         SshKeyManager.addHostEntry("test-instance");
 
         var content = assertDoesNotThrow(
-                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
         assertEquals(1, content.lines().filter(l -> l.strip().startsWith("Host ")).count(),
                 "Should have exactly one Host block");
     }
@@ -99,10 +110,24 @@ class SshKeyManagerTest {
         SshKeyManager.addHostEntry("instance-b");
 
         var content = assertDoesNotThrow(
-                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
         assertTrue(content.contains("Host instance-a"));
         assertTrue(content.contains("Host instance-b"));
         assertEquals(2, content.lines().filter(l -> l.strip().startsWith("Host ")).count());
+    }
+
+    @Test
+    void addHostEntryPreservesExistingContent() throws IOException {
+        var sshDir = tempDir.resolve(".ssh");
+        Files.createDirectories(sshDir);
+        Files.writeString(sshDir.resolve("config"), "Host myserver\n    HostName 1.2.3.4\n");
+
+        SshKeyManager.addHostEntry("test-instance");
+
+        var content = Files.readString(sshDir.resolve("config"));
+        assertTrue(content.contains("Host myserver"), "Existing content should be preserved");
+        assertTrue(content.contains("HostName 1.2.3.4"), "Existing content should be preserved");
+        assertTrue(content.contains("Host test-instance"), "New entry should be added");
     }
 
     @Test
@@ -112,9 +137,11 @@ class SshKeyManagerTest {
         SshKeyManager.removeHostEntry("remove-me");
 
         var content = assertDoesNotThrow(
-                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
         assertTrue(content.contains("Host keep-me"));
         assertFalse(content.contains("Host remove-me"));
+        assertFalse(content.contains("isx:begin:remove-me"));
+        assertFalse(content.contains("isx:end:remove-me"));
     }
 
     @Test
@@ -123,7 +150,7 @@ class SshKeyManagerTest {
         SshKeyManager.removeHostEntry("nonexistent");
 
         var content = assertDoesNotThrow(
-                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
         assertTrue(content.contains("Host keep-me"));
     }
 
@@ -173,7 +200,7 @@ class SshKeyManagerTest {
         SshKeyManager.cleanupInstance("my-instance");
 
         var config = assertDoesNotThrow(
-                () -> Files.readString(tempDir.resolve(".config/incus-spawn/ssh/config")));
+                () -> Files.readString(tempDir.resolve(".ssh/config")));
         assertFalse(config.contains("Host my-instance"), "Host block should be removed");
         assertTrue(config.contains("Host other-instance"), "Other host should remain");
     }
