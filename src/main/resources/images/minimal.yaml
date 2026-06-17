@@ -4,6 +4,7 @@ image: images:fedora/44
 
 packages:
   - glibc-langpack-en
+  - bash-completion
 
 remove_packages:
   - glibc-all-langpacks

@@ -773,6 +773,11 @@ public class BuildCommand extends BaseCommand {
         container.appendToProfile("export ISX_CONTAINER=\"${HOSTNAME}\"");
         container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(canonicalName));
 
+        // Enable bash completion
+        container.appendToProfile("if [ -f /usr/share/bash-completion/bash_completion ]; then");
+        container.appendToProfile("  . /usr/share/bash-completion/bash_completion");
+        container.appendToProfile("fi");
+
         System.out.println("Installing base packages...");
         container.runInteractive("Failed to install base packages",
                 "dnf", "install", "-y", "--setopt=keepcache=true",
