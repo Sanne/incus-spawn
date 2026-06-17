@@ -68,6 +68,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @CommandDefinition(
@@ -3249,21 +3250,8 @@ public class ListCommand extends BaseCommand {
                 var expandedDevices = node.path("expanded_devices");
                 var rootSize = expandedDevices.path("root").path("size").asText("");
 
-                // Extract first global IPv4 address from state.network
-                var ipv4 = "";
-                var network = node.path("state").path("network");
-                for (var ifaces = network.fields(); ifaces.hasNext(); ) {
-                    var iface = ifaces.next();
-                    if (iface.getKey().equals("lo")) continue;
-                    for (var addr : iface.getValue().path("addresses")) {
-                        if ("inet".equals(addr.path("family").asText())
-                                && "global".equals(addr.path("scope").asText())) {
-                            ipv4 = addr.path("address").asText();
-                            break;
-                        }
-                    }
-                    if (!ipv4.isEmpty()) break;
-                }
+                var ipv4 = Objects.requireNonNullElse(
+                        IncusClient.extractIpv4(node.path("state").path("network")), "");
 
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),

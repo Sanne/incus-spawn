@@ -316,7 +316,8 @@ public final class InstanceLifecycle {
         boolean hostConfigured = false;
         if (SshKeyManager.exists()) {
             try {
-                hostConfigured = SshKeyManager.addHostEntry(name);
+                var ipv4 = incus.getContainerIpv4(name);
+                hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
             } catch (Exception e) {
                 System.err.println("  Warning: failed to configure SSH host entry: " + e.getMessage());
             }
