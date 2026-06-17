@@ -56,6 +56,24 @@ public class InitCommand extends BaseCommand {
 
     private int totalSteps;
     private int currentStep;
+    private HttpClient httpClient;
+
+    // Not a static final: GraalVM native-image would capture it at build time.
+    // HTTP/1.1: Java's default HTTP/2 ALPN negotiation can cause the first TLS
+    // request in a native-image JVM to fail, then succeed on retry.
+    private HttpClient getHttpClient() {
+        if (httpClient == null) {
+            httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
+        }
+        return httpClient;
+    }
+
+    private void closeHttpClient() {
+        if (httpClient != null) {
+            httpClient.close();
+            httpClient = null;
+        }
+    }
 
     private static String pad(String s, int width) {
         int vlen = ANSI_PATTERN.matcher(s).replaceAll("").length();
@@ -219,6 +237,7 @@ public class InitCommand extends BaseCommand {
         setupSshKeyPair();
         setupClaudeAuth();
         setupGitHubAuth();
+        closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
 
@@ -274,6 +293,7 @@ public class InitCommand extends BaseCommand {
         setupSshKeyPair();
         setupClaudeAuth();
         setupGitHubAuth();
+        closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
 
@@ -909,7 +929,7 @@ public class InitCommand extends BaseCommand {
         }
 
         try {
-            var client = HttpClient.newHttpClient();
+            var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.anthropic.com/v1/messages"))
                     .header("x-api-key", key)
@@ -964,7 +984,7 @@ public class InitCommand extends BaseCommand {
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
                     + "/publishers/anthropic/models/claude-sonnet-4:rawPredict";
-            var client = HttpClient.newHttpClient();
+            var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", "Bearer " + accessToken)
@@ -1022,7 +1042,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Testing GitHub token...");
             boolean verified = false;
             try {
-                var client = HttpClient.newHttpClient();
+                var client = getHttpClient();
                 var request = HttpRequest.newBuilder()
                         .uri(URI.create("https://api.github.com/user"))
                         .header("Authorization", "token " + token)
