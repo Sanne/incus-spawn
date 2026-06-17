@@ -263,7 +263,6 @@ public final class InstanceLifecycle {
             if (!SshKeyManager.exists()) {
                 SshKeyManager.ensureKeyPairExists();
             }
-            SshKeyManager.ensureSshConfigInclude();
         } catch (Exception ignored) {}
 
         // Collect keys to inject — managed key plus any personal key

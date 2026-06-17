@@ -17,7 +17,6 @@ import java.util.concurrent.TimeUnit;
  */
 public final class SshKeyManager {
 
-    private static final String INCLUDE_LINE = "Include ~/.config/incus-spawn/ssh/config";
     private static final String MARKER_BEGIN = "# isx:begin:";
     private static final String MARKER_END = "# isx:end:";
     private SshKeyManager() {}
@@ -110,45 +109,6 @@ public final class SshKeyManager {
             return Files.readString(Environment.sshPubKeyFile()).strip();
         } catch (IOException e) {
             throw new RuntimeException("Failed to read SSH public key: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Idempotently prepend an Include directive to ~/.ssh/config pointing
-     * to the incus-spawn managed SSH config.
-     *
-     * @return true if the Include is present (already existed or was added), false on failure
-     */
-    public static boolean ensureSshConfigInclude() {
-        try {
-            var sshDir = Environment.home().resolve(".ssh");
-            Files.createDirectories(sshDir);
-            Files.setPosixFilePermissions(sshDir, PosixFilePermissions.fromString("rwx------"));
-
-            var sshConfig = sshDir.resolve("config");
-            // Resolve symlinks so dotfile-managed configs are updated in place
-            var resolvedConfig = Files.exists(sshConfig)
-                    ? sshConfig.toRealPath()
-                    : sshConfig;
-            String content = "";
-            if (Files.exists(resolvedConfig)) {
-                content = Files.readString(resolvedConfig);
-                // Check if the Include is already at the top (before any Host block)
-                for (var line : content.lines().toList()) {
-                    var trimmed = line.strip();
-                    if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
-                    if (trimmed.equals(INCLUDE_LINE)) return true;
-                    break; // first non-blank, non-comment line is not our Include
-                }
-            }
-
-            // Prepend Include line — must come before Host blocks to take effect
-            var newContent = INCLUDE_LINE + "\n\n" + content;
-            writeAtomically(resolvedConfig, newContent);
-            return true;
-        } catch (IOException e) {
-            System.err.println("  Warning: failed to update ~/.ssh/config: " + e.getMessage());
-            return false;
         }
     }
 

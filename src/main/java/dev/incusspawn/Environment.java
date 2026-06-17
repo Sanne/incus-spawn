@@ -35,10 +35,6 @@ public final class Environment {
         return sshDir().resolve("id_ed25519.pub");
     }
 
-    public static Path sshConfigFile() {
-        return sshDir().resolve("config");
-    }
-
     public static Path downloadCacheDir() {
         return home().resolve(".cache/incus-spawn/downloads");
     }

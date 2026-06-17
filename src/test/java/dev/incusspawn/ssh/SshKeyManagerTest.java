@@ -155,44 +155,6 @@ class SshKeyManagerTest {
     }
 
     @Test
-    void ensureSshConfigIncludeCreatesConfigIfMissing() {
-        assertTrue(SshKeyManager.ensureSshConfigInclude());
-
-        var sshConfig = tempDir.resolve(".ssh/config");
-        assertTrue(Files.exists(sshConfig));
-        var content = assertDoesNotThrow(() -> Files.readString(sshConfig));
-        assertTrue(content.contains("Include ~/.config/incus-spawn/ssh/config"));
-    }
-
-    @Test
-    void ensureSshConfigIncludePrependsToExistingConfig() throws IOException {
-        var sshDir = tempDir.resolve(".ssh");
-        Files.createDirectories(sshDir);
-        var sshConfig = sshDir.resolve("config");
-        Files.writeString(sshConfig, "Host existing\n    HostName 1.2.3.4\n");
-
-        assertTrue(SshKeyManager.ensureSshConfigInclude());
-
-        var content = Files.readString(sshConfig);
-        var lines = content.lines().toList();
-        assertEquals("Include ~/.config/incus-spawn/ssh/config", lines.get(0),
-                "Include should be the first line");
-        assertTrue(content.contains("Host existing"), "Existing content should be preserved");
-    }
-
-    @Test
-    void ensureSshConfigIncludeIsIdempotent() throws IOException {
-        SshKeyManager.ensureSshConfigInclude();
-        var sshConfig = tempDir.resolve(".ssh/config");
-        var firstContent = Files.readString(sshConfig);
-
-        SshKeyManager.ensureSshConfigInclude();
-        var secondContent = Files.readString(sshConfig);
-
-        assertEquals(firstContent, secondContent, "Should not duplicate the Include line");
-    }
-
-    @Test
     void fullCleanupFlow() {
         SshKeyManager.addHostEntry("my-instance");
         SshKeyManager.addHostEntry("other-instance");

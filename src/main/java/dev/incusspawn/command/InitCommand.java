@@ -608,12 +608,7 @@ public class InitCommand extends BaseCommand {
             } else {
                 SshKeyManager.ensureKeyPairExists();
             }
-            if (SshKeyManager.ensureSshConfigInclude()) {
-                System.out.println("  SSH configuration ready.");
-            } else {
-                System.out.println("  SSH key generated but ~/.ssh/config could not be updated.");
-                System.out.println("  Add manually: Include ~/.config/incus-spawn/ssh/config");
-            }
+            System.out.println("  SSH configuration ready.");
         } catch (Exception e) {
             System.err.println("  Warning: SSH key setup failed: " + e.getMessage());
             System.err.println("  SSH container access will fall back to your personal keys.");
