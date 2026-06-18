@@ -8,7 +8,7 @@ Spin up isolated Linux environments in seconds — full system containers with c
 
 **Branching is instant.** Like `git branch`, each clone is a copy-on-write snapshot that shares storage with its parent. Build a template once with your preferred tools and repos, then spin up complete, disposable environments in seconds — each with its own filesystem, networking, and process tree. Get your work back via standard `git fetch` using `isx://` remotes.
 
-**Built for developer workflows.** Templates are YAML: packages, tools, repos. Branch and it's all there. Git remotes are managed automatically — `git fetch fix-auth` from your host pulls commits straight out of the container. JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
+**Built for developer workflows.** Templates are YAML: packages, tools, repos. Branch and it's all there. Git remotes are managed automatically — `git fetch fix-auth` from your host pulls commits straight out of the container. VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
 
 Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
@@ -474,7 +474,28 @@ Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → se
 
 ### Remote IDE Access
 
-The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend, allowing you to connect from JetBrains Gateway on the host. It declares `requires: [sshd]`, so the SSH server is installed automatically:
+Both VS Code and JetBrains IntelliJ can connect to containers with their UI running natively on the host and all backend processing (indexing, builds, terminals, extensions) running inside the container. SSH keys are managed automatically: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`, and each branch injects it into the container along with your personal `~/.ssh` key. Container host keys are pre-validated so `ssh <instance-name>` just works — no passphrase prompt, no host key warning. Entries are cleaned up when instances are destroyed.
+
+Both tools declare TUI actions — press **F9** on a running instance to open a repo directly in your IDE.
+
+#### VS Code (Remote - SSH)
+
+The built-in `vscode-remote` tool provides one-click "Open in VS Code" actions. It declares `requires: [sshd]`, so the SSH server is installed automatically. No backend is pre-installed inside the container — VS Code downloads its own server component on first connect.
+
+**Host prerequisite**: install the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension in VS Code.
+
+```yaml
+name: tpl-java-vscode
+parent: tpl-java
+tools:
+  - vscode-remote    # auto-installs sshd via requires
+```
+
+#### JetBrains IntelliJ (Gateway)
+
+The built-in `idea-backend` tool installs the JetBrains IntelliJ IDEA remote development backend inside the container. It declares `requires: [sshd]`, so the SSH server is installed automatically.
+
+**Host prerequisite**: install [JetBrains Gateway](https://www.jetbrains.com/remote-development/gateway/).
 
 ```yaml
 name: tpl-java-ide
@@ -490,10 +511,6 @@ tools:
   - idea-backend:
       memory: "8g"
 ```
-
-SSH keys are managed automatically: `isx init` generates a dedicated passphraseless key pair at `~/.config/incus-spawn/ssh/`, and each branch injects it into the container along with your personal `~/.ssh` key. Container host keys are pre-validated so `ssh <instance-name>` just works — no passphrase prompt, no host key warning. Entries are cleaned up when instances are destroyed.
-
-The `idea-backend` tool also declares a tool action that lets you open repos directly in Gateway from the TUI — press F9 on a running instance to see available actions, including an "Open repo in Gateway" entry for each declared repository.
 
 ### Tool Parameters
 
