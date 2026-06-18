@@ -6,11 +6,15 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
@@ -70,8 +74,14 @@ public final class IncusRemoteSetup {
      * The VM must already be running with HTTPS enabled on port 8443.
      * The VM trusts our client cert via virtio-fs, so no trust token
      * exchange is needed.
+     * <p>
+     * When a vsock socket path is provided and the socket exists, the
+     * remote is configured to use a localhost proxy that tunnels through
+     * the Unix socket. This bypasses network-layer socket filters (e.g.
+     * Cisco AnyConnect) that block non-Apple-signed binaries from
+     * connecting to the VM subnet.
      */
-    public static void configure(String vmIp) throws IOException {
+    public static void configure(String vmIp, Path vsockSocket) throws IOException {
         System.err.println("Configuring Incus remote for VM at " + vmIp + "...");
 
         Files.createDirectories(Environment.incusConfigDir());
@@ -79,13 +89,23 @@ public final class IncusRemoteSetup {
 
         ensureCertExists();
 
-        System.err.println("  Waiting for Incus HTTPS API on " + vmIp + ":" + INCUS_PORT + "...");
-        if (!waitForPort(vmIp, INCUS_PORT, 60)) {
-            throw new IOException("Incus HTTPS API not reachable at " + vmIp + ":" + INCUS_PORT
-                    + " after 60s. Check 'isx vm console' for boot logs.");
+        // Try vsock first (bypasses Cisco AnyConnect socket filter), fall back to direct TCP
+        boolean useVsock = vsockSocket != null && waitForSocket(vsockSocket, 60);
+        if (useVsock) {
+            System.err.println("  Connected via vsock tunnel");
+        } else {
+            System.err.println("  Waiting for Incus HTTPS API on " + vmIp + ":" + INCUS_PORT + "...");
+            if (!waitForPort(vmIp, INCUS_PORT, 60)) {
+                throw new IOException("Incus HTTPS API not reachable at " + vmIp + ":" + INCUS_PORT
+                        + " after 60s. Check 'isx vm console' for boot logs.");
+            }
         }
 
-        saveServerCert(vmIp);
+        if (useVsock) {
+            saveServerCertViaVsock(vsockSocket);
+        } else {
+            saveServerCert(vmIp);
+        }
 
         writeClientConfig(vmIp);
 
@@ -93,7 +113,7 @@ public final class IncusRemoteSetup {
         System.err.println("  Incus remote '" + REMOTE_NAME + "' configured at " + baseUrl);
     }
 
-    public static void updateVmIp(String newIp) throws IOException {
+    public static void updateVmIp(String newIp, Path vsockSocket) throws IOException {
         writeClientConfig(newIp);
         System.err.println("  Updated Incus remote IP to " + newIp);
     }
@@ -189,6 +209,49 @@ public final class IncusRemoteSetup {
     }
 
     // --- Helpers ---
+
+    private static boolean waitForSocket(Path socketPath, int maxWaitSeconds) {
+        for (int i = 0; i < maxWaitSeconds; i++) {
+            if (Files.exists(socketPath)) {
+                try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
+                    channel.connect(UnixDomainSocketAddress.of(socketPath));
+                    return true;
+                } catch (IOException ignored) {}
+            }
+            try { Thread.sleep(1000); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static void saveServerCertViaVsock(Path vsockSocket) {
+        try {
+            int proxyPort = dev.incusspawn.incus.UnixSocketProxy.startIfNeeded(vsockSocket);
+            var sslContext = SSLContext.getInstance("TLS");
+            var capturingTm = new CertCapturingTrustManager();
+            sslContext.init(null, new TrustManager[]{capturingTm}, null);
+
+            var client = HttpClient.newBuilder()
+                    .sslContext(sslContext)
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .build();
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://localhost:" + proxyPort + "/1.0"))
+                    .GET()
+                    .timeout(Duration.ofSeconds(5))
+                    .build();
+            client.send(request, HttpResponse.BodyHandlers.discarding());
+
+            if (capturingTm.captured != null) {
+                var certPath = Environment.incusServerCertsDir().resolve(REMOTE_NAME + ".crt");
+                Files.writeString(certPath, toPem("CERTIFICATE", capturingTm.captured.getEncoded()));
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not save server certificate via vsock: " + e.getMessage());
+        }
+    }
 
     private static boolean waitForPort(String host, int port, int maxWaitSeconds) {
         for (int i = 0; i < maxWaitSeconds; i++) {

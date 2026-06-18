@@ -60,6 +60,20 @@ class HttpsTransport implements IncusTransport {
                 var certDir = configPath.getParent();
                 var sslContext = buildSslContext(certDir, addr);
                 if (sslContext == null) continue;
+
+                // If a vsock Unix socket is available, route through it
+                // to bypass network-layer socket filters (Cisco AnyConnect)
+                var vsockSocket = Environment.vmVsockSocket();
+                if (Files.exists(vsockSocket)) {
+                    try {
+                        int proxyPort = UnixSocketProxy.startIfNeeded(vsockSocket);
+                        var vsockAddr = "https://localhost:" + proxyPort;
+                        return new HttpsTransport(vsockAddr, sslContext);
+                    } catch (IOException e) {
+                        System.err.println("Warning: vsock proxy failed, falling back to direct: " + e.getMessage());
+                    }
+                }
+
                 return new HttpsTransport(addr, sslContext);
             } catch (Exception ignored) {}
         }

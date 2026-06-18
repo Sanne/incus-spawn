@@ -125,6 +125,10 @@ public final class Environment {
         return vmStateDir().resolve("vm.rest-uri");
     }
 
+    public static Path vmVsockSocket() {
+        return vmStateDir().resolve("vm.incus.sock");
+    }
+
     public static Path vmDiskImage() {
         return vmStateDir().resolve("disk.img");
     }

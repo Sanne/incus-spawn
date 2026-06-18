@@ -38,6 +38,7 @@ public final class VmManager {
     private static final String DEFAULT_DISK_SIZE = "60G";
     private static final String DEFAULT_SWAP_SIZE = "12G";
     private static final int GA_VSOCK_PORT = 1024;
+    private static final int INCUS_VSOCK_PORT = 8443;
 
     private static final String LATEST_KNOWN_RELEASE = "0.2.2";
     private static volatile String resolvedApplianceVersion;
@@ -412,16 +413,17 @@ public final class VmManager {
         }
         System.err.println("  VM IP: " + vmIp);
 
+        var vsockSocket = Environment.vmVsockSocket();
         if (!IncusRemoteSetup.isConfigured()) {
             try {
-                IncusRemoteSetup.configure(vmIp);
+                IncusRemoteSetup.configure(vmIp, vsockSocket);
             } catch (IOException e) {
                 System.err.println("Failed to configure Incus remote: " + e.getMessage());
                 return false;
             }
         } else {
             try {
-                IncusRemoteSetup.updateVmIp(vmIp);
+                IncusRemoteSetup.updateVmIp(vmIp, vsockSocket);
             } catch (IOException e) {
                 System.err.println("Warning: could not update VM IP: " + e.getMessage());
             }
@@ -529,6 +531,8 @@ public final class VmManager {
                 "--device", "virtio-serial,logFilePath=" + Environment.vmLogFile(),
                 "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
                 "--timesync", "vsockPort=" + GA_VSOCK_PORT,
+                "--device", "virtio-vsock,port=" + INCUS_VSOCK_PORT
+                        + ",socketURL=" + Environment.vmVsockSocket() + ",connect",
                 "--restful-uri", "tcp://localhost:" + restPort
         ));
 
@@ -757,6 +761,7 @@ public final class VmManager {
                 + " isx.mitm_port=" + mitmPort()
                 + " isx.time=" + (System.currentTimeMillis() / 1000)
                 + " isx.ga_vsock=" + GA_VSOCK_PORT
+                + " isx.vsock_incus=" + INCUS_VSOCK_PORT
                 + " isx.proxy=remote"
                 + " isx.shared=/host";
     }
@@ -817,6 +822,7 @@ public final class VmManager {
     private static void cleanupStaleFiles() {
         try { Files.deleteIfExists(Environment.vmPidFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmRestUriFile()); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(Environment.vmVsockSocket()); } catch (IOException ignored) {}
     }
 
     private static String humanSize(long bytes) {

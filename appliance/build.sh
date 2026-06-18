@@ -69,7 +69,8 @@ apk add --no-cache \
     ca-certificates \
     util-linux \
     qemu-guest-agent \
-    shadow-subids
+    shadow-subids \
+    socat
 "
 echo "    Size after packages: $(du -sh "$ROOTFS_DIR" | cut -f1)"
 
