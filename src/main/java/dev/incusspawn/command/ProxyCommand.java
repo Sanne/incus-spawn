@@ -79,10 +79,11 @@ public class ProxyCommand extends BaseCommand {
             var config = dev.incusspawn.config.SpawnConfig.load();
             var claude = config.getClaude();
             var apiKey = claude.getApiKey();
+            var oauthToken = claude.getOauthToken();
             var ghToken = config.getGithub().getToken();
 
-            if (apiKey.isBlank() && !claude.isUseVertex()) {
-                System.err.println("Error: no Claude API key configured. Run 'isx init' first.");
+            if (!claude.hasAuth()) {
+                System.err.println("Error: no Claude credentials configured. Run 'isx init' first.");
                 return CommandResult.valueOf(1);
             }
 
@@ -129,6 +130,8 @@ public class ProxyCommand extends BaseCommand {
             if (claude.isUseVertex()) {
                 System.out.println("  Vertex AI:     " + claude.getCloudMlRegion() +
                         " (project: " + claude.getVertexProjectId() + ")");
+            } else if (!oauthToken.isBlank()) {
+                System.out.println("  OAuth token:   configured");
             } else {
                 System.out.println("  API key:       " + (apiKey.isBlank() ? "(not configured)" : "configured"));
             }
@@ -138,7 +141,8 @@ public class ProxyCommand extends BaseCommand {
 
             var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
             var vertx = Arc.container().instance(Vertx.class).get();
-            var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, apiKey, ghToken,
+            var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
+                    apiKey, oauthToken, ghToken,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
 
             if (debug) {

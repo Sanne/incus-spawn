@@ -126,6 +126,7 @@ public class MitmProxy {
     private final int mitmPort;
     private final int healthPort;
     private final String anthropicApiKey;
+    private final String oauthToken;
     private final String ghToken;
 
     // Vertex AI configuration. When useVertex=true, the proxy transparently translates
@@ -167,14 +168,16 @@ public class MitmProxy {
     private final String healthBindAddress;
 
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
-                     String healthBindAddress, String anthropicApiKey, String ghToken,
+                     String healthBindAddress, String anthropicApiKey, String oauthToken,
+                     String ghToken,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
-        this.anthropicApiKey = anthropicApiKey;
+        this.anthropicApiKey = anthropicApiKey != null ? anthropicApiKey : "";
+        this.oauthToken = oauthToken != null ? oauthToken : "";
         this.ghToken = ghToken;
         this.useVertex = useVertex;
         this.vertexRegion = vertexRegion != null ? vertexRegion : "";
@@ -218,6 +221,7 @@ public class MitmProxy {
                 DEFAULT_HEALTH_PORT,
                 gatewayIp,
                 claude.getApiKey(),
+                claude.getOauthToken(),
                 config.getGithub().getToken(),
                 claude.isUseVertex(),
                 claude.getCloudMlRegion(),
@@ -463,6 +467,8 @@ public class MitmProxy {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexHost() +
                     " (region: " + vertexRegion + ", project: " + vertexProjectId + ")");
+        } else if (!oauthToken.isBlank()) {
+            System.out.println("OAuth mode: injecting Bearer token for api.anthropic.com");
         }
         System.out.println();
         System.out.println("Press Ctrl+C to stop.");
@@ -628,6 +634,12 @@ public class MitmProxy {
                             bodyBytes, isVertexRequest, bodyRewritten, true,
                             originalDump, originalBody);
                     return;
+                }
+
+                if (upResp.statusCode() == 401 && !oauthToken.isBlank()
+                        && ANTHROPIC_DOMAINS.contains(domain)) {
+                    System.err.println("Claude OAuth token rejected (HTTP 401). " +
+                            "The token may have expired — run 'isx init' to refresh.");
                 }
 
                 relayApiResponse(clientReq, upResp, upstreamHost, domain,
@@ -1264,11 +1276,17 @@ public class MitmProxy {
             upReq.headers().remove("anthropic-version");
             upReq.headers().remove("anthropic-dangerous-direct-browser-access");
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
-            if (anthropicApiKey != null && !anthropicApiKey.isBlank()) {
+            if (!oauthToken.isBlank()) {
+                // The container's tool (claude or pi) was configured with an OAuth-shaped
+                // placeholder, so it already built the OAuth request itself — Bearer auth
+                // plus whatever Claude Code identity/beta headers Anthropic currently
+                // requires. We only swap the placeholder token for the real one and never
+                // touch those headers, so we don't have to track Anthropic's auth quirks here.
+                upReq.putHeader("Authorization", "Bearer " + oauthToken);
+                upReq.headers().remove("x-api-key");
+            } else if (!anthropicApiKey.isBlank()) {
                 upReq.putHeader("x-api-key", anthropicApiKey);
             } else {
-                // No real key — strip the container's placeholder so the request
-                // looks the same as a no-auth request from the host
                 upReq.headers().remove("x-api-key");
             }
         } else if (GITHUB_DOMAINS.contains(domain)) {

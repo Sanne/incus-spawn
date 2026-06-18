@@ -56,7 +56,7 @@ class ProxyNetworkIT {
 
         vertx = Vertx.vertx();
         proxy = new MitmProxy(vertx, proxyAddress, 18443, 18080, proxyAddress,
-                DUMMY_API_KEY, "", false, "", "");
+                DUMMY_API_KEY, "", "", false, "", "");
 
         Thread.ofPlatform().daemon().start(() -> {
             try {

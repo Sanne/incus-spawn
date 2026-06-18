@@ -231,7 +231,7 @@ iptables -P OUTPUT DROP
 2. Template images include a custom CA certificate (generated during `isx init`) so containers trust the proxy's TLS certificates
 3. The proxy listens on port 18443 on the gateway IP. An iptables PREROUTING redirect rule (installed by `isx init` via `firewall-cmd --permanent --direct`) transparently redirects traffic arriving on `incusbr0` destined for port 443 to port 18443, avoiding conflicts with the Incus daemon on port 443. The proxy terminates TLS using per-domain certificates signed by the custom CA
 4. Based on the target domain, the proxy injects authentication headers:
-   - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (direct mode) or Vertex AI passthrough/translation with GCP Bearer token (Vertex mode, see below)
+   - `api.anthropic.com` — `x-api-key: <anthropic-api-key>` (direct API key mode), `Authorization: Bearer <oauth-token>` (OAuth mode, for Claude Pro/Max subscriptions), or Vertex AI passthrough/translation with GCP Bearer token (Vertex mode, see below)
    - `github.com` (git HTTP) — `Authorization: Basic <base64(x-access-token:token)>`
    - Other GitHub domains (API, CDN) — `Authorization: Bearer <github-token>`
    - Container registry and Maven domains — relayed transparently with caching (no auth injection)
@@ -290,6 +290,8 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 **Vertex AI token refresh**: Vertex AI requests that receive a 401 response are retried once with a fresh GCP access token (the cached token is invalidated). This handles token expiry during long-running sessions without user intervention.
 
 **Buffered I/O**: The proxy uses 64KB `BufferedInputStream`/`BufferedOutputStream` on both client and upstream connections for throughput. SSE and chunked streaming responses are flushed after each line/chunk to avoid buffering delays.
+
+**OAuth token support:** Users with a Claude Pro/Max subscription (no API key) can authenticate via `claude setup-token`, which generates a long-lived (~1 year) OAuth token. The proxy injects `Authorization: Bearer <token>` into requests to `api.anthropic.com` and strips the container's placeholder `x-api-key` header. Containers are configured identically to direct API key mode (with `ANTHROPIC_API_KEY=sk-ant-placeholder`). Unlike Vertex AI tokens, OAuth tokens cannot be refreshed automatically — when a 401 is received, the proxy logs an actionable error directing the user to re-run `isx init`.
 
 **Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth application-default login` completed.
 
@@ -489,8 +491,9 @@ Real API keys and tokens never enter containers, regardless of network mode. Con
 | Credential | Container has | How it works |
 |-----------|--------------|--------------|
 | Claude API key (direct mode) | Placeholder `sk-ant-placeholder` | Proxy replaces `x-api-key` header with real key |
+| Claude OAuth token (Pro/Max) | Placeholder `sk-ant-placeholder` | Proxy strips `x-api-key` and injects `Authorization: Bearer <oauth-token>`. Container configuration is identical to direct API key mode |
 | GCP credentials (Vertex mode) | **Nothing** | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
-| Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct mode. Pi always uses standard API format; the proxy handles key injection or Vertex translation transparently |
+| Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct/OAuth mode. Pi always uses standard API format; the proxy handles key injection, OAuth Bearer injection, or Vertex translation transparently |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 The MITM TLS proxy provides credential isolation:

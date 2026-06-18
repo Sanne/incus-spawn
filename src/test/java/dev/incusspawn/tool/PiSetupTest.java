@@ -1,8 +1,14 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -12,6 +18,26 @@ class PiSetupTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String CONTAINER = "test-container";
+
+    @TempDir
+    Path tempDir;
+
+    private String originalUserHome;
+
+    @BeforeEach
+    void setup() {
+        // configureAuth() reads SpawnConfig.load(); point it at an isolated, empty
+        // config dir so these tests don't depend on (or pollute) the real ~/.config.
+        originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (originalUserHome != null) {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
 
     @Test
     void nameIsPi() {
@@ -66,6 +92,27 @@ class PiSetupTest {
         new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
         verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains("ANTHROPIC_API_KEY=sk-ant-placeholder"));
+    }
+
+    @Test
+    void installSetsOauthPlaceholderWhenHostHasOauthToken() {
+        var config = SpawnConfig.load();
+        config.getClaude().setOauthToken("sk-ant-oat01-real-token-on-host");
+        config.save();
+
+        var incus = mock(IncusClient.class);
+        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
+
+        // Pi's own Anthropic provider detects an OAuth token by its "sk-ant-oat" prefix
+        // and builds the Bearer/identity-header request itself — Pi never sees the real
+        // host token, just a placeholder shaped like one.
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains("ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-placeholder"));
+        verify(incus, never()).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), contains("ANTHROPIC_API_KEY=sk-ant-placeholder"));
     }
 

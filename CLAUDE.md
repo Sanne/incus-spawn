@@ -68,7 +68,7 @@ Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user 
 `MitmProxy` (in `proxy/`) is a TLS-terminating proxy that intercepts HTTPS to specific domains and injects real auth credentials, so containers only hold placeholder values. Key design:
 - Listens on gateway IP:18443 (iptables redirects 443->18443 on the bridge)
 - Per-domain certs signed by a custom CA (installed in templates during build)
-- Vertex AI support: three-way routing — passthrough for Vertex-formatted requests from containers running in Vertex mode, standard-to-Vertex translation for `/v1/messages` requests (using `VERTEX_ALLOWED_FIELDS` body allowlist), and direct forwarding for non-messages endpoints
+- Three auth modes for Anthropic domains (priority: Vertex > OAuth > API key): OAuth mode strips `x-api-key` and injects `Authorization: Bearer <token>` for Claude Pro/Max users; Vertex mode does three-way routing — passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (using `VERTEX_ALLOWED_FIELDS` body allowlist), and direct forwarding for non-messages endpoints; API key mode replaces `x-api-key` with the real key
 - Caches OCI blobs by SHA256 and Maven artifacts by coordinate
 
 ### TUI

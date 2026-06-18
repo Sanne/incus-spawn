@@ -30,8 +30,9 @@ public class ClaudeSetup implements ToolSetup {
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
-        configureSettings(c);
-        configureAuth(c);
+        var claude = SpawnConfig.load().getClaude();
+        configureSettings(c, claude);
+        configureAuth(c, claude);
     }
 
     private void installBinary(Container c) {
@@ -90,7 +91,7 @@ public class ClaudeSetup implements ToolSetup {
         return checksum;
     }
 
-    private void configureSettings(Container c) {
+    void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig) {
         System.out.println("Configuring Claude Code for agent use...");
         var settingsJson = """
                 {
@@ -133,7 +134,7 @@ public class ClaudeSetup implements ToolSetup {
                   "officialMarketplaceAutoInstallAttempted": true,
                   "officialMarketplaceAutoInstalled": true,
                 """);
-        if (!SpawnConfig.load().getClaude().isUseVertex()) {
+        if (!claudeConfig.isUseVertex() && !claudeConfig.isOauthMode()) {
             claudeJsonBuilder.append("""
                   "customApiKeyResponses": {
                     "approved": ["sk-ant-placeholder"],
@@ -160,25 +161,32 @@ public class ClaudeSetup implements ToolSetup {
 
     /**
      * Configure auth env vars so Claude Code skips login and makes API requests.
-     * The MITM proxy handles actual credential injection — no real secrets enter the container.
+     * The MITM proxy replaces the placeholder credential with the real one — no real
+     * secrets enter the container.
      * <p>
      * When the host uses Vertex AI, the container also runs in Vertex mode (with auth
      * skipped) so it gets the same model list and features. Requests go to
      * api.anthropic.com via ANTHROPIC_VERTEX_BASE_URL, where the proxy intercepts them
      * and forwards to the real Vertex endpoint with GCP credentials.
      * <p>
-     * When the host uses a direct API key, the container gets a placeholder API key
-     * and the proxy injects the real key.
+     * When the host has a Claude Pro/Max OAuth token configured, the container gets
+     * CLAUDE_CODE_OAUTH_TOKEN (not ANTHROPIC_API_KEY) so Claude Code itself builds the
+     * OAuth-shaped request (Bearer auth, Claude Code identity/beta headers) — the proxy
+     * only swaps the placeholder token for the real one and never has to replicate
+     * Anthropic's auth-header requirements itself.
+     * <p>
+     * Otherwise the container gets a placeholder direct API key and the proxy replaces
+     * the x-api-key header with the real key.
      */
-    private void configureAuth(Container c) {
-        var config = SpawnConfig.load();
-        var claude = config.getClaude();
+    void configureAuth(Container c, SpawnConfig.ClaudeConfig claude) {
         if (claude.isUseVertex()) {
             c.appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
             c.appendToProfile("export CLAUDE_CODE_SKIP_VERTEX_AUTH=1");
             c.appendToProfile("export CLOUD_ML_REGION=" + claude.getCloudMlRegion());
             c.appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + claude.getVertexProjectId());
             c.appendToProfile("export ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1");
+        } else if (claude.isOauthMode()) {
+            c.appendToProfile("export CLAUDE_CODE_OAUTH_TOKEN=" + SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
         } else {
             c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
         }

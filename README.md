@@ -73,6 +73,7 @@ Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GP
 - The proxy terminates TLS, injects authentication headers, and forwards to the real upstream over TLS
 - Tools (`curl`, `git`, `gh`, `claude`, `pi`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
 - **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard API requests to Vertex AI `rawPredict` format — containers run Claude Code in standard mode with zero knowledge of Vertex, no GCP credentials
+- **Claude Pro/Max support**: users with a Claude subscription (no API key) can authenticate via `claude setup-token`. The proxy injects the OAuth Bearer token transparently — no API key required
 - There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
 - **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
 
@@ -314,7 +315,7 @@ tools:
 shell-command: pi
 ```
 
-Pi is pre-configured at build time with a placeholder `ANTHROPIC_API_KEY`. The [MITM proxy](#credential-isolation) intercepts all requests to `api.anthropic.com` and injects your real credentials transparently — Pi works out of the box, and your API key never enters the container. If your host is configured for Vertex AI, the proxy automatically translates Pi's standard Anthropic API requests to Vertex AI format, with no configuration needed inside the container.
+Pi is pre-configured at build time with a placeholder `ANTHROPIC_API_KEY`. The [MITM proxy](#credential-isolation) intercepts all requests to `api.anthropic.com` and injects your real credentials transparently — Pi works out of the box, and your API key never enters the container. This works with all three auth modes: direct API key, Claude Pro/Max OAuth token, and Vertex AI. If your host is configured for Vertex AI, the proxy automatically translates Pi's standard Anthropic API requests to Vertex AI format, with no configuration needed inside the container.
 
 To run Pi without making it the default shell, omit `shell-command` and just include it in `tools:`:
 

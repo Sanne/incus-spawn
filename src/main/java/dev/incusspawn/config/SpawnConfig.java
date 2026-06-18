@@ -35,10 +35,13 @@ public class SpawnConfig {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
+        public static final String PLACEHOLDER_OAUTH_TOKEN = "sk-ant-oat01-placeholder";
+
         private boolean useVertex;
         private String cloudMlRegion = "";
         private String vertexProjectId = "";
         private String apiKey = "";
+        private String oauthToken = "";
 
         public boolean isUseVertex() { return useVertex; }
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
@@ -48,6 +51,21 @@ public class SpawnConfig {
         public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId; }
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
+        public String getOauthToken() { return oauthToken; }
+        public void setOauthToken(String oauthToken) { this.oauthToken = oauthToken == null ? "" : oauthToken; }
+
+        public boolean hasAuth() { return useVertex || !oauthToken.isBlank() || !apiKey.isBlank(); }
+
+        /** True when the container's tools should authenticate via a Claude Pro/Max OAuth token rather than a direct API key. */
+        public boolean isOauthMode() { return !useVertex && !oauthToken.isBlank(); }
+
+        public void clearAuth() {
+            useVertex = false;
+            apiKey = "";
+            oauthToken = "";
+            cloudMlRegion = "";
+            vertexProjectId = "";
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -111,8 +129,8 @@ public class SpawnConfig {
         }
 
         if (tools.contains("claude") || tools.contains("pi")) {
-            if (!config.getClaude().isUseVertex() && config.getClaude().getApiKey().isBlank()) {
-                missing.add("Anthropic API key (or Vertex AI)");
+            if (!config.getClaude().hasAuth()) {
+                missing.add("Anthropic API key, OAuth token, or Vertex AI");
             }
         }
         if (tools.contains("gh")) {

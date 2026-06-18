@@ -301,8 +301,7 @@ public class InitCommand extends BaseCommand {
 
         startStep("DNS Configuration", DNS_HINT);
         var spawnConfig = SpawnConfig.load();
-        if (!spawnConfig.getClaude().getApiKey().isBlank() || spawnConfig.getClaude().isUseVertex()
-                || !spawnConfig.getGithub().getToken().isBlank()) {
+        if (spawnConfig.getClaude().hasAuth() || !spawnConfig.getGithub().getToken().isBlank()) {
             MitmProxy.configureBridgeDns(incus);
         } else {
             System.out.println("  Skipped — no API keys configured yet.");
@@ -767,10 +766,10 @@ public class InitCommand extends BaseCommand {
     private void setupClaudeAuth() {
         startStep("Claude Code Authentication",
                 "Configures how containers authenticate with the Claude API.",
-                "You can use a direct Anthropic API key or Google Cloud",
-                "Vertex AI. The credential stays on your host and is injected",
-                "at runtime via the MITM proxy — containers never see the",
-                "real key.");
+                "You can use an Anthropic API key, a Claude Pro/Max OAuth",
+                "token, or Google Cloud Vertex AI. The credential stays on",
+                "your host and is injected at runtime via the MITM proxy —",
+                "containers never see the real key.");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -781,6 +780,7 @@ public class InitCommand extends BaseCommand {
         // Detect existing env vars
         var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
         var envApiKey = System.getenv("ANTHROPIC_API_KEY");
+        var envOauthToken = System.getenv("CLAUDE_CODE_OAUTH_TOKEN");
 
         if ("1".equals(envVertex)) {
             var region = System.getenv().getOrDefault("CLOUD_ML_REGION", "");
@@ -816,6 +816,24 @@ public class InitCommand extends BaseCommand {
                     }
                 }
             }
+        } else if (envOauthToken != null && !envOauthToken.isBlank()) {
+            System.out.println("  Detected CLAUDE_CODE_OAUTH_TOKEN from environment.");
+            System.out.println("  Verifying OAuth token...");
+            var oauthResult = verifyOauthToken(envOauthToken);
+            if (oauthResult.verified()) {
+                System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
+                System.out.print("  Use this token? (Y/n): ");
+                var accept = console.readLine().strip();
+                if (!accept.equalsIgnoreCase("n")) {
+                    saveOauthConfig(config, envOauthToken);
+                    System.out.println("  Claude auth configuration saved.");
+                    return;
+                }
+                System.out.println("  Skipping environment token. Continuing with manual setup...");
+            } else {
+                System.out.println("  " + oauthResult.message());
+                System.out.println("  Continuing with manual setup...");
+            }
         } else if (envApiKey != null && !envApiKey.isBlank()) {
             System.out.println("  Detected ANTHROPIC_API_KEY from environment.");
             System.out.println("  Verifying API key...");
@@ -836,10 +854,15 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        System.out.print("  Do you use Vertex AI for Claude? (y/N): ");
-        var vertexAnswer = console.readLine().strip();
+        System.out.println("  How do you authenticate with Claude?");
+        System.out.println("    1. Anthropic API key");
+        System.out.println("    2. Claude Pro/Max subscription (OAuth token)");
+        System.out.println("    3. Google Cloud Vertex AI");
+        System.out.println();
+        System.out.print("  Choice (1/2/3, or Enter to skip): ");
+        var authChoice = console.readLine().strip();
 
-        if (vertexAnswer.equalsIgnoreCase("y")) {
+        if (authChoice.equals("3")) {
             while (true) {
                 System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
                 var region = console.readLine().strip();
@@ -875,7 +898,9 @@ public class InitCommand extends BaseCommand {
                     }
                 }
             }
-        } else {
+        } else if (authChoice.equals("2")) {
+            setupClaudeOauth(config, console);
+        } else if (authChoice.equals("1")) {
             while (true) {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
                 var key = new String(console.readPassword());
@@ -905,12 +930,15 @@ public class InitCommand extends BaseCommand {
                     }
                 }
             }
+        } else {
+            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
         }
     }
 
     private record AuthResult(boolean verified, String message) {}
 
     private static void saveVertexConfig(SpawnConfig config, String region, String projectId) {
+        config.getClaude().clearAuth();
         config.getClaude().setUseVertex(true);
         config.getClaude().setCloudMlRegion(region);
         config.getClaude().setVertexProjectId(projectId);
@@ -918,8 +946,14 @@ public class InitCommand extends BaseCommand {
     }
 
     private static void saveDirectConfig(SpawnConfig config, String apiKey) {
-        config.getClaude().setUseVertex(false);
+        config.getClaude().clearAuth();
         config.getClaude().setApiKey(apiKey);
+        config.save();
+    }
+
+    private static void saveOauthConfig(SpawnConfig config, String oauthToken) {
+        config.getClaude().clearAuth();
+        config.getClaude().setOauthToken(oauthToken);
         config.save();
     }
 
@@ -927,12 +961,19 @@ public class InitCommand extends BaseCommand {
         if (!key.startsWith("sk-ant-")) {
             System.out.println("  Note: key does not start with 'sk-ant-' (unexpected format).");
         }
+        return verifyAnthropicCredential("x-api-key", key, "API key");
+    }
 
+    private AuthResult verifyOauthToken(String token) {
+        return verifyAnthropicCredential("Authorization", "Bearer " + token, "OAuth token");
+    }
+
+    private AuthResult verifyAnthropicCredential(String headerName, String headerValue, String label) {
         try {
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.anthropic.com/v1/messages"))
-                    .header("x-api-key", key)
+                    .header(headerName, headerValue)
                     .header("Content-Type", "application/json")
                     .header("anthropic-version", "2023-06-01")
                     .timeout(Duration.ofSeconds(10))
@@ -941,13 +982,71 @@ public class InitCommand extends BaseCommand {
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             return switch (response.statusCode()) {
-                case 400 -> new AuthResult(true, "API key verified.");
-                case 401 -> new AuthResult(false, "Invalid API key (HTTP 401). Check that the key is correct and not expired.");
-                case 403 -> new AuthResult(true, "API key accepted (HTTP 403). It may have restricted permissions.");
-                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The key may be invalid.");
+                case 400 -> new AuthResult(true, label + " verified.");
+                case 401 -> new AuthResult(false, label + " rejected (HTTP 401). It may be expired or invalid.");
+                case 403 -> new AuthResult(true, label + " accepted (HTTP 403). It may have restricted permissions.");
+                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The " + label.toLowerCase() + " may be invalid.");
             };
         } catch (Exception e) {
             return new AuthResult(false, "Could not reach api.anthropic.com: " + e.getMessage());
+        }
+    }
+
+    private void setupClaudeOauth(SpawnConfig config, java.io.Console console) {
+        if (commandExists("claude")) {
+            System.out.println("  Found 'claude' CLI on this host.");
+            System.out.print("  Run 'claude setup-token' to generate an OAuth token? (Y/n): ");
+            var proceed = console.readLine().strip();
+            if (!proceed.equalsIgnoreCase("n")) {
+                try {
+                    var pb = new ProcessBuilder("claude", "setup-token");
+                    pb.inheritIO();
+                    var process = pb.start();
+                    if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                        process.destroyForcibly();
+                        System.err.println("  'claude setup-token' timed out after 2 minutes.");
+                    } else if (process.exitValue() != 0) {
+                        System.err.println("  'claude setup-token' exited with code " + process.exitValue() + ".");
+                    } else {
+                        System.out.println("  Token generation complete.");
+                    }
+                } catch (Exception e) {
+                    System.err.println("  Failed to run 'claude setup-token': " + e.getMessage());
+                }
+            }
+        } else {
+            System.out.println("  'claude' CLI not found on this host.");
+            System.out.println("  To generate a token, install Claude Code and run: claude setup-token");
+        }
+
+        while (true) {
+            System.out.print("  Paste your OAuth token (or press Enter to skip): ");
+            var token = new String(console.readPassword());
+            if (token.isBlank()) {
+                System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                break;
+            }
+
+            System.out.println("  Verifying OAuth token...");
+            var result = verifyOauthToken(token);
+            if (result.verified()) {
+                System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
+                saveOauthConfig(config, token);
+                System.out.println("  Claude auth configuration saved.");
+                break;
+            } else {
+                System.out.println("  " + result.message());
+                System.out.print("  Try again? (Y/n/s to save anyway): ");
+                var retry = console.readLine().strip();
+                if (retry.equalsIgnoreCase("n")) {
+                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                    break;
+                } else if (retry.equalsIgnoreCase("s")) {
+                    saveOauthConfig(config, token);
+                    System.out.println("  Claude auth configuration saved (unverified).");
+                    break;
+                }
+            }
         }
     }
 
