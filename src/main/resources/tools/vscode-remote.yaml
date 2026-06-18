@@ -3,6 +3,14 @@ description: VS Code Remote Development via SSH
 requires:
   - sshd
 
+files:
+  - path: /home/agentuser/.vscode-server/data/Machine/settings.json
+    owner: agentuser
+    content: |
+      {
+        "security.workspace.trust.enabled": false
+      }
+
 actions:
   - label: "Open repo '${repo_name}' in VS Code"
     type: url
