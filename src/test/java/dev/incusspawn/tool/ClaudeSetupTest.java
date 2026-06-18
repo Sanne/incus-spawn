@@ -66,6 +66,44 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void configureSettingsWritesManagedSettingsToEtc() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER), new SpawnConfig.ClaudeConfig());
+
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains("/etc/claude-code/managed-settings.json"));
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains("bypassPermissions"));
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains("skipDangerousModePermissionPrompt"));
+    }
+
+    @Test
+    void configureSettingsUserSettingsDoNotContainBypassPermissions() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER), new SpawnConfig.ClaudeConfig());
+
+        // bypassPermissions should only be in managed settings, not user settings
+        // User settings file is ~/.claude/settings.json
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+
+        for (var cmd : captor.getAllValues()) {
+            if (cmd.contains(".claude/settings.json") && !cmd.contains("/etc/claude-code")) {
+                assertFalse(cmd.contains("bypassPermissions"),
+                        "User settings.json should not contain bypassPermissions (now in managed settings)");
+                assertFalse(cmd.contains("skipDangerousModePermissionPrompt"),
+                        "User settings.json should not contain skipDangerousModePermissionPrompt (now in managed settings)");
+            }
+        }
+    }
+
+    @Test
     void configureSettingsOmitsCustomApiKeyResponsesInOauthMode() {
         var claude = new SpawnConfig.ClaudeConfig();
         claude.setOauthToken("sk-ant-oat01-real-token-on-host");

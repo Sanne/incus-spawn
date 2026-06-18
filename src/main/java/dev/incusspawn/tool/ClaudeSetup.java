@@ -91,19 +91,12 @@ public class ClaudeSetup implements ToolSetup {
         return checksum;
     }
 
+    static final String MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
+
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig) {
         System.out.println("Configuring Claude Code for agent use...");
-        var settingsJson = """
+        var managedSettingsJson = """
                 {
-                  "env": {
-                    "DISABLE_AUTOUPDATER": "1",
-                    "DISABLE_TELEMETRY": "1",
-                    "DO_NOT_TRACK": "1",
-                    "DISABLE_ERROR_REPORTING": "1",
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
-                    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
-                  },
                   "permissions": {
                     "defaultMode": "bypassPermissions",
                     "allow": [
@@ -118,7 +111,26 @@ public class ClaudeSetup implements ToolSetup {
                       "Agent(*)"
                     ]
                   },
+                  "env": {
+                    "DISABLE_AUTOUPDATER": "1",
+                    "DISABLE_TELEMETRY": "1",
+                    "DO_NOT_TRACK": "1",
+                    "DISABLE_ERROR_REPORTING": "1",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+                    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+                  },
                   "skipDangerousModePermissionPrompt": true,
+                  "sandbox": {
+                    "enabled": false
+                  }
+                }
+                """;
+        c.sh("mkdir -p /etc/claude-code");
+        c.writeFile(MANAGED_SETTINGS_PATH, managedSettingsJson);
+
+        var settingsJson = """
+                {
                   "disableDeepLinkRegistration": "disable"
                 }
                 """;
