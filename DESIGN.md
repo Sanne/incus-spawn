@@ -129,7 +129,7 @@ Execution order: packages → downloads → run → run_as_user → files → en
 
 **Package deduplication**: Before installing packages, the build walks the parent chain and collects all packages from ancestor images and their tools. These are subtracted from the current image's package list so derived images only install what's new. The build logs both the count being installed and the count already present in ancestors.
 
-**DNF cache sharing**: During builds, a host-side directory (`~/.cache/incus-spawn/dnf`) is mounted into the container at `/var/cache/libdnf5` via an Incus disk device with UID shifting. All dnf commands use `--setopt=keepcache=true` so downloaded RPMs persist across builds. Repository metadata uses `--setopt=metadata_expire=4h` instead of `--refresh`, so repeated builds within 4 hours skip the metadata download entirely while still picking up updates on longer intervals. The cache device is unmounted before the final cleanup step so the host cache is preserved while the container image stays small.
+**DNF cache sharing**: During builds, a host-side directory (`~/.cache/incus-spawn/dnf`) is mounted into the container at `/var/cache/libdnf5` via an Incus disk device with UID shifting. All dnf commands use `--setopt=keepcache=true` so downloaded RPMs persist across builds. Repository metadata uses `--setopt=metadata_expire=14400` instead of `--refresh`, so repeated builds within 4 hours skip the metadata download entirely while still picking up updates on longer intervals. The cache device is unmounted before the final cleanup step so the host cache is preserved while the container image stays small.
 
 ### Branching
 
