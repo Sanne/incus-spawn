@@ -26,6 +26,7 @@ public class ToolDefLoader {
             "maven-3.yaml",
             "sshd.yaml",
             "idea-backend.yaml",
+            "vscode-remote.yaml",
             "starship.yaml",
             "tmux.yaml"
     );

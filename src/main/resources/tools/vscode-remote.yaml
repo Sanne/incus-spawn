@@ -1,0 +1,10 @@
+name: vscode-remote
+description: VS Code Remote Development via SSH
+requires:
+  - sshd
+
+actions:
+  - label: "Open repo '${repo_name}' in VS Code"
+    type: url
+    expand: repos
+    url: "vscode://vscode-remote/ssh-remote+${name}${repo_path}"
