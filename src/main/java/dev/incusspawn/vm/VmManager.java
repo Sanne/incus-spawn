@@ -413,17 +413,16 @@ public final class VmManager {
         }
         System.err.println("  VM IP: " + vmIp);
 
-        var vsockSocket = Environment.vmVsockSocket();
         if (!IncusRemoteSetup.isConfigured()) {
             try {
-                IncusRemoteSetup.configure(vmIp, vsockSocket);
+                IncusRemoteSetup.configure(vmIp);
             } catch (IOException e) {
                 System.err.println("Failed to configure Incus remote: " + e.getMessage());
                 return false;
             }
         } else {
             try {
-                IncusRemoteSetup.updateVmIp(vmIp, vsockSocket);
+                IncusRemoteSetup.updateVmIp(vmIp);
             } catch (IOException e) {
                 System.err.println("Warning: could not update VM IP: " + e.getMessage());
             }
@@ -530,9 +529,9 @@ public final class VmManager {
                 "--device", "virtio-net,nat,mac=" + VmNetwork.ISX_VM_MAC,
                 "--device", "virtio-serial,logFilePath=" + Environment.vmLogFile(),
                 "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
-                "--timesync", "vsockPort=" + GA_VSOCK_PORT,
                 "--device", "virtio-vsock,port=" + INCUS_VSOCK_PORT
                         + ",socketURL=" + Environment.vmVsockSocket() + ",connect",
+                "--timesync", "vsockPort=" + GA_VSOCK_PORT,
                 "--restful-uri", "tcp://localhost:" + restPort
         ));
 

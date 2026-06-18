@@ -474,6 +474,28 @@ Auto-remote management requires explicit `host-paths` or `repo-paths` configurat
 ### Fedora-specific
 The base image and package management are Fedora-specific (`dnf`, `images:fedora/44`). This is intentional — supporting multiple distros adds complexity for a tool primarily targeting developer workstations where Fedora is a common choice. The YAML tool system is distro-agnostic in principle (tools can use any shell commands), but the built-in base image setup assumes Fedora.
 
+### Incus Daemon Connection
+
+The CLI communicates with the Incus daemon via its REST API. The transport depends on the platform:
+
+**Linux** (direct): The Incus daemon exposes a Unix domain socket at `/run/incus/unix.socket`. The CLI speaks plain HTTP/1.1 over this socket — no TLS, no authentication (access is governed by Unix socket permissions and the `incus-admin` group). WebSocket-based exec sessions (for `isx shell`, file push, etc.) use the same socket.
+
+**macOS** (via VM): Incus runs inside a VM managed by vfkit. The CLI connects via a **vsock tunnel** — a direct host↔VM communication channel that bypasses the IP network entirely:
+
+```
+UnixSocketTransport (plain HTTP/1.1)
+  → ~/.local/state/incus-spawn/vm.incus.sock  (Unix socket on host)
+    → vfkit virtio-vsock device (port 8443)
+      → socat VSOCK-LISTEN:8443 inside VM
+        → /run/incus/unix.socket (Incus daemon)
+```
+
+vfkit exposes the VM's vsock port 8443 as a Unix domain socket on the host. Inside the VM, socat bridges the vsock listener to the Incus daemon's local Unix socket. The result is that the macOS path reuses the same `UnixSocketTransport` as Linux — plain HTTP, no TLS, no certificates.
+
+**Why vsock instead of HTTPS:** The original macOS transport used HTTPS over TCP to the VM's DHCP-assigned IP (192.168.64.0/24 subnet). This required client certificate generation, server certificate capture, hostname verification bypass (the self-signed cert doesn't include the DHCP IP), and IP rediscovery on VM restart. More critically, corporate VPN software (notably Cisco AnyConnect) installs a macOS socket filter that blocks non-Apple-signed binaries from TCP connections to the VM subnet — even when the VPN is disconnected. Since `isx` is an ad-hoc-signed GraalVM native binary, AnyConnect blocks it from reaching the VM over TCP. vsock bypasses this entirely because it operates outside the IP network stack (`AF_VSOCK`, not `AF_INET`), so socket filters that target TCP connections cannot intercept it. The MITM proxy is unaffected because its traffic flows in the opposite direction — containers inside the VM connect outward to the host, which arrives as inbound traffic to the proxy process, not as an outbound `connect()` from `isx`.
+
+**HTTPS fallback:** If the vsock socket doesn't exist (older appliance image without socat, or QEMU backend), the CLI falls back to HTTPS with mutual TLS authentication. The transport selection order in `IncusApi.tryConnect()` is: Linux Unix sockets → vsock Unix socket → HTTPS remote.
+
 ## VM Appliance
 
 A minimal Alpine Linux VM image with Incus pre-installed, providing CI integration testing and macOS support. Uses BusyBox init (not systemd or OpenRC) for fastest possible boot. Custom kernel from kernel.org source (zero modules, no initrd) with musl libc for fast dynamic linking. The build produces a rootfs tarball (~30-40 MB) and kernel (~11 MB); a writable btrfs disk image is created on first boot. See [`appliance/DESIGN.md`](appliance/DESIGN.md) for full architecture details.

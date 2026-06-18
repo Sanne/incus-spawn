@@ -31,7 +31,7 @@ The appliance uses a custom kernel built from vanilla kernel.org source (`kernel
 Applied on top of `allnoconfig` via `merge_config.sh`. Both x86_64 and aarch64 options are included in a single fragment; irrelevant options are silently ignored by kconfig.
 
 **Enabled (built-in)**:
-- **Virtio**: PCI, MMIO, block, network, console, balloon
+- **Virtio**: PCI, MMIO, block, network, console, balloon, vsock (host↔VM API tunnel)
 - **Filesystems**: btrfs, overlayfs (Incus containers), fuse (lxcfs), tmpfs, procfs, sysfs, devtmpfs
 - **Networking**: TCP/UDP/IPv4/IPv6, UNIX sockets, packet sockets, bridge (with VLAN filtering), veth, macvlan, 802.1Q VLANs, netfilter/iptables (NAT, REDIRECT, CHECKSUM, MASQUERADE, conntrack)
 - **Container isolation**: all namespace types (including time), cgroups v2 (cpu with CFS bandwidth, io with iocost, memory with zswap, pids, cpuset, hugetlb), seccomp
@@ -137,6 +137,7 @@ vfkit --cpus 2 --memory 2048 \
   --device virtio-blk,path=disk.img \
   --device virtio-net,nat \
   --device virtio-serial,logFilePath=vm.log \
+  --device virtio-vsock,port=8443,socketURL=~/.local/state/incus-spawn/vm.incus.sock,connect \
   --restful-uri tcp://localhost:$PORT
 ```
 
@@ -144,6 +145,7 @@ vfkit --cpus 2 --memory 2048 \
 - Console on `hvc0` (virtio-serial), not `ttyS0`
 - REST API for lifecycle management (stop via `POST /vm/state {"state":"Stop"}`)
 - NAT networking with DHCP (interface appears as `enp0s1`)
+- **vsock tunnel**: the `virtio-vsock` device exposes the VM's vsock port 8443 as a Unix domain socket on the host. Inside the VM, socat bridges this to the Incus daemon's Unix socket, giving the host direct plain-HTTP access to the Incus API without TCP or TLS. This bypasses corporate VPN socket filters (e.g. Cisco AnyConnect) that block non-Apple-signed binaries from TCP connections to the VM subnet
 
 ### QEMU (Linux / CI)
 
@@ -162,6 +164,7 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 - `vm.pid` -- vfkit/QEMU process ID
 - `vm.log` -- serial console output
 - `vm.rest-uri` -- vfkit REST API endpoint (macOS only)
+- `vm.incus.sock` -- vsock Unix socket for Incus API (macOS/vfkit only, created by vfkit, cleaned up on stop)
 
 **Configuration** via environment variables (overrides adaptive defaults):
 - `ISX_VM_DISK` -- disk size (default: `60G`)
@@ -179,14 +182,15 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 
 ## First-Boot Initialization
 
-`incus-spawn-vm-init` runs from `rcS` after `incusd` is started. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`) and:
+`incus-spawn-vm-init` runs from `rcS` after `incusd` is started. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`, `isx.vsock_incus`) and:
 
 1. Waits for DNS readiness (nameserver entry in `/etc/resolv.conf`, populated by `udhcpc`)
 2. Waits for the Incus daemon to become ready (up to 30 seconds)
 3. Creates the `incusbr0` bridge network with the configured gateway IP and NAT
 4. Creates a btrfs storage pool (`cow`) backed by a loop file, adaptively sized (half of free disk, capped at 30 GB, minimum 1 GB)
 5. Installs an iptables PREROUTING redirect rule (port 443 -> MITM proxy port) on the bridge interface
-6. Symlinks the `isx` binary from the shared directory if available
+6. Starts the vsock forwarder if `isx.vsock_incus` is set (socat bridges vsock port to `/run/incus/unix.socket`)
+7. Symlinks the `isx` binary from the shared directory if available
 
 On subsequent boots, the script detects existing configuration and skips creation steps.
 

@@ -3,6 +3,8 @@ package dev.incusspawn.incus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import dev.incusspawn.Environment;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -42,15 +44,18 @@ class IncusApi {
      * Returns an IncusApi instance if a probe request succeeds, or null if nothing is accessible.
      */
     static IncusApi tryConnect() {
-        // Try Unix socket first (Linux)
-        for (var candidate : UnixSocketTransport.SOCKET_CANDIDATES) {
+        // Try Unix sockets: Linux daemon sockets, then vsock (macOS)
+        var socketCandidates = new ArrayList<>(UnixSocketTransport.SOCKET_CANDIDATES);
+        var vsockSocket = Environment.vmVsockSocket();
+        if (Files.exists(vsockSocket)) {
+            socketCandidates.add(vsockSocket.toString());
+        }
+        for (var candidate : socketCandidates) {
             if (!Files.exists(Path.of(candidate))) continue;
             try {
                 var http = new IncusApi(new UnixSocketTransport(candidate));
                 if (http.get("/1.0").isSuccess()) return http;
-            } catch (IncusException ignored) {
-                // Socket exists but not accessible or connection refused — try next.
-            }
+            } catch (IncusException ignored) {}
         }
         // Try HTTPS remote (macOS or configured remote)
         var httpsTransport = HttpsTransport.fromClientConfig();
@@ -102,6 +107,18 @@ class IncusApi {
                         """.formatted(candidate);
             } catch (IOException e) {
                 return "Cannot connect to Incus socket at " + candidate + ": " + e.getMessage();
+            }
+        }
+        // Check vsock socket (macOS)
+        var vsockSocket = Environment.vmVsockSocket();
+        if (Files.exists(vsockSocket)) {
+            try (var ch = SocketChannel.open(StandardProtocolFamily.UNIX)) {
+                ch.connect(UnixDomainSocketAddress.of(vsockSocket));
+                return "vsock socket at " + vsockSocket + " is accessible — please retry.";
+            } catch (IOException e) {
+                return "vsock socket exists at " + vsockSocket
+                        + " but connection failed: " + e.getMessage()
+                        + "\nThe VM may still be booting. Wait a few seconds and retry.";
             }
         }
         // No socket file found — check if HTTPS was attempted
