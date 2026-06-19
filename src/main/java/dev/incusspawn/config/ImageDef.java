@@ -106,6 +106,7 @@ public class ImageDef {
     @JsonProperty("mask_services")
     private List<String> maskServices = List.of();
     private boolean gui;
+    private boolean pinned;
     private String workdir;
     @JsonProperty("shell-command")
     private String shellCommand;
@@ -145,6 +146,8 @@ public class ImageDef {
     public void setMaskServices(List<String> maskServices) { this.maskServices = maskServices; }
     public boolean isGui() { return gui; }
     public void setGui(boolean gui) { this.gui = gui; }
+    public boolean isPinned() { return pinned; }
+    public void setPinned(boolean pinned) { this.pinned = pinned; }
     public String getWorkdir() { return workdir; }
     public void setWorkdir(String workdir) { this.workdir = workdir; }
     public String getShellCommand() { return shellCommand; }

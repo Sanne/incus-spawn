@@ -27,13 +27,13 @@ public class UpdateBaseCommand extends BaseCommand {
     private static final String RELEASES_API = "https://api.github.com/repos/" + GITHUB_REPO + "/releases";
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    @Argument(required = false, description = "Release tag to install (e.g. fedora-44-v2)")
+    @Argument(required = false, description = "Release tag to pin (e.g. fedora-44-v2)")
     String targetTag;
 
     @Option(name = "list", hasValue = false, description = "List available versions")
     boolean listOnly;
 
-    @Option(name = "latest", hasValue = false, description = "Update to the latest version without prompting")
+    @Option(name = "latest", hasValue = false, description = "Track the latest version (remove any pin)")
     boolean useLatest;
 
     @Override
@@ -46,7 +46,9 @@ public class UpdateBaseCommand extends BaseCommand {
         }
 
         var currentTag = minimal.getImageTag();
-        System.out.println("Current base image: " + (currentTag != null ? currentTag : "unknown"));
+        var isPinned = minimal.isPinned();
+        System.out.println("Current base image: " + (currentTag != null ? currentTag : "unknown")
+                + (isPinned ? " [pinned]" : ""));
 
         System.out.println("Fetching available releases...");
         List<ReleaseInfo> releases;
@@ -67,43 +69,41 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        ReleaseInfo selected;
+        // Explicit tag argument → pin to that version
         if (targetTag != null) {
-            selected = releases.stream()
-                    .filter(r -> r.tag.equals(targetTag))
-                    .findFirst()
-                    .orElse(null);
-            if (selected == null) {
-                System.err.println("Release '" + targetTag + "' not found.");
-                printReleaseList(releases, currentTag);
-                return CommandResult.valueOf(1);
-            }
-        } else if (useLatest) {
-            selected = releases.get(0);
-        } else {
-            printReleaseList(releases, currentTag);
-            var latest = releases.get(0);
-            if (latest.tag.equals(currentTag)) {
-                System.out.println("\nAlready on the latest version.");
-                return CommandResult.SUCCESS;
-            }
-            System.out.print("\nUpdate to " + latest.tag + "? [Y/n] ");
-            var console = System.console();
-            if (console == null) {
-                System.err.println("No console available. Use --latest or specify a tag.");
-                return CommandResult.valueOf(1);
-            }
-            var answer = console.readLine();
-            if (answer != null && answer.strip().equalsIgnoreCase("n")) {
-                System.out.println("Aborted.");
-                return CommandResult.SUCCESS;
-            }
-            selected = latest;
+            return pinToTag(targetTag, releases, minimal);
         }
 
-        if (selected.tag.equals(currentTag)) {
-            System.out.println("Already on " + selected.tag + ".");
-            return CommandResult.SUCCESS;
+        // --latest flag → track latest, remove any pin
+        if (useLatest) {
+            return trackLatest(minimal);
+        }
+
+        // Interactive mode
+        return interactive(releases, minimal, currentTag);
+    }
+
+    private CommandResult trackLatest(ImageDef current) throws IOException {
+        var overridePath = ImageDef.userImagesDir().resolve("minimal.yaml");
+        if (Files.deleteIfExists(overridePath)) {
+            System.out.println("Removed user override.");
+        }
+        var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
+        var builtinTag = builtin != null ? builtin.getImageTag() : "unknown";
+        System.out.println("Tracking latest — using built-in base image (" + builtinTag + ").");
+        System.out.println("The base image will be updated on the next 'isx build tpl-minimal'.");
+        return CommandResult.SUCCESS;
+    }
+
+    private CommandResult pinToTag(String tag, List<ReleaseInfo> releases, ImageDef current) throws IOException {
+        var selected = releases.stream()
+                .filter(r -> r.tag.equals(tag))
+                .findFirst()
+                .orElse(null);
+        if (selected == null) {
+            System.err.println("Release '" + tag + "' not found.");
+            printReleaseList(releases, current.getImageTag());
+            return CommandResult.valueOf(1);
         }
 
         System.out.println("Fetching checksums for " + selected.tag + "...");
@@ -113,14 +113,56 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        writeUserOverride(minimal, selected.tag, checksums);
-        System.out.println("Updated to " + selected.tag + ".");
+        writeUserOverride(current, selected.tag, checksums, true);
+        System.out.println("Pinned base image to " + selected.tag + ".");
         System.out.println("The new base image will be downloaded on the next 'isx build tpl-minimal'.");
-
         return CommandResult.SUCCESS;
     }
 
-    private void writeUserOverride(ImageDef current, String tag, Checksums checksums) throws IOException {
+    private CommandResult interactive(List<ReleaseInfo> releases, ImageDef current, String currentTag) throws IOException {
+        printReleaseList(releases, currentTag);
+
+        var latest = releases.get(0);
+        if (latest.tag.equals(currentTag) && !current.isPinned()) {
+            System.out.println("\nAlready on the latest version.");
+            return CommandResult.SUCCESS;
+        }
+
+        var console = System.console();
+        if (console == null) {
+            System.err.println("No console available. Use --latest or specify a tag.");
+            return CommandResult.valueOf(1);
+        }
+
+        System.out.println("\nWhat would you like to do?");
+        System.out.println("  1) Update to latest (" + latest.tag + ") — always tracks the newest version");
+        System.out.println("  2) Pin a specific version");
+        System.out.println("  3) Cancel");
+        System.out.print("Choice [1-3]: ");
+
+        var choice = console.readLine();
+        if (choice == null) return CommandResult.SUCCESS;
+        choice = choice.strip();
+
+        return switch (choice) {
+            case "1" -> trackLatest(current);
+            case "2" -> {
+                System.out.print("Enter version tag: ");
+                var tag = console.readLine();
+                if (tag == null || tag.isBlank()) {
+                    System.out.println("Aborted.");
+                    yield CommandResult.SUCCESS;
+                }
+                yield pinToTag(tag.strip(), releases, current);
+            }
+            default -> {
+                System.out.println("Aborted.");
+                yield CommandResult.SUCCESS;
+            }
+        };
+    }
+
+    private void writeUserOverride(ImageDef current, String tag, Checksums checksums, boolean pinned) throws IOException {
         var dir = ImageDef.userImagesDir();
         Files.createDirectories(dir);
         var overridePath = dir.resolve("minimal.yaml");
@@ -131,6 +173,7 @@ public class UpdateBaseCommand extends BaseCommand {
                 image: %s
                 image_url: %s
                 image_tag: %s
+                pinned: %s
                 image_sha256:
                   x86_64: %s
                   aarch64: %s
@@ -139,6 +182,7 @@ public class UpdateBaseCommand extends BaseCommand {
                 current.getImage(),
                 current.getImageUrl(),
                 tag,
+                pinned,
                 checksums.x86_64,
                 checksums.aarch64);
 
