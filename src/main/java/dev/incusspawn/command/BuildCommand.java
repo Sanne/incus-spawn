@@ -1146,16 +1146,15 @@ public class BuildCommand extends BaseCommand {
 
     private void waitForIpv4(Container container) {
         System.out.println("Waiting for DHCP lease...");
-        for (int attempt = 0; attempt < 150; attempt++) {
-            var result = container.sh("ip -4 -o addr show eth0 | grep -q 'inet '");
-            if (result.success()) {
-                System.out.println("  Network ready.");
-                return;
-            }
-            if (attempt > 0 && attempt % 50 == 0) {
-                System.out.println("  Still waiting for DHCP... (" + (attempt / 10) + "s)");
-            }
-            try { Thread.sleep(100); } catch (InterruptedException e) { break; }
+        var result = container.sh(
+                "systemctl start dhcpcd-eth0.service 2>/dev/null; " +
+                "for i in $(seq 1 30); do " +
+                "  ip -4 -o addr show eth0 | grep -q 'inet ' && exit 0; " +
+                "  sleep 0.5; " +
+                "done; exit 1");
+        if (result.success()) {
+            System.out.println("  Network ready.");
+            return;
         }
         throw new RuntimeException("Container did not acquire an IPv4 address within 15 seconds");
     }
