@@ -1217,4 +1217,21 @@ public class IncusClient {
             throw new IncusException("Failed to create image alias '" + alias + "'");
         }
     }
+
+    public void setImageProperty(String fingerprint, String key, String value) {
+        var resp = http().get("/1.0/images/" + fingerprint);
+        if (!resp.isSuccess()) return;
+        var props = resp.body().path("metadata").path("properties");
+        var updated = new java.util.HashMap<String, String>();
+        props.fields().forEachRemaining(f -> updated.put(f.getKey(), f.getValue().asText()));
+        updated.put(key, value);
+        http().patch("/1.0/images/" + fingerprint, Map.of("properties", updated));
+    }
+
+    public String getImageProperty(String fingerprint, String key) {
+        var resp = http().get("/1.0/images/" + fingerprint);
+        if (!resp.isSuccess()) return null;
+        var val = resp.body().path("metadata").path("properties").path(key);
+        return val.isMissingNode() ? null : val.asText(null);
+    }
 }

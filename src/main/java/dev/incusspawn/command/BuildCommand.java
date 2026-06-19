@@ -842,19 +842,20 @@ public class BuildCommand extends BaseCommand {
             expectedSha256 = sha256Map.get(arch);
         }
 
+        var tag = imageDef.getImageTag();
         var existingFingerprint = incus.imageAliasTarget(localAlias);
         if (existingFingerprint != null) {
-            if (expectedSha256 == null || existingFingerprint.startsWith(expectedSha256)
-                    || expectedSha256.startsWith(existingFingerprint)) {
-                System.out.println("Base image '" + localAlias + "' is up to date.");
+            var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
+            if (tag != null && tag.equals(installedTag)) {
+                System.out.println("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
-            System.out.println("Base image '" + localAlias + "' is outdated, replacing...");
+            System.out.println("Base image '" + localAlias + "' is outdated"
+                    + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
+                    + ", replacing...");
             incus.deleteImageAlias(localAlias);
             incus.deleteImage(existingFingerprint);
         }
-
-        var tag = imageDef.getImageTag();
         var resolvedUrl = imageUrl.replace("{arch}", arch);
         if (tag != null) {
             resolvedUrl = resolvedUrl.replace("{tag}", tag);
@@ -871,6 +872,9 @@ public class BuildCommand extends BaseCommand {
 
             System.out.println("Creating alias '" + localAlias + "' -> "
                     + fingerprint.substring(0, Math.min(12, fingerprint.length())) + "...");
+            if (tag != null) {
+                incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
+            }
             incus.createImageAlias(localAlias, fingerprint);
 
             System.out.println("Base image ready.");
