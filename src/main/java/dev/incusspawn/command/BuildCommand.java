@@ -620,9 +620,11 @@ public class BuildCommand extends BaseCommand {
         incus.start(buildName);
         incus.waitForSystemd(buildName);
 
-        // Re-apply DNS fix — systemd-resolved can re-enable after copy+start
+        var container = new Container(incus, buildName);
+        waitForIpv4(container);
+
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
-        new Container(incus, buildName).sh(
+        container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
@@ -631,7 +633,6 @@ public class BuildCommand extends BaseCommand {
         waitForNetwork(buildName);
 
         mountDnfCache(buildName);
-        var container = new Container(incus, buildName);
 
         container.sh("sed -i \"s/^export ISX_TEMPLATE=.*/export ISX_TEMPLATE='" + canonicalName + "'/\" /home/agentuser/.bashrc")
                 .assertSuccess("Failed to update ISX_TEMPLATE in .bashrc");
@@ -727,9 +728,8 @@ public class BuildCommand extends BaseCommand {
         incus.restart(buildName);
         incus.waitForSystemd(buildName);
 
-        // systemd-resolved (127.0.0.53) doesn't work reliably inside Incus
-        // containers. Point resolv.conf at the bridge gateway's dnsmasq instead.
-        // Done after restart because systemd-resolved re-enables on restart.
+        waitForIpv4(container);
+
         System.out.println("Replacing systemd-resolved with direct DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
@@ -1136,6 +1136,15 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Cleaning up caches...");
         incus.shellExec(container, "sh", "-c",
                 "rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*");
+    }
+
+    private void waitForIpv4(Container container) {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            var result = container.sh("ip -4 -o addr show eth0 | grep -q 'inet '");
+            if (result.success()) return;
+            try { Thread.sleep(100); } catch (InterruptedException e) { break; }
+        }
+        throw new RuntimeException("Container did not acquire an IPv4 address within 5 seconds");
     }
 
     private void waitForNetwork(String container) {
