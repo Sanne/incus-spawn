@@ -279,6 +279,7 @@ public class InitCommand extends BaseCommand {
                 "Generates a custom Certificate Authority for the MITM",
                 "proxy. Containers trust this CA so the proxy can intercept",
                 "HTTPS and inject credentials transparently.");
+        incus.ensureBridgeNetwork("incusbr0", VmManager.gatewayIp());
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
         config.setIncusBridgeGateway(gatewayIp);

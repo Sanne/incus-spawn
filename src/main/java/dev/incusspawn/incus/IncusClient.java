@@ -683,6 +683,25 @@ public class IncusClient {
     }
 
     /**
+     * Ensure a bridge network exists with the given gateway IP.
+     * No-op if the network already exists.
+     */
+    public void ensureBridgeNetwork(String networkName, String gatewayIp) {
+        var resp = http().get("/1.0/networks/" + networkName);
+        if (resp.isSuccess()) return;
+        var config = Map.of(
+                "ipv4.address", gatewayIp + "/24",
+                "ipv4.nat", "true",
+                "ipv6.address", "none");
+        var createResp = http().requestAndWait("POST", "/1.0/networks",
+                Map.of("name", networkName, "type", "bridge", "config", config));
+        if (!createResp.isSuccess()) {
+            throw new IncusException("Failed to create network " + networkName
+                    + ": " + createResp.body().path("error").asText("unknown error"));
+        }
+    }
+
+    /**
      * Get a config value from a named network (e.g. "incusbr0").
      * Returns empty string if the key is not set.
      */

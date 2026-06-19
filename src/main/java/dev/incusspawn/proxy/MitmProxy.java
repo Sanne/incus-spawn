@@ -4,6 +4,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -229,19 +230,22 @@ public class MitmProxy {
     }
 
     /** Resolve the Incus bridge gateway IP (e.g. "10.166.11.1").
-     *  Tries the Incus API first, falls back to the cached value in config. */
+     *  Falls back to the cached value in config if the API call fails. */
     public static String resolveGatewayIp(IncusClient incus) {
+        RuntimeException error = null;
         try {
             var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
             if (addr.contains("/")) {
                 addr = addr.substring(0, addr.indexOf('/'));
             }
-            return addr;
+            if (!addr.isEmpty()) return addr;
         } catch (RuntimeException e) {
-            var cached = SpawnConfig.load().getIncusBridgeGateway();
-            if (!cached.isEmpty()) return cached;
-            throw e;
+            error = e;
         }
+        var cached = SpawnConfig.load().getIncusBridgeGateway();
+        if (!cached.isEmpty()) return cached;
+        if (error != null) throw error;
+        throw new IncusException("Bridge incusbr0 has no ipv4.address configured");
     }
 
     /** The set of domains intercepted by this proxy. */

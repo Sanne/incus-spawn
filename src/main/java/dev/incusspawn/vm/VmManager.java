@@ -124,7 +124,7 @@ public final class VmManager {
         return DEFAULT_SWAP_SIZE;
     }
 
-    static String gatewayIp() {
+    public static String gatewayIp() {
         var env = System.getenv("ISX_GATEWAY");
         return (env != null && !env.isBlank()) ? env : DEFAULT_GATEWAY;
     }
@@ -425,6 +425,9 @@ public final class VmManager {
                 IncusRemoteSetup.updateVmIp(vmIp);
             } catch (IOException e) {
                 System.err.println("Warning: could not update VM IP: " + e.getMessage());
+            }
+            if (!IncusClient.isReachable()) {
+                IncusRemoteSetup.saveServerCert(vmIp);
             }
         }
 

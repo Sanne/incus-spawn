@@ -154,7 +154,7 @@ public final class IncusRemoteSetup {
 
     // --- Server cert & config ---
 
-    private static void saveServerCert(String vmIp) {
+    static void saveServerCert(String vmIp) {
         try {
             var sslContext = SSLContext.getInstance("TLS");
             var capturingTm = new CertCapturingTrustManager();
