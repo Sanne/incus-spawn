@@ -1242,19 +1242,29 @@ public class BuildCommand extends BaseCommand {
      * metadata and downloaded packages across builds, avoiding redundant
      * downloads when building a parent→child image chain.
      */
+    private static final String DNF_CACHE_VOLUME = "dnf-cache";
+
     private void mountDnfCache(String container) {
-        try {
-            Files.createDirectories(dnfCacheDir());
-        } catch (IOException e) {
-            System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
-            return;
+        if (Environment.isMacOS()) {
+            var pool = incus.findCowPool();
+            if (pool == null) return;
+            incus.ensureStorageVolume(pool, DNF_CACHE_VOLUME);
+            incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
+                    "pool=" + pool,
+                    "source=" + DNF_CACHE_VOLUME,
+                    "path=/var/cache/libdnf5");
+        } else {
+            try {
+                Files.createDirectories(dnfCacheDir());
+            } catch (IOException e) {
+                System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
+                return;
+            }
+            incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
+                    "source=" + dnfCacheDir(),
+                    "path=/var/cache/libdnf5",
+                    "shift=true");
         }
-        var source = HostResourceSetup.translateForVm(dnfCacheDir().toString());
-        var args = new java.util.ArrayList<>(java.util.List.of(
-                "source=" + source,
-                "path=/var/cache/libdnf5"));
-        HostResourceSetup.addShiftIfSupported(args);
-        incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk", args.toArray(String[]::new));
     }
 
     private void unmountDnfCache(String container) {

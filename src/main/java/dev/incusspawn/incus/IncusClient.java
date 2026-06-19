@@ -969,6 +969,21 @@ public class IncusClient {
         if (!resp.isSuccess()) throw new IncusException("Failed to remove device " + deviceName + " from " + container);
     }
 
+    /**
+     * Ensure a custom storage volume exists in the given pool.
+     * Does nothing if the volume already exists.
+     */
+    public void ensureStorageVolume(String pool, String volumeName) {
+        var resp = http().get("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName);
+        if (resp.isSuccess()) return;
+        var createResp = http().requestAndWait("POST",
+                "/1.0/storage-pools/" + pool + "/volumes",
+                Map.of("name", volumeName, "type", "custom"));
+        if (!createResp.isSuccess()) {
+            throw new IncusException("Failed to create storage volume " + volumeName + " in pool " + pool);
+        }
+    }
+
     public void devicesRemoveAll(String container, Collection<String> deviceNames) {
         if (deviceNames.isEmpty()) return;
         var resp = http().removeDevices(container, deviceNames);
