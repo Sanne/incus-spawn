@@ -54,6 +54,14 @@ public class ImageDef {
 
     public static Path projectImagesDir() { return PROJECT_IMAGES_DIR; }
 
+    public static ImageDef loadBuiltinByName(String name) {
+        for (var filename : BUILTIN_FILES) {
+            var def = loadResource(RESOURCE_DIR + filename, w -> {});
+            if (def != null && name.equals(def.getName())) return def;
+        }
+        return null;
+    }
+
     /**
      * Parse an image definition from a YAML file on disk.
      */

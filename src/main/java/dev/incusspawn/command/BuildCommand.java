@@ -828,7 +828,30 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Image " + canonicalName + " built successfully.");
     }
 
+    private ImageDef cleanStaleOverride(ImageDef imageDef) {
+        if ("built-in".equals(imageDef.getSource())) return imageDef;
+        var builtin = ImageDef.loadBuiltinByName(imageDef.getName());
+        if (builtin == null || builtin.getImageTag() == null) return imageDef;
+        var overrideTag = imageDef.getImageTag();
+        var builtinTag = builtin.getImageTag();
+        if (builtinTag.equals(overrideTag)) return imageDef;
+        if (builtinTag.compareTo(overrideTag) > 0) {
+            var overridePath = ImageDef.userImagesDir().resolve("minimal.yaml");
+            try {
+                java.nio.file.Files.deleteIfExists(overridePath);
+                System.out.println("Removed stale user override (" + overrideTag
+                        + "), built-in is newer (" + builtinTag + ").");
+            } catch (IOException e) {
+                System.err.println("Warning: could not remove stale override: " + e.getMessage());
+            }
+            return builtin;
+        }
+        return imageDef;
+    }
+
     private void ensureBaseImage(ImageDef imageDef) {
+        imageDef = cleanStaleOverride(imageDef);
+
         var imageUrl = imageDef.getImageUrl();
         if (imageUrl == null || imageUrl.isBlank()) return;
 
