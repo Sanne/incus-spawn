@@ -747,7 +747,7 @@ public class BuildCommand extends BaseCommand {
 
             System.out.println("Updating system packages...");
             container.runInteractive("Failed to update system packages",
-                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "upgrade");
+                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs", "upgrade");
 
             // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
             // it. Masking prevents package scripts from restarting it. Also remove
@@ -791,7 +791,7 @@ public class BuildCommand extends BaseCommand {
 
             System.out.println("Installing base packages...");
             container.runInteractive("Failed to install base packages",
-                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400",
+                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs",
                     "git", "curl", "which", "procps-ng", "findutils");
         }
 
@@ -1055,7 +1055,7 @@ public class BuildCommand extends BaseCommand {
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages) + "...");
         var args = new ArrayList<String>();
-        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400"));
+        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs"));
         args.addAll(allPackages);
         container.runInteractive("Failed to install packages", args.toArray(String[]::new));
     }
