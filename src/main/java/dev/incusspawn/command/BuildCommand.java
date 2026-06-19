@@ -1243,21 +1243,21 @@ public class BuildCommand extends BaseCommand {
      * downloads when building a parent→child image chain.
      */
     private void mountDnfCache(String container) {
-        if (!Environment.isLinux()) return;
         try {
             Files.createDirectories(dnfCacheDir());
         } catch (IOException e) {
             System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
             return;
         }
-        incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
-                "source=" + dnfCacheDir(),
-                "path=/var/cache/libdnf5",
-                "shift=true");
+        var source = HostResourceSetup.translateForVm(dnfCacheDir().toString());
+        var args = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + source,
+                "path=/var/cache/libdnf5"));
+        HostResourceSetup.addShiftIfSupported(args);
+        incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk", args.toArray(String[]::new));
     }
 
     private void unmountDnfCache(String container) {
-        if (!Environment.isLinux()) return;
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
     }
 
