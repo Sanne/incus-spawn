@@ -730,12 +730,13 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+        System.out.println("Restarting container with updated security config...");
         incus.restart(buildName);
         incus.waitForSystemd(buildName);
 
         waitForIpv4(container);
 
-        System.out.println("Replacing systemd-resolved with direct DNS...");
+        System.out.println("Configuring DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
@@ -1144,9 +1145,13 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void waitForIpv4(Container container) {
+        System.out.println("Waiting for DHCP lease...");
         for (int attempt = 0; attempt < 50; attempt++) {
             var result = container.sh("ip -4 -o addr show eth0 | grep -q 'inet '");
-            if (result.success()) return;
+            if (result.success()) {
+                System.out.println("  Network ready.");
+                return;
+            }
             try { Thread.sleep(100); } catch (InterruptedException e) { break; }
         }
         throw new RuntimeException("Container did not acquire an IPv4 address within 5 seconds");
