@@ -260,6 +260,16 @@ class IncusApi {
         return waitForOperation(opPath);
     }
 
+    ApiResponse requestRawAndWait(String method, String apiPath,
+                                  String contentType, Map<String, String> headers,
+                                  byte[] body) {
+        var resp = requestRaw(method, apiPath, contentType, headers, body);
+        if (!resp.isAsync()) return resp;
+        var opPath = resp.operationPath();
+        if (opPath.isEmpty()) throw new IncusException("Async response missing operation path");
+        return waitForOperation(opPath);
+    }
+
     private ApiResponse waitForOperation(String operationPath) {
         var result = get(operationPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS);
         if (!result.isSuccess()) {

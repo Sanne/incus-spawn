@@ -1169,4 +1169,52 @@ public class IncusClient {
     public void filePushRecursive(String sourceDir, String container, String destPath) {
         http().filePushRecursive(container, destPath, Path.of(sourceDir));
     }
+
+    public boolean imageAliasExists(String alias) {
+        return http().get("/1.0/images/aliases/" + alias).isSuccess();
+    }
+
+    public String imageAliasTarget(String alias) {
+        var resp = http().get("/1.0/images/aliases/" + alias);
+        if (!resp.isSuccess()) return null;
+        return resp.body().path("metadata").path("target").asText(null);
+    }
+
+    public void deleteImageAlias(String alias) {
+        http().delete("/1.0/images/aliases/" + alias);
+    }
+
+    public void deleteImage(String fingerprint) {
+        http().delete("/1.0/images/" + fingerprint);
+    }
+
+    public String importImage(Path tarball) {
+        try {
+            var content = Files.readAllBytes(tarball);
+            var resp = http().requestRawAndWait("POST", "/1.0/images",
+                    "application/octet-stream", Map.of(), content);
+            var fingerprint = resp.body().path("metadata").path("metadata")
+                    .path("fingerprint").asText("");
+            if (fingerprint.isEmpty()) {
+                fingerprint = resp.body().path("metadata").path("fingerprint").asText("");
+            }
+            if (fingerprint.isEmpty()) {
+                throw new IncusException("Image import succeeded but no fingerprint returned");
+            }
+            return fingerprint;
+        } catch (IOException e) {
+            throw new IncusException("Failed to read image tarball: " + tarball, e);
+        }
+    }
+
+    public void createImageAlias(String alias, String fingerprint) {
+        var body = Map.of(
+                "name", alias,
+                "target", fingerprint
+        );
+        var resp = http().post("/1.0/images/aliases", body);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to create image alias '" + alias + "'");
+        }
+    }
 }

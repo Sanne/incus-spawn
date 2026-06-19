@@ -21,6 +21,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
+import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
@@ -673,6 +674,9 @@ public class BuildCommand extends BaseCommand {
     private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs, String buildName) {
         var canonicalName = imageDef.getName();
         var image = imageDef.getImage();
+        var prebaked = imageDef.getImageUrl() != null;
+
+        ensureBaseImage(imageDef);
 
         // Launch base image
         System.out.println("Launching " + image + "...");
@@ -738,50 +742,58 @@ public class BuildCommand extends BaseCommand {
 
         mountDnfCache(buildName);
 
-        removePackages(container, imageDef);
+        if (!prebaked) {
+            removePackages(container, imageDef);
 
-        System.out.println("Updating system packages...");
-        container.runInteractive("Failed to update system packages",
-                "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "upgrade");
+            System.out.println("Updating system packages...");
+            container.runInteractive("Failed to update system packages",
+                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "upgrade");
 
-        // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
-        // it. Masking prevents package scripts from restarting it. Also remove
-        // 'resolve' from nsswitch.conf so .local domains use dnsmasq, not mDNS.
-        System.out.println("Finalizing DNS configuration...");
-        container.sh(
-                "systemctl disable --now systemd-resolved 2>/dev/null; " +
-                "systemctl mask systemd-resolved 2>/dev/null; " +
-                "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
-                .assertSuccess("Failed to finalize DNS configuration");
+            // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
+            // it. Masking prevents package scripts from restarting it. Also remove
+            // 'resolve' from nsswitch.conf so .local domains use dnsmasq, not mDNS.
+            System.out.println("Finalizing DNS configuration...");
+            container.sh(
+                    "systemctl disable --now systemd-resolved 2>/dev/null; " +
+                    "systemctl mask systemd-resolved 2>/dev/null; " +
+                    "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
+                    .assertSuccess("Failed to finalize DNS configuration");
 
-        maskServices(container, imageDef);
+            maskServices(container, imageDef);
+        }
 
-        System.out.println("Creating agentuser...");
-        container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
-                .assertSuccess("Failed to create agentuser");
-        container.exec("chown", "-R", "agentuser:agentuser", "/home/agentuser")
-                .assertSuccess("Failed to set home directory ownership");
-        container.exec("mkdir", "-p", "/home/agentuser/inbox")
-                .assertSuccess("Failed to create inbox directory");
-        container.sh(
-                "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
-                .assertSuccess("Failed to configure passwordless sudo");
+        if (!prebaked || !container.exec("id", "agentuser").success()) {
+            System.out.println("Creating agentuser...");
+            container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
+                    .assertSuccess("Failed to create agentuser");
+            container.exec("chown", "-R", "agentuser:agentuser", "/home/agentuser")
+                    .assertSuccess("Failed to set home directory ownership");
+            container.exec("mkdir", "-p", "/home/agentuser/inbox")
+                    .assertSuccess("Failed to create inbox directory");
+            container.sh(
+                    "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
+                    .assertSuccess("Failed to configure passwordless sudo");
+        }
 
-        container.sh(
-                "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
-                .assertSuccess("Failed to configure .bashrc");
+        if (!prebaked) {
+            container.sh(
+                    "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
+                    .assertSuccess("Failed to configure .bashrc");
+        }
         container.appendToProfile("export ISX_CONTAINER=\"${HOSTNAME}\"");
         container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(canonicalName));
 
-        // Enable bash completion
-        container.appendToProfile("if [ -f /usr/share/bash-completion/bash_completion ]; then");
-        container.appendToProfile("  . /usr/share/bash-completion/bash_completion");
-        container.appendToProfile("fi");
+        if (!prebaked) {
+            // Enable bash completion
+            container.appendToProfile("if [ -f /usr/share/bash-completion/bash_completion ]; then");
+            container.appendToProfile("  . /usr/share/bash-completion/bash_completion");
+            container.appendToProfile("fi");
 
-        System.out.println("Installing base packages...");
-        container.runInteractive("Failed to install base packages",
-                "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400",
-                "git", "curl", "which", "procps-ng", "findutils");
+            System.out.println("Installing base packages...");
+            container.runInteractive("Failed to install base packages",
+                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400",
+                    "git", "curl", "which", "procps-ng", "findutils");
+        }
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
@@ -808,6 +820,67 @@ public class BuildCommand extends BaseCommand {
         incus.stop(buildName);
 
         System.out.println("Image " + canonicalName + " built successfully.");
+    }
+
+    private void ensureBaseImage(ImageDef imageDef) {
+        var imageUrl = imageDef.getImageUrl();
+        if (imageUrl == null || imageUrl.isBlank()) return;
+
+        var localAlias = imageDef.getImage();
+        if (localAlias.contains(":")) return;
+
+        var arch = normalizeHostArch();
+        String expectedSha256 = null;
+        var sha256Map = imageDef.getImageSha256();
+        if (sha256Map != null) {
+            expectedSha256 = sha256Map.get(arch);
+        }
+
+        var existingFingerprint = incus.imageAliasTarget(localAlias);
+        if (existingFingerprint != null) {
+            if (expectedSha256 == null || existingFingerprint.startsWith(expectedSha256)
+                    || expectedSha256.startsWith(existingFingerprint)) {
+                System.out.println("Base image '" + localAlias + "' is up to date.");
+                return;
+            }
+            System.out.println("Base image '" + localAlias + "' is outdated, replacing...");
+            incus.deleteImageAlias(localAlias);
+            incus.deleteImage(existingFingerprint);
+        }
+
+        var tag = imageDef.getImageTag();
+        var resolvedUrl = imageUrl.replace("{arch}", arch);
+        if (tag != null) {
+            resolvedUrl = resolvedUrl.replace("{tag}", tag);
+        }
+
+        System.out.println("Downloading base image from " + resolvedUrl + "...");
+
+        try {
+            var cache = new DownloadCache();
+            var cached = cache.download(resolvedUrl, expectedSha256);
+
+            System.out.println("Importing image into Incus...");
+            var fingerprint = incus.importImage(cached);
+
+            System.out.println("Creating alias '" + localAlias + "' -> "
+                    + fingerprint.substring(0, Math.min(12, fingerprint.length())) + "...");
+            incus.createImageAlias(localAlias, fingerprint);
+
+            System.out.println("Base image ready.");
+        } catch (IOException e) {
+            throw new RuntimeException(
+                    "Failed to download base image from " + resolvedUrl + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static String normalizeHostArch() {
+        var arch = System.getProperty("os.arch");
+        return switch (arch) {
+            case "amd64" -> "x86_64";
+            case "arm64" -> "aarch64";
+            default -> arch;
+        };
     }
 
     /**

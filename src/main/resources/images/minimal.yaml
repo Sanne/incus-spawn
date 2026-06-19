@@ -1,39 +1,8 @@
 name: tpl-minimal
 description: Base OS only
-image: images:fedora/44
-
-packages:
-  - glibc-langpack-en
-  - bash-completion
-
-remove_packages:
-  - glibc-all-langpacks
-  - geolite2-city
-  - geolite2-country
-
-mask_services:
-  - systemd-udevd.service
-  - systemd-udevd-control.socket
-  - systemd-udevd-kernel.socket
-  - systemd-udev-trigger.service
-  - systemd-udev-settle.service
-  - systemd-udev-load-credentials.service
-  - systemd-homed.service
-  - systemd-pcrlock-file-system.service
-  - systemd-pcrlock-firmware-code.service
-  - systemd-pcrlock-firmware-config.service
-  - systemd-pcrlock-machine-id.service
-  - systemd-pcrlock-make-policy.service
-  - systemd-pcrlock-secureboot-authority.service
-  - systemd-pcrlock-secureboot-policy.service
-  - systemd-tpm2-clear.service
-  - systemd-time-wait-sync.service
-  - systemd-timesyncd.service
-  - systemd-boot-update.service
-  - systemd-boot-check-no-failures.service
-  - systemd-boot-clear-sysfail.service
-  - systemd-sysupdate.timer
-  - systemd-sysupdate-reboot.timer
-  - unbound-anchor.timer
-  - fstrim.timer
-  - selinux-autorelabel-mark.service
+image: fedora-44-base
+image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
+image_tag: fedora-44-v3
+image_sha256:
+  x86_64: c75589889f00c3375acbefa02a74323ff89c7e4dc9857271a8673312f279c20d
+  aarch64: b5418a35bb301de31458ca1263e19815a20c9ca62ce501a4c0d54c6ad7c1657b

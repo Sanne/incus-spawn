@@ -28,10 +28,9 @@ class ImageDefTest {
         var minimal = defs.get("tpl-minimal");
         assertTrue(minimal.isRoot());
         assertNotNull(minimal.getImage());
-        assertEquals("images:fedora/44", minimal.getImage());
-        assertTrue(minimal.getPackages().contains("glibc-langpack-en"));
-        assertFalse(minimal.getRemovePackages().isEmpty());
-        assertFalse(minimal.getMaskServices().isEmpty());
+        assertEquals("fedora-44-base", minimal.getImage());
+        assertNotNull(minimal.getImageUrl());
+        assertNotNull(minimal.getImageSha256());
         assertTrue(minimal.getTools().isEmpty());
     }
 
@@ -327,6 +326,50 @@ class ImageDefTest {
         } finally {
             System.setProperty("user.home", originalHome);
         }
+    }
+
+    @Test
+    void parseImageWithImageUrl() throws Exception {
+        var yaml = """
+                name: tpl-test
+                image: fedora-44-base
+                image_url: https://example.com/fedora-44-{arch}.tar.xz
+                image_sha256:
+                  x86_64: abc123
+                  aarch64: def456
+                """;
+        var def = ImageDef.parseYaml(yaml);
+        assertEquals("fedora-44-base", def.getImage());
+        assertEquals("https://example.com/fedora-44-{arch}.tar.xz", def.getImageUrl());
+        assertEquals("abc123", def.getImageSha256().get("x86_64"));
+        assertEquals("def456", def.getImageSha256().get("aarch64"));
+    }
+
+    @Test
+    void imageWithoutImageUrlDefaultsToNull() {
+        var def = new ImageDef();
+        assertNull(def.getImageUrl());
+        assertNull(def.getImageSha256());
+    }
+
+    @Test
+    void fingerprintChangesWhenImageUrlChanges() {
+        var a = makeDef("fedora-44-base", null, List.of(), List.of());
+        var b = makeDef("fedora-44-base", null, List.of(), List.of());
+        a.setImageUrl("https://example.com/v1/fedora-44-{arch}.tar.xz");
+        b.setImageUrl("https://example.com/v2/fedora-44-{arch}.tar.xz");
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenImageSha256Changes() {
+        var a = makeDef("fedora-44-base", null, List.of(), List.of());
+        var b = makeDef("fedora-44-base", null, List.of(), List.of());
+        a.setImageUrl("https://example.com/fedora-44-{arch}.tar.xz");
+        b.setImageUrl("https://example.com/fedora-44-{arch}.tar.xz");
+        a.setImageSha256(Map.of("x86_64", "aaa"));
+        b.setImageSha256(Map.of("x86_64", "bbb"));
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
     }
 
     // --- contentFingerprint tests ---

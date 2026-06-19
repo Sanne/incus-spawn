@@ -75,6 +75,12 @@ public class ImageDef {
     private String name;
     private String description = "";
     private String image = "images:fedora/44";
+    @JsonProperty("image_url")
+    private String imageUrl;
+    @JsonProperty("image_tag")
+    private String imageTag;
+    @JsonProperty("image_sha256")
+    private Map<String, String> imageSha256;
     private String parent;
     private List<String> packages = List.of();
     @JsonProperty("remove_packages")
@@ -105,6 +111,12 @@ public class ImageDef {
     public void setDescription(String description) { this.description = description; }
     public String getImage() { return image; }
     public void setImage(String image) { this.image = image; }
+    public String getImageUrl() { return imageUrl; }
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
+    public String getImageTag() { return imageTag; }
+    public void setImageTag(String imageTag) { this.imageTag = imageTag; }
+    public Map<String, String> getImageSha256() { return imageSha256; }
+    public void setImageSha256(Map<String, String> imageSha256) { this.imageSha256 = imageSha256; }
     public String getParent() { return parent; }
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getPackages() { return packages; }
@@ -274,6 +286,13 @@ public class ImageDef {
     public String contentFingerprint(Map<String, String> toolFingerprints) {
         var sb = new StringBuilder();
         sb.append("image=").append(image).append('\n');
+        if (imageUrl != null) sb.append("image_url=").append(imageUrl).append('\n');
+        if (imageTag != null) sb.append("image_tag=").append(imageTag).append('\n');
+        if (imageSha256 != null) {
+            imageSha256.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                    .forEach(e -> sb.append("image_sha256.").append(e.getKey())
+                            .append('=').append(e.getValue()).append('\n'));
+        }
         sb.append("parent=").append(parent != null ? parent : "").append('\n');
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
         for (var t : tools.stream().sorted(java.util.Comparator.comparing(ToolDef.ToolRef::getName)).toList()) {

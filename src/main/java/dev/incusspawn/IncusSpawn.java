@@ -12,10 +12,10 @@ import org.aesh.command.option.Option;
 public class IncusSpawn implements QuarkusApplication {
     @Override
     public int run(String... args) {
-        if (args.length == 0) {
-            return launchTui() ? 0 : 1;
-        }
         try {
+            if (args.length == 0) {
+                return launchTui() ? 0 : 1;
+            }
             var result = AeshRuntimeRunner.builder()
                     .command(IncusSpawnCommand.class)
                     .args(args)
@@ -40,7 +40,8 @@ public class IncusSpawn implements QuarkusApplication {
                 BranchCommand.class, ShellCommand.class, ListCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CompletionCommand.class, TemplatesCommand.class, InstancesCommand.class,
-                GitRemoteHelperCommand.class, SshProxyCommand.class, VmCommand.class
+                GitRemoteHelperCommand.class, SshProxyCommand.class, VmCommand.class,
+                UpdateBaseCommand.class
             }, generateHelp = true)
     public static class IncusSpawnCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")

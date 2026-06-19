@@ -2435,8 +2435,10 @@ public class ListCommand extends BaseCommand {
         var chain = getInheritanceChain(parent);
         for (var def : chain) {
             for (var repo : def.getRepos()) {
-                var repoPath = repo.getPath().startsWith("~/")
-                        ? "/home/agentuser" + repo.getPath().substring(1) : repo.getPath();
+                var path = repo.getPath();
+                if (path == null) continue;
+                var repoPath = path.startsWith("~/")
+                        ? "/home/agentuser" + path.substring(1) : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
                 repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
             }
