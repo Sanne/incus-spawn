@@ -617,6 +617,11 @@ public class BuildCommand extends BaseCommand {
 
         System.out.println("Deriving from parent image '" + parentCanonical + "'...");
         incus.copy(parentSource, buildName);
+        incus.configSet(buildName, "security.nesting", "true");
+        if (Environment.isLinux()) {
+            incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        }
+        incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
         incus.start(buildName);
         incus.waitForSystemd(buildName);
 
