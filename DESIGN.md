@@ -56,12 +56,26 @@ Additional Java tools available: `pi` (Pi coding agent). Not included in built-i
 Each image definition specifies:
 - `name` — container name (required)
 - `description` — human-readable description for the TUI
-- `image` — base OS image, only for root images (default: `images:fedora/44`)
+- `image` — base OS image, only for root images
+- `image_url` — download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders)
+- `image_tag` — release tag identifying the base image version
+- `image_sha256` — per-architecture checksums for integrity verification
 - `parent` — parent image name (omit for root images)
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
 
 Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch.
+
+**Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image
+from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images)
+instead of linuxcontainers.org. This image is a pre-baked systemd rootfs with
+agentuser, dhcpcd networking, container-specific service masking, and a tmpfiles
+override for device node permissions — all the static setup that `buildFromScratch`
+would otherwise perform on every build. The base image tag and SHA256 checksums
+are pinned in `src/main/resources/images/minimal.yaml`. When a new base image is
+released, update `image_tag` and `image_sha256` in that file. See the
+[incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
+for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones.
 
@@ -105,20 +119,19 @@ Execution order: packages → downloads → run → run_as_user → files → en
 ### Build Flow
 
 **`buildFromScratch` (root image, no parent):**
-1. Launch base OS image
-2. Configure security (idmap, nesting, syscall interception, no capability dropping)
-3. Relax kernel paranoia (sysctl: ping_group_range, dmesg, perf, ptrace)
-4. Configure DNS (disable systemd-resolved, point at Incus bridge gateway)
-5. Upgrade system packages
-6. Create agentuser (UID 1000, passwordless sudo)
-7. Install base packages (git, curl, which, procps-ng, findutils)
-8. Install image-defined packages via dnf
-9. Install image-defined tools (resolved from YAML/Java)
-10. Clone declared repos (with reference optimization — see below)
-11. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
-12. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
-13. Clean caches (dnf, /tmp)
-14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
+1. Import and launch base image (pre-baked with agentuser, dhcpcd, service masks)
+2. Install MITM proxy CA certificate
+3. Configure security (idmap, nesting, syscall interception, no capability dropping)
+4. Prepare container for package install (tmpfiles overrides, dhcpcd tuning, man dirs)
+5. Configure DNS (disable systemd-resolved, point at Incus bridge gateway)
+6. Upgrade system packages
+7. Install image-defined packages via dnf
+8. Install image-defined tools (resolved from YAML/Java)
+9. Clone declared repos (with reference optimization — see below)
+10. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
+11. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
+12. Clean caches (dnf, /tmp)
+13. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
 
 **`buildFromParent` (derived image):**
 1. Copy parent image, start, wait for network
