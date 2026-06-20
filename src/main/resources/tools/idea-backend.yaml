@@ -34,6 +34,14 @@ run_as_user:
     mkdir -p "$IJ_CFG_DIR"
     printf -- '\n-Xmx${param_memory}\n' >> "$IJ_CFG_DIR/idea64.vmoptions"
   - /opt/idea/bin/remote-dev-server.sh registerBackendLocationForGateway
+  - |
+    IJ_DATA_DIR=~/.local/share/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+    IJ_BUILD=$(grep -o '"buildNumber": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+    PLUGIN_DIR="$IJ_DATA_DIR/plugins"
+    mkdir -p "$PLUGIN_DIR"
+    curl -fSL -o /tmp/index-mcp-plugin.zip "https://plugins.jetbrains.com/plugin/download?pluginId=29174&build=$IJ_BUILD"
+    unzip -qo /tmp/index-mcp-plugin.zip -d "$PLUGIN_DIR"
+    rm -f /tmp/index-mcp-plugin.zip
 
 verify: test -x /opt/idea/bin/remote-dev-server.sh
 
