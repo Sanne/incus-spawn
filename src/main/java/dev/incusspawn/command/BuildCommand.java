@@ -905,8 +905,12 @@ public class BuildCommand extends BaseCommand {
 
     private void maskStaticNodePermissions(Container container) {
         container.sh(
-                "test -f /etc/tmpfiles.d/static-nodes-permissions.conf || " +
-                "printf '# container override\\n' > /etc/tmpfiles.d/static-nodes-permissions.conf");
+                "mkdir -p /etc/tmpfiles.d; " +
+                "for f in $(grep -rl '/dev/net/tun\\|/dev/fuse' /usr/lib/tmpfiles.d/ 2>/dev/null); do " +
+                "  test -f /etc/tmpfiles.d/$(basename \"$f\") || " +
+                "  printf '# container override\\n' > /etc/tmpfiles.d/$(basename \"$f\"); " +
+                "done")
+                .assertSuccess("Failed to mask static device node permissions");
     }
 
     private static String normalizeHostArch() {
