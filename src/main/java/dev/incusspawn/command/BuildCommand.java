@@ -1192,7 +1192,18 @@ public class BuildCommand extends BaseCommand {
             System.out.println("  Network ready.");
             return;
         }
-        throw new RuntimeException("Container did not acquire an IPv4 address within 15 seconds");
+        var diag = container.sh(
+                "echo '--- dhcpcd-eth0 status ---'; " +
+                "systemctl status dhcpcd-eth0.service 2>&1 || true; " +
+                "echo '--- ip link ---'; " +
+                "ip link show eth0 2>&1 || true; " +
+                "echo '--- dhcpcd.conf ---'; " +
+                "cat /etc/dhcpcd.conf 2>&1 || true; " +
+                "echo '--- journalctl dhcpcd ---'; " +
+                "journalctl -u dhcpcd-eth0 --no-pager -n 20 2>&1 || true");
+        throw new RuntimeException(
+                "Container did not acquire an IPv4 address within 15 seconds.\n" +
+                "Diagnostics:\n" + diag.stdout() + diag.stderr());
     }
 
     private void waitForNetwork(String container) {
