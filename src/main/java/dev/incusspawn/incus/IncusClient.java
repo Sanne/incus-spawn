@@ -20,9 +20,13 @@ import java.util.Set;
 
 /**
  * Manages Incus container/VM lifecycle operations.
- * Uses the Incus REST API over Unix socket (Linux) or HTTPS (macOS/remote).
+ * Uses the Incus REST API over Unix socket (Linux) or vsock (macOS).
  */
 public class IncusClient {
+
+    private static final int VSOCK_RETRY_MAX = 5;
+    private static final long VSOCK_RETRY_DELAY_MS = 100;
+    private static final int MAX_RECONNECT_ATTEMPTS = 10;
 
     private volatile boolean apiInitialized;
     private volatile IncusApi api;
@@ -31,12 +35,27 @@ public class IncusClient {
         if (!apiInitialized) {
             synchronized (this) {
                 if (!apiInitialized) {
-                    api = IncusApi.tryConnect();
+                    api = connectWithRetry();
                     apiInitialized = true;
                 }
             }
         }
         return api;
+    }
+
+    private static IncusApi connectWithRetry() {
+        var result = IncusApi.tryConnect();
+        if (result != null) return result;
+        if (!Files.exists(Environment.vmVsockSocket())) return null;
+        for (int i = 0; i < VSOCK_RETRY_MAX; i++) {
+            try { Thread.sleep(VSOCK_RETRY_DELAY_MS); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            result = IncusApi.tryConnect();
+            if (result != null) return result;
+        }
+        return null;
     }
 
     private IncusApi http() {
@@ -270,11 +289,26 @@ public class IncusClient {
                 shellArgs = List.of("bash", "--login");
             }
 
-            var size = IncusApi.terminalSize();
-            return http().execPty(container, shellArgs,
-                    Integer.parseInt(uidGid.uid()), Integer.parseInt(uidGid.gid()),
-                    targetCwd, Map.of("HOME", homeDir),
-                    size[0], size[1]);
+            int uid = Integer.parseInt(uidGid.uid());
+            int gid = Integer.parseInt(uidGid.gid());
+            var env = Map.of("HOME", homeDir);
+
+            for (int reconnectAttempt = 0; ; reconnectAttempt++) {
+                try {
+                    var size = IncusApi.terminalSize();
+                    var result = http().execPty(container, shellArgs, uid, gid,
+                            targetCwd, env, size[0], size[1]);
+                    if (!result.connectionLost()) return result.exitCode();
+                } catch (IncusException e) {
+                    if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
+                }
+                long delay = Math.min(1000L * (1 << reconnectAttempt), 10_000L);
+                System.err.println("\n\033[1;33mConnection lost — reconnecting...\033[0m");
+                try { Thread.sleep(delay); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return -1;
+                }
+            }
         } finally {
             if (inTmux && savedWindowName != null) {
                 hostExecQuiet("tmux", "rename-window", savedWindowName);
@@ -289,6 +323,14 @@ public class IncusClient {
             System.out.print("\033]0;\007");
             System.out.flush();
         }
+    }
+
+    private static boolean hasIOExceptionCause(Throwable t) {
+        while (t != null) {
+            if (t instanceof java.io.IOException) return true;
+            t = t.getCause();
+        }
+        return false;
     }
 
     private record UidGid(String uid, String gid) {}

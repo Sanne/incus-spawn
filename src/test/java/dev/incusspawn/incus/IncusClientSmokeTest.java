@@ -357,9 +357,10 @@ class IncusClientSmokeTest {
         try {
             var http = IncusApi.tryConnect();
             assertNotNull(http, "IncusApi should be connectable");
-            ptyExit = http.execPty(CONTAINER,
+            var ptyResult = http.execPty(CONTAINER,
                     List.of("sh", "-c", "echo pty-output-ok; exit 5"),
                     0, 0, "/root", java.util.Map.of(), 80, 24);
+            ptyExit = ptyResult.exitCode();
         } finally {
             System.setIn(savedIn);
             System.setOut(savedOut);

@@ -286,6 +286,7 @@ class UnixSocketTransport implements IncusTransport {
         private final SocketChannel channel;
         private final OutputStream out;
         private final InputStream in;
+        private final Object writeLock = new Object();
 
         UnixWsConnection(SocketChannel channel, OutputStream out, InputStream in) {
             this.channel = channel;
@@ -300,13 +301,24 @@ class UnixSocketTransport implements IncusTransport {
 
         @Override
         public void sendData(byte[] data, int offset, int length) throws IOException {
-            wsSendMasked(out, WS_BINARY, data, offset, length);
+            synchronized (writeLock) {
+                wsSendMasked(out, WS_BINARY, data, offset, length);
+            }
+        }
+
+        @Override
+        public void sendPing() throws IOException {
+            synchronized (writeLock) {
+                wsSendMasked(out, WS_PING, new byte[0], 0, 0);
+            }
         }
 
         @Override
         public void sendClose() throws IOException {
-            wsSendMasked(out, WS_CLOSE, new byte[0], 0, 0);
-            out.flush();
+            synchronized (writeLock) {
+                wsSendMasked(out, WS_CLOSE, new byte[0], 0, 0);
+                out.flush();
+            }
         }
 
         @Override

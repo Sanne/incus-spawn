@@ -334,6 +334,16 @@ class HttpsTransport implements IncusTransport {
         }
 
         @Override
+        public void sendPing() throws IOException {
+            try {
+                ws.sendPing(ByteBuffer.allocate(0)).join();
+            } catch (java.util.concurrent.CompletionException e) {
+                if (e.getCause() instanceof IOException io) throw io;
+                throw new IOException(e);
+            }
+        }
+
+        @Override
         public void sendClose() throws IOException {
             try {
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "").join();

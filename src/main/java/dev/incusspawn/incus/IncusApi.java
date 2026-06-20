@@ -40,11 +40,10 @@ class IncusApi {
     }
 
     /**
-     * Try each candidate Unix socket path, then fall back to an HTTPS remote if configured.
+     * Try each candidate Unix socket path: Linux daemon sockets, then vsock (macOS).
      * Returns an IncusApi instance if a probe request succeeds, or null if nothing is accessible.
      */
     static IncusApi tryConnect() {
-        // Try Unix sockets: Linux daemon sockets, then vsock (macOS)
         var socketCandidates = new ArrayList<>(UnixSocketTransport.SOCKET_CANDIDATES);
         var vsockSocket = Environment.vmVsockSocket();
         if (Files.exists(vsockSocket)) {
@@ -56,17 +55,6 @@ class IncusApi {
                 var http = new IncusApi(new UnixSocketTransport(candidate));
                 if (http.get("/1.0").isSuccess()) return http;
             } catch (IncusException ignored) {}
-        }
-        // Try HTTPS remote (macOS or configured remote)
-        var httpsTransport = HttpsTransport.fromClientConfig();
-        if (httpsTransport != null) {
-            try {
-                var http = new IncusApi(httpsTransport);
-                if (http.get("/1.0").isSuccess()) return http;
-            } catch (IncusException e) {
-                var root = e.getCause() != null ? e.getCause() : e;
-                System.err.println("Incus HTTPS connection failed: " + root.getMessage());
-            }
         }
         return null;
     }
@@ -121,15 +109,8 @@ class IncusApi {
                         + "\nThe VM may still be booting. Wait a few seconds and retry.";
             }
         }
-        // No socket file found — check if HTTPS was attempted
-        var httpsTransport = HttpsTransport.fromClientConfig();
-        if (httpsTransport != null) {
-            return "HTTPS remote configured but connection failed.\n\n" +
-                   "The VM may not trust the current client certificate.\n" +
-                   "Re-run 'isx init' to regenerate and trust certificates.";
-        }
         return """
-                Incus not reachable. No Unix socket found and no HTTPS remote configured.
+                Incus not reachable. No Unix socket found and no vsock socket found.
 
                 First-time setup: run 'isx init'
                 """;
@@ -556,13 +537,18 @@ class IncusApi {
         });
     }
 
+    record PtyResult(int exitCode, boolean connectionLost) {}
+
+    private static final long WS_PING_INTERVAL_MS = 15_000;
+
     /**
      * Interactive PTY exec — bridges System.in/out to the container PTY.
-     * Sets the local terminal to raw mode for the duration. Returns exit code.
+     * Sets the local terminal to raw mode for the duration.
+     * Returns exit code and whether the session ended due to a connection loss.
      */
-    int execPty(String instance, List<String> command,
-                Integer uid, Integer gid, String cwd, Map<String, String> env,
-                int width, int height) {
+    PtyResult execPty(String instance, List<String> command,
+                      Integer uid, Integer gid, String cwd, Map<String, String> env,
+                      int width, int height) {
         var postResp = post("/1.0/instances/" + instance + "/exec",
                 buildExecBody(command, uid, gid, cwd, env, true, width, height));
         if (!postResp.isAsync()) throw new IncusException(
@@ -582,14 +568,25 @@ class IncusApi {
         // "control". The operation (and its exit code in /wait) is finalized only after BOTH
         // WebSocket connections are closed. So when control closes, we close the fd "0"
         // connection to unblock the read loop and allow waitForExecOp to return the exit code.
+        var controlLostConnection = new java.util.concurrent.atomic.AtomicBoolean(false);
         var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscard(opPath, fds.path("control").asText()));
+                wsDiscardTracked(opPath, fds.path("control").asText(), controlLostConnection));
 
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + fds.path("0").asText())) {
             // Watcher: close fd "0" as soon as control closes (command exited).
             Thread.ofVirtual().start(() -> {
                 joinQuietly(controlThread);
                 ws.close();
+            });
+
+            // Keepalive: periodic pings to prevent idle connection timeout.
+            var keepaliveThread = Thread.ofVirtual().start(() -> {
+                try {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        Thread.sleep(WS_PING_INTERVAL_MS);
+                        ws.sendPing();
+                    }
+                } catch (IOException | InterruptedException ignored) {}
             });
 
             setRawTerminal();
@@ -615,6 +612,7 @@ class IncusApi {
             } catch (IOException ignored) {
                 // Connection closed by watcher — normal PTY session end.
             } finally {
+                keepaliveThread.interrupt();
                 restoreTerminal();
             }
         } catch (IOException e) {
@@ -622,7 +620,8 @@ class IncusApi {
         }
         joinQuietly(controlThread);
 
-        return waitForExecOp(opPath);
+        int exitCode = waitForExecOp(opPath);
+        return new PtyResult(exitCode, controlLostConnection.get());
     }
 
     // ---- WebSocket helpers ----
@@ -686,6 +685,16 @@ class IncusApi {
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
             while (ws.readPayload() != null) {}
         } catch (IOException ignored) {}
+    }
+
+    /** Like wsDiscard, but sets connectionLost if the socket died due to an I/O error. */
+    private void wsDiscardTracked(String opPath, String secret,
+                                  java.util.concurrent.atomic.AtomicBoolean connectionLost) {
+        try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
+            while (ws.readPayload() != null) {}
+        } catch (IOException e) {
+            connectionLost.set(true);
+        }
     }
 
     /** Connect a WebSocket and immediately send a close frame. */
