@@ -628,6 +628,8 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
         waitForIpv4(container);
 
+        maskStaticNodePermissions(container);
+
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
@@ -735,6 +737,8 @@ public class BuildCommand extends BaseCommand {
         incus.waitForSystemd(buildName);
 
         waitForIpv4(container);
+
+        maskStaticNodePermissions(container);
 
         System.out.println("Configuring DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -897,6 +901,12 @@ public class BuildCommand extends BaseCommand {
             throw new RuntimeException(
                     "Failed to download base image from " + resolvedUrl + ": " + e.getMessage(), e);
         }
+    }
+
+    private void maskStaticNodePermissions(Container container) {
+        container.sh(
+                "test -f /etc/tmpfiles.d/static-nodes-permissions.conf || " +
+                "printf '# container override\\n' > /etc/tmpfiles.d/static-nodes-permissions.conf");
     }
 
     private static String normalizeHostArch() {
