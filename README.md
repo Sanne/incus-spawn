@@ -532,6 +532,28 @@ Resolution order (later sources override earlier ones with the same name):
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
 
+## FAQ
+
+### Why can't I mount a host directory read-write to follow agent work in my IDE?
+
+A project directory is not just data — it is an implicit code execution channel. Build tools, package managers, and IDEs all trust its contents and execute them with your full host privileges. A read-write mount turns the agent's output into unreviewed host-side code execution, which is exactly the threat model incus-spawn exists to prevent.
+
+Two attack surfaces make this dangerous even for "just the project directory":
+
+1. **Executable project content.** Build plugins, Makefiles, `gradlew`, `.mvn/jvm.config`, git hooks, IDE run configurations, and dependency declarations with local path references (`<systemPath>`, `file:` deps, Go `replace` directives) all execute when you run a normal build command. An agent that modifies a Maven build plugin or a git pre-commit hook gets code execution on your host with your credentials and network access — without you ever intentionally "running the agent's code."
+
+2. **IDE auto-execution.** VS Code, IntelliJ, and most editors auto-execute project configuration the moment you open a directory: `.vscode/settings.json` (task auto-run), `.idea/` workspace files, ESLint/TypeScript/Pyright configs that load plugins. An agent writing to the project directory can trigger code execution on your host just by the folder being open — no build command required.
+
+These risks are compounded by a **race condition**: with a live read-write mount, files can change between review and execution. You inspect a git hook or build script, decide it's safe, and run your build — but the agent modified the file between your review and your command. Unlike `git fetch`, which gives you a specific immutable commit to review and act on, a live mount means your review is never final.
+
+Beyond security, a shared project directory is also **misleading**. The agent's code runs against the container's execution context — container-local SNAPSHOT dependencies, container-local `node_modules`, container-local pip packages. None of that comes through the mount. The source code on the host *looks* like a complete project, but when you build it locally it may behave differently or break entirely because the dependency state is invisible. The project directory is only a partial view of the agent's environment.
+
+**What to use instead:**
+
+- **`isx://` git remotes** ([Git Remotes](#git-remotes)): `git fetch <instance>` pulls a consistent, atomic snapshot — a specific commit you can review with `git diff` before merging. Even if the agent pushes new commits between your review and your merge, you act on the exact commit you reviewed. Git's content-addressed model eliminates torn reads by design. This is the intended workflow for getting work out of containers.
+- **VS Code Remote SSH / JetBrains Gateway** ([Remote IDE Access](#remote-ide-access)): the IDE backend runs inside the container while the UI runs on your host. You see live edits, have full debugging, and the security boundary stays intact. Both are built-in tools (`vscode-remote`, `idea-backend`).
+- **`readonly` and `overlay` host-resources** ([Host Resources](#host-resources)): for sharing files *into* the container safely. `readonly` is a read-only bind mount; `overlay` gives the container a writable view backed by an ephemeral layer, without modifying the host.
+
 ## CLI Reference
 
 | Command | Description |
