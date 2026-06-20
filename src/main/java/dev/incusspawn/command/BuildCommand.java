@@ -910,7 +910,9 @@ public class BuildCommand extends BaseCommand {
                 "  test -f /etc/tmpfiles.d/$(basename \"$f\") || " +
                 "  printf '# container override\\n' > /etc/tmpfiles.d/$(basename \"$f\"); " +
                 "done; " +
-                "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}")
+                "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}; " +
+                "grep -q 'nohook resolv.conf' /etc/dhcpcd.conf 2>/dev/null || " +
+                "  echo 'nohook resolv.conf' >> /etc/dhcpcd.conf")
                 .assertSuccess("Failed to prepare container for package install");
     }
 
