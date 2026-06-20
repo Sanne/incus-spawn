@@ -124,6 +124,9 @@ public class CompletionCommand extends BaseCommand {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
                 '--all[Rebuild all defined templates]' \\
+                '--out-of-sync[Rebuild templates that are out of sync]' \\
+                '--with-parents[Rebuild the template and all its parents]' \\
+                '--with-descendants[Rebuild the template and all templates inheriting from it]' \\
                 '--missing[Build only templates that don'"'"'t exist yet]' \\
                 '--vm[Build as a VM instead of a container]' \\
                 '--yes[Skip interactive confirmations]' \\
@@ -225,6 +228,36 @@ public class CompletionCommand extends BaseCommand {
                 '1::shell:(bash zsh fish)'
             }
 
+            _isx_vm() {
+              local state line; typeset -A opt_args
+              _arguments -C \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1: :->subcmd' \\
+                '*:: :->args'
+
+              local -a _vm_subcmds
+              _vm_subcmds=(
+                'start:start the VM (creates disk image on first run)'
+                'stop:stop the VM (graceful shutdown)'
+                'status:show VM status and system diagnostics'
+                'console:follow VM serial console output'
+              )
+
+              case $state in
+                subcmd) _describe -t subcmds 'vm subcommand' _vm_subcmds ;;
+                args)
+                  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
+              esac
+            }
+
+            _isx_update_base() {
+              _arguments \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '--list[List available versions]' \\
+                '--latest[Track the latest version (remove any pin)]' \\
+                '1::release tag'
+            }
+
             _isx() {
               local context state state_descr line
               typeset -A opt_args
@@ -253,6 +286,8 @@ public class CompletionCommand extends BaseCommand {
                     'instances:list connectable instance names'
                     'git-remote-helper:git remote helper for isx:// URLs (used by git)'
                     'ssh-proxy:SSH ProxyCommand that tunnels through Incus exec API'
+                    'vm:manage the incus-spawn VM appliance'
+                    'update-base:check for and install base image updates'
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
@@ -272,6 +307,8 @@ public class CompletionCommand extends BaseCommand {
                     instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                     git-remote-helper) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance' '2:service' '3:path' ;;
                     ssh-proxy) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance:_isx_instances' ;;
+                    vm)         _isx_vm ;;
+                    update-base) _isx_update_base ;;
                   esac ;;
               esac
             }
@@ -296,14 +333,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build project branch shell list destroy update-all proxy completion templates instances git-remote-helper ssh-proxy"
+              local commands="init build project branch shell list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper|ssh-proxy)
+                  init|build|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -338,10 +375,10 @@ public class CompletionCommand extends BaseCommand {
                 build)
                   case "$prev" in
                     build)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --missing --vm --yes" -- "$cur") )
+                      COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --vm --yes" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --all --missing --vm --yes" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --all --out-of-sync --with-parents --with-descendants --missing --vm --yes" -- "$cur") )
                   ;;
                 destroy)
                   case "$prev" in
@@ -448,6 +485,24 @@ public class CompletionCommand extends BaseCommand {
                   esac
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
+                vm)
+                  local vm_subcmds="start stop status console"
+                  local vm_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      start|stop|status|console) vm_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  if [[ -z "$vm_cmd" ]]; then
+                    COMPREPLY=( $(compgen -W "$vm_subcmds --help" -- "$cur") )
+                  else
+                    COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                  fi
+                  ;;
+                update-base)
+                  COMPREPLY=( $(compgen -W "--help --list --latest" -- "$cur") )
+                  ;;
                 init|update-all|instances|git-remote-helper)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
@@ -474,7 +529,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|proxy|completion|templates|instances|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -498,6 +553,8 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
             complete -c isx -f -n __isx_no_subcommand -a git-remote-helper -d 'Git remote helper for isx:// URLs (used by git)'
             complete -c isx -f -n __isx_no_subcommand -a ssh-proxy       -d 'SSH ProxyCommand that tunnels through Incus exec API'
+            complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
+            complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
 
             # ── branch ───────────────────────────────────────────────────────────────────
 
@@ -515,10 +572,13 @@ public class CompletionCommand extends BaseCommand {
             # ── build ────────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand build' -a '(__isx_templates)' -d 'Template name'
-            complete -c isx -f -n '__isx_using_subcommand build' -l all     -d 'Rebuild all defined templates'
-            complete -c isx -f -n '__isx_using_subcommand build' -l missing -d 'Build only templates that don'"'"'t exist yet'
-            complete -c isx -f -n '__isx_using_subcommand build' -l vm      -d 'Build as a VM instead of a container'
-            complete -c isx -f -n '__isx_using_subcommand build' -l yes     -d 'Skip interactive confirmations'
+            complete -c isx -f -n '__isx_using_subcommand build' -l all              -d 'Rebuild all defined templates'
+            complete -c isx -f -n '__isx_using_subcommand build' -l out-of-sync     -d 'Rebuild templates that are out of sync'
+            complete -c isx -f -n '__isx_using_subcommand build' -l with-parents    -d 'Rebuild the template and all its parents'
+            complete -c isx -f -n '__isx_using_subcommand build' -l with-descendants -d 'Rebuild the template and all templates inheriting from it'
+            complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
+            complete -c isx -f -n '__isx_using_subcommand build' -l vm               -d 'Build as a VM instead of a container'
+            complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
 
             # ── destroy ──────────────────────────────────────────────────────────────────
 
@@ -576,5 +636,17 @@ public class CompletionCommand extends BaseCommand {
             # ── ssh-proxy ────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand ssh-proxy' -a '(__isx_instances)' -d 'Instance name'
+
+            # ── vm ──────────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
+
+            # ── update-base ─────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand update-base' -l list   -d 'List available versions'
+            complete -c isx -f -n '__isx_using_subcommand update-base' -l latest -d 'Track the latest version (remove any pin)'
             """;
 }
