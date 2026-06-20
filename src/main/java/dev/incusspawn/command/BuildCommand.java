@@ -628,7 +628,7 @@ public class BuildCommand extends BaseCommand {
         var container = new Container(incus, buildName);
         waitForIpv4(container);
 
-        maskStaticNodePermissions(container);
+        prepareContainerForPackageInstall(container);
 
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
@@ -738,7 +738,7 @@ public class BuildCommand extends BaseCommand {
 
         waitForIpv4(container);
 
-        maskStaticNodePermissions(container);
+        prepareContainerForPackageInstall(container);
 
         System.out.println("Configuring DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -903,14 +903,15 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void maskStaticNodePermissions(Container container) {
+    private void prepareContainerForPackageInstall(Container container) {
         container.sh(
                 "mkdir -p /etc/tmpfiles.d; " +
                 "for f in $(grep -rl '/dev/net/tun\\|/dev/fuse' /usr/lib/tmpfiles.d/ 2>/dev/null); do " +
                 "  test -f /etc/tmpfiles.d/$(basename \"$f\") || " +
                 "  printf '# container override\\n' > /etc/tmpfiles.d/$(basename \"$f\"); " +
-                "done")
-                .assertSuccess("Failed to mask static device node permissions");
+                "done; " +
+                "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}")
+                .assertSuccess("Failed to prepare container for package install");
     }
 
     private static String normalizeHostArch() {
