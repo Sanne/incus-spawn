@@ -68,16 +68,13 @@ Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GP
 
 **API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
 
-- The proxy configures bridge-level DNS overrides (via dnsmasq on `incusbr0`) so containers resolve `api.anthropic.com`, `github.com`, and related domains to the Incus bridge gateway IP
-- Template images include a custom CA certificate so containers trust the proxy's TLS certificates
-- The proxy terminates TLS, injects authentication headers, and forwards to the real upstream over TLS
-- Tools (`curl`, `git`, `gh`, `claude`, `pi`) work transparently inside containers — placeholder auth values satisfy local checks, but the proxy replaces them with real credentials before requests reach upstream
-- **Vertex AI support**: when the host uses Vertex AI, the proxy transparently translates standard API requests to Vertex AI `rawPredict` format — containers run Claude Code in standard mode with zero knowledge of Vertex, no GCP credentials
-- **Claude Pro/Max support**: users with a Claude subscription (no API key) can authenticate via `claude setup-token`. The proxy injects the OAuth Bearer token transparently — no API key required
-- There is no mechanism for code inside a container to read, extract, or exfiltrate real credentials
-- **HTTPS only**: the proxy intercepts HTTPS traffic, so Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS automatically; for `git clone`, use `https://github.com/...` instead of `git@github.com:...`
+- The proxy uses bridge-level DNS overrides and a custom CA certificate so containers transparently route intercepted domains through the proxy
+- The proxy terminates TLS, injects real authentication headers, and forwards to the real upstream over TLS — tools (`curl`, `git`, `gh`, `claude`, `pi`) work unmodified inside containers
+- **Vertex AI support**: the proxy transparently translates requests to Vertex AI format — no GCP credentials enter the container
+- **Claude Pro/Max support**: authenticate via `claude setup-token`; the proxy injects the OAuth Bearer token transparently
+- **HTTPS only**: Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS; for `git clone`, use `https://github.com/...`
 
-The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service that starts automatically and survives reboots. Alternatively, run `isx proxy` in a separate terminal. View proxy logs with `isx proxy logs`. Builds, branches, and shell access verify the proxy is reachable before proceeding, so you get a clear error instead of mysterious connection failures. If the running proxy version doesn't match the CLI, it is automatically restarted (when no containers are running) or a warning is shown. Branching from a template built with a different CA certificate also warns you before you hit TLS failures.
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service, or run `isx proxy` in a separate terminal. The CLI verifies proxy reachability and version compatibility before builds, branches, and shell access.
 
 ### Network Modes
 
@@ -88,12 +85,6 @@ Each branch runs in one of three network modes:
 | **Full internet** | *(default)* | Unrestricted network access via NAT, auth via MITM proxy |
 | **Proxy only** | `--proxy-only` | Outbound traffic restricted to MITM proxy only (iptables) |
 | **Airgapped** | `--airgap` | Network device removed, complete isolation |
-
-In all non-airgapped modes, credentials are injected transparently by the MITM proxy. The network modes only control what *other* traffic the container can access:
-
-- **Full internet**: containers can reach any destination; traffic to intercepted domains (Anthropic, GitHub) is transparently routed through the MITM proxy for auth injection
-- **Proxy only**: iptables OUTPUT rules restrict all outbound traffic to the MITM proxy port (443) and DNS — the container cannot reach any external endpoint directly
-- **Airgapped**: no network device, no traffic at all
 
 ### Git Remotes
 
@@ -108,30 +99,15 @@ git cherry-pick fix-auth/main
 
 #### isx:// URLs
 
-The remote uses the `isx://` URL scheme:
-
-```
-isx://<instance-name>/<path-to-repo>
-```
-
-For example:
+The remote uses the `isx://` URL scheme (`~` expands to `/home/agentuser`):
 
 ```shell
-# Tilde expands to /home/agentuser
 git remote add fix-auth isx://fix-auth/~/quarkus
-
-# Absolute paths work too
-git remote add fix-auth isx://fix-auth/home/agentuser/quarkus
-
-# Then use standard git commands
 git fetch fix-auth
-git log fix-auth/main
 git diff main..fix-auth/main
-git pull fix-auth main
-git push fix-auth main
 ```
 
-The instance must be running for git operations to work. If you specify a wrong path, the error message lists known repositories from the image definition.
+The instance must be running for git operations to work.
 
 #### Automatic remotes
 
@@ -150,42 +126,24 @@ repo-paths:
   hibernate: /opt/hibernate
 ```
 
-With this configuration:
-
-- **`isx branch`** adds a git remote named after the instance in each matching host repo. A host repo matches when its `origin` URL corresponds to a repo declared in the template's image definition (protocol-lenient — SSH and HTTPS URLs for the same repo are treated as equal).
-- **`isx destroy`** removes the remote from host repos.
-
-```shell
-# Branch from a template that declares a quarkus repo
-isx branch fix-auth tpl-quarkus
-
-# The remote is automatically added in ~/work/quarkus:
-#   git remote add fix-auth isx://fix-auth/home/agentuser/quarkus
-cd ~/work/quarkus
-git fetch fix-auth
-
-# When done, destroy the instance — the remote is cleaned up
-isx destroy fix-auth
-```
-
-If a remote with the instance name already exists, a warning is printed with instructions to add it under a different name.
+With this configuration, `isx branch` adds a git remote named after the instance in each matching host repo (protocol-lenient — SSH and HTTPS URLs for the same repo are treated as equal), and `isx destroy` removes it.
 
 ## Caching
 
-The proxy caches to save bandwidth, not to cut corners. Every cache hit is guaranteed to return the same bytes you'd get by fetching directly from upstream — pure speed boost with zero risk. Mutable artifacts (Maven SNAPSHOTs, repository metadata, version listings) are never cached. Immutable artifacts are only committed to the cache after verification against their content digest or upstream checksum — a mismatch means the artifact is discarded and re-fetched. When possible, the proxy also validates artifacts already on the host (e.g. your `~/.m2/repository`) against upstream checksums before serving, avoiding both a redundant download and the risk of serving stale local data.
+The proxy and build system cache artifacts on the host, shared across all templates and branches. Only immutable, content-addressed artifacts are cached — mutable data (Maven SNAPSHOTs, repository metadata, version listings) always passes through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
 
-The MITM proxy caches artifacts from container traffic on the host, shared across all templates and branches:
+Proxy caches (from container traffic):
 
-- **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed and verified by SHA256 content digest
-- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal. SNAPSHOTs and metadata pass through uncached
+- **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed by SHA256 content digest
+- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal
 - **Gradle distributions** — verified against the upstream `.sha256` sidecar
 
-Build-time caches avoid redundant work across the template chain:
+Build-time caches:
 
-- **DNF packages** — a host-side cache is mounted into each container during builds, so child images don't re-download what the parent already fetched
-- **Tool downloads** — artifacts declared in tool YAML definitions are downloaded and extracted on the host, then pushed into containers. Rebuilds reuse cached files when the SHA256 matches
+- **DNF packages** — host-side cache mounted during builds so child images reuse parent downloads
+- **Tool downloads** — cached on the host by SHA256; rebuilds reuse unchanged artifacts
 
-All caches live under `~/.cache/incus-spawn/` (`registry/`, `maven/`, `gradle/`, `dnf/`, `downloads/`). There is no automatic eviction — cached artifacts accumulate until you delete them manually. This is deliberate: every cached artifact is either content-addressed or version-pinned, so it's either correct forever or superseded by a newer version that gets its own cache entry.
+All caches live under `~/.cache/incus-spawn/`. There is no automatic eviction — every entry is content-addressed or version-pinned, so it is either correct forever or superseded by a newer version with its own entry.
 
 ## Template Images
 
@@ -215,9 +173,7 @@ isx update-base fedora-44-v2 # pin to a specific release tag
 
 Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`. Tracking latest (the default) uses the built-in definition, which is updated with each isx release. After changing the base image version, rebuild with `isx build tpl-minimal`.
 
-Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
-You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)); this is useful to version your templates in a separate git project.
-Later sources override earlier ones: built-in → user → search paths → project-local.
+Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)).
 
 Use `isx templates` to manage templates from the CLI:
 
@@ -309,10 +265,8 @@ workdir: ~/quarkus
 shell-command: claude
 ```
 
-- `workdir` -- the directory to `cd` into when opening a shell. If omitted, defaults to the checkout path of the first declared repo. When a template inherits from a parent, the child's repos take priority; if the child has no repos, the parent's first repo is used. If no repos exist anywhere in the chain, the shell opens in the home directory.
-- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` to launch Claude Code directly, or `pi` to launch the Pi coding agent). If the command fails to start, the shell falls back to `bash --login`.
-
-Both values are stored as Incus metadata at build time and propagate automatically to branches. A missing `workdir` directory never blocks shell access -- the `cd` fails silently and the shell opens in the home directory.
+- `workdir` -- the directory to `cd` into when opening a shell. Defaults to the first declared repo's path if omitted.
+- `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`). Falls back to `bash --login` if it fails to start.
 
 ### Pi Coding Agent
 
@@ -331,16 +285,7 @@ tools:
 shell-command: pi
 ```
 
-Pi is pre-configured at build time with a placeholder `ANTHROPIC_API_KEY`. The [MITM proxy](#credential-isolation) intercepts all requests to `api.anthropic.com` and injects your real credentials transparently — Pi works out of the box, and your API key never enters the container. This works with all three auth modes: direct API key, Claude Pro/Max OAuth token, and Vertex AI. If your host is configured for Vertex AI, the proxy automatically translates Pi's standard Anthropic API requests to Vertex AI format, with no configuration needed inside the container.
-
-To run Pi without making it the default shell, omit `shell-command` and just include it in `tools:`:
-
-```yaml
-tools:
-  - pi
-```
-
-You can then launch it manually with `pi` after connecting via `isx shell <instance>`.
+Pi works out of the box with all three auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](#credential-isolation) injects credentials transparently. To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
 
 ### Claude Code Skills
 
@@ -367,24 +312,11 @@ skills:
   - myorg/catalog
 ```
 
-For local skills (e.g. skills you are developing), point to a directory containing a `SKILL.md` or subdirectories each with their own `SKILL.md`. Relative paths are resolved from the directory where `isx build` is run:
-
-```yaml
-skills:
-  - ./my-skills/code-review      # single skill: my-skills/code-review/SKILL.md
-  - ./my-skills                  # all skills: one per subdirectory with SKILL.md
-```
-
 Skill source formats:
 - `owner/repo@skill-name` -- specific skill from a GitHub repo
 - `owner/repo` -- all skills from a GitHub repo
-- `https://github.com/owner/repo` -- full GitHub URL
-- `./local-path` -- local directory (always read from disk, not cached)
-- `skill-name` -- bare name, resolved as `repo@skill-name` using the `skills.repo` field. There is no built-in default catalog, so bare names require `repo` to be set -- otherwise the build will stop with an error explaining how to fix it.
-
-Skills are fetched on the host at build time and cached at `~/.cache/incus-spawn/skills/`. They are not installed on the host — each SKILL.md is written directly into the container at `~/.claude/skills/<skill-name>/SKILL.md`, the global skills directory that Claude Code reads automatically. Subsequent builds reuse the cached files without hitting the network.
-
-Skills are deduplicated across the parent chain: if a parent already declares a skill, child images skip it.
+- `./local-path` -- local directory (relative to where `isx build` is run)
+- `skill-name` -- bare name, resolved using the `skills.repo` field (required for bare names)
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
@@ -417,28 +349,7 @@ Three modes are available:
 | `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. **Linux only** — not yet supported on macOS. |
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
 
-If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. For example, `source: ~/.m2/repository` maps to `/home/agentuser/.m2/repository` inside the container.
-
-More examples:
-
-```yaml
-host-resources:
-  # Share SSH config (read-only)
-  - source: ~/.ssh/config
-
-  # Copy a custom gitconfig from a URL
-  - source: https://example.com/team-gitconfig
-    path: /home/agentuser/.gitconfig
-    mode: copy
-
-  # Share Gradle cache with overlay (writable inside container, host protected)
-  - source: ~/.gradle/caches
-    mode: overlay
-```
-
-If a host path doesn't exist at build or branch time, the entry is skipped with a warning -- the build proceeds without it. This means templates with host-resources remain portable: they work on machines that have the declared paths and gracefully degrade on machines that don't.
-
-Host resources compose across the parent chain: a child image inherits its parent's host-resources and can override individual entries (matched by container path) to change the mode.
+If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
 ## Custom Tools
 
@@ -484,9 +395,7 @@ Download entry fields:
 
 Supported archive formats: `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
-Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `env` → `verify`.
-
-Resolution order: built-in YAML → `~/.config/incus-spawn/tools/` (user) → search paths → `.incus-spawn/tools/` (project-local) → Java plugins.
+Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `env` → `verify`. Resolution follows the same order as templates (see [Configuration](#configuration)).
 
 ### Remote IDE Access
 
@@ -530,129 +439,33 @@ tools:
 
 ### Tool Parameters
 
-Tools can define parameters to allow configuration at build time. Parameters support validation by type (string, integer, boolean, enum) and constraints (regex patterns, min/max ranges, allowed values).
-
-Define parameters in the tool YAML:
+Tools can define parameters for build-time configuration. Parameter types: `string` (with optional `pattern`), `integer` (with `min`/`max`), `boolean`, and `enum` (with `options`). Use `${param_name}` to reference values in scripts, env, and file content:
 
 ```yaml
-# tools/example-tool.yaml
-name: example-tool
-description: Example parameterized tool
+# tools/my-server.yaml
+name: my-server
 parameters:
   memory:
     type: string
     default: "2g"
-    description: "JVM heap size"
     pattern: "^[0-9]+[gGmM]$"
-  port:
-    type: integer
-    default: "8080"
-    min: 1024
-    max: 65535
-    description: "Server port"
-  debug:
-    type: boolean
-    default: "false"
-    description: "Enable debug mode"
-  mode:
-    type: enum
-    default: "production"
-    options:
-      - "production"
-      - "development"
-      - "testing"
-    description: "Deployment mode"
-
-run_as_user:
-  - echo "Memory: ${param_memory}, Port: ${param_port}"
-  - |
-    if [ "${param_debug}" = "true" ]; then
-      export DEBUG=1
-    fi
-
 env:
-  - export APP_MEMORY=${param_memory}
-  - export APP_PORT=${param_port}
+  - export SERVER_MEMORY=${param_memory}
 ```
 
-Reference parameterized tools in image definitions:
-
-```yaml
-# images/example.yaml
-name: tpl-example
-tools:
-  - maven-3                      # Simple string form (uses defaults)
-  - example-tool:                # Map form with custom parameters
-      memory: "8g"
-      port: "9000"
-      debug: "true"
-      mode: "development"
-```
-
-Parameter values are substituted during tool installation. Use `${param_name}` in tool scripts, environment variables, and file content.
-
-**Validation**: When a tool defines parameters, any unknown or invalid parameters will trigger validation errors. Tools that do not define a `parameters` section will reject any parameters provided to them.
+Pass parameter values using the map form in image definitions (the `idea-backend` memory example above shows this pattern).
 
 ### Tool Actions
 
-Tools can declare runtime actions that appear in the TUI when the tool is installed on an instance. Press **F9** on a selected instance to open the actions menu. Actions are only shown for tools that are part of the instance's template chain.
-
-Three action types are supported:
-
-| Type | Description |
-|------|-------------|
-| `url` | Opens a URL in the default browser (via `xdg-open`) |
-| `command` | Runs a shell command on the host (exits the TUI, re-enters after) |
-| `copy-to-clipboard` | Copies text to the system clipboard (via `xclip`) |
-
-Actions support template variables that are interpolated at execution time:
-
-| Variable | Value |
-|----------|-------|
-| `${ip}` | Instance IPv4 address |
-| `${name}` | Instance name |
-| `${parent}` | Parent template name |
-| `${repo_name}` | Repository directory name (when expanded) |
-| `${repo_path}` | Repository path inside the container (when expanded) |
-| `${repo_url}` | Repository clone URL (when expanded) |
-
-Use `expand: repos` to generate one action per declared repository in the template's inheritance chain. This is how the `idea-backend` tool creates a separate "Open in Gateway" entry for each repo:
+Tools can declare runtime actions that appear in the TUI (press **F9** on a running instance). Three types: `url` (opens in browser), `command` (runs on the host), `copy-to-clipboard`. Actions support template variables (`${ip}`, `${name}`, `${repo_name}`, `${repo_path}`) and `expand: repos` to generate one action per declared repository:
 
 ```yaml
-# tools/idea-backend.yaml (excerpt)
 actions:
   - label: "Open repo '${repo_name}' in Gateway"
     type: url
     expand: repos
-    url: "jetbrains-gateway://connect#idePath=%2Fopt%2Fidea&host=${ip}&port=22&user=agentuser&type=ssh&deploy=false&projectPath=${repo_path}"
+    url: "jetbrains-gateway://connect#host=${ip}&projectPath=${repo_path}"
 ```
-
-A standalone action (without `expand`) looks like:
-
-```yaml
-actions:
-  - label: "Open web UI"
-    type: url
-    url: "http://${ip}:8080"
-  - label: "Copy SSH command"
-    type: copy-to-clipboard
-    text: "ssh agentuser@${ip}"
-  - label: "Run migrations"
-    type: command
-    command: "incus exec ${name} -- sudo -u agentuser /home/agentuser/app/migrate.sh"
-```
-
-Action entry fields:
-- `label` (required) -- text shown in the actions menu (supports template variables)
-- `type` (required) -- one of `url`, `command`, or `copy-to-clipboard`
-- `url` -- URL to open (for `url` type)
-- `command` -- shell command to run on the host (for `command` type)
-- `text` -- text to copy (for `copy-to-clipboard` type)
-- `expand` -- set to `repos` to generate one action per declared repository
-- `requires_running` -- whether the instance must be running (default: `true`)
-- `auto_return` -- for `command` type, skip the "press any key" prompt after execution (default: `false`)
-
-Actions can also be contributed programmatically by CDI beans implementing the `ToolAction` interface, for cases that need logic beyond what YAML declarations can express.
 
 ## Installation
 
@@ -687,56 +500,6 @@ Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. 
 ```shell
 jbang app install isx@Sanne/incus-spawn
 ```
-
-## Building from source
-
-```shell
-# Build
-mvn package
-
-# Run tests
-mvn test                        # unit tests (no Incus needed)
-mvn verify -DskipITs=false      # integration tests (requires Incus)
-
-# Install locally
-./install.sh            # JVM
-./install.sh --native   # native (requires Docker, Podman, or GraalVM)
-```
-
-## Website Development
-
-The project website is hosted on GitHub Pages. To preview changes locally:
-
-```shell
-# Build the site (generates _site/ directory from README.md)
-./site/build.sh
-
-# Serve locally
-cd _site && python3 -m http.server 8000
-```
-
-Then open http://localhost:8000 in your browser. The build script converts README.md to HTML and generates the table of contents for the docs page.
-
-## Releasing
-
-Releases are automated via GitHub Actions. To create a new release, run:
-
-```shell
-./release.sh
-```
-
-The script derives the version from the POM snapshot (e.g. `0.1.9-SNAPSHOT` → `v0.1.9`), validates the working tree, creates the tag, and pushes it. You can also pass an explicit version: `./release.sh 0.2.0`.
-
-Pushing the tag triggers a workflow that will:
-1. Set the project version from the tag
-2. Build a self-contained uber-jar (for JBang users)
-3. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64)
-4. Create a GitHub Release with auto-generated release notes and all artifacts attached
-5. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap) with new checksums
-6. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
-7. Bump the POM version to the next snapshot
-
-Users can then install or update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
 
 ## Configuration
 
@@ -775,18 +538,11 @@ Resolution order (later sources override earlier ones with the same name):
 |---------|-------------|
 | `isx` | Launch the interactive TUI |
 | `isx init` | One-time host setup (Incus, firewall, auth) |
-| `isx build <template>` | Build or rebuild a template image |
-| `isx build <tpl> --with-parents` | Rebuild a template and all its parents |
-| `isx build --all` | Rebuild all discovered templates |
-| `isx build --out-of-sync` | Rebuild out-of-sync templates |
-| `isx build --missing` | Build only templates that don't exist yet |
+| `isx build <template>` | Build or rebuild a template (`--all`, `--missing`, `--out-of-sync`, `--with-parents`) |
 | `isx branch <name>` | Create a CoW clone from a template or instance |
 | `isx shell <instance>` | Open a shell in an instance |
 | `isx destroy <instance>` | Destroy an instance |
-| `isx update-base` | Check for and install base image updates |
-| `isx update-base --list` | List available base image versions |
-| `isx update-base <tag>` | Pin base image to a specific version |
-| `isx update-base --latest` | Track the latest version (remove any pin) |
+| `isx update-base` | Check for and install base image updates (`--list`, `--latest`, or a tag) |
 | `isx update-all` | Update all templates (packages, repos, tools) |
 | `isx templates` | List available templates |
 | `isx templates list -v` | List templates with source and description |
