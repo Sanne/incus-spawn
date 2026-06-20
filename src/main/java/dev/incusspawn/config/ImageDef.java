@@ -235,7 +235,12 @@ public class ImageDef {
 
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
-        public String getPath() { return path; }
+        public String getPath() {
+            if (path != null) return path;
+            if (url == null) return null;
+            var name = dev.incusspawn.git.GitRemoteUtils.repoNameFromUrl(url);
+            return name.isEmpty() ? null : "~/" + name;
+        }
         public void setPath(String path) { this.path = path; }
         public String getBranch() { return branch; }
         public void setBranch(String branch) { this.branch = branch; }
