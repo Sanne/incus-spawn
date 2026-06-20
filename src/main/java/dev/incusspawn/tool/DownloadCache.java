@@ -58,14 +58,17 @@ public class DownloadCache {
         System.out.println("  Downloading " + url + "...");
         var tmp = Files.createTempFile(cacheDir, "download-", ".tmp");
         try {
-            var client = HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .build();
-            var request = HttpRequest.newBuilder(URI.create(url)).GET().build();
-            var response = client.send(request, HttpResponse.BodyHandlers.ofFile(tmp));
-
-            if (response.statusCode() != 200) {
-                throw new IOException("Download failed: HTTP " + response.statusCode() + " for " + url);
+            if (url.startsWith("file://")) {
+                Files.copy(Path.of(URI.create(url)), tmp, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                var client = HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .build();
+                var request = HttpRequest.newBuilder(URI.create(url)).GET().build();
+                var response = client.send(request, HttpResponse.BodyHandlers.ofFile(tmp));
+                if (response.statusCode() != 200) {
+                    throw new IOException("Download failed: HTTP " + response.statusCode() + " for " + url);
+                }
             }
 
             if (sha256 != null) {
