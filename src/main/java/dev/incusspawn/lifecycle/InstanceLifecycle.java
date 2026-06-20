@@ -238,7 +238,7 @@ public final class InstanceLifecycle {
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append("; tic -x /tmp/.isx-terminfo.src 2>/dev/null; rm -f /tmp/.isx-terminfo.src");
         }
-        sb.append(" && ip -4 -o addr show eth0 | grep -q 'inet '");
+        sb.append(" && { for i in $(seq 1 30); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.5; done; ip -4 -o addr show eth0 | grep -q 'inet '; }");
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource != null) {
             for (var tool : buildSource.getTools().values()) {
