@@ -140,6 +140,13 @@ public final class InstanceLifecycle {
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, Path inboxPath,
                                    RuntimeConfig prefetched) {
+        setupRuntime(incus, name, networkMode, inboxPath, null, prefetched);
+    }
+
+    public static void setupRuntime(IncusClient incus, String name,
+                                   NetworkMode networkMode, Path inboxPath,
+                                   java.util.List<String> rwMounts,
+                                   RuntimeConfig prefetched) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
         }
@@ -156,6 +163,25 @@ public final class InstanceLifecycle {
             } else {
                 System.err.println("Warning: inbox path '" + inboxPath +
                         "' is not a directory, skipping.");
+            }
+        }
+
+        if (rwMounts != null) {
+            for (var mount : rwMounts) {
+                var parts = mount.split(":", 2);
+                var hostPath = dev.incusspawn.config.HostResourceSetup.expandHostTilde(parts[0]);
+                var containerPath = parts.length > 1
+                        ? dev.incusspawn.config.HostResourceSetup.resolveContainerPath(parts[0], parts[1])
+                        : dev.incusspawn.config.HostResourceSetup.resolveContainerPath(parts[0], null);
+                if (!java.nio.file.Files.isDirectory(Path.of(hostPath))) {
+                    System.err.println("Warning: mount path '" + parts[0] + "' is not a directory, skipping.");
+                    continue;
+                }
+                var devName = dev.incusspawn.config.HostResourceSetup.deviceName(containerPath);
+                System.out.println("Mounting " + parts[0] + " -> " + containerPath + " (readwrite)");
+                incus.deviceAdd(name, devName, "disk",
+                        "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(hostPath),
+                        "path=" + containerPath);
             }
         }
 

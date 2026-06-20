@@ -59,7 +59,7 @@ public final class HostResourceSetup {
         return hostPath;
     }
 
-    static String deviceName(String containerPath) {
+    public static String deviceName(String containerPath) {
         var stripped = containerPath.startsWith("/") ? containerPath.substring(1) : containerPath;
         var name = "hr-" + stripped.replaceAll("[^a-zA-Z0-9]", "-");
         if (name.length() > 64) {
@@ -114,6 +114,7 @@ public final class HostResourceSetup {
             switch (hr.getMode()) {
                 case "copy" -> applyCopy(container, hr);
                 case "readonly" -> applyReadonly(incus, container.name(), hr);
+                case "readwrite" -> applyReadwrite(incus, container.name(), hr);
                 case "overlay" -> {
                     if (Environment.isMacOS()) {
                         throw new IllegalStateException(
@@ -157,6 +158,10 @@ public final class HostResourceSetup {
                 case "readonly" -> {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
                     applyReadonly(incus, container, hr);
+                }
+                case "readwrite" -> {
+                    removeExistingDevice(incus, container, deviceNameForMode(hr));
+                    applyReadwrite(incus, container, hr);
                 }
                 case "overlay" -> {
                     if (Environment.isMacOS()) {
@@ -263,6 +268,21 @@ public final class HostResourceSetup {
         addShiftIfSupported(args);
         incus.deviceAdd(container, devName, "disk", args.toArray(String[]::new));
         System.out.println("  Mounted " + hr.getSource() + " -> " + containerPath + " (readonly)");
+    }
+
+    private static void applyReadwrite(IncusClient incus, String container, ImageDef.HostResource hr) {
+        var expandedSource = expandHostTilde(hr.getSource());
+        if (!Files.exists(Path.of(expandedSource))) {
+            System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
+            return;
+        }
+        var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
+        var devName = deviceName(containerPath);
+        var args = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + translateForVm(expandedSource),
+                "path=" + containerPath));
+        incus.deviceAdd(container, devName, "disk", args.toArray(String[]::new));
+        System.out.println("  Mounted " + hr.getSource() + " -> " + containerPath + " (readwrite)");
     }
 
     private static void applyOverlay(IncusClient incus, Container container, ImageDef.HostResource hr) {

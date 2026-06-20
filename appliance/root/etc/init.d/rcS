@@ -24,9 +24,9 @@ mount -o remount,noatime,commit=300,compress=zstd:1 /
 #-- Expand btrfs to fill disk (disk may have been extended after image creation) --#
 btrfs filesystem resize max / 2>/dev/null || true
 
-#-- Mount host filesystem via virtio-fs (macOS shares ~ read-only) --#
+#-- Mount host filesystem via virtio-fs --#
 mkdir -p /host
-mount -t virtiofs -o ro hostfs /host 2>/dev/null || true
+mount -t virtiofs -o rw hostfs /host 2>/dev/null || true
 
 #-- Hostname --#
 hostname -F /etc/hostname

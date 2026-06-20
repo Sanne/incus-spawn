@@ -21,6 +21,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
+import java.util.List;
 
 @CommandDefinition(
         name = "branch",
@@ -49,6 +50,9 @@ public class BranchCommand extends BaseCommand {
 
     @Option(name = "inbox", description = "Host directory to mount read-only at /home/agentuser/inbox")
     Path inbox;
+
+    @Option(name = "mount", description = "Host directory to mount read-write (host-path:container-path or host-path)")
+    List<String> mounts;
 
     @Option(name = "cpu", description = "CPU core limit (default: adaptive)")
     Integer cpuLimit;
@@ -133,7 +137,7 @@ public class BranchCommand extends BaseCommand {
 
         System.out.println("Starting container...");
         incus.start(name);
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, mounts, prefetched);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
