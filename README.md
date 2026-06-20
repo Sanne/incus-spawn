@@ -204,7 +204,18 @@ tools:
   - maven-3
 ```
 
-Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). Add your own by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
+Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). The root image (`tpl-minimal`) uses a custom Fedora base from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images). Use `isx update-base` to check for new base image releases, pin a specific version, or track the latest:
+
+```shell
+isx update-base              # interactive — shows versions, prompts for action
+isx update-base --list       # list available versions
+isx update-base --latest     # always track the newest version
+isx update-base fedora-44-v2 # pin to a specific release tag
+```
+
+Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`. Tracking latest (the default) uses the built-in definition, which is updated with each isx release. After changing the base image version, rebuild with `isx build tpl-minimal`.
+
+Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local).
 You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)); this is useful to version your templates in a separate git project.
 Later sources override earlier ones: built-in → user → search paths → project-local.
 
@@ -225,8 +236,13 @@ isx templates edit tpl-java    # opens in $EDITOR, validates on save
 
 Editing a built-in template automatically creates a user-level override in `~/.config/incus-spawn/images/`. The override takes precedence over the built-in but will not auto-update with isx upgrades. Templates are validated after editing: YAML syntax, required fields, and parent references are checked.
 
+You can also define a custom root image (no `parent`) by specifying `image`, `image_url`, `image_tag`, and `image_sha256` to point at your own pre-baked OS tarball. See the built-in [`minimal.yaml`](src/main/resources/images/minimal.yaml) and the [incus-spawn-images](https://github.com/Sanne/incus-spawn-images) repo for the reference example.
+
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
+- `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders)
+- `image_tag` -- release tag identifying the base image version
+- `image_sha256` -- per-architecture SHA256 checksums for integrity verification
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
 - `tools` -- tool names to run (resolved from YAML or Java, see [Custom Tools](#custom-tools))
@@ -767,6 +783,10 @@ Resolution order (later sources override earlier ones with the same name):
 | `isx branch <name>` | Create a CoW clone from a template or instance |
 | `isx shell <instance>` | Open a shell in an instance |
 | `isx destroy <instance>` | Destroy an instance |
+| `isx update-base` | Check for and install base image updates |
+| `isx update-base --list` | List available base image versions |
+| `isx update-base <tag>` | Pin base image to a specific version |
+| `isx update-base --latest` | Track the latest version (remove any pin) |
 | `isx update-all` | Update all templates (packages, repos, tools) |
 | `isx templates` | List available templates |
 | `isx templates list -v` | List templates with source and description |

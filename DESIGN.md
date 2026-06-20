@@ -72,9 +72,12 @@ instead of linuxcontainers.org. This image is a pre-baked systemd rootfs with
 agentuser, dhcpcd networking, container-specific service masking, and a tmpfiles
 override for device node permissions — all the static setup that `buildFromScratch`
 would otherwise perform on every build. The base image tag and SHA256 checksums
-are pinned in `src/main/resources/images/minimal.yaml`. When a new base image is
-released, update `image_tag` and `image_sha256` in that file. See the
-[incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
+are pinned in `src/main/resources/images/minimal.yaml`. `isx update-base` manages
+base image versions: it fetches the release list from the GitHub API, retrieves
+per-architecture SHA256 checksums, and writes a user-level override to
+`~/.config/incus-spawn/images/minimal.yaml` when pinning. `--latest` removes the
+override so the built-in definition (updated with each isx release) is used.
+See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
 for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones.
