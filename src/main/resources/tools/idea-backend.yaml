@@ -36,12 +36,22 @@ run_as_user:
   - /opt/idea/bin/remote-dev-server.sh registerBackendLocationForGateway
   - |
     IJ_DATA_DIR=~/.local/share/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
+    IJ_CFG_DIR=~/.config/JetBrains/$(grep -o '"dataDirectoryName": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
     IJ_BUILD=$(grep -o '"buildNumber": "[^"]*"' /opt/idea/product-info.json | head -1 | cut -d'"' -f4)
     PLUGIN_DIR="$IJ_DATA_DIR/plugins"
-    mkdir -p "$PLUGIN_DIR"
+    mkdir -p "$PLUGIN_DIR" "$IJ_CFG_DIR/options"
     curl -fSL -o /tmp/index-mcp-plugin.zip "https://plugins.jetbrains.com/plugin/download?pluginId=29174&build=$IJ_BUILD"
     unzip -qo /tmp/index-mcp-plugin.zip -d "$PLUGIN_DIR"
     rm -f /tmp/index-mcp-plugin.zip
+    cat > "$IJ_CFG_DIR/options/mcp-plugin.xml" << 'MCPCFG'
+    <application>
+      <component name="McpPluginSettings">
+        <option name="disabledTools">
+          <set />
+        </option>
+      </component>
+    </application>
+    MCPCFG
 
 verify: test -x /opt/idea/bin/remote-dev-server.sh
 
