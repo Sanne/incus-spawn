@@ -54,6 +54,9 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "mount", description = "Host directory to mount read-write (host-path:container-path or host-path)")
     List<String> mounts;
 
+    @Option(name = "port", description = "Forward a host port into the container (e.g. 29170)")
+    List<Integer> ports;
+
     @Option(name = "cpu", description = "CPU core limit (default: adaptive)")
     Integer cpuLimit;
 
@@ -137,7 +140,7 @@ public class BranchCommand extends BaseCommand {
 
         System.out.println("Starting container...");
         incus.start(name);
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, mounts, prefetched);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, mounts, ports, prefetched);
 
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());

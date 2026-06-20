@@ -140,12 +140,13 @@ public final class InstanceLifecycle {
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, Path inboxPath,
                                    RuntimeConfig prefetched) {
-        setupRuntime(incus, name, networkMode, inboxPath, null, prefetched);
+        setupRuntime(incus, name, networkMode, inboxPath, null, null, prefetched);
     }
 
     public static void setupRuntime(IncusClient incus, String name,
                                    NetworkMode networkMode, Path inboxPath,
                                    java.util.List<String> rwMounts,
+                                   java.util.List<Integer> forwardPorts,
                                    RuntimeConfig prefetched) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
@@ -182,6 +183,17 @@ public final class InstanceLifecycle {
                 incus.deviceAdd(name, devName, "disk",
                         "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(hostPath),
                         "path=" + containerPath);
+            }
+        }
+
+        if (forwardPorts != null) {
+            var gatewayIp = dev.incusspawn.proxy.MitmProxy.resolveGatewayIp(incus);
+            for (var port : forwardPorts) {
+                var devName = "port-" + port;
+                System.out.println("Forwarding port " + port + " from host (" + gatewayIp + ") into container");
+                incus.deviceAdd(name, devName, "proxy",
+                        "listen=tcp:0.0.0.0:" + port,
+                        "connect=tcp:" + gatewayIp + ":" + port);
             }
         }
 
