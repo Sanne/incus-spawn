@@ -1189,22 +1189,17 @@ public class IncusClient {
     }
 
     public String importImage(Path tarball) {
-        try {
-            var content = Files.readAllBytes(tarball);
-            var resp = http().requestRawAndWait("POST", "/1.0/images",
-                    "application/octet-stream", Map.of(), content);
-            var fingerprint = resp.body().path("metadata").path("metadata")
-                    .path("fingerprint").asText("");
-            if (fingerprint.isEmpty()) {
-                fingerprint = resp.body().path("metadata").path("fingerprint").asText("");
-            }
-            if (fingerprint.isEmpty()) {
-                throw new IncusException("Image import succeeded but no fingerprint returned");
-            }
-            return fingerprint;
-        } catch (IOException e) {
-            throw new IncusException("Failed to read image tarball: " + tarball, e);
+        var resp = http().requestFromFileAndWait("POST", "/1.0/images",
+                "application/octet-stream", Map.of(), tarball);
+        var fingerprint = resp.body().path("metadata").path("metadata")
+                .path("fingerprint").asText("");
+        if (fingerprint.isEmpty()) {
+            fingerprint = resp.body().path("metadata").path("fingerprint").asText("");
         }
+        if (fingerprint.isEmpty()) {
+            throw new IncusException("Image import succeeded but no fingerprint returned");
+        }
+        return fingerprint;
     }
 
     public void createImageAlias(String alias, String fingerprint) {

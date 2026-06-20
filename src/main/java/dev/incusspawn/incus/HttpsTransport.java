@@ -214,10 +214,26 @@ class HttpsTransport implements IncusTransport {
         var bodyPublisher = body.length > 0
                 ? HttpRequest.BodyPublishers.ofByteArray(body)
                 : HttpRequest.BodyPublishers.noBody();
+        return sendRequest(method, path, contentType, extraHeaders, bodyPublisher,
+                body.length > 0);
+    }
+
+    @Override
+    public RawResponse request(String method, String path,
+                               String contentType, Map<String, String> extraHeaders,
+                               Path bodyFile) throws IOException {
+        return sendRequest(method, path, contentType, extraHeaders,
+                HttpRequest.BodyPublishers.ofFile(bodyFile), true);
+    }
+
+    private RawResponse sendRequest(String method, String path,
+                                    String contentType, Map<String, String> extraHeaders,
+                                    HttpRequest.BodyPublisher bodyPublisher,
+                                    boolean hasBody) throws IOException {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .method(method, bodyPublisher)
                 .header("Accept", "application/json");
-        if (body.length > 0 && contentType != null)
+        if (hasBody && contentType != null)
             builder.header("Content-Type", contentType);
         for (var e : extraHeaders.entrySet())
             builder.header(e.getKey(), e.getValue());

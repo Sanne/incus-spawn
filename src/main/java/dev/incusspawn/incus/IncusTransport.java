@@ -1,6 +1,8 @@
 package dev.incusspawn.incus;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 /**
@@ -21,6 +23,17 @@ interface IncusTransport {
     RawResponse request(String method, String path,
                         String contentType, Map<String, String> extraHeaders,
                         byte[] body) throws IOException;
+
+    /**
+     * Execute an HTTP request with body from a file.
+     * Implementations should stream the file to avoid loading it entirely into memory.
+     * The default falls back to {@code readAllBytes} for transports that don't override.
+     */
+    default RawResponse request(String method, String path,
+                                String contentType, Map<String, String> extraHeaders,
+                                Path bodyFile) throws IOException {
+        return request(method, path, contentType, extraHeaders, Files.readAllBytes(bodyFile));
+    }
 
     /**
      * Open a WebSocket connection. wsPath must include the full path and query string,

@@ -270,6 +270,16 @@ class IncusApi {
         return waitForOperation(opPath);
     }
 
+    ApiResponse requestFromFileAndWait(String method, String apiPath,
+                                       String contentType, Map<String, String> headers,
+                                       Path bodyFile) {
+        var resp = requestRawFromFile(method, apiPath, contentType, headers, bodyFile);
+        if (!resp.isAsync()) return resp;
+        var opPath = resp.operationPath();
+        if (opPath.isEmpty()) throw new IncusException("Async response missing operation path");
+        return waitForOperation(opPath);
+    }
+
     private ApiResponse waitForOperation(String operationPath) {
         var result = get(operationPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS);
         if (!result.isSuccess()) {
@@ -410,6 +420,17 @@ class IncusApi {
                                    Map<String, String> extraHeaders, byte[] bodyBytes) {
         try {
             var raw = transport.request(method, path, contentType, extraHeaders, bodyBytes);
+            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
+            return new ApiResponse(raw.statusCode(), bodyJson);
+        } catch (IOException e) {
+            throw new IncusException("Incus REST request failed: " + method + " " + path, e);
+        }
+    }
+
+    private ApiResponse requestRawFromFile(String method, String path, String contentType,
+                                           Map<String, String> extraHeaders, Path bodyFile) {
+        try {
+            var raw = transport.request(method, path, contentType, extraHeaders, bodyFile);
             var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
             return new ApiResponse(raw.statusCode(), bodyJson);
         } catch (IOException e) {

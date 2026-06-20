@@ -9,6 +9,8 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +59,20 @@ class UnixSocketTransport implements IncusTransport {
     }
 
     @Override
+    public RawResponse request(String method, String path,
+                               String contentType, Map<String, String> extraHeaders,
+                               Path bodyFile) throws IOException {
+        var addr = UnixDomainSocketAddress.of(socketPath);
+        try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
+            channel.connect(addr);
+            var out = Channels.newOutputStream(channel);
+            var in  = Channels.newInputStream(channel);
+            writeRequestFromFile(out, method, path, contentType, extraHeaders, bodyFile);
+            return readResponse(in);
+        }
+    }
+
+    @Override
     public WsConnection openWebSocket(String wsPath) throws IOException {
         var addr = UnixDomainSocketAddress.of(socketPath);
         var channel = SocketChannel.open(StandardProtocolFamily.UNIX);
@@ -86,6 +102,28 @@ class UnixSocketTransport implements IncusTransport {
         out.write(header.toString().getBytes(StandardCharsets.US_ASCII));
         if (bodyBytes.length > 0) {
             out.write(bodyBytes);
+        }
+        out.flush();
+    }
+
+    private void writeRequestFromFile(OutputStream out, String method, String path,
+                                      String contentType, Map<String, String> extraHeaders,
+                                      Path bodyFile) throws IOException {
+        long fileSize = Files.size(bodyFile);
+        var header = new StringBuilder();
+        header.append(method).append(' ').append(path).append(" HTTP/1.1\r\n");
+        header.append("Host: localhost\r\n");
+        header.append("Accept: application/json\r\n");
+        header.append("Connection: close\r\n");
+        header.append("Content-Type: ").append(contentType).append("\r\n");
+        for (var entry : extraHeaders.entrySet()) {
+            header.append(entry.getKey()).append(": ").append(entry.getValue()).append("\r\n");
+        }
+        header.append("Content-Length: ").append(fileSize).append("\r\n");
+        header.append("\r\n");
+        out.write(header.toString().getBytes(StandardCharsets.US_ASCII));
+        try (var fileIn = Files.newInputStream(bodyFile)) {
+            fileIn.transferTo(out);
         }
         out.flush();
     }
