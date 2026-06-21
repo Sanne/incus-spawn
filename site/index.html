@@ -36,11 +36,17 @@
   <div class="install-tabs">
     <div class="tab-buttons">
       <button class="tab-btn active" data-tab="macos">macOS</button>
+      <button class="tab-btn" data-tab="fedora">Fedora</button>
       <button class="tab-btn" data-tab="linux">Linux</button>
       <button class="tab-btn" data-tab="jbang">JBang</button>
     </div>
     <div class="tab-panel active" id="tab-macos">
       <code>brew install Sanne/tap/incus-spawn</code>
+    </div>
+    <div class="tab-panel" id="tab-fedora">
+      <pre><code>sudo dnf copr enable sanne/incus-spawn
+sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
+sudo dnf install incus-spawn</code></pre>
     </div>
     <div class="tab-panel" id="tab-linux">
       <code>curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh</code>

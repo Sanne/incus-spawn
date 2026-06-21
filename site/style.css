@@ -158,6 +158,14 @@ a:hover {
   display: block;
 }
 
+.hero .tab-panel pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
 .hero .tab-panel code {
   color: inherit;
   background: none;
