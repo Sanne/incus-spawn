@@ -94,6 +94,7 @@ public class BranchCommand extends BaseCommand {
         System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
+        InstanceLifecycle.assignStaticIp(incus, name, networkMode);
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 

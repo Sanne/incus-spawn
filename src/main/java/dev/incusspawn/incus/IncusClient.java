@@ -768,6 +768,27 @@ public class IncusClient {
     }
 
     /**
+     * Find the NIC device name attached to a given network on an instance.
+     * Checks expanded_devices to include profile-inherited devices.
+     * Returns null if no matching NIC device is found.
+     */
+    public String findNicDeviceName(String instance, String networkName) {
+        var resp = http().get("/1.0/instances/" + instance);
+        if (!resp.isSuccess()) return null;
+        var expandedDevices = resp.body().path("metadata").path("expanded_devices");
+        for (var it = expandedDevices.fields(); it.hasNext(); ) {
+            var entry = it.next();
+            var dev = entry.getValue();
+            if ("nic".equals(dev.path("type").asText()) &&
+                (networkName.equals(dev.path("network").asText()) ||
+                 networkName.equals(dev.path("parent").asText()))) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /**
      * Detach the named network from an instance by finding and removing the matching NIC device.
      * If the NIC is inherited from a profile (not in instance devices), it is first overridden
      * into the instance's own devices so it can be removed.
@@ -1166,6 +1187,19 @@ public class IncusClient {
             ));
         }
         return result;
+    }
+
+    /**
+     * List all instances with config and devices (no runtime state).
+     * Uses recursion=1 which is significantly faster than recursion=2
+     * since it skips network state, memory usage, and disk usage.
+     */
+    public String listJsonConfig() {
+        var resp = http().get("/1.0/instances?recursion=1");
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to list instances: " + resp.body().path("error").asText());
+        }
+        return resp.body().path("metadata").toString();
     }
 
     /**

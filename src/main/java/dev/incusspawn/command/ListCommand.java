@@ -3074,6 +3074,7 @@ public class ListCommand extends BaseCommand {
         System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
+        InstanceLifecycle.assignStaticIp(incus, name, networkMode);
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, source);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
@@ -3252,7 +3253,8 @@ public class ListCommand extends BaseCommand {
                 var rootSize = expandedDevices.path("root").path("size").asText("");
 
                 var extracted = IncusClient.extractIpv4(node.path("state").path("network"));
-                var ipv4 = extracted != null ? extracted : "";
+                var ipv4 = extracted != null ? extracted
+                        : configVal(config, Metadata.STATIC_IP, "");
 
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),

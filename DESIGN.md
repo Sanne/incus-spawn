@@ -69,9 +69,9 @@ Building an image automatically builds missing parents recursively. `isx build -
 **Base image**: The root image (`tpl-minimal`) uses a custom Fedora base image
 from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images)
 instead of linuxcontainers.org. This image is a pre-baked systemd rootfs with
-agentuser, dhcpcd networking, container-specific service masking, and a tmpfiles
-override for device node permissions — all the static setup that `buildFromScratch`
-would otherwise perform on every build. The base image tag and SHA256 checksums
+agentuser, systemd-networkd, a connectivity watchdog, container-specific service
+masking, and a tmpfiles override for device node permissions — all the static
+setup that `buildFromScratch` would otherwise perform on every build. The base image tag and SHA256 checksums
 are pinned in `src/main/resources/images/minimal.yaml`. `isx update-base` manages
 base image versions: it fetches the release list from the GitHub API, retrieves
 per-architecture SHA256 checksums, and writes a user-level override to
@@ -122,10 +122,10 @@ Execution order: packages → downloads → run → run_as_user → files → en
 ### Build Flow
 
 **`buildFromScratch` (root image, no parent):**
-1. Import and launch base image (pre-baked with agentuser, dhcpcd, service masks)
+1. Import and launch base image (pre-baked with agentuser, systemd-networkd, service masks)
 2. Install MITM proxy CA certificate
 3. Configure security (idmap, nesting, syscall interception, no capability dropping)
-4. Prepare container for package install (tmpfiles overrides, dhcpcd tuning, man dirs)
+4. Prepare container for package install (tmpfiles overrides, temporary DHCP network config, man dirs)
 5. Configure DNS (disable systemd-resolved, point at Incus bridge gateway)
 6. Upgrade system packages
 7. Install image-defined packages via dnf
@@ -150,6 +150,8 @@ Execution order: packages → downloads → run → run_as_user → files → en
 ### Branching
 
 Like `git branch`, branching creates an instant copy-on-write clone of any template image. Each branch has its own independent filesystem -- changes in one branch cannot affect the template image or any other branch. The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparently at the block level, so branches are instant to create and only consume disk space for their own modifications.
+
+**Static IP assignment**: Each branch receives a deterministic static IP on the bridge subnet at creation time. `StaticIpAllocator` scans all existing instances for claimed `ipv4.address` values on NIC devices and picks the lowest free host address (`.2`–`.254`). The IP is set on the Incus NIC device (so Incus is authoritative) and a `systemd-networkd` `.network` file is pushed into the stopped container before start, so the interface comes up statically at boot with no DHCP lease to expire. Templates do not have baked-in addresses — all CoW branches share the template filesystem, so a static address in the template would collide. The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
 
 The TUI branch modal supports:
 - Custom name
@@ -223,7 +225,7 @@ Enables GUI applications and audio inside containers:
 
 Branches run in one of three network modes, selectable via CLI flags or the TUI branch modal:
 
-**Full internet** (default): Container stays on the `incusbr0` bridge with NAT masquerading. Unrestricted outbound access to the internet. Traffic to intercepted domains (Anthropic, GitHub) is transparently authenticated by the host MITM proxy — credentials never enter the container in any form.
+**Full internet** (default): Container stays on the `incusbr0` bridge with NAT masquerading and a static IP assigned at branch time. Unrestricted outbound access to the internet. Traffic to intercepted domains (Anthropic, GitHub) is transparently authenticated by the host MITM proxy — credentials never enter the container in any form.
 
 **Proxy only** (`--proxy-only`): Container stays on the bridge but iptables OUTPUT rules restrict all outbound traffic to the MITM proxy (port 443) and DNS. The container can only reach intercepted domains via the MITM proxy.
 
@@ -370,6 +372,7 @@ user.incus-spawn.ca-fingerprint=AB:CD:EF:... # CA certificate fingerprint
 user.incus-spawn.build-source={...}          # (JSON, full image + tool defs for out-of-scope visibility)
 user.incus-spawn.network-mode=PROXY_ONLY     # (proxy-only branches only)
 user.incus-spawn.proxy-gateway=10.166.11.1   # (proxy-only branches only)
+user.incus-spawn.static-ip=10.166.11.2       # (branches only, assigned at creation)
 user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declared)
 ```
 

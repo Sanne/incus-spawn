@@ -626,9 +626,12 @@ public class BuildCommand extends BaseCommand {
         incus.waitForSystemd(buildName);
 
         var container = new Container(incus, buildName);
-        waitForIpv4(container);
-
+        // Write the (DHCP) network config before waiting: the base image bakes no
+        // .network file, so without this networkd brings eth0 up with only a
+        // link-local address and never requests IPv4.
         prepareContainerForPackageInstall(container);
+
+        waitForIpv4(container);
 
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
@@ -736,9 +739,10 @@ public class BuildCommand extends BaseCommand {
         incus.restart(buildName);
         incus.waitForSystemd(buildName);
 
-        waitForIpv4(container);
-
+        // Network config before the IPv4 wait — see buildFromScratch for rationale.
         prepareContainerForPackageInstall(container);
+
+        waitForIpv4(container);
 
         System.out.println("Configuring DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -911,11 +915,20 @@ public class BuildCommand extends BaseCommand {
                 "  printf '# container override\\n' > /etc/tmpfiles.d/$(basename \"$f\"); " +
                 "done; " +
                 "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}; " +
-                "for opt in 'nohook resolv.conf' noarp nodev; do " +
-                "  grep -q \"^${opt}$\" /etc/dhcpcd.conf 2>/dev/null || " +
-                "  echo \"${opt}\" >> /etc/dhcpcd.conf; " +
-                "done; " +
-                "sed -i 's/RestartSec=5/RestartSec=1/' /etc/systemd/system/dhcpcd-eth0.service 2>/dev/null || true")
+                // Write a temporary DHCP network config for systemd-networkd to use during the build.
+                // Branches replace this with a static config at creation time.
+                "mkdir -p /etc/systemd/network; " +
+                "printf '[Match]\\nName=eth0\\n\\n[Network]\\nDHCP=ipv4\\n\\n[DHCPv4]\\nUseDNS=no\\n' " +
+                "> /etc/systemd/network/10-eth0.network; " +
+                "systemctl restart systemd-networkd 2>/dev/null; " +
+                // Legacy: also configure dhcpcd if present (old base images)
+                "if [ -f /etc/dhcpcd.conf ]; then " +
+                "  for opt in 'nohook resolv.conf' noarp nodev; do " +
+                "    grep -q \"^${opt}$\" /etc/dhcpcd.conf 2>/dev/null || " +
+                "    echo \"${opt}\" >> /etc/dhcpcd.conf; " +
+                "  done; " +
+                "  sed -i 's/RestartSec=5/RestartSec=1/' /etc/systemd/system/dhcpcd-eth0.service 2>/dev/null; " +
+                "fi; true")
                 .assertSuccess("Failed to prepare container for package install");
     }
 
@@ -1184,8 +1197,9 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void waitForIpv4(Container container) {
-        System.out.println("Waiting for DHCP lease...");
+        System.out.println("Waiting for network...");
         var result = container.sh(
+                "systemctl start systemd-networkd 2>/dev/null; " +
                 "systemctl start dhcpcd-eth0.service 2>/dev/null; " +
                 "for i in $(seq 1 30); do " +
                 "  ip -4 -o addr show eth0 | grep -q 'inet ' && exit 0; " +
@@ -1196,14 +1210,14 @@ public class BuildCommand extends BaseCommand {
             return;
         }
         var diag = container.sh(
-                "echo '--- dhcpcd-eth0 status ---'; " +
-                "systemctl status dhcpcd-eth0.service 2>&1 || true; " +
+                "echo '--- systemd-networkd status ---'; " +
+                "systemctl status systemd-networkd 2>&1 || true; " +
+                "echo '--- networkctl ---'; " +
+                "networkctl status eth0 2>&1 || true; " +
                 "echo '--- ip link ---'; " +
                 "ip link show eth0 2>&1 || true; " +
-                "echo '--- dhcpcd.conf ---'; " +
-                "cat /etc/dhcpcd.conf 2>&1 || true; " +
-                "echo '--- journalctl dhcpcd ---'; " +
-                "journalctl -u dhcpcd-eth0 --no-pager -n 20 2>&1 || true");
+                "echo '--- journalctl networkd ---'; " +
+                "journalctl -u systemd-networkd --no-pager -n 20 2>&1 || true");
         throw new RuntimeException(
                 "Container did not acquire an IPv4 address within 15 seconds.\n" +
                 "Diagnostics:\n" + diag.stdout() + diag.stderr());

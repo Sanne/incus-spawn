@@ -5,8 +5,10 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.ssh.SshKeyManager;
 
@@ -43,6 +45,62 @@ public final class InstanceLifecycle {
                 System.out.println("Enabling network airgap...");
                 incus.networkDetach(name, "incusbr0");
             }
+        }
+    }
+
+    /**
+     * Allocate a static IP for a new branch and configure it on the Incus NIC device.
+     * The systemd-networkd {@code .network} file is pushed into the still-stopped
+     * container here so the interface comes up statically at boot — no DHCP lease is
+     * ever acquired, which is the whole point: leases expire across host sleep/wake.
+     * Skipped for AIRGAP mode (no NIC).
+     *
+     * @return the allocated IP, or null if skipped
+     */
+    public static String assignStaticIp(IncusClient incus, String name, NetworkMode mode) {
+        if (mode == NetworkMode.AIRGAP) return null;
+
+        var ip = StaticIpAllocator.allocate(incus);
+        var gateway = MitmProxy.resolveGatewayIp(incus);
+        var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
+
+        System.out.println("Assigning static IP " + ip + " (device: " + nicDevice + ")");
+        incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
+        incus.configSetAll(name, Map.of(
+                Metadata.STATIC_IP, ip,
+                Metadata.STATIC_GATEWAY, gateway));
+
+        pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        return ip;
+    }
+
+    private static int bridgePrefixLen(IncusClient incus) {
+        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
+        return bridgeAddr.contains("/") ? CidrUtils.parseCidr(bridgeAddr).prefixLen() : 24;
+    }
+
+    /**
+     * Push a systemd-networkd static config into the stopped container, overwriting the
+     * temporary DHCP config the template carries from build time. This makes the branch
+     * boot directly into static addressing (instant network, no DHCP round trip). The
+     * in-container watchdog re-applies this same file if connectivity is ever lost.
+     */
+    private static void pushStaticNetworkConfig(IncusClient incus, String name,
+                                                String ip, String gateway, int prefixLen) {
+        var content = "[Match]\nName=eth0\n\n[Network]\n"
+                + "Address=" + ip + "/" + prefixLen + "\n"
+                + "Gateway=" + gateway + "\n"
+                + "DNS=" + gateway + "\n";
+        try {
+            var tmp = Files.createTempFile("isx-network-", ".network");
+            try {
+                Files.writeString(tmp, content);
+                incus.filePush(tmp.toString(), name, "/etc/systemd/network/10-eth0.network");
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+        } catch (IOException | RuntimeException e) {
+            System.err.println("  Warning: failed to push static network config: " + e.getMessage());
         }
     }
 
@@ -165,7 +223,7 @@ public final class InstanceLifecycle {
         // seccomp_notify lock contention during container startup.
         var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
                 : incus.configGet(name, Metadata.BUILD_SOURCE);
-        var setupScript = buildSetupScript(prefetched, buildSourceJson);
+        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode);
         System.out.println("Waiting for container...");
         if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
             System.err.println("Warning: container setup may not be complete.");
@@ -206,10 +264,14 @@ public final class InstanceLifecycle {
                 "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + mitmPort + " -j ACCEPT",
                 "iptables -A OUTPUT -d " + gatewayIp + " -p tcp --dport " + healthPort + " -j ACCEPT",
                 "iptables -A OUTPUT -d " + gatewayIp + " -p udp --dport 53 -j ACCEPT",
+                // Allow ICMP echo to the gateway so the connectivity watchdog's
+                // `ping $GATEWAY` reachability check works here too — otherwise it
+                // would see the gateway as unreachable and restart networkd every 30s.
+                "iptables -A OUTPUT -d " + gatewayIp + " -p icmp --icmp-type echo-request -j ACCEPT",
                 "iptables -P OUTPUT DROP"));
 
         System.out.println("  Outbound traffic restricted to " + gatewayIp +
-                " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS)");
+                " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS), ICMP");
     }
 
     public static void awaitToolReadiness(IncusClient incus, String name, String buildSourceJson) {
@@ -232,13 +294,24 @@ public final class InstanceLifecycle {
      * Batching avoids multiple exec round trips that each block due to
      * seccomp_notify lock contention during container startup.
      */
-    static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson) {
+    static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
+                                   NetworkMode networkMode) {
         var sb = new StringBuilder();
         sb.append("chown agentuser:agentuser /home/agentuser");
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append("; tic -x /tmp/.isx-terminfo.src 2>/dev/null; rm -f /tmp/.isx-terminfo.src");
         }
-        sb.append(" && { for i in $(seq 1 30); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.5; done; ip -4 -o addr show eth0 | grep -q 'inet '; }");
+        // The static .network config is pushed into the stopped container before start
+        // (see assignStaticIp), so the interface comes up immediately at boot — no DHCP
+        // wait. Here we only ensure the service is running and confirm the address is up.
+        // Old DHCP-based branches fall back to dhcpcd. Airgap branches have no NIC, so the
+        // wait would always time out — skip it.
+        if (networkMode != NetworkMode.AIRGAP) {
+            sb.append(" && { systemctl start systemd-networkd 2>/dev/null; ")
+              .append("systemctl start dhcpcd-eth0.service 2>/dev/null; ")
+              .append("for i in $(seq 1 30); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.5; done; ")
+              .append("ip -4 -o addr show eth0 | grep -q 'inet '; }");
+        }
         var buildSource = BuildSource.fromJson(buildSourceJson);
         if (buildSource != null) {
             for (var tool : buildSource.getTools().values()) {

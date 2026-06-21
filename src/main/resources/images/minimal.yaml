@@ -2,7 +2,7 @@ name: tpl-minimal
 description: Base OS only
 image: fedora-44-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
-image_tag: fedora-44-20260620
+image_tag: fedora-44-20260621
 image_sha256:
-  x86_64: 462af0db2514ded1a080c7941b97756d5e6df20b8d7d1b2a589f0e4e62000c0e
-  aarch64: 8097ba7858a00be8b69f4c49032911992af171908d805d6a93415f24411de3ce
+  x86_64: 6d55f0a05214af383586ffb29b0e21038999d3ba1fb30bdebfe6938c3858cda2
+  aarch64: 9d01e5f81e6b1e3a0af7f0540e48b4a8b40fd9926a712fec13ce264b5770e27d
