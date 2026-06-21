@@ -613,8 +613,9 @@ public final class VmManager {
                     + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
         }
         boolean hasDiskVersion = Files.exists(Environment.vmDiskVersion());
-        boolean needsReExtract = hasDiskVersion && !applianceVersion()
-                .equals(readVersionFile());
+        boolean needsReExtract = (hasDiskVersion && !applianceVersion()
+                .equals(readVersionFile()))
+                || (Files.exists(Environment.vmDiskImage()) && !hasDiskVersion);
         if (needsReExtract || (!Files.exists(Environment.vmDiskImage())
                 && !Files.exists(Environment.applianceDiskImage()))) {
             if (!Files.exists(Environment.applianceDiskImage())) {
@@ -643,15 +644,16 @@ public final class VmManager {
                     if (diskVersion.equals(currentVersion)) return;
                     System.out.println("Appliance version changed (" + diskVersion + " -> "
                             + currentVersion + "), replacing root disk...");
-                    Files.delete(Environment.vmDiskImage());
-                    try {
-                        downloadArtifacts();
-                    } catch (IOException e) {
-                        System.err.println("Warning: could not re-download appliance artifacts: "
-                                + e.getMessage());
-                    }
                 } else {
-                    return;
+                    System.out.println("Appliance disk predates version tracking, replacing with "
+                            + currentVersion + "...");
+                }
+                Files.delete(Environment.vmDiskImage());
+                try {
+                    downloadArtifacts();
+                } catch (IOException e) {
+                    System.err.println("Warning: could not re-download appliance artifacts: "
+                            + e.getMessage());
                 }
             } catch (IOException e) {
                 return;
