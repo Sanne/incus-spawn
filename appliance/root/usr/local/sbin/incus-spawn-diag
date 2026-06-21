@@ -11,8 +11,17 @@ done
 
 exec > "$CONSOLE" 2>&1
 echo "=== incus-spawn diagnostics ==="
+echo "--- kernel cmdline ---"
+cat /proc/cmdline 2>&1
+echo "--- appliance version ---"
+cat /etc/isx-version 2>&1 || echo "(no version file)"
 echo "--- processes ---"
 ps aux 2>&1
+echo "--- vsock forwarder ---"
+pgrep -a socat 2>&1 || echo "socat not running"
+echo "--- incus socket ---"
+ls -la /var/lib/incus/unix.socket 2>&1 || echo "/var/lib/incus/unix.socket: not found"
+ls -la /run/incus/unix.socket 2>&1 || echo "/run/incus/unix.socket: not found"
 echo "--- dmesg (last 30 lines) ---"
 dmesg | tail -30 2>&1
 echo "--- incusd check ---"
