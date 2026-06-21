@@ -189,7 +189,7 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 3. Creates the `incusbr0` bridge network with the configured gateway IP and NAT
 4. Creates a btrfs storage pool (`cow`) backed by a loop file, adaptively sized (half of free disk, capped at 30 GB, minimum 1 GB)
 5. Installs an iptables PREROUTING redirect rule (port 443 -> MITM proxy port) on the bridge interface
-6. Starts the vsock forwarder if `isx.vsock_incus` is set (socat bridges vsock port to `/run/incus/unix.socket`)
+6. Starts the vsock forwarder if `isx.vsock_incus` is set (socat bridges vsock port to `/var/lib/incus/unix.socket`)
 7. Symlinks the `isx` binary from the shared directory if available
 
 On subsequent boots, the script detects existing configuration and skips creation steps.

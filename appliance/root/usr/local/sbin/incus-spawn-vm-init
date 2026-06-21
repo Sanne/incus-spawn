@@ -105,7 +105,7 @@ incus config set core.https_address :8443
 VSOCK_INCUS_PORT=$(parse_cmdline "isx.vsock_incus")
 if [ -n "$VSOCK_INCUS_PORT" ]; then
     socat -b 65536 VSOCK-LISTEN:"$VSOCK_INCUS_PORT",reuseaddr,fork \
-        UNIX-CONNECT:/run/incus/unix.socket &
+        UNIX-CONNECT:/var/lib/incus/unix.socket &
     echo "incus-spawn-vm-init: vsock forwarder on port $VSOCK_INCUS_PORT"
 fi
 

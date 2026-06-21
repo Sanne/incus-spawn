@@ -644,6 +644,12 @@ public final class VmManager {
                     System.out.println("Appliance version changed (" + diskVersion + " -> "
                             + currentVersion + "), replacing root disk...");
                     Files.delete(Environment.vmDiskImage());
+                    try {
+                        downloadArtifacts();
+                    } catch (IOException e) {
+                        System.err.println("Warning: could not re-download appliance artifacts: "
+                                + e.getMessage());
+                    }
                 } else {
                     return;
                 }
@@ -710,7 +716,9 @@ public final class VmManager {
 
     /**
      * Download vmlinuz and disk.img.gz from the GitHub release matching
-     * the current isx version.
+     * the current isx version. Re-downloads when the version changes —
+     * a stale disk.img.gz would produce a disk.img missing features
+     * added in newer releases.
      */
     public static void downloadArtifacts() throws IOException {
         var version = applianceVersion();
@@ -718,6 +726,19 @@ public final class VmManager {
         var baseUrl = "https://github.com/Sanne/incus-spawn/releases/download/v" + version;
 
         Files.createDirectories(Environment.applianceDir());
+
+        var versionFile = Environment.applianceDir().resolve("version");
+        boolean versionMatch = false;
+        if (Files.exists(versionFile)) {
+            try {
+                versionMatch = Files.readString(versionFile).strip().equals(version);
+            } catch (IOException ignored) {}
+        }
+        if (!versionMatch) {
+            Files.deleteIfExists(Environment.applianceKernel());
+            Files.deleteIfExists(Environment.applianceDiskImage());
+        }
+
         var cache = new DownloadCache();
 
         if (!Files.exists(Environment.applianceKernel())) {
@@ -731,6 +752,8 @@ public final class VmManager {
             var cached = cache.download(baseUrl + "/disk-" + arch + ".img.gz", null);
             Files.copy(cached, Environment.applianceDiskImage(), StandardCopyOption.REPLACE_EXISTING);
         }
+
+        Files.writeString(versionFile, version);
     }
 
     static long parseDiskSize(String size) {
@@ -758,7 +781,7 @@ public final class VmManager {
 
     private static String kernelCmdline(String console) {
         return "root=/dev/vda rw rootflags=commit=300 console=" + console
-                + " quiet mitigations=off"
+                + " mitigations=off"
                 + " isx.gateway=" + gatewayIp()
                 + " isx.mitm_port=" + mitmPort()
                 + " isx.time=" + (System.currentTimeMillis() / 1000)
