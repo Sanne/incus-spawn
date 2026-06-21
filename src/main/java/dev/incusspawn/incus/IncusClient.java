@@ -244,11 +244,11 @@ public class IncusClient {
         }
     }
 
-    public int interactiveShell(String container, String user) {
-        return interactiveShell(container, user, ShellPrep.from(this, container));
+    public void interactiveShell(String container, String user) {
+        interactiveShell(container, user, ShellPrep.from(this, container));
     }
 
-    public int interactiveShell(String container, String user, ShellPrep prep) {
+    public void interactiveShell(String container, String user, ShellPrep prep) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 
@@ -296,9 +296,9 @@ public class IncusClient {
             for (int reconnectAttempt = 0; ; reconnectAttempt++) {
                 try {
                     var size = IncusApi.terminalSize();
-                    var result = http().execPty(container, shellArgs, uid, gid,
+                    boolean connectionLost = http().execPty(container, shellArgs, uid, gid,
                             targetCwd, env, size[0], size[1]);
-                    if (!result.connectionLost()) return result.exitCode();
+                    if (!connectionLost) return;
                 } catch (IncusException e) {
                     if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
                 }
@@ -306,7 +306,7 @@ public class IncusClient {
                 System.err.println("\n\033[1;33mConnection lost — reconnecting...\033[0m");
                 try { Thread.sleep(delay); } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    return -1;
+                    return;
                 }
             }
         } finally {

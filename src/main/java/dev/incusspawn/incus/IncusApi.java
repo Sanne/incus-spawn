@@ -537,18 +537,17 @@ class IncusApi {
         });
     }
 
-    record PtyResult(int exitCode, boolean connectionLost) {}
-
     private static final long WS_PING_INTERVAL_MS = 15_000;
 
     /**
      * Interactive PTY exec — bridges System.in/out to the container PTY.
      * Sets the local terminal to raw mode for the duration.
-     * Returns exit code and whether the session ended due to a connection loss.
+     * Returns true if the session ended due to a connection loss (for reconnect logic).
+     * Returns immediately after the shell exits without waiting for Incus operation finalization.
      */
-    PtyResult execPty(String instance, List<String> command,
-                      Integer uid, Integer gid, String cwd, Map<String, String> env,
-                      int width, int height) {
+    boolean execPty(String instance, List<String> command,
+                    Integer uid, Integer gid, String cwd, Map<String, String> env,
+                    int width, int height) {
         var postResp = post("/1.0/instances/" + instance + "/exec",
                 buildExecBody(command, uid, gid, cwd, env, true, width, height));
         if (!postResp.isAsync()) throw new IncusException(
@@ -564,16 +563,15 @@ class IncusApi {
         //   fd "0" — muxed stdin+stdout
         //   "control" — REQUIRED by wait-for-websocket; Incus closes it when the process exits.
         //
-        // Incus does NOT close the fd "0" WebSocket when the process exits — it only closes
-        // "control". The operation (and its exit code in /wait) is finalized only after BOTH
-        // WebSocket connections are closed. So when control closes, we close the fd "0"
-        // connection to unblock the read loop and allow waitForExecOp to return the exit code.
+        // When control closes (process exited), the watcher below closes fd "0" to end the session
+        // and we return immediately. We do NOT call waitForExecOp — that waits ~8s for Incus to
+        // finalize the operation. For interactive logout, instant detach is the right behavior.
         var controlLostConnection = new java.util.concurrent.atomic.AtomicBoolean(false);
         var controlThread = Thread.ofVirtual().start(() ->
                 wsDiscardTracked(opPath, fds.path("control").asText(), controlLostConnection));
 
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + fds.path("0").asText())) {
-            // Watcher: close fd "0" as soon as control closes (command exited).
+            // Watcher: closes fd "0" when control closes.
             Thread.ofVirtual().start(() -> {
                 joinQuietly(controlThread);
                 ws.close();
@@ -591,9 +589,7 @@ class IncusApi {
 
             setRawTerminal();
             try {
-                // Thread: System.in → WebSocket.
-                // Does NOT send a close frame on EOF — doing so terminates the PTY session
-                // immediately, losing buffered output. The session ends via the watcher above.
+                // Thread: System.in → WebSocket (no close frame on EOF to avoid losing output).
                 var stdinThread = Thread.ofVirtual().start(() -> {
                     try {
                         var buf = new byte[4096];
@@ -602,8 +598,7 @@ class IncusApi {
                     } catch (IOException ignored) {}
                 });
 
-                // Main: WebSocket → System.out.
-                // Exits when the watcher closes the connection (IOException → caught).
+                // Main: WebSocket → System.out (exits when watcher closes the connection).
                 byte[] payload;
                 while ((payload = ws.readPayload()) != null) {
                     System.out.write(payload);
@@ -620,8 +615,7 @@ class IncusApi {
         }
         joinQuietly(controlThread);
 
-        int exitCode = waitForExecOp(opPath);
-        return new PtyResult(exitCode, controlLostConnection.get());
+        return controlLostConnection.get();
     }
 
     // ---- WebSocket helpers ----

@@ -342,33 +342,37 @@ class IncusClientSmokeTest {
     // =========================================================================
 
     @Test
-    void execPtyRunsCommandAndReturnsExitCode() throws Exception {
+    void execPtyRunsCommandAndReturnsInstantly() throws Exception {
         if (skip()) return;
         // execPty test: use InputStream.nullInputStream() for stdin (returns EOF immediately,
         // but as a virtual thread the stdinThread blocks harmlessly).
         // The watcher in execPty closes the fd0 channel when the control WebSocket closes
         // (command exited), unblocking the read loop without losing buffered output.
+        // execPty returns immediately after the process exits (instant logout) without waiting
+        // for Incus operation finalization.
         var ptyCapture = new ByteArrayOutputStream();
         var savedIn  = System.in;
         var savedOut = System.out;
         System.setIn(InputStream.nullInputStream());
         System.setOut(new PrintStream(ptyCapture));
-        int ptyExit;
+        long startMs = System.currentTimeMillis();
+        boolean connectionLost;
         try {
             var http = IncusApi.tryConnect();
             assertNotNull(http, "IncusApi should be connectable");
-            var ptyResult = http.execPty(CONTAINER,
-                    List.of("sh", "-c", "echo pty-output-ok; exit 5"),
+            connectionLost = http.execPty(CONTAINER,
+                    List.of("sh", "-c", "echo pty-output-ok; exit 0"),
                     0, 0, "/root", java.util.Map.of(), 80, 24);
-            ptyExit = ptyResult.exitCode();
         } finally {
             System.setIn(savedIn);
             System.setOut(savedOut);
         }
-        assertEquals(5, ptyExit, "execPty exit code should be 5");
+        long durationMs = System.currentTimeMillis() - startMs;
+        assertFalse(connectionLost, "execPty should not report connection lost");
         assertTrue(ptyCapture.toString().contains("pty-output-ok"),
                 "execPty output: " + ptyCapture);
-        System.out.println("execPty: exit=" + ptyExit + " output confirmed");
+        assertTrue(durationMs < 2000, "execPty should return instantly");
+        System.out.println("execPty: instant logout confirmed (" + durationMs + "ms), output captured");
     }
 
     // =========================================================================
