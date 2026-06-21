@@ -228,6 +228,31 @@ public class CompletionCommand extends BaseCommand {
                 '1::shell:(bash zsh fish)'
             }
 
+            _isx_clean() {
+              local state line; typeset -A opt_args
+              _arguments -C \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1: :->subcmd' \\
+                '*:: :->args'
+
+              local -a _clean_subcmds
+              _clean_subcmds=(
+                'cache:remove cached downloads, registry blobs, and build caches'
+                'state:remove VM state, logs, and appliance artifacts'
+                'config:remove configuration, SSH keys, and CA certificate'
+                'all:remove all incus-spawn data'
+              )
+
+              case $state in
+                subcmd) _describe -t subcmds 'clean subcommand' _clean_subcmds ;;
+                args)
+                  _arguments \\
+                    '(-h --help)'{-h,--help}'[Show help]' \\
+                    '--dry-run[Show what would be deleted without deleting]' \\
+                    '--skip-confirmation[Skip the confirmation prompt]' ;;
+              esac
+            }
+
             _isx_vm() {
               local state line; typeset -A opt_args
               _arguments -C \\
@@ -274,6 +299,7 @@ public class CompletionCommand extends BaseCommand {
                   cmds=(
                     'init:one-time host setup (install Incus, configure auth)'
                     'build:build or rebuild a template image'
+                    'clean:remove cached data, state, or configuration'
                     'project:manage project templates'
                     'branch:create a new instance from an existing one'
                     'shell:open a shell in an existing clone'
@@ -297,6 +323,7 @@ public class CompletionCommand extends BaseCommand {
                   case $cmd in
                     branch)     _isx_branch ;;
                     build)      _isx_build ;;
+                    clean)      _isx_clean ;;
                     destroy)    _isx_destroy ;;
                     list)       _isx_list ;;
                     shell)      _isx_shell ;;
@@ -333,14 +360,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build project branch shell list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
+              local commands="init build clean project branch shell list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
+                  init|build|clean|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -379,6 +406,21 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --all --out-of-sync --with-parents --with-descendants --missing --vm --yes" -- "$cur") )
+                  ;;
+                clean)
+                  local clean_subcmds="cache state config all"
+                  local clean_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      cache|state|config|all) clean_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  if [[ -z "$clean_cmd" ]]; then
+                    COMPREPLY=( $(compgen -W "$clean_subcmds --help" -- "$cur") )
+                  else
+                    COMPREPLY=( $(compgen -W "--help --dry-run --skip-confirmation" -- "$cur") )
+                  fi
                   ;;
                 destroy)
                   case "$prev" in
@@ -529,7 +571,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -541,6 +583,7 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n __isx_no_subcommand -a init         -d 'One-time host setup (install Incus, configure auth)'
             complete -c isx -f -n __isx_no_subcommand -a build        -d 'Build or rebuild a template image'
+            complete -c isx -f -n __isx_no_subcommand -a clean        -d 'Remove cached data, state, or configuration'
             complete -c isx -f -n __isx_no_subcommand -a project      -d 'Manage project templates'
             complete -c isx -f -n __isx_no_subcommand -a branch       -d 'Create a new instance from an existing one'
             complete -c isx -f -n __isx_no_subcommand -a shell        -d 'Open a shell in an existing clone'
@@ -579,6 +622,16 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
             complete -c isx -f -n '__isx_using_subcommand build' -l vm               -d 'Build as a VM instead of a container'
             complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
+
+            # ── clean ────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
+
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
 
             # ── destroy ──────────────────────────────────────────────────────────────────
 

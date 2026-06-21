@@ -39,6 +39,10 @@ public final class Environment {
         return sshDir().resolve("config");
     }
 
+    public static Path cacheDir() {
+        return home().resolve(".cache/incus-spawn");
+    }
+
     public static Path downloadCacheDir() {
         return home().resolve(".cache/incus-spawn/downloads");
     }
@@ -155,12 +159,16 @@ public final class Environment {
 
     // --- VM appliance artifact paths ---
 
+    public static Path dataDir() {
+        return home().resolve(".local/share/incus-spawn");
+    }
+
     public static Path applianceDir() {
         var envDir = System.getenv("ISX_APPLIANCE_DIR");
         if (envDir != null && !envDir.isBlank()) {
             return Path.of(envDir);
         }
-        return home().resolve(".local/share/incus-spawn/appliance");
+        return dataDir().resolve("appliance");
     }
 
     public static Path applianceKernel() {
