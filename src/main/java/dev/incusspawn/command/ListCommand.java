@@ -137,6 +137,8 @@ public class ListCommand extends BaseCommand {
     // Actions cache (computed once per data refresh, not per render)
     private java.util.Map<String, java.util.List<ToolAction>> actionsCache = new java.util.HashMap<>();
 
+    private boolean deferredBuildForBranch;
+
     private enum PendingAction { NONE, SHELL, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
@@ -433,6 +435,17 @@ public class ListCommand extends BaseCommand {
 
     private boolean handleEvent(Event event, TuiRunner tui, TableState tableState) {
         if (event instanceof TickEvent) {
+            if (deferredBuildForBranch && !proxyRestartInProgress) {
+                deferredBuildForBranch = false;
+                if (ProxyHealthCheck.check(incus) == ProxyHealthCheck.ProxyStatus.RUNNING) {
+                    pendingAction = PendingAction.BUILD_THEN_BRANCH;
+                    pendingBuildArgs = new String[]{branchSourceName};
+                    returnToTemplate = branchSourceName;
+                    tui.quit();
+                    return true;
+                }
+                setStatusMessage("Proxy restart failed. Try: isx proxy start");
+            }
             return needsRefresh.get() || pendingStatusMessage.get() != null
                     || !backgroundTasks.getActiveTasks().isEmpty();
         }
@@ -1120,6 +1133,12 @@ public class ListCommand extends BaseCommand {
     private boolean handleConfirmBuildForBranchEvent(KeyEvent key, TuiRunner tui) {
         if (key.isChar('y') || key.isChar('Y') || key.isKey(KeyCode.ENTER)) {
             if (checkBuildPreconditions(branchSourceName)) {
+                if (mode == Mode.ERROR) {
+                    return true;
+                }
+                if (proxyRestartInProgress) {
+                    deferredBuildForBranch = true;
+                }
                 mode = Mode.BROWSE;
                 return true;
             }
@@ -3152,7 +3171,7 @@ public class ListCommand extends BaseCommand {
             setStatusMessage("Proxy not running, restarting service...");
             var thread = new Thread(() -> {
                 try {
-                    if (ProxyHealthCheck.tryAutoRestart(incus)) {
+                    if (ProxyHealthCheck.tryAutoRestart(incus, msg -> {})) {
                         setStatusMessage("Proxy restarted, waiting for DNS...");
                     } else {
                         setStatusMessage("Proxy restart failed. Check: isx proxy status");
