@@ -44,15 +44,18 @@ class IncusApi {
      * Returns an IncusApi instance if a probe request succeeds, or null if nothing is accessible.
      */
     static IncusApi tryConnect() {
-        var socketCandidates = new ArrayList<>(UnixSocketTransport.SOCKET_CANDIDATES);
-        var vsockSocket = Environment.vmVsockSocket();
-        if (Files.exists(vsockSocket)) {
-            socketCandidates.add(vsockSocket.toString());
-        }
-        for (var candidate : socketCandidates) {
+        for (var candidate : UnixSocketTransport.SOCKET_CANDIDATES) {
             if (!Files.exists(Path.of(candidate))) continue;
             try {
                 var http = new IncusApi(new UnixSocketTransport(candidate));
+                if (http.get("/1.0").isSuccess()) return http;
+            } catch (IncusException ignored) {}
+        }
+        // Try HTTPS transport (includes vsock proxy for macOS)
+        var https = HttpsTransport.fromClientConfig();
+        if (https != null) {
+            try {
+                var http = new IncusApi(https);
                 if (http.get("/1.0").isSuccess()) return http;
             } catch (IncusException ignored) {}
         }

@@ -81,9 +81,20 @@ public final class IncusRemoteSetup {
 
         // Try vsock first (bypasses VPN socket filters like Cisco AnyConnect)
         var vsockSocket = Environment.vmVsockSocket();
-        if (Files.exists(vsockSocket) && VmManager.waitUntilReady(30)) {
-            System.err.println("  Incus reachable via vsock tunnel");
-        } else {
+        boolean reachableViaVsock = false;
+        if (Files.exists(vsockSocket)) {
+            try {
+                int proxyPort = dev.incusspawn.incus.UnixSocketProxy.startIfNeeded(vsockSocket);
+                if (waitForPort("localhost", proxyPort, 30)) {
+                    System.err.println("  Incus reachable via vsock tunnel");
+                    saveServerCertViaProxy(proxyPort);
+                    reachableViaVsock = true;
+                }
+            } catch (Exception e) {
+                System.err.println("  vsock proxy failed: " + e.getMessage());
+            }
+        }
+        if (!reachableViaVsock) {
             System.err.println("  Waiting for Incus HTTPS API on " + vmIp + ":" + INCUS_PORT + "...");
             if (!waitForPort(vmIp, INCUS_PORT, 60)) {
                 throw new IOException("Incus HTTPS API not reachable at " + vmIp + ":" + INCUS_PORT
@@ -177,6 +188,23 @@ public final class IncusRemoteSetup {
             }
         } catch (Exception e) {
             System.err.println("  Warning: could not save server certificate: " + e.getMessage());
+        }
+    }
+
+    private static void saveServerCertViaProxy(int proxyPort) {
+        try {
+            var sslContext = SSLContext.getInstance("TLS");
+            var capturingTm = new CertCapturingTrustManager();
+            sslContext.init(null, new TrustManager[]{capturingTm}, null);
+            var client = HttpClient.newBuilder().sslContext(sslContext).connectTimeout(Duration.ofSeconds(5)).build();
+            var request = HttpRequest.newBuilder().uri(URI.create("https://localhost:" + proxyPort + "/1.0")).GET().timeout(Duration.ofSeconds(5)).build();
+            client.send(request, HttpResponse.BodyHandlers.discarding());
+            if (capturingTm.captured != null) {
+                var certPath = Environment.incusServerCertsDir().resolve(REMOTE_NAME + ".crt");
+                Files.writeString(certPath, toPem("CERTIFICATE", capturingTm.captured.getEncoded()));
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not save server certificate via vsock: " + e.getMessage());
         }
     }
 
