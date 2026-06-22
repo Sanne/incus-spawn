@@ -224,9 +224,13 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean tryAutoRestart(IncusClient incus) {
+        return tryAutoRestart(incus, System.err::println);
+    }
+
+    public static boolean tryAutoRestart(IncusClient incus, java.util.function.Consumer<String> log) {
         if (!ProxyService.isInstalled()) return false;
-        System.err.println("Proxy is not running, restarting service...");
-        ProxyService.restart();
+        log.accept("Proxy is not running, restarting service...");
+        ProxyService.restart(log);
         var addr = healthAddress(incus);
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
@@ -235,11 +239,11 @@ public final class ProxyHealthCheck {
             }
             if (isHealthy(addr)) {
                 invalidateCache();
-                System.err.println("Proxy service restarted successfully.");
+                log.accept("Proxy service restarted successfully.");
                 return true;
             }
         }
-        System.err.println("Proxy service did not become healthy after restart.");
+        log.accept("Proxy service did not become healthy after restart.");
         return false;
     }
 

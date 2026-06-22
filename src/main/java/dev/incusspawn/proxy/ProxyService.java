@@ -120,8 +120,12 @@ public final class ProxyService {
     }
 
     public static boolean restart() {
+        return restart(System.err::println);
+    }
+
+    public static boolean restart(java.util.function.Consumer<String> log) {
         ProxyLog.info("Service restarting");
-        System.err.println("Restarting proxy service...");
+        log.accept("Restarting proxy service...");
         if (Environment.isMacOS()) {
             var uid = getUid();
             runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
@@ -131,10 +135,10 @@ public final class ProxyService {
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         }
         if (isActive()) {
-            System.err.println("Proxy service restarted.");
+            log.accept("Proxy service restarted.");
             return true;
         }
-        System.err.println("Warning: proxy service did not restart.");
+        log.accept("Warning: proxy service did not restart.");
         return false;
     }
 
