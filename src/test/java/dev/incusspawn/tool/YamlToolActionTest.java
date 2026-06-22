@@ -198,6 +198,28 @@ class YamlToolActionTest {
     }
 
     @Test
+    void testExtractScheme() {
+        assertEquals("vscode", YamlToolAction.extractScheme("vscode://vscode-remote/ssh-remote+test/path"));
+        assertEquals("jetbrains-gateway", YamlToolAction.extractScheme("jetbrains-gateway://connect#host=10.0.0.1"));
+        assertEquals("http", YamlToolAction.extractScheme("http://example.com"));
+        assertEquals("https", YamlToolAction.extractScheme("https://example.com"));
+        assertNull(YamlToolAction.extractScheme("no-scheme-here"));
+        assertNull(YamlToolAction.extractScheme(""));
+    }
+
+    @Test
+    void testExtractSchemeCaseInsensitive() {
+        assertEquals("vscode", YamlToolAction.extractScheme("VSCode://something"));
+    }
+
+    @Test
+    void testCheckUrlPrerequisitesSkipsUnknownSchemes() {
+        assertNull(YamlToolAction.checkUrlPrerequisites("http://example.com"));
+        assertNull(YamlToolAction.checkUrlPrerequisites("https://example.com"));
+        assertNull(YamlToolAction.checkUrlPrerequisites("custom://something"));
+    }
+
+    @Test
     void testAllVariableInterpolation() {
         var entry = new ActionEntry();
         entry.setLabel("${repo_name}");

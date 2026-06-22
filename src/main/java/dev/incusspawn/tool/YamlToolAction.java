@@ -78,10 +78,16 @@ public class YamlToolAction implements ToolAction {
         if (url == null || url.isBlank()) {
             return ActionResult.error("Missing URL for action: " + entry.getLabel());
         }
+
+        var prereq = checkUrlPrerequisites(url);
+        if (prereq != null) {
+            return prereq;
+        }
+
         if (openInBrowser(url)) {
             return ActionResult.ok("Opened " + url);
         } else {
-            return ActionResult.ok("URL: " + url);
+            return ActionResult.error("Could not open URL (no handler found): " + url);
         }
     }
 
@@ -172,6 +178,139 @@ public class YamlToolAction implements ToolAction {
             return false;
         } catch (IOException ignored) {
             return false;
+        }
+    }
+
+    // --- URL scheme prerequisite checks ---
+
+    static ActionResult checkUrlPrerequisites(String url) {
+        var scheme = extractScheme(url);
+        if (scheme == null) return null;
+
+        return switch (scheme) {
+            case "vscode" -> checkVscodePrerequisites(url);
+            case "jetbrains-gateway" -> checkGatewayPrerequisites();
+            default -> null;
+        };
+    }
+
+    static String extractScheme(String url) {
+        int idx = url.indexOf("://");
+        return idx > 0 ? url.substring(0, idx).toLowerCase(java.util.Locale.ROOT) : null;
+    }
+
+    private static ActionResult checkVscodePrerequisites(String url) {
+        var codePath = findVscodeCli();
+        if (codePath == null && !isVscodeInstalled()) {
+            return ActionResult.error(
+                    "VS Code does not appear to be installed.\n" +
+                    "Install it from: https://code.visualstudio.com/");
+        }
+
+        if (codePath != null && url.contains("vscode-remote/ssh-remote")) {
+            if (!isVscodeExtensionInstalled(codePath, "ms-vscode-remote.remote-ssh")) {
+                System.out.println(
+                        "The VS Code 'Remote - SSH' extension is required for this action but is not installed.\n" +
+                        "\nPress Enter to open VS Code and install it...");
+                try { System.in.read(); } catch (java.io.IOException ignored) {}
+                openInBrowser("vscode:extension/ms-vscode-remote.remote-ssh");
+                return ActionResult.error(
+                        "Please retry this action after the extension installation completes.");
+            }
+        }
+
+        return null;
+    }
+
+    private static ActionResult checkGatewayPrerequisites() {
+        if (!isSchemeHandlerAvailable("jetbrains-gateway")) {
+            return ActionResult.error(
+                    "JetBrains Gateway does not appear to be installed.\n" +
+                    "Install it from: https://www.jetbrains.com/remote-development/gateway/");
+        }
+        return null;
+    }
+
+    static String findVscodeCli() {
+        if (isCommandAvailable("code")) {
+            return "code";
+        }
+        if (dev.incusspawn.Environment.isMacOS()) {
+            var bundled = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+            if (new java.io.File(bundled).canExecute()) {
+                return bundled;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isVscodeInstalled() {
+        if (findVscodeCli() != null) return true;
+        if (dev.incusspawn.Environment.isMacOS()) {
+            return isMacAppInstalled("Visual Studio Code");
+        }
+        if (dev.incusspawn.Environment.isLinux()) {
+            return isSchemeHandlerAvailable("vscode");
+        }
+        return false;
+    }
+
+    static boolean isCommandAvailable(String command) {
+        try {
+            var process = new ProcessBuilder("which", command)
+                    .redirectErrorStream(true).start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    static boolean isVscodeExtensionInstalled(String codePath, String extensionId) {
+        try {
+            var process = new ProcessBuilder(codePath, "--list-extensions")
+                    .redirectErrorStream(true).start();
+            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return true;
+            }
+            return output.lines().anyMatch(line -> line.trim().equalsIgnoreCase(extensionId));
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    static boolean isSchemeHandlerAvailable(String scheme) {
+        if (dev.incusspawn.Environment.isLinux()) {
+            try {
+                var process = new ProcessBuilder("xdg-mime", "query", "default",
+                        "x-scheme-handler/" + scheme)
+                        .redirectErrorStream(true).start();
+                var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    return true;
+                }
+                return !output.trim().isEmpty();
+            } catch (Exception e) {
+                return true;
+            }
+        }
+        if (dev.incusspawn.Environment.isMacOS()) {
+            return isMacAppInstalled("JetBrains Gateway");
+        }
+        return true;
+    }
+
+    private static boolean isMacAppInstalled(String appName) {
+        try {
+            var process = new ProcessBuilder("open", "-Ra", appName)
+                    .redirectErrorStream(true).start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0;
+        } catch (Exception e) {
+            return true;
         }
     }
 }
