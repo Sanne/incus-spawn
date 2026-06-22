@@ -665,6 +665,7 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        mountRepoSourceReferences(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -824,6 +825,7 @@ public class BuildCommand extends BaseCommand {
         writeEnvFile(container, imageDef, defs, tools, canonicalName);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        mountRepoSourceReferences(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -1404,6 +1406,15 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));
         }
+        if (!imageDef.getRepoSources().isEmpty()) {
+            try {
+                var repoSourcesJson = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .writeValueAsString(imageDef.getRepoSources());
+                incus.configSet(buildName, Metadata.REPO_SOURCES, repoSourcesJson);
+            } catch (Exception e) {
+                System.err.println("Warning: could not store repo-sources metadata: " + e.getMessage());
+            }
+        }
         incus.configSet(buildName, Metadata.BUILD_SOURCE,
                 collectBuildSource(imageDef, defs).toJson());
 
@@ -1905,6 +1916,69 @@ public class BuildCommand extends BaseCommand {
         } catch (Exception e) {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;
+        }
+    }
+
+    private void mountRepoSourceReferences(Container container, ImageDef imageDef) {
+        var repoSources = imageDef.getRepoSources();
+        if (repoSources.isEmpty()) return;
+
+        var alreadyCloned = imageDef.getRepos().stream()
+                .map(r -> GitRemoteUtils.repoNameFromUrl(r.getUrl()))
+                .collect(java.util.stream.Collectors.toSet());
+
+        for (var source : repoSources) {
+            var expandedPath = HostResourceSetup.expandHostTilde(source.getHostPath());
+            var hostPath = Path.of(expandedPath);
+            if (!Files.isDirectory(hostPath)) {
+                System.err.println("Warning: repo-source host-path not found: " + source.getHostPath());
+                continue;
+            }
+
+            List<String> repoNames;
+            if (source.getManifest() != null && !source.getManifest().isBlank()) {
+                // Read manifest from first cloned repo in the container
+                var firstRepo = imageDef.getRepos().isEmpty() ? null : imageDef.getRepos().get(0);
+                if (firstRepo == null) {
+                    System.err.println("Warning: manifest specified but no repos declared to read it from");
+                    continue;
+                }
+                var repoPath = firstRepo.getPath();
+                if (repoPath.startsWith("~/")) repoPath = "/home/agentuser/" + repoPath.substring(2);
+                var manifestPath = repoPath + "/" + source.getManifest();
+                var result = container.exec("cat", manifestPath);
+                if (!result.success()) {
+                    System.err.println("Warning: could not read manifest " + manifestPath + ": " + result.stderr());
+                    continue;
+                }
+                repoNames = GitRemoteUtils.parseManifestRepoNames(result.stdout());
+            } else {
+                repoNames = GitRemoteUtils.scanHostPathForRepos(hostPath);
+            }
+
+            System.out.println("Mounting " + repoNames.size() + " repo references from " + source.getHostPath() + "...");
+            int mounted = 0;
+            for (var repoName : repoNames) {
+                if (alreadyCloned.contains(repoName)) continue;
+                var repoDir = hostPath.resolve(repoName);
+                if (!Files.isDirectory(repoDir) || !GitRemoteUtils.isGitRepo(repoDir)) continue;
+
+                try {
+                    var containerPath = GitRemoteUtils.referenceContainerPath(repoName, "https://github.com/_/" + repoName + ".git");
+                    var deviceName = GitRemoteUtils.referenceDeviceName(repoName, "https://github.com/_/" + repoName + ".git");
+                    container.exec("mkdir", "-p", containerPath);
+                    var refArgs = new java.util.ArrayList<>(java.util.List.of(
+                            "source=" + HostResourceSetup.translateForVm(repoDir.toString()),
+                            "path=" + containerPath,
+                            "readonly=true"));
+                    HostResourceSetup.addShiftIfSupported(refArgs);
+                    incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
+                    mounted++;
+                } catch (Exception e) {
+                    System.err.println("  Warning: could not mount reference for " + repoName + ": " + e.getMessage());
+                }
+            }
+            System.out.println("  " + mounted + " references mounted.");
         }
     }
 

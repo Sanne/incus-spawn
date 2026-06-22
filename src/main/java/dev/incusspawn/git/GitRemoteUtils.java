@@ -305,6 +305,30 @@ public final class GitRemoteUtils {
         return base + suffix;
     }
 
+    public static List<String> scanHostPathForRepos(Path hostPath) {
+        var repos = new ArrayList<String>();
+        try (var stream = Files.list(hostPath)) {
+            stream.filter(Files::isDirectory)
+                  .filter(p -> Files.isDirectory(p.resolve(".git")))
+                  .map(p -> p.getFileName().toString())
+                  .forEach(repos::add);
+        } catch (IOException e) {
+            System.err.println("Warning: could not scan " + hostPath + ": " + e.getMessage());
+        }
+        return repos;
+    }
+
+    public static List<String> parseManifestRepoNames(String csvContent) {
+        var repos = new ArrayList<String>();
+        for (var line : csvContent.split("\n")) {
+            line = line.strip();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            var name = line.split(",")[0].strip();
+            if (!name.isEmpty()) repos.add(name);
+        }
+        return repos;
+    }
+
     public static String referenceContainerPath(String repoName, String cloneUrl) {
         if (repoName == null || repoName.isBlank()
                 || repoName.contains("/") || repoName.equals(".") || repoName.equals("..")) {

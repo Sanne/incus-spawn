@@ -22,6 +22,7 @@ public final class Metadata {
     public static final String BUILD_SHA = PREFIX + "build-sha";
     public static final String CA_FINGERPRINT = PREFIX + "ca-fingerprint";
     public static final String HOST_RESOURCES = PREFIX + "host-resources";
+    public static final String REPO_SOURCES = PREFIX + "repo-sources";
     public static final String DEFINITION_SHA = PREFIX + "definition-sha";
     public static final String BUILD_SOURCE = PREFIX + "build-source";
     public static final String GUI_ENABLED = PREFIX + "gui-enabled";
