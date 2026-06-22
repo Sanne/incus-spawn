@@ -623,13 +623,14 @@ public class BuildCommand extends BaseCommand {
         }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
         incus.start(buildName);
-        incus.waitForSystemd(buildName);
+        incus.waitForReady(buildName);
 
         var container = new Container(incus, buildName);
-        // Write the (DHCP) network config before waiting: the base image bakes no
-        // .network file, so without this networkd brings eth0 up with only a
-        // link-local address and never requests IPv4.
+        // Write the DHCP .network file before waiting for systemd — otherwise
+        // networkd-wait-online blocks systemd from reaching "running".
         prepareContainerForPackageInstall(container);
+
+        incus.waitForSystemd(buildName);
 
         waitForIpv4(container);
 
@@ -735,12 +736,14 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
         }
         incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+        // Write network config before restart so systemd-networkd finds the
+        // DHCP .network file on boot — otherwise networkd-wait-online blocks
+        // systemd from reaching "running" for its full timeout.
+        prepareContainerForPackageInstall(container);
+
         System.out.println("Restarting container with updated security config...");
         incus.restart(buildName);
         incus.waitForSystemd(buildName);
-
-        // Network config before the IPv4 wait — see buildFromScratch for rationale.
-        prepareContainerForPackageInstall(container);
 
         waitForIpv4(container);
 
