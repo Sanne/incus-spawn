@@ -22,7 +22,7 @@ public final class BridgeSubnetCheck {
 
     public static List<String> getHostRoutes() {
         try {
-            var pb = new ProcessBuilder("ip", "route", "show");
+            var pb = new ProcessBuilder("ip", "route", "show", "table", "all");
             pb.redirectErrorStream(true);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes()).strip();
