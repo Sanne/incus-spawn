@@ -59,4 +59,10 @@ public interface ToolSetup {
     default void reconfigure(Container container, java.util.Map<String, String> resolvedParams) {
         install(container, resolvedParams);
     }
+
+    /**
+     * Run post-repos scripts after all template repos have been cloned.
+     * Called once after cloneRepos() completes. Default is a no-op.
+     */
+    default void postRepos(Container container, java.util.Map<String, String> resolvedParams) {}
 }

@@ -665,6 +665,7 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        runPostReposHooks(container, toolResolution.effective());
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -824,6 +825,7 @@ public class BuildCommand extends BaseCommand {
         writeEnvFile(container, imageDef, defs, tools, canonicalName);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        runPostReposHooks(container, tools);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -1214,6 +1216,12 @@ public class BuildCommand extends BaseCommand {
 
         var script = resolver.resolve();
         container.writeFile("/etc/profile.d/isx-env.sh", script);
+    }
+
+    private void runPostReposHooks(Container container, List<ResolvedTool> tools) {
+        for (var resolved : tools) {
+            resolved.setup().postRepos(container, resolved.parameters());
+        }
     }
 
     private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {

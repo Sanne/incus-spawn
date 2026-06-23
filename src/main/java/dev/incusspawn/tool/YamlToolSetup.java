@@ -116,6 +116,15 @@ public class YamlToolSetup implements ToolSetup {
         }
     }
 
+    @Override
+    public void postRepos(Container container, java.util.Map<String, String> resolvedParams) {
+        for (var script : def.getPostRepos()) {
+            var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
+            container.runAsUser("agentuser", substituted,
+                    "Failed to run post-repos for " + def.getName());
+        }
+    }
+
     static String canonicalArch(String arch) {
         return switch (arch) {
             case "amd64", "x86_64" -> "x86_64";
