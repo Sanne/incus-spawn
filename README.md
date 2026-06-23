@@ -254,21 +254,22 @@ Declared repos are automatically pre-trusted in `.claude.json` so Claude Code do
 
 ### Shell Defaults
 
-Templates can configure the default working directory and shell command when connecting to a container via `isx shell` or the TUI:
+Templates can configure the default working directory, shell command, and default action when connecting to a container:
 
 ```yaml
 name: tpl-quarkus
 parent: tpl-java
+tools: [claude]
 repos:
   - url: https://github.com/quarkusio/quarkus.git
     path: ~/quarkus
 workdir: ~/quarkus
-shell-command: claude
+default-action: claude
 ```
 
 - `workdir` -- the directory to `cd` into when opening a shell. Defaults to the first declared repo's path if omitted.
 - `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`). Falls back to `bash --login` if it fails to start.
-- `default-action` -- a tool action to run when pressing Enter on an instance in the TUI. The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions. When set, Enter runs the action and F2 opens a shell; when unset, Enter opens a shell. Inherits from parent templates; a child overrides the parent's default action.
+- `default-action` -- a tool action to run when pressing Enter on an instance in the TUI. The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions (see [Tool Actions](#tool-actions) for the `id` field). When set, Enter runs the action and F2 opens a shell; when unset, Enter opens a shell. Inherits from parent templates; a child overrides the parent's default action. No rebuild required when changing this field.
 
 ### Pi Coding Agent
 
@@ -459,7 +460,25 @@ Pass parameter values using the map form in image definitions (the `idea-backend
 
 ### Tool Actions
 
-Tools can declare runtime actions that appear in the TUI (press **F9** on a running instance, or **Enter** to run the template's default action). Four types: `url` (opens in browser), `command` (runs on the host), `shell` (runs inside the container as an interactive terminal command), `copy-to-clipboard`. Actions support template variables (`${ip}`, `${name}`, `${repo_name}`, `${repo_path}`) and `expand: repos` to generate one action per declared repository:
+Tools can declare runtime actions that appear in the TUI (press **F9** on a running instance, or **Enter** to run the template's default action). Actions can be declared in YAML tool definitions or programmatically by Java/CDI tools. The built-in `claude` and `pi` tools automatically contribute shell actions ("Claude Code" and "Pi Coding Agent") when included in a template's `tools` list.
+
+Action entry fields:
+
+- `label` (required) -- display text shown in the F9 menu; supports template variables
+- `type` (required) -- one of: `url`, `command`, `shell`, `copy-to-clipboard`
+- `id` -- stable identifier for referencing from `default-action: tool:action-id`
+- `requires_running` -- whether the instance must be running (default: `true`)
+- `expand` -- set to `repos` to generate one action per declared repository
+- `auto_return` -- return to TUI automatically after the action completes (default: `false`; only meaningful for `command` and `shell`)
+
+Type-specific fields:
+
+- **`url`**: `url` -- URL to open in the host browser
+- **`command`**: `command` -- shell command to run on the host
+- **`shell`**: `command` -- command to run inside the container as an interactive terminal session
+- **`copy-to-clipboard`**: `text` -- text to copy to the host clipboard
+
+Template variables available in `label`, `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`. When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
 
 ```yaml
 actions:
@@ -467,6 +486,11 @@ actions:
     type: url
     expand: repos
     url: "jetbrains-gateway://connect#host=${ip}&projectPath=${repo_path}"
+  - label: "Launch agent"
+    id: launch
+    type: shell
+    command: "my-agent --continue"
+    auto_return: true
 ```
 
 ## Installation
