@@ -1,0 +1,32 @@
+name: Test Intel macOS build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Oracle GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Build native image
+        run: |
+          mvn package -Dnative -DskipTests -Dmacos.info.plist="$(pwd)/src/main/resources/Info.plist"
+
+      - name: Verify binary
+        run: |
+          file target/incus-spawn-*-runner
+          target/incus-spawn-*-runner --version
+
+      - name: Check vfkit availability
+        run: |
+          brew install vfkit
+          vfkit --version || echo "vfkit installed but --version not supported"
+          file $(which vfkit)
