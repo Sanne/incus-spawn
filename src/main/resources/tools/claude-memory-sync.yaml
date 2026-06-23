@@ -35,7 +35,7 @@ run_as_user:
         if verbose: print(f"  {msg}", file=sys.stderr)
 
     def encode_path(p):
-        return p.replace("/", "-")
+        return p.replace("/", "-").replace(".", "-")
 
     def discover_host_home():
         d = os.path.join(sync_repo, "projects")
@@ -122,6 +122,14 @@ run_as_user:
             synced += copied
         return synced
 
+    def sync_global_files():
+        for f in os.listdir(sync_repo):
+            if f.endswith(".md") and os.path.isfile(os.path.join(sync_repo, f)):
+                src = os.path.join(sync_repo, f)
+                dst = os.path.join(claude_dir, f)
+                if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
+                    shutil.copy2(src, dst)
+
     ensure_mapping()
     if not os.path.isfile(map_path):
         sys.exit(0)
@@ -129,38 +137,33 @@ run_as_user:
         mappings = json.load(f).get("mappings", [])
 
     if push_mode:
+        subprocess.run(["git", "-C", sync_repo, "pull", "--rebase", "--quiet"],
+                       capture_output=True)
         synced = sync_files(claude_dir, sync_repo, mappings, "container_dir", "host_dir")
         if synced > 0 and not dry_run:
             subprocess.run(["git", "-C", sync_repo, "add", "--all"], capture_output=True)
             r = subprocess.run(["git", "-C", sync_repo, "diff", "--cached", "--quiet"],
                                capture_output=True)
             if r.returncode != 0:
-                hostname = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+                import socket
                 subprocess.run(["git", "-C", sync_repo, "commit", "-m",
-                               f"memory sync from {hostname}"], capture_output=True)
-                log(f"Committed {synced} file(s) to sync repo.")
+                               f"memory sync from {socket.gethostname()}"], capture_output=True)
+                log(f"Committed {synced} file(s).")
                 r = subprocess.run(["git", "-C", sync_repo, "push"],
                                    capture_output=True, text=True)
                 if r.returncode == 0:
                     log("Pushed to remote.")
                 else:
-                    log("Committed locally (no remote or push failed — host can fetch via SSH).")
+                    log("Committed locally (host can fetch via SSH).")
         elif synced == 0:
             log("No changes to write back.")
     else:
         subprocess.run(["git", "-C", sync_repo, "pull", "--rebase", "--quiet"],
                        capture_output=True)
         synced = sync_files(sync_repo, claude_dir, mappings, "host_dir", "container_dir")
-        global_files = ["CLAUDE.md", "engagement.md", "working-style.md",
-                        "document-boundaries.md", "design-implementation.md",
-                        "config-architecture.md"]
-        for gf in global_files:
-            src = os.path.join(sync_repo, gf)
-            dst = os.path.join(claude_dir, gf)
-            if os.path.isfile(src):
-                if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
-                    shutil.copy2(src, dst)
-        log(f"Sync complete: {synced} file(s) pulled from host.")
+        if not dry_run:
+            sync_global_files()
+        log(f"Sync complete: {synced} memory file(s) pulled from host.")
     PYEOF
     SYNCEOF
     sed -i "s|%%PATHMAP%%|${param_pathmap}|g" ~/.claude/bin/memory-sync.sh
@@ -201,9 +204,14 @@ run_as_user:
     print("  SessionStart + SessionEnd hooks registered")
     PYEOF
   - |
+    if [ -d ~/.claude-sync/.git ]; then
+      git -C ~/.claude-sync config user.name "isx-memory-sync"
+      git -C ~/.claude-sync config user.email "memory-sync@incus-spawn"
+    fi
+  - |
     if [ -d ~/.claude-sync ]; then
-      for f in CLAUDE.md engagement.md working-style.md document-boundaries.md design-implementation.md config-architecture.md; do
-        [ -f "$HOME/.claude-sync/$f" ] && cp "$HOME/.claude-sync/$f" ~/.claude/
+      for f in ~/.claude-sync/*.md; do
+        [ -f "$f" ] && cp "$f" ~/.claude/
       done
     fi
   - PATHMAP="${param_pathmap}" ~/.claude/bin/memory-sync.sh --verbose || true
