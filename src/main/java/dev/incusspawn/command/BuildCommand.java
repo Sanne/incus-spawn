@@ -663,6 +663,7 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        writeRepoMapping(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -824,6 +825,7 @@ public class BuildCommand extends BaseCommand {
         runToolSetup(container, tools);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
+        writeRepoMapping(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -1667,6 +1669,38 @@ public class BuildCommand extends BaseCommand {
 
     /**
      * Clone git repos declared in the image definition as agentuser.
+     * Writes a JSON mapping of host↔container paths for each cloned repo.
+     * Tools and hooks can read this to correlate paths across the host/container boundary.
+     * Written to /var/lib/incus-spawn/repo-map.json inside the container.
+     */
+    void writeRepoMapping(Container container, ImageDef imageDef) {
+        var config = SpawnConfig.load();
+        var mapper = new ObjectMapper();
+        var root = mapper.createObjectNode();
+        var repos = root.putArray("repos");
+
+        for (var repo : imageDef.getRepos()) {
+            var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
+            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            var containerPath = expandHome(repo.getPath());
+
+            var entry = repos.addObject();
+            entry.put("name", repoName);
+            entry.put("url", repo.getUrl());
+            entry.put("host_path", hostPath != null ? hostPath.toString() : "");
+            entry.put("container_path", containerPath);
+        }
+
+        try {
+            var json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            container.writeFile("/var/lib/incus-spawn/repo-map.json", json);
+            container.exec("chown", "agentuser:agentuser", "/var/lib/incus-spawn/repo-map.json");
+        } catch (Exception e) {
+            System.err.println("Warning: failed to write repo mapping: " + e.getMessage());
+        }
+    }
+
+    /**
      * When a matching host-side checkout is available (via SpawnConfig host-path/repo-paths),
      * uses {@code --reference} to speed up cloning from local objects. Dissociation
      * is deferred to after checkout: a manual {@code repack -a -d} followed by
