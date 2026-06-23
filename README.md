@@ -271,6 +271,35 @@ default-action: claude
 - `shell-command` -- a command to run instead of the default login shell (e.g. `claude` or `pi`). Falls back to `bash --login` if it fails to start.
 - `default-action` -- a tool action to run when pressing Enter on an instance in the TUI. The value is a tool name (e.g. `claude`) if the tool has a single action, or `tool:action-id` (e.g. `claude:launch`) if the tool has multiple actions (see [Tool Actions](#tool-actions) for the `id` field). When set, Enter runs the action and F2 opens a shell; when unset, Enter opens a shell. Inherits from parent templates; a child overrides the parent's default action. No rebuild required when changing this field.
 
+### Claude Code
+
+Claude Code is Anthropic's official CLI for Claude. Add it to any template with `tools: [claude]`:
+
+```yaml
+name: tpl-agent
+description: Isolated dev environment with Claude Code
+parent: tpl-dev
+repos:
+  - url: https://github.com/myorg/myproject.git
+    path: ~/myproject
+workdir: ~/myproject
+tools:
+  - claude
+default-action: claude
+```
+
+The `claude` tool downloads the latest Claude Code binary, configures permissions for unattended agent use, and sets up authentication. All three auth modes work transparently — the [MITM proxy](#credential-isolation) injects credentials so no real API keys or tokens enter the container.
+
+To preconfigure which model Claude Code uses, pass the `model` parameter:
+
+```yaml
+tools:
+  - claude:
+      model: claude-sonnet-4-6
+```
+
+When omitted, Claude Code uses its own default. Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
+
 ### Pi Coding Agent
 
 Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API. Add it to any template with `tools: [pi]`:

@@ -41,11 +41,9 @@ class JavaToolParametersTest {
     }
 
     @Test
-    void testJavaToolsDefaultToNoParameters() {
-        var claude = new ClaudeSetup();
+    void testJavaToolsWithoutExplicitParametersDefaultToEmpty() {
         var gh = new GhSetup();
 
-        assertTrue(claude.parameters().isEmpty(), "ClaudeSetup should have no parameters by default");
         assertTrue(gh.parameters().isEmpty(), "GhSetup should have no parameters by default");
     }
 }

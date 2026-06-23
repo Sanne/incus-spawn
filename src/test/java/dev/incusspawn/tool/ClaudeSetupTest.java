@@ -121,6 +121,54 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void configureSettingsWritesModelToUserSettingsWhenProvided() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER),
+                new SpawnConfig.ClaudeConfig(), "claude-sonnet-4-6");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+
+        var settingsWrite = captor.getAllValues().stream()
+                .filter(cmd -> cmd.contains(".claude/settings.json") && !cmd.contains("/etc/claude-code"))
+                .findFirst().orElseThrow();
+        assertTrue(settingsWrite.contains("\"model\": \"claude-sonnet-4-6\""),
+                "User settings.json should contain model when parameter is set");
+    }
+
+    @Test
+    void configureSettingsOmitsModelFromUserSettingsWhenNotProvided() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER),
+                new SpawnConfig.ClaudeConfig());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+
+        var settingsWrite = captor.getAllValues().stream()
+                .filter(cmd -> cmd.contains(".claude/settings.json") && !cmd.contains("/etc/claude-code"))
+                .findFirst().orElseThrow();
+        assertFalse(settingsWrite.contains("\"model\""),
+                "User settings.json should not contain model when parameter is not set");
+    }
+
+    @Test
+    void parametersDeclaresModelWithPattern() {
+        var params = new ClaudeSetup().parameters();
+        assertTrue(params.containsKey("model"));
+        var model = params.get("model");
+        assertEquals("string", model.getType());
+        assertNotNull(model.getPattern());
+        assertNull(model.getDefault());
+    }
+
+    @Test
     void detectPlatformReturnsLinuxX64OnAmd64() {
         assertEquals("linux-x64", ClaudeSetup.detectPlatform("amd64"));
         assertEquals("linux-x64", ClaudeSetup.detectPlatform("x86_64"));

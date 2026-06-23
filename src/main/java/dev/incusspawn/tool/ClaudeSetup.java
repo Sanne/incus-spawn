@@ -7,6 +7,7 @@ import dev.incusspawn.incus.Container;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Map;
 
 public class ClaudeSetup implements ToolSetup {
 
@@ -39,10 +40,19 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
+    public Map<String, ToolDef.ParameterDef> parameters() {
+        var model = new ToolDef.ParameterDef();
+        model.setType("string");
+        model.setDescription("Claude model ID (e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001)");
+        model.setPattern("^claude-[a-z0-9][-a-z0-9.]*$");
+        return Map.of("model", model);
+    }
+
+    @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
         var claude = SpawnConfig.load().getClaude();
-        configureSettings(c, claude);
+        configureSettings(c, claude, resolvedParams.get("model"));
         configureAuth(c, claude);
     }
 
@@ -105,6 +115,10 @@ public class ClaudeSetup implements ToolSetup {
     static final String MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig) {
+        configureSettings(c, claudeConfig, null);
+    }
+
+    void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig, String model) {
         System.out.println("Configuring Claude Code for agent use...");
         var managedSettingsJson = """
                 {
@@ -140,11 +154,14 @@ public class ClaudeSetup implements ToolSetup {
         c.sh("mkdir -p /etc/claude-code");
         c.writeFile(MANAGED_SETTINGS_PATH, managedSettingsJson);
 
-        var settingsJson = """
-                {
-                  "disableDeepLinkRegistration": "disable"
-                }
-                """;
+        var settingsJsonBuilder = new StringBuilder();
+        settingsJsonBuilder.append("{\n");
+        settingsJsonBuilder.append("  \"disableDeepLinkRegistration\": \"disable\"");
+        if (model != null) {
+            settingsJsonBuilder.append(",\n  \"model\": \"").append(model).append("\"");
+        }
+        settingsJsonBuilder.append("\n}\n");
+        var settingsJson = settingsJsonBuilder.toString();
         var claudeJsonBuilder = new StringBuilder();
         claudeJsonBuilder.append("""
                 {
