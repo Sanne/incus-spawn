@@ -7,6 +7,7 @@ import java.io.OutputStream;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -27,6 +28,8 @@ class UnixSocketTransport implements IncusTransport {
             "/var/lib/incus/unix.socket"
     );
 
+    static final int DEFAULT_TIMEOUT_SECONDS = 30;
+
     private static final int WS_BINARY = 0x2;
     private static final int WS_CLOSE  = 0x8;
     private static final int WS_PING   = 0x9;
@@ -36,25 +39,45 @@ class UnixSocketTransport implements IncusTransport {
     // build time.
 
     private final String socketPath;
+    private final int timeoutSeconds;
 
     UnixSocketTransport(String socketPath) {
+        this(socketPath, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    UnixSocketTransport(String socketPath, int timeoutSeconds) {
         this.socketPath = socketPath;
+        this.timeoutSeconds = timeoutSeconds;
     }
 
     @Override
     public RawResponse request(String method, String path,
                                String contentType, Map<String, String> extraHeaders,
                                byte[] bodyBytes) throws IOException {
+        return request(method, path, contentType, extraHeaders, bodyBytes, timeoutSeconds);
+    }
+
+    @Override
+    public RawResponse request(String method, String path,
+                               String contentType, Map<String, String> extraHeaders,
+                               byte[] bodyBytes, int requestTimeout) throws IOException {
         var addr = UnixDomainSocketAddress.of(socketPath);
         try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
-            channel.connect(addr);
-            var out = Channels.newOutputStream(channel);
-            var in  = Channels.newInputStream(channel);
-            writeRequest(out, method, path, contentType, extraHeaders, bodyBytes);
-            // Do NOT shutdownOutput() — Incus cancels the request context on half-close.
-            // Connection: close makes the server close its end after the response, which
-            // causes readAllBytes() / readNBytes() to see EOF naturally.
-            return readResponse(in);
+            var watchdog = startWatchdog(channel, requestTimeout);
+            try {
+                channel.connect(addr);
+                var out = Channels.newOutputStream(channel);
+                var in  = Channels.newInputStream(channel);
+                writeRequest(out, method, path, contentType, extraHeaders, bodyBytes);
+                // Do NOT shutdownOutput() — Incus cancels the request context on half-close.
+                // Connection: close makes the server close its end after the response, which
+                // causes readAllBytes() / readNBytes() to see EOF naturally.
+                return readResponse(in);
+            } catch (ClosedChannelException e) {
+                throw timeoutException(path, requestTimeout);
+            } finally {
+                watchdog.interrupt();
+            }
         }
     }
 
@@ -64,11 +87,18 @@ class UnixSocketTransport implements IncusTransport {
                                Path bodyFile) throws IOException {
         var addr = UnixDomainSocketAddress.of(socketPath);
         try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
-            channel.connect(addr);
-            var out = Channels.newOutputStream(channel);
-            var in  = Channels.newInputStream(channel);
-            writeRequestFromFile(out, method, path, contentType, extraHeaders, bodyFile);
-            return readResponse(in);
+            var watchdog = startWatchdog(channel, timeoutSeconds);
+            try {
+                channel.connect(addr);
+                var out = Channels.newOutputStream(channel);
+                var in  = Channels.newInputStream(channel);
+                writeRequestFromFile(out, method, path, contentType, extraHeaders, bodyFile);
+                return readResponse(in);
+            } catch (ClosedChannelException e) {
+                throw timeoutException(path, timeoutSeconds);
+            } finally {
+                watchdog.interrupt();
+            }
         }
     }
 
@@ -274,13 +304,26 @@ class UnixSocketTransport implements IncusTransport {
         out.flush();
     }
 
+    private static Thread startWatchdog(SocketChannel channel, int timeoutSeconds) {
+        return Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(timeoutSeconds * 1000L);
+                channel.close();
+            } catch (InterruptedException | IOException ignored) {}
+        });
+    }
+
+    private static IOException timeoutException(String path, int timeout) {
+        return new IOException(
+                "Request timed out after " + timeout + "s (" + path + ") — "
+                + "the Incus daemon may be unreachable. On macOS, try: isx vm restart");
+    }
+
     /**
      * WsConnection backed by a Unix domain SocketChannel.
-     * Reads block without a timeout — bounded by the process lifecycle: Incus closes the
-     * WebSocket when the container process exits, and callers join reader threads with
-     * timeouts (e.g. execBidirectional's 2 s stdin join). The HTTPS transport has a 120 s
-     * poll timeout via LinkedBlockingQueue; Unix sockets don't need one because the daemon
-     * is local and connection failures surface as IOExceptions immediately.
+     * WebSocket reads block without a request-level timeout — bounded by the 15 s keepalive
+     * pings (IncusApi.execPty) and reconnect logic (IncusClient.startShell). HTTP
+     * request/response cycles use a watchdog timeout (see {@link #startWatchdog}).
      */
     private static class UnixWsConnection implements IncusTransport.WsConnection {
         private final SocketChannel channel;

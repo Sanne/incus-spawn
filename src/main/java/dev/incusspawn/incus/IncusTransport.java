@@ -24,6 +24,16 @@ interface IncusTransport {
                         byte[] body) throws IOException;
 
     /**
+     * Execute an HTTP request with a per-request timeout override.
+     * Implementations that support timeouts use this instead of their default.
+     */
+    default RawResponse request(String method, String path,
+                                String contentType, Map<String, String> extraHeaders,
+                                byte[] body, int timeoutSeconds) throws IOException {
+        return request(method, path, contentType, extraHeaders, body);
+    }
+
+    /**
      * Execute an HTTP request with body streamed from a file.
      * Implementations must stream the content to avoid loading it entirely into memory.
      */

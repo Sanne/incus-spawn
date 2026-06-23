@@ -39,9 +39,12 @@ class IncusApi {
         this.transport = transport;
     }
 
+    private static final int PROBE_TIMEOUT_SECONDS = 5;
+
     /**
      * Try each candidate Unix socket path: Linux daemon sockets, then vsock (macOS).
      * Returns an IncusApi instance if a probe request succeeds, or null if nothing is accessible.
+     * Uses a short timeout for the probe so a wedged vsock fails fast instead of hanging.
      */
     static IncusApi tryConnect() {
         var socketCandidates = new ArrayList<>(UnixSocketTransport.SOCKET_CANDIDATES);
@@ -52,8 +55,11 @@ class IncusApi {
         for (var candidate : socketCandidates) {
             if (!Files.exists(Path.of(candidate))) continue;
             try {
-                var http = new IncusApi(new UnixSocketTransport(candidate));
-                if (http.get("/1.0").isSuccess()) return http;
+                var probeTransport = new UnixSocketTransport(candidate, PROBE_TIMEOUT_SECONDS);
+                var http = new IncusApi(probeTransport);
+                if (http.get("/1.0").isSuccess()) {
+                    return new IncusApi(new UnixSocketTransport(candidate));
+                }
             } catch (IncusException ignored) {}
         }
         return null;
@@ -262,7 +268,9 @@ class IncusApi {
     }
 
     private ApiResponse waitForOperation(String operationPath) {
-        var result = get(operationPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS);
+        var waitPath = operationPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS;
+        var result = requestWithTimeout("GET", waitPath, null,
+                WAIT_TIMEOUT_SECONDS + 30);
         if (!result.isSuccess()) {
             throw new IncusException("Operation wait failed: " + result.body().path("error").asText());
         }
@@ -390,6 +398,19 @@ class IncusApi {
         try {
             byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
             var raw = transport.request(method, path, "application/json", Map.of(), bodyBytes);
+            var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
+            return new ApiResponse(raw.statusCode(), bodyJson);
+        } catch (IOException e) {
+            throw new IncusException("Incus REST request failed: " + method + " " + path, e);
+        }
+    }
+
+    private ApiResponse requestWithTimeout(String method, String path, Object bodyObj,
+                                           int timeoutSeconds) {
+        try {
+            byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
+            var raw = transport.request(method, path, "application/json", Map.of(),
+                    bodyBytes, timeoutSeconds);
             var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
             return new ApiResponse(raw.statusCode(), bodyJson);
         } catch (IOException e) {
