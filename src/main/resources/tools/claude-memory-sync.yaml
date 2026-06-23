@@ -1,0 +1,182 @@
+name: claude-memory-sync
+description: Sync Claude Code project memory from host to container at session boundaries
+
+parameters:
+  pathmap:
+    type: string
+    description: >
+      Comma-separated host_rel:container_rel path pairs relative to home.
+      Maps host project directories to their container equivalents so that
+      Claude Code memory can be copied between path-encoded directories.
+      Example: "claude/casehub:casehub,.hortora:.hortora"
+
+run_as_user:
+  - |
+    mkdir -p ~/.claude/bin
+    cat > ~/.claude/bin/memory-sync.sh << 'SYNCEOF'
+    #!/bin/bash
+    set -euo pipefail
+    HOST_CLAUDE="/mnt/host-claude"
+    CLAUDE="$HOME/.claude"
+    MAP="$CLAUDE/memory-map.json"
+    PATHMAP="%%PATHMAP%%"
+
+    [ -d "$HOST_CLAUDE/projects" ] || exit 0
+
+    python3 - "$@" << 'PYEOF'
+    import json, os, shutil, sys
+
+    host_claude = "/mnt/host-claude"
+    claude_dir = os.path.expanduser("~/.claude")
+    home = os.path.expanduser("~")
+    map_path = os.path.join(claude_dir, "memory-map.json")
+    pathmap_raw = os.environ.get("PATHMAP", "")
+    verbose = "--verbose" in sys.argv or "--dry-run" in sys.argv
+    dry_run = "--dry-run" in sys.argv
+
+    def encode_path(p):
+        return p.replace("/", "-")
+
+    def discover_host_home():
+        d = os.path.join(host_claude, "projects")
+        if not os.path.isdir(d):
+            return None
+        dirs = [e for e in os.listdir(d) if os.path.isdir(os.path.join(d, e))]
+        if not dirs:
+            return None
+        shortest = min(dirs, key=len)
+        return "/" + shortest.lstrip("-").replace("-", "/")
+
+    def find_repos(base):
+        if not os.path.isdir(base):
+            return []
+        return [os.path.join(base, e) for e in os.listdir(base)
+                if os.path.isdir(os.path.join(base, e, ".git"))]
+
+    def build_mappings():
+        host_home = discover_host_home()
+        if not host_home:
+            return []
+        mappings = [{
+            "host_dir": encode_path(host_home),
+            "container_dir": encode_path(home),
+            "label": "~ (home/global)",
+            "match_type": "home"
+        }]
+        if not pathmap_raw.strip():
+            return mappings
+        for pair in pathmap_raw.split(","):
+            pair = pair.strip()
+            if ":" not in pair:
+                continue
+            host_rel, container_rel = pair.split(":", 1)
+            host_base = os.path.join(host_home, host_rel)
+            container_base = os.path.join(home, container_rel)
+            for repo in find_repos(container_base):
+                name = os.path.basename(repo)
+                host_path = os.path.join(host_base, name)
+                h_enc = encode_path(host_path)
+                c_enc = encode_path(repo)
+                if os.path.isdir(os.path.join(host_claude, "projects", h_enc, "memory")):
+                    mappings.append({
+                        "host_dir": h_enc, "container_dir": c_enc,
+                        "label": os.path.relpath(repo, home), "match_type": "pathmap"
+                    })
+        return mappings
+
+    # Regenerate mapping if stale (only home mapping or missing repos)
+    need_regen = True
+    if os.path.isfile(map_path):
+        with open(map_path) as f:
+            existing = json.load(f)
+        if any(m.get("match_type") == "pathmap" for m in existing.get("mappings", [])):
+            need_regen = False
+
+    if need_regen:
+        mappings = build_mappings()
+        os.makedirs(claude_dir, exist_ok=True)
+        with open(map_path, "w") as f:
+            json.dump({"mappings": mappings}, f, indent=2)
+        if verbose:
+            print(f"  Regenerated mapping: {len(mappings)} entries", file=sys.stderr)
+            for m in mappings:
+                print(f"    {m['label']}: {m['host_dir']} -> {m['container_dir']}", file=sys.stderr)
+
+    # Sync memory files
+    with open(map_path) as f:
+        data = json.load(f)
+
+    synced = 0
+    for m in data.get("mappings", []):
+        src = os.path.join(host_claude, "projects", m["host_dir"], "memory")
+        dst = os.path.join(claude_dir, "projects", m["container_dir"], "memory")
+        label = m.get("label", "")
+        if not os.path.isdir(src):
+            if verbose: print(f"  {label}: no host memory — skip", file=sys.stderr)
+            continue
+        md_files = [f for f in os.listdir(src) if f.endswith(".md")]
+        if not md_files:
+            continue
+        if dry_run:
+            print(f"  DRY-RUN: {label}: {len(md_files)} file(s)", file=sys.stderr)
+            continue
+        os.makedirs(dst, exist_ok=True)
+        copied = 0
+        for fname in md_files:
+            s, d = os.path.join(src, fname), os.path.join(dst, fname)
+            if not os.path.exists(d) or os.path.getmtime(s) > os.path.getmtime(d):
+                shutil.copy2(s, d)
+                copied += 1
+        if verbose and copied:
+            print(f"  {label}: synced {copied}/{len(md_files)} file(s)", file=sys.stderr)
+        synced += copied
+
+    if verbose:
+        print(f"Memory sync complete: {synced} file(s) updated.", file=sys.stderr)
+    PYEOF
+    SYNCEOF
+    sed -i "s|%%PATHMAP%%|${param_pathmap}|g" ~/.claude/bin/memory-sync.sh
+    chmod +x ~/.claude/bin/memory-sync.sh
+  - |
+    python3 << 'PYEOF'
+    import json, os
+
+    settings_path = os.path.expanduser("~/.claude/settings.json")
+    hook_command = "~/.claude/bin/memory-sync.sh"
+
+    settings = {}
+    if os.path.isfile(settings_path):
+        with open(settings_path) as f:
+            settings = json.load(f)
+
+    if "hooks" not in settings:
+        settings["hooks"] = {}
+
+    for event in ["SessionStart", "SessionEnd"]:
+        if event not in settings["hooks"]:
+            settings["hooks"][event] = []
+
+    already = any(
+        hook.get("command", "") == hook_command
+        for group in settings["hooks"]["SessionStart"]
+        for hook in group.get("hooks", [])
+    )
+    if not already:
+        settings["hooks"]["SessionStart"].append({
+            "hooks": [{"type": "command", "command": hook_command}]
+        })
+
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+    print("  SessionStart hook registered in ~/.claude/settings.json")
+    PYEOF
+  - |
+    if [ -d /mnt/host-claude ]; then
+      for f in CLAUDE.md engagement.md working-style.md document-boundaries.md design-implementation.md config-architecture.md; do
+        [ -f "/mnt/host-claude/$f" ] && cp "/mnt/host-claude/$f" ~/.claude/
+      done
+    fi
+  - PATHMAP="${param_pathmap}" ~/.claude/bin/memory-sync.sh --verbose || true
+
+verify: test -x /home/agentuser/.claude/bin/memory-sync.sh
