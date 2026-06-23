@@ -2488,21 +2488,42 @@ public class ListCommand extends BaseCommand {
         return null;
     }
 
-    private java.util.Optional<ToolAction> findDefaultAction(String ref, InstanceInfo instance) {
-        String toolName;
-        String actionId;
+    private record ActionRef(String toolName, String actionId) {}
+
+    private static ActionRef parseActionRef(String ref) {
         int colon = ref.indexOf(':');
         if (colon >= 0) {
-            toolName = ref.substring(0, colon);
-            actionId = ref.substring(colon + 1);
-        } else {
-            toolName = ref;
-            actionId = null;
+            var id = ref.substring(colon + 1);
+            return new ActionRef(ref.substring(0, colon), id.isEmpty() ? null : id);
         }
+        return new ActionRef(ref, null);
+    }
 
+    private static java.util.Optional<ToolAction> resolveActionByRef(ActionRef parsed,
+                                                                      java.util.List<ToolAction> matching) {
+        if (parsed.actionId() != null) {
+            var withId = matching.stream()
+                    .filter(a -> a.id().map(id -> matchesActionId(id, parsed.actionId())).orElse(false))
+                    .toList();
+            if (withId.size() == 1) return java.util.Optional.of(withId.get(0));
+            return java.util.Optional.empty();
+        }
+        if (matching.size() == 1) return java.util.Optional.of(matching.get(0));
+        return java.util.Optional.empty();
+    }
+
+    private static boolean matchesActionId(String actualId, String requestedId) {
+        if (requestedId.equals(actualId)) return true;
+        // Repo-expanded actions have IDs like "base-id/repo-name"; match on the base part
+        int slash = actualId.indexOf('/');
+        return slash >= 0 && requestedId.equals(actualId.substring(0, slash));
+    }
+
+    private java.util.Optional<ToolAction> findDefaultAction(String ref, InstanceInfo instance) {
+        var parsed = parseActionRef(ref);
         var actions = getActionsForInstance(instance);
         var matching = actions.stream()
-                .filter(a -> toolName.equals(a.toolName()))
+                .filter(a -> parsed.toolName().equals(a.toolName()))
                 .toList();
 
         if (matching.isEmpty()) {
@@ -2510,25 +2531,15 @@ public class ListCommand extends BaseCommand {
             return java.util.Optional.empty();
         }
 
-        if (actionId != null) {
-            var withId = matching.stream()
-                    .filter(a -> a.id().map(actionId::equals).orElse(false))
-                    .toList();
-            if (withId.isEmpty()) {
-                statusMessage = "default-action '" + ref + "': action id not found";
-                return java.util.Optional.empty();
+        var result = resolveActionByRef(parsed, matching);
+        if (result.isEmpty()) {
+            if (parsed.actionId() != null) {
+                statusMessage = "default-action '" + ref + "': action id not found or ambiguous";
+            } else {
+                statusMessage = "default-action '" + ref + "': ambiguous, use tool:action-id";
             }
-            if (withId.size() > 1) {
-                statusMessage = "default-action '" + ref + "': multiple actions match";
-                return java.util.Optional.empty();
-            }
-            return java.util.Optional.of(withId.get(0));
         }
-
-        if (matching.size() == 1) return java.util.Optional.of(matching.get(0));
-
-        statusMessage = "default-action '" + ref + "': ambiguous, use tool:action-id";
-        return java.util.Optional.empty();
+        return result;
     }
 
     private boolean dispatchDefaultAction(InstanceInfo selected) {
@@ -2567,7 +2578,6 @@ public class ListCommand extends BaseCommand {
 
     private String resolveDefaultCommandFromTemplate(String templateName) {
         String ref = null;
-        // Walk the template YAML chain (child wins over parent).
         var chain = getInheritanceChain(templateName);
         if (!chain.isEmpty()) {
             for (int i = chain.size() - 1; i >= 0; i--) {
@@ -2578,55 +2588,57 @@ public class ListCommand extends BaseCommand {
                 }
             }
         } else {
-            // YAML definitions not on disk: fall back to Incus metadata snapshot.
             var refValue = incus.configGet(templateName, Metadata.DEFAULT_ACTION);
             ref = (refValue == null || refValue.isBlank()) ? null : refValue;
         }
         if (ref == null) return null;
 
-        String toolName;
-        String actionId;
-        int colon = ref.indexOf(':');
-        if (colon >= 0) {
-            toolName = ref.substring(0, colon);
-            actionId = ref.substring(colon + 1);
-        } else {
-            toolName = ref;
-            actionId = null;
+        var parsed = parseActionRef(ref);
+        var actions = collectActionsForTemplate(templateName);
+        var matching = actions.stream()
+                .filter(a -> parsed.toolName().equals(a.toolName()))
+                .toList();
+        if (matching.isEmpty()) return null;
+
+        var resolved = resolveActionByRef(parsed, matching);
+        if (resolved.isEmpty()) return null;
+
+        var cmd = resolved.get().shellCommand(null);
+        return cmd.orElse(null);
+    }
+
+    private java.util.List<ToolAction> collectActionsForTemplate(String templateName) {
+        var actions = new ArrayList<ToolAction>();
+        var chain = getInheritanceChain(templateName);
+        var tools = new java.util.LinkedHashSet<String>();
+        for (var def : chain) {
+            for (var toolRef : def.getTools()) {
+                tools.add(toolRef.getName());
+            }
         }
-
-        var matching = new java.util.ArrayList<dev.incusspawn.tool.ToolDef.ActionEntry>();
-
-        var setup = toolDefLoader.find(toolName);
-        if (setup instanceof YamlToolSetup yts) {
-            for (var entry : yts.toolDef().getActions()) {
-                if ("shell".equals(entry.getType())) {
-                    if (actionId == null || actionId.equals(entry.getId())) {
-                        matching.add(entry);
-                    }
+        var handledTools = new java.util.HashSet<String>();
+        for (var toolName : tools) {
+            var setup = toolDefLoader.find(toolName);
+            if (setup instanceof YamlToolSetup yts) {
+                var toolDef = yts.toolDef();
+                if (!toolDef.getActions().isEmpty()) {
+                    handledTools.add(toolName);
+                }
+                for (var entry : toolDef.getActions()) {
+                    actions.add(new YamlToolAction(toolName, entry));
                 }
             }
         }
-
         if (cdiTools != null) {
             for (var cdiTool : cdiTools) {
-                if (toolName.equals(cdiTool.name())) {
+                if (tools.contains(cdiTool.name()) && !handledTools.contains(cdiTool.name())) {
                     for (var entry : cdiTool.actions()) {
-                        if ("shell".equals(entry.getType())) {
-                            if (actionId == null || actionId.equals(entry.getId())) {
-                                matching.add(entry);
-                            }
-                        }
+                        actions.add(new YamlToolAction(cdiTool.name(), entry));
                     }
                 }
             }
         }
-
-        if (matching.size() == 1) {
-            var cmd = matching.get(0).getCommand();
-            return (cmd == null || cmd.isBlank()) ? null : cmd;
-        }
-        return null;
+        return actions;
     }
 
     private java.util.Set<String> collectInstalledTools(InstanceInfo instance) {

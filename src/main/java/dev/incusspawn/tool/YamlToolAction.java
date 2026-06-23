@@ -68,7 +68,7 @@ public class YamlToolAction implements ToolAction {
 
     @Override
     public boolean needsDeferredExecution() {
-        return TYPE_COMMAND.equals(entry.getType()) || TYPE_SHELL.equals(entry.getType());
+        return TYPE_COMMAND.equals(entry.getType());
     }
 
     public boolean shouldAutoReturn() {
@@ -85,7 +85,7 @@ public class YamlToolAction implements ToolAction {
         return switch (type) {
             case TYPE_URL -> executeUrl(context);
             case TYPE_COMMAND -> executeCommand(context);
-            case TYPE_SHELL -> ActionResult.error("Shell actions must be dispatched via interactiveShell");
+            case TYPE_SHELL -> ActionResult.error("Missing command for shell action: " + entry.getLabel());
             case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
             default -> ActionResult.error("Unknown action type: " + type);
         };
