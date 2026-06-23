@@ -237,4 +237,81 @@ class YamlToolActionTest {
         assertFalse(action.isUrl());
         assertFalse(action.needsDeferredExecution());
     }
+
+    // --- shell action type ---
+
+    @Test
+    void testShellDoesNotNeedDeferredExecution() {
+        var entry = new ActionEntry();
+        entry.setLabel("Claude Code");
+        entry.setType("shell");
+        entry.setCommand("claude");
+        var action = new YamlToolAction("claude", entry);
+        assertFalse(action.needsDeferredExecution());
+    }
+
+    @Test
+    void testShellCommandReturnsCommand() {
+        var entry = new ActionEntry();
+        entry.setLabel("Claude Code");
+        entry.setType("shell");
+        entry.setCommand("claude --continue");
+        var action = new YamlToolAction("claude", entry);
+        assertEquals("claude --continue", action.shellCommand(null).orElse(null));
+    }
+
+    @Test
+    void testShellCommandBlankReturnsEmptyAndExecuteShowsUserError() {
+        var entry = new ActionEntry();
+        entry.setLabel("Broken");
+        entry.setType("shell");
+        var action = new YamlToolAction("test", entry);
+        assertTrue(action.shellCommand(null).isEmpty());
+        var result = action.execute(new ActionContext("t", "10.0.0.1", "RUNNING", "tpl",
+                Set.of(), "host", List.of()));
+        assertFalse(result.success());
+        assertTrue(result.message().contains("Missing command"));
+    }
+
+    @Test
+    void testNonShellReturnsEmptyShellCommand() {
+        var entry = new ActionEntry();
+        entry.setLabel("Open");
+        entry.setType("url");
+        entry.setUrl("http://example.com");
+        var action = new YamlToolAction("test", entry);
+        assertTrue(action.shellCommand(null).isEmpty());
+    }
+
+    // --- action id ---
+
+    @Test
+    void testIdWithoutRepo() {
+        var entry = new ActionEntry();
+        entry.setLabel("Test");
+        entry.setType("shell");
+        entry.setId("launch");
+        var action = new YamlToolAction("claude", entry);
+        assertEquals("launch", action.id().orElse(null));
+    }
+
+    @Test
+    void testIdWithRepoExpansion() {
+        var entry = new ActionEntry();
+        entry.setLabel("Test");
+        entry.setType("url");
+        entry.setId("open-ide");
+        var repo = new ActionContext.RepoInfo("my-project", "/home/user/my-project", "https://github.com/u/p");
+        var action = new YamlToolAction("vscode", entry, repo);
+        assertEquals("open-ide/my-project", action.id().orElse(null));
+    }
+
+    @Test
+    void testIdNotSet() {
+        var entry = new ActionEntry();
+        entry.setLabel("Test");
+        entry.setType("shell");
+        var action = new YamlToolAction("test", entry);
+        assertTrue(action.id().isEmpty());
+    }
 }
