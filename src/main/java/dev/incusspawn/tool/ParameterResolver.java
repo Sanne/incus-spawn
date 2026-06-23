@@ -52,6 +52,9 @@ public class ParameterResolver {
             var value = provided != null ? provided : def.getDefault();
 
             if (value == null) {
+                if (def.isOptional() || def.isReconfigurable()) {
+                    continue;
+                }
                 errors.add("Required parameter '" + name + "' has no value and no default");
                 continue;
             }

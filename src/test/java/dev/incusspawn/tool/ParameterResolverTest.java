@@ -69,6 +69,58 @@ class ParameterResolverTest {
     }
 
     @Test
+    void testOptionalParameterSkippedWhenNotProvided() {
+        var def = new ToolDef.ParameterDef();
+        def.setType("string");
+        def.setOptional(true);
+
+        var result = ParameterResolver.resolve(
+            Map.of("model", def),
+            Map.of()
+        );
+
+        assertFalse(result.hasErrors());
+        assertFalse(result.resolvedValues().containsKey("model"),
+                "Optional parameter should not appear in resolved values when not provided");
+    }
+
+    @Test
+    void testOptionalParameterValidatedWhenProvided() {
+        var def = new ToolDef.ParameterDef();
+        def.setType("string");
+        def.setOptional(true);
+        def.setPattern("^claude-.*$");
+
+        var validResult = ParameterResolver.resolve(
+            Map.of("model", def),
+            Map.of("model", "claude-sonnet-4-6")
+        );
+        assertFalse(validResult.hasErrors());
+        assertEquals("claude-sonnet-4-6", validResult.resolvedValues().get("model"));
+
+        var invalidResult = ParameterResolver.resolve(
+            Map.of("model", def),
+            Map.of("model", "invalid")
+        );
+        assertTrue(invalidResult.hasErrors());
+    }
+
+    @Test
+    void testReconfigurableParameterImpliesOptional() {
+        var def = new ToolDef.ParameterDef();
+        def.setType("string");
+        def.setReconfigurable(true);
+
+        var result = ParameterResolver.resolve(
+            Map.of("model", def),
+            Map.of()
+        );
+
+        assertFalse(result.hasErrors(),
+                "Reconfigurable parameter should be treated as optional");
+    }
+
+    @Test
     void testStringPatternValidation() {
         var def = new ToolDef.ParameterDef();
         def.setType("string");

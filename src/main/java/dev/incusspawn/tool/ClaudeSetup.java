@@ -45,6 +45,8 @@ public class ClaudeSetup implements ToolSetup {
         model.setType("string");
         model.setDescription("Claude model ID (e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001)");
         model.setPattern("^claude-[a-z0-9][-a-z0-9.]*$");
+        model.setOptional(true);
+        model.setReconfigurable(true);
         return Map.of("model", model);
     }
 
@@ -54,6 +56,12 @@ public class ClaudeSetup implements ToolSetup {
         var claude = SpawnConfig.load().getClaude();
         configureSettings(c, claude, resolvedParams.get("model"));
         configureAuth(c, claude);
+    }
+
+    @Override
+    public void reconfigure(Container c, java.util.Map<String, String> resolvedParams) {
+        var claude = SpawnConfig.load().getClaude();
+        configureSettings(c, claude, resolvedParams.get("model"));
     }
 
     private void installBinary(Container c) {

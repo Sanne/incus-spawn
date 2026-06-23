@@ -39,4 +39,13 @@ public interface ToolSetup {
      * @param resolvedParams parameter values (already validated and with defaults applied)
      */
     void install(Container container, java.util.Map<String, String> resolvedParams);
+
+    /**
+     * Apply only reconfigurable parameter changes without a full reinstall.
+     * Called when a child template overrides reconfigurable parameters of a
+     * tool already installed by an ancestor. Defaults to {@link #install}.
+     */
+    default void reconfigure(Container container, java.util.Map<String, String> resolvedParams) {
+        install(container, resolvedParams);
+    }
 }

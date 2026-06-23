@@ -159,13 +159,35 @@ class ClaudeSetupTest {
     }
 
     @Test
-    void parametersDeclaresModelWithPattern() {
+    void reconfigureOnlyWritesSettingsNotBinary() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().reconfigure(new Container(incus, CONTAINER),
+                java.util.Map.of("model", "claude-opus-4-6"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+
+        var commands = captor.getAllValues();
+        assertTrue(commands.stream().anyMatch(cmd ->
+                        cmd.contains(".claude/settings.json") && cmd.contains("\"model\": \"claude-opus-4-6\"")),
+                "reconfigure should write model to settings.json");
+        assertFalse(commands.stream().anyMatch(cmd -> cmd.contains(".local/bin/claude")),
+                "reconfigure should not install the binary");
+    }
+
+    @Test
+    void parametersDeclaresModelAsOptionalReconfigurable() {
         var params = new ClaudeSetup().parameters();
         assertTrue(params.containsKey("model"));
         var model = params.get("model");
         assertEquals("string", model.getType());
         assertNotNull(model.getPattern());
         assertNull(model.getDefault());
+        assertTrue(model.isOptional());
+        assertTrue(model.isReconfigurable());
     }
 
     @Test

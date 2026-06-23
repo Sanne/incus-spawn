@@ -457,6 +457,80 @@ class BuildCommandTest {
     }
 
     @Test
+    void collectEffectiveToolsAllowsReconfigurableParamOverride() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setOptional(true);
+        modelParam.setReconfigurable(true);
+
+        var tool = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(tool);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("claude")));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("claude",
+                java.util.Map.of("model", "claude-sonnet-4-6"))));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var result = BuildCommand.collectEffectiveTools(child, defs,
+                toolDefLoader, java.util.List.of());
+        assertEquals(1, result.effective().size());
+        assertEquals("claude", result.effective().get(0).name());
+        assertTrue(result.effective().get(0).reconfigureOnly(),
+                "Override of reconfigurable param should be marked reconfigureOnly");
+        assertEquals("claude-sonnet-4-6", result.effective().get(0).parameters().get("model"));
+    }
+
+    @Test
+    void collectEffectiveToolsErrorsOnMixedReconfigurableParams() {
+        var memParam = new ToolDef.ParameterDef();
+        memParam.setType("string");
+
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setReconfigurable(true);
+
+        var tool = new ToolSetup() {
+            @Override public String name() { return "my-tool"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("memory", memParam, "model", modelParam);
+            }
+        };
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("my-tool")).thenReturn(tool);
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setTools(List.of(new ToolDef.ToolRef("my-tool",
+                java.util.Map.of("memory", "4g", "model", "a"))));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setTools(List.of(new ToolDef.ToolRef("my-tool",
+                java.util.Map.of("memory", "8g", "model", "b"))));
+
+        var defs = java.util.Map.of("tpl-parent", parent, "tpl-child", child);
+        var ex = assertThrows(IllegalArgumentException.class,
+                () -> BuildCommand.collectEffectiveTools(child, defs,
+                        toolDefLoader, java.util.List.of()));
+        assertTrue(ex.getMessage().contains("different parameters"));
+    }
+
+    @Test
     void collectEffectiveToolsNewToolPassesThrough() {
         var tool1 = simpleToolSetup("maven");
         var tool2 = simpleToolSetup("podman");

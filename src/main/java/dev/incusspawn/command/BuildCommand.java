@@ -951,8 +951,13 @@ public class BuildCommand extends BaseCommand {
     record ResolvedTool(
         String name,
         ToolSetup setup,
-        Map<String, String> parameters
-    ) {}
+        Map<String, String> parameters,
+        boolean reconfigureOnly
+    ) {
+        ResolvedTool(String name, ToolSetup setup, Map<String, String> parameters) {
+            this(name, setup, parameters, false);
+        }
+    }
 
     record ToolResolution(
         List<ResolvedTool> effective,
@@ -1178,7 +1183,11 @@ public class BuildCommand extends BaseCommand {
      */
     private void runToolSetup(Container container, List<ResolvedTool> tools) {
         for (var resolved : tools) {
-            resolved.setup().install(container, resolved.parameters());
+            if (resolved.reconfigureOnly()) {
+                resolved.setup().reconfigure(container, resolved.parameters());
+            } else {
+                resolved.setup().install(container, resolved.parameters());
+            }
         }
     }
 
@@ -1670,13 +1679,41 @@ public class BuildCommand extends BaseCommand {
             if (ancestorTool == null) {
                 effective.add(tool);
             } else if (!ancestorTool.parameters().equals(tool.parameters())) {
-                var ancestorTemplateName = ancestorTemplateNames.get(tool.name());
-                throw new IllegalArgumentException(
-                    "Tool '" + tool.name() + "' is already installed by ancestor template '" +
-                    ancestorTemplateName + "' with different parameters:\n" +
-                    "  Ancestor: " + ancestorTool.parameters() + "\n" +
-                    "  Current:  " + tool.parameters()
-                );
+                var paramDefs = tool.setup().parameters();
+                var allReconfigurable = true;
+                for (var key : tool.parameters().keySet()) {
+                    var ancestorValue = ancestorTool.parameters().get(key);
+                    var childValue = tool.parameters().get(key);
+                    if (!java.util.Objects.equals(ancestorValue, childValue)) {
+                        var def = paramDefs.get(key);
+                        if (def == null || !def.isReconfigurable()) {
+                            allReconfigurable = false;
+                            break;
+                        }
+                    }
+                }
+                if (allReconfigurable) {
+                    for (var key : ancestorTool.parameters().keySet()) {
+                        if (!tool.parameters().containsKey(key)) {
+                            var def = paramDefs.get(key);
+                            if (def == null || !def.isReconfigurable()) {
+                                allReconfigurable = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (allReconfigurable) {
+                    effective.add(new ResolvedTool(tool.name(), tool.setup(), tool.parameters(), true));
+                } else {
+                    var ancestorTemplateName = ancestorTemplateNames.get(tool.name());
+                    throw new IllegalArgumentException(
+                        "Tool '" + tool.name() + "' is already installed by ancestor template '" +
+                        ancestorTemplateName + "' with different parameters:\n" +
+                        "  Ancestor: " + ancestorTool.parameters() + "\n" +
+                        "  Current:  " + tool.parameters()
+                    );
+                }
             }
         }
         return new ToolResolution(effective, ancestorTools);

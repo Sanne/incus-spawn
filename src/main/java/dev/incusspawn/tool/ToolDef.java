@@ -295,6 +295,8 @@ public class ToolDef {
         private Integer min;     // for integer type
         private Integer max;     // for integer type
         private List<String> options = List.of();  // for enum type
+        private boolean optional = false;
+        private boolean reconfigurable = false;
 
         public String getType() { return type; }
         public void setType(String type) { this.type = type; }
@@ -310,6 +312,10 @@ public class ToolDef {
         public void setMax(Integer max) { this.max = max; }
         public List<String> getOptions() { return options; }
         public void setOptions(List<String> options) { this.options = options; }
+        public boolean isOptional() { return optional; }
+        public void setOptional(boolean optional) { this.optional = optional; }
+        public boolean isReconfigurable() { return reconfigurable; }
+        public void setReconfigurable(boolean reconfigurable) { this.reconfigurable = reconfigurable; }
     }
 
     public String contentFingerprint() {
