@@ -14,11 +14,11 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
 
 ## Quick Start
 
-Requires **Linux or macOS (Apple Silicon)**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status`. Windows and Intel Macs are not yet supported.
+Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status`. Windows is not yet supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
-On macOS (Apple Silicon):
+On macOS:
 
 ```shell
 brew install Sanne/tap/incus-spawn
@@ -501,7 +501,7 @@ actions:
 brew install Sanne/tap/incus-spawn
 ```
 
-Requires Apple Silicon. Updates with `brew upgrade incus-spawn`. See [docs/HOMEBREW.md](docs/HOMEBREW.md) for details.
+Updates with `brew upgrade incus-spawn`. See [docs/HOMEBREW.md](docs/HOMEBREW.md) for details.
 
 ### Fedora (DNF)
 

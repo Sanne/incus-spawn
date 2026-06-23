@@ -33,7 +33,7 @@ When cutting a new release:
 1. **Tag and push** the release in this repository (triggers GitHub Actions)
 
 2. **GitHub Actions builds**:
-   - macOS aarch64 native binary (`incus-spawn-macos-aarch64`)
+   - macOS native binaries (`incus-spawn-macos-aarch64`, `incus-spawn-macos-x86_64`)
    - Linux binaries (amd64, aarch64)
    - VM appliance artifacts (kernel, disk images)
    - Git remote helper (`git-remote-isx`)
@@ -52,19 +52,13 @@ If the automated step fails, update the formula manually:
 ```bash
 VERSION=X.Y.Z
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/incus-spawn-macos-aarch64 | shasum -a 256
+curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/incus-spawn-macos-x86_64 | shasum -a 256
 curl -sL https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx | shasum -a 256
 ```
 
-Update `version` and both `sha256` values in `Sanne/homebrew-tap/Formula/incus-spawn.rb`,
+Update `version` and all `sha256` values in `Sanne/homebrew-tap/Formula/incus-spawn.rb`,
 then commit and push.
 
 ## Supported Platforms
 
-The Homebrew formula **only supports Apple Silicon (arm64)** Macs.
-
-Intel Macs are not supported due to:
-- Deprecated GitHub Actions runners (macos-13 x86_64)
-- Focus on modern Apple Silicon hardware
-- Native performance requirements for the VM workload
-
-Users on Intel Macs can build from source using `./install.sh --native`.
+The Homebrew formula supports both Apple Silicon (arm64) and Intel (x86_64) Macs.

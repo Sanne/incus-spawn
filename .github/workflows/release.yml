@@ -26,6 +26,9 @@ jobs:
           - runner: macos-14
             os: macos
             arch: aarch64
+          - runner: macos-15-intel
+            os: macos
+            arch: x86_64
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -118,6 +121,7 @@ jobs:
             artifacts/native-linux-amd64/incus-spawn-linux-amd64 \
             artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 \
             artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 \
+            artifacts/native-macos-x86_64/incus-spawn-macos-x86_64 \
             artifacts/vmlinuz-x86_64 \
             artifacts/vmlinuz-aarch64 \
             artifacts/disk-x86_64.img.gz \
@@ -132,7 +136,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
 
-          BINARY_SHA=$(sha256sum artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 | cut -d' ' -f1)
+          SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 | cut -d' ' -f1)
+          SHA_X86_64=$(sha256sum artifacts/native-macos-x86_64/incus-spawn-macos-x86_64 | cut -d' ' -f1)
           GIT_REMOTE_SHA=$(sha256sum src/main/resources/git-remote-isx | cut -d' ' -f1)
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/Sanne/homebrew-tap.git /tmp/homebrew-tap
@@ -140,7 +145,8 @@ jobs:
 
           sed -i \
             -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
-            -e "0,/sha256 \"[^\"]*\"/{s/sha256 \"[^\"]*\"/sha256 \"${BINARY_SHA}\"/}" \
+            -e "/macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_ARM64}\"/;}" \
+            -e "/macos-x86_64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_X86_64}\"/;}" \
             -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx\"|}" \
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
             Formula/incus-spawn.rb

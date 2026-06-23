@@ -2,11 +2,11 @@
 
 ## Who this is for
 
-Developers on Apple Silicon Macs who want isolated Linux environments for running AI agents, reproducing bugs, or creating dev environments — without managing a VM manually.
+Developers on macOS who want isolated Linux environments for running AI agents, reproducing bugs, or creating dev environments — without managing a VM manually.
 
 ## Prerequisites
 
-- macOS with Apple Silicon (M1/M2/M3/M4)
+- macOS (Apple Silicon or Intel)
 - 12+ GB available RAM (recommended for building multiple projects in parallel)
 - 80+ GB disk space (recommended for caching dependencies and multiple containers)
 

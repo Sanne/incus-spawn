@@ -42,7 +42,7 @@ The script derives the version from the POM snapshot (e.g. `0.1.9-SNAPSHOT` → 
 Pushing the tag triggers a workflow that will:
 1. Set the project version from the tag
 2. Build a self-contained uber-jar (for JBang users)
-3. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64)
+3. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64/x86_64)
 4. Create a GitHub Release with auto-generated release notes and all artifacts attached
 5. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap) with new checksums
 6. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
