@@ -1370,6 +1370,7 @@ public class BuildCommand extends BaseCommand {
         }
         var effectiveDefaultAction = resolveEffectiveDefaultAction(imageDef, defs);
         if (effectiveDefaultAction != null) {
+            validateDefaultAction(effectiveDefaultAction, imageDef, defs);
             incus.configSet(buildName, Metadata.DEFAULT_ACTION, effectiveDefaultAction);
         } else {
             incus.configUnset(buildName, Metadata.DEFAULT_ACTION);
@@ -1389,6 +1390,28 @@ public class BuildCommand extends BaseCommand {
             current = defs.get(current.getParent());
         }
         return null;
+    }
+
+    private static void validateDefaultAction(String ref, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var toolName = ref;
+        int colon = ref.indexOf(':');
+        if (colon >= 0) toolName = ref.substring(0, colon);
+
+        var allTools = new java.util.LinkedHashSet<String>();
+        var current = imageDef;
+        while (current != null) {
+            for (var toolRef : current.getTools()) {
+                allTools.add(toolRef.getName());
+            }
+            if (current.isRoot() || current.getParent() == null) break;
+            current = defs.get(current.getParent());
+        }
+        if (!allTools.contains(toolName)) {
+            System.err.println("Warning: default-action '" + ref
+                    + "' references tool '" + toolName
+                    + "' which is not in the tools list. "
+                    + "Add it to tools: [" + toolName + "] or remove default-action.");
+        }
     }
 
     static String resolveEffectiveDefaultAction(ImageDef imageDef, Map<String, ImageDef> defs) {
