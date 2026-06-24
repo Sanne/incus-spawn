@@ -19,7 +19,8 @@ import java.nio.file.Path;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SpawnConfig {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
+            .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
 
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
@@ -153,7 +154,7 @@ public class SpawnConfig {
             config.validate();
             return config;
         } catch (IOException e) {
-            System.err.println("Warning: could not read config: " + e.getMessage());
+            System.err.println("Warning: " + YamlErrors.friendly("config.yaml", e));
             return new SpawnConfig();
         } catch (IllegalStateException e) {
             System.err.println("Error: invalid config: " + e.getMessage());

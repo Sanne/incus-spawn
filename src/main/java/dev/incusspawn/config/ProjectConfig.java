@@ -18,7 +18,8 @@ import java.util.List;
 public class ProjectConfig {
 
     private static final String CONFIG_FILENAME = "incus-spawn.yaml";
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
+            .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
 
     private String name;
     private String parent = "tpl-java";
@@ -67,7 +68,7 @@ public class ProjectConfig {
         try {
             return YAML.readValue(file.toFile(), ProjectConfig.class);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to read project config: " + file + ": " + e.getMessage(), e);
+            throw new RuntimeException(YamlErrors.friendly(file.getFileName().toString(), e), e);
         }
     }
 }

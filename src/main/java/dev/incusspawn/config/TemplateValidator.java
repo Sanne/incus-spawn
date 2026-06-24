@@ -3,8 +3,10 @@ package dev.incusspawn.config;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class TemplateValidator {
 
@@ -21,7 +23,7 @@ public class TemplateValidator {
         try {
             def = ImageDef.parseFile(file);
         } catch (IOException e) {
-            errors.add("YAML parse error: " + e.getMessage());
+            errors.add(YamlErrors.friendly(file.getFileName().toString(), e));
             return new ValidationResult(errors, warnings);
         }
 
@@ -46,6 +48,29 @@ public class TemplateValidator {
             warnings.add("Root template (no parent) should specify an 'image' field");
         }
 
+        validateHostResources(def, warnings);
+        validateDuplicateTools(def, warnings);
+
         return new ValidationResult(errors, warnings);
+    }
+
+    private static final Set<String> VALID_HR_MODES = Set.of("readonly", "overlay", "copy");
+
+    private static void validateHostResources(ImageDef def, List<String> warnings) {
+        for (var hr : def.getHostResources()) {
+            if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
+                warnings.add("host-resource mode '" + hr.getMode()
+                        + "' is not valid — must be one of: readonly, overlay, copy");
+            }
+        }
+    }
+
+    private static void validateDuplicateTools(ImageDef def, List<String> warnings) {
+        var seen = new HashSet<String>();
+        for (var tool : def.getTools()) {
+            if (!seen.add(tool.getName())) {
+                warnings.add("tool '" + tool.getName() + "' is listed more than once");
+            }
+        }
     }
 }

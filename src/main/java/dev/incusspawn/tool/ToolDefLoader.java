@@ -2,6 +2,7 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.YamlErrors;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -95,7 +96,7 @@ public class ToolDefLoader {
                     tools.put(def.getName(), new YamlToolSetup(def));
                 }
             } catch (IOException e) {
-                System.err.println("Warning: failed to load built-in tool: " + filename + ": " + e.getMessage());
+                System.err.println("Warning: " + YamlErrors.friendly(filename, e));
             }
         }
     }
@@ -112,7 +113,8 @@ public class ToolDefLoader {
                                 tools.put(def.getName(), new YamlToolSetup(def));
                             }
                         } catch (IOException e) {
-                            System.err.println("Warning: failed to load tool: " + path + ": " + e.getMessage());
+                            System.err.println("Warning: " + YamlErrors.friendly(
+                                    path.getFileName().toString(), e));
                         }
                     });
         } catch (IOException e) {

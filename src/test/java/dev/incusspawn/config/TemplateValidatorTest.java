@@ -66,7 +66,7 @@ class TemplateValidatorTest {
                 """);
         var result = TemplateValidator.validate(file, knownTemplates());
         assertTrue(result.hasErrors());
-        assertTrue(result.errors().stream().anyMatch(e -> e.contains("YAML parse error")));
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("test.yaml")));
     }
 
     @Test
@@ -107,6 +107,79 @@ class TemplateValidatorTest {
         assertFalse(result.hasErrors());
         assertTrue(result.hasWarnings());
         assertTrue(result.warnings().stream().anyMatch(w -> w.contains("'image'")));
+    }
+
+    @Test
+    void duplicateKeyIsError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                tools:
+                  - graalvm
+                tools:
+                  - claude
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("duplicate key")));
+    }
+
+    @Test
+    void invalidHostResourceMode(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: ~/.m2/repository
+                    path: /home/user/.m2/repository
+                    mode: readwrite
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertFalse(result.hasErrors());
+        assertTrue(result.hasWarnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("readwrite")));
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("readonly, overlay, copy")));
+    }
+
+    @Test
+    void validHostResourceModes(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: ~/.m2
+                    path: /home/user/.m2
+                    mode: readonly
+                  - source: ~/.gradle
+                    path: /home/user/.gradle
+                    mode: overlay
+                  - source: ~/.gitconfig
+                    path: /home/user/.gitconfig
+                    mode: copy
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertFalse(result.hasErrors());
+        assertFalse(result.hasWarnings());
+    }
+
+    @Test
+    void duplicateToolsWarning(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                tools:
+                  - maven-3
+                  - podman
+                  - maven-3
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertFalse(result.hasErrors());
+        assertTrue(result.hasWarnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("maven-3") && w.contains("more than once")));
     }
 
     @Test

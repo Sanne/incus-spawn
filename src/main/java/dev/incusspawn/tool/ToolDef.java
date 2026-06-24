@@ -34,7 +34,8 @@ import java.util.TreeMap;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ToolDef {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
+            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
 
     private String name;
     private String description = "";

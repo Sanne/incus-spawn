@@ -38,7 +38,8 @@ import java.util.function.Consumer;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class ImageDef {
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
+            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
     private static final String RESOURCE_DIR = "images/";
 
     // Hardcoded list of built-in image filenames. Classpath directory scanning
@@ -460,8 +461,8 @@ public class ImageDef {
                                 defs.put(def.getName(), def);
                             }
                         } catch (IOException e) {
-                            warnings.accept("Failed to load " + path.getFileName()
-                                    + ": " + e.getMessage());
+                            warnings.accept(YamlErrors.friendly(
+                                    path.getFileName().toString(), e));
                         }
                     });
         } catch (IOException e) {
@@ -481,7 +482,7 @@ public class ImageDef {
             if (is == null) return null;
             return YAML.readValue(is, ImageDef.class);
         } catch (IOException e) {
-            warnings.accept("Failed to load built-in " + path + ": " + e.getMessage());
+            warnings.accept(YamlErrors.friendly(path, e));
             return null;
         }
     }
