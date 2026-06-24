@@ -209,7 +209,7 @@ public final class GitRemoteUtils {
                 .anyMatch(url -> urlsMatch(url, cloneUrl));
     }
 
-    static String hostGitExec(Path repoDir, String... gitArgs) {
+    public static String hostGitExec(Path repoDir, String... gitArgs) {
         var command = new ArrayList<String>();
         command.add("git");
         command.add("-C");
