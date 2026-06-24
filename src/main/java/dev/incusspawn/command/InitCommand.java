@@ -855,6 +855,27 @@ public class InitCommand extends BaseCommand {
             }
         }
 
+        // Offer to keep existing config on re-run
+        if (config.getClaude().hasAuth()) {
+            String desc;
+            if (config.getClaude().isUseVertex()) {
+                var region = config.getClaude().getCloudMlRegion();
+                var project = config.getClaude().getVertexProjectId();
+                desc = "Google Cloud Vertex AI (region: " + (region.isBlank() ? "<not set>" : region)
+                        + ", project: " + (project.isBlank() ? "<not set>" : project) + ")";
+            } else if (config.getClaude().isOauthMode()) {
+                desc = "Claude Pro/Max OAuth token (" + maskSecret(config.getClaude().getOauthToken()) + ")";
+            } else {
+                desc = "Anthropic API key (" + maskSecret(config.getClaude().getApiKey()) + ")";
+            }
+            System.out.println("  Claude auth: " + desc);
+            System.out.print("  Keep current? (Y/n): ");
+            var keep = console.readLine();
+            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+                return;
+            }
+        }
+
         System.out.println("  How do you authenticate with Claude?");
         System.out.println("    1. Anthropic API key");
         System.out.println("    2. Claude Pro/Max subscription (OAuth token)");
@@ -937,6 +958,22 @@ public class InitCommand extends BaseCommand {
     }
 
     private record AuthResult(boolean verified, String message) {}
+
+    private static final String[] KNOWN_PREFIXES = {"github_pat_", "sk-ant-", "ghp_"};
+
+    static String maskSecret(String secret) {
+        if (secret == null || secret.length() < 8) {
+            return "****";
+        }
+        int prefixEnd = 4;
+        for (var p : KNOWN_PREFIXES) {
+            if (secret.startsWith(p)) { prefixEnd = p.length(); break; }
+        }
+        if (prefixEnd + 4 >= secret.length()) {
+            return "****";
+        }
+        return secret.substring(0, prefixEnd) + "..." + secret.substring(secret.length() - 4);
+    }
 
     private static void saveVertexConfig(SpawnConfig config, String region, String projectId) {
         config.getClaude().clearAuth();
@@ -1128,6 +1165,16 @@ public class InitCommand extends BaseCommand {
         if (console == null) {
             System.err.println("  Error: no console available for interactive setup.");
             return;
+        }
+
+        // Offer to keep existing token on re-run
+        if (!config.getGithub().getToken().isBlank()) {
+            System.out.println("  GitHub auth: token configured (" + maskSecret(config.getGithub().getToken()) + ")");
+            System.out.print("  Keep current? (Y/n): ");
+            var keep = console.readLine();
+            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+                return;
+            }
         }
 
         while (true) {
