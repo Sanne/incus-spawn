@@ -380,8 +380,13 @@ public class MitmProxy {
                 .sorted()
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
+        // Reuse persisted leaf certs across restarts so their notBefore stays
+        // stable (minted while clocks were in sync); only mint on miss/expiry/CA
+        // rotation. See CertStore for why per-start re-minting broke validation
+        // on hosts whose container clock lags (e.g. macOS VM after resume).
+        var certStore = new CertStore(ca);
         var certs = allDomains.parallelStream()
-                .map(domain -> java.util.Map.entry(domain, ca.generateDomainCert(domain)))
+                .map(domain -> java.util.Map.entry(domain, certStore.get(domain)))
                 .toList();
         var keyStore = KeyStore.getInstance("JKS");
         keyStore.load(null, null);

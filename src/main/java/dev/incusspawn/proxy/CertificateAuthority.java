@@ -33,6 +33,15 @@ import static dev.incusspawn.DerEncoder.*;
  */
 public class CertificateAuthority {
 
+    /**
+     * How far back {@code notBefore} is set on generated certs, to tolerate clock
+     * skew between the host that mints a cert and a (possibly lagging) container
+     * that validates it. Leaf certs are persisted and reused across proxy restarts
+     * (see {@link CertStore}), so this margin only matters at the rare moments a
+     * cert is freshly minted: first install, CA rotation, and near-expiry renewal.
+     */
+    private static final long BACKDATE_MS = 2L * 24 * 60 * 60 * 1000;
+
     private static Path caKeyFile() { return SpawnConfig.configDir().resolve("ca.key"); }
     private static Path caCertFile() { return SpawnConfig.configDir().resolve("ca.crt"); }
 
@@ -76,8 +85,8 @@ public class CertificateAuthority {
             keyGen.initialize(2048);
             var keyPair = keyGen.generateKeyPair();
 
-            var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
-            var expiry = new Date(yesterday.getTime() + 366L * 24 * 60 * 60 * 1000);
+            var notBefore = new Date(System.currentTimeMillis() - BACKDATE_MS);
+            var expiry = new Date(notBefore.getTime() + 366L * 24 * 60 * 60 * 1000);
             var serial = new BigInteger(128, new SecureRandom());
 
             var algId = sha256WithRsaAid();
@@ -86,7 +95,7 @@ public class CertificateAuthority {
                     derInteger(serial),
                     algId,
                     caCert.getSubjectX500Principal().getEncoded(),      // issuer
-                    derSequence(concat(derUtcTime(yesterday), derUtcTime(expiry))),
+                    derSequence(concat(derUtcTime(notBefore), derUtcTime(expiry))),
                     derDistinguishedName(domain),                       // subject
                     keyPair.getPublic().getEncoded(),                   // SubjectPublicKeyInfo
                     derExplicit(3, derSequence(concat(                  // extensions
@@ -187,8 +196,8 @@ public class CertificateAuthority {
         keyGen.initialize(2048);
         var keyPair = keyGen.generateKeyPair();
 
-        var yesterday = new Date(System.currentTimeMillis() - 24L * 60 * 60 * 1000);
-        var expiry = new Date(yesterday.getTime() + 3650L * 24 * 60 * 60 * 1000);
+        var notBefore = new Date(System.currentTimeMillis() - BACKDATE_MS);
+        var expiry = new Date(notBefore.getTime() + 3650L * 24 * 60 * 60 * 1000);
         var serial = new BigInteger(128, new SecureRandom());
         var subject = derDistinguishedName("incus-spawn MITM CA");
 
@@ -201,7 +210,7 @@ public class CertificateAuthority {
                 derInteger(serial),
                 algId,
                 subject,                                            // issuer = subject (self-signed)
-                derSequence(concat(derUtcTime(yesterday), derUtcTime(expiry))),
+                derSequence(concat(derUtcTime(notBefore), derUtcTime(expiry))),
                 subject,
                 keyPair.getPublic().getEncoded(),                   // SubjectPublicKeyInfo
                 derExplicit(3, derSequence(concat(
