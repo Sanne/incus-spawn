@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -366,6 +367,7 @@ class IncusApiLiveTest {
     }
 
     @Test
+    @Timeout(30)
     void execCaptureReturnsStdoutStderrAndExitCode() throws Exception {
         if (skip()) return;
         var fp = testImageFingerprint();
@@ -391,6 +393,7 @@ class IncusApiLiveTest {
     }
 
     @Test
+    @Timeout(30)
     void execCaptureWithUserAndGroup() throws Exception {
         if (skip()) return;
         var fp = testImageFingerprint();
@@ -427,6 +430,7 @@ class IncusApiLiveTest {
     }
 
     @Test
+    @Timeout(30)
     void execStreamWritesToOutputStreams() throws Exception {
         if (skip()) return;
         var fp = testImageFingerprint();

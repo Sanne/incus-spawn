@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * High-level HTTP client for the Incus REST API.
@@ -520,6 +521,7 @@ class IncusApi {
                 wsCollect(opPath, fds.path("1").asText(), stdoutBuf));
         var stderrThread = Thread.ofVirtual().start(() ->
                 wsCollect(opPath, fds.path("2").asText(), stderrBuf));
+        assertAllFdsConnected(fds, Set.of("0", "1", "2", "control"));
         joinQuietly(stdoutThread, stderrThread);
 
         int exitCode = waitForExecOp(opPath);
@@ -561,6 +563,7 @@ class IncusApi {
                     wsStream(opPath, fds.path("1").asText(), outDst));
             var stderrThread = Thread.ofVirtual().start(() ->
                     wsStream(opPath, fds.path("2").asText(), errDst));
+            assertAllFdsConnected(fds, Set.of("0", "1", "2", "control"));
             joinQuietly(stdoutThread, stderrThread);
 
             int exitCode = waitForExecOp(opPath);
@@ -601,6 +604,7 @@ class IncusApi {
         var controlLostConnection = new java.util.concurrent.atomic.AtomicBoolean(false);
         var controlThread = Thread.ofVirtual().start(() ->
                 wsDiscardTracked(opPath, fds.path("control").asText(), controlLostConnection));
+        assertAllFdsConnected(fds, Set.of("0", "control"));
 
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + fds.path("0").asText())) {
             // Watcher: closes fd "0" when control closes.
@@ -704,6 +708,18 @@ class IncusApi {
             body.put("height", height > 0 ? height : 24);
         }
         return body;
+    }
+
+    private static void assertAllFdsConnected(JsonNode fds, Set<String> connected) {
+        var missed = new ArrayList<String>();
+        fds.fieldNames().forEachRemaining(name -> {
+            if (!connected.contains(name)) missed.add(name);
+        });
+        if (!missed.isEmpty()) {
+            throw new IncusException(
+                    "WebSocket exec bug: fds not connected: " + missed
+                    + " — wait-for-websocket requires all fds to be connected");
+        }
     }
 
     /** Connect a WebSocket and read/discard all frames until the server closes it. */
@@ -815,6 +831,7 @@ class IncusApi {
         var stdinThread  = Thread.ofVirtual().start(() -> wsForward(opPath, stdinSecret, stdin));
         var stdoutThread = Thread.ofVirtual().start(() -> wsStream(opPath, stdoutSecret, outDst));
         var stderrThread = Thread.ofVirtual().start(() -> wsStream(opPath, stderrSecret, errDst));
+        assertAllFdsConnected(fds, Set.of("0", "1", "2", "control"));
 
         // Join stdout/stderr first: they finish when the container process exits.
         // In the git pack protocol, git closes its write pipe to stdin *before* reading

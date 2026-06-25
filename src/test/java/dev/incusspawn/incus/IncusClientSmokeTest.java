@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -280,6 +281,7 @@ class IncusClientSmokeTest {
     // =========================================================================
 
     @Test
+    @Timeout(30)
     void execBidirectionalBridgesStdinToStdout() throws Exception {
         if (skip()) return;
         // 'cat' echoes stdin to stdout. When we close stdin, cat exits.
@@ -310,6 +312,7 @@ class IncusClientSmokeTest {
     }
 
     @Test
+    @Timeout(30)
     void execBidirectionalCompletesAfterContainerExitsBeforeStdinEof() throws Exception {
         if (skip()) return;
         // Regression test for the hang scenario: container exits (stdout closes) while
