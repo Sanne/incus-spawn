@@ -9,7 +9,6 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Files;
-import java.nio.file.Path;
 
 @CommandDefinition(
         name = "sync",
@@ -51,6 +50,11 @@ public class SyncCommand extends BaseCommand {
         boolean doPull = !pushOnly;
         boolean doPush = !pullOnly;
 
+        if (doPush) {
+            incus.execInContainer(name, "agentuser",
+                    "git", "config", "--global", "receive.denyCurrentBranch", "updateInstead");
+        }
+
         int pulled = 0;
         int pushed = 0;
         int failed = 0;
@@ -88,7 +92,7 @@ public class SyncCommand extends BaseCommand {
 
             if (doPush) {
                 System.out.print("  Pushing  " + repoName + " (" + branch + ")... ");
-                var result = GitRemoteUtils.hostGitExec(hostPath, "push", name, branch);
+                var result = GitRemoteUtils.hostGitExec(hostPath, "push", "--no-verify", name, branch);
                 if (result != null) {
                     System.out.println("done");
                     pushed++;
