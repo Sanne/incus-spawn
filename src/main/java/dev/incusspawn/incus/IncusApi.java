@@ -510,6 +510,10 @@ class IncusApi {
         var stdoutBuf = new ByteArrayOutputStream();
         var stderrBuf = new ByteArrayOutputStream();
 
+        // Connect control fd — wait-for-websocket requires all fds connected before the command starts
+        var controlThread = Thread.ofVirtual().start(() ->
+                wsDiscard(opPath, fds.path("control").asText()));
+
         wsCloseOnly(opPath, fds.path("0").asText());
 
         var stdoutThread = Thread.ofVirtual().start(() ->
@@ -519,6 +523,7 @@ class IncusApi {
         joinQuietly(stdoutThread, stderrThread);
 
         int exitCode = waitForExecOp(opPath);
+        joinQuietly(controlThread);
         return new IncusClient.ExecResult(exitCode,
                 stdoutBuf.toString(StandardCharsets.UTF_8),
                 stderrBuf.toString(StandardCharsets.UTF_8));
@@ -543,6 +548,10 @@ class IncusApi {
             var fds    = opMeta.path("metadata").path("fds");
             var opPath = "/1.0/operations/" + opId;
 
+            // Connect control fd — wait-for-websocket requires all fds connected before the command starts
+            var controlThread = Thread.ofVirtual().start(() ->
+                    wsDiscard(opPath, fds.path("control").asText()));
+
             wsCloseOnly(opPath, fds.path("0").asText());
 
             var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
@@ -554,7 +563,9 @@ class IncusApi {
                     wsStream(opPath, fds.path("2").asText(), errDst));
             joinQuietly(stdoutThread, stderrThread);
 
-            return waitForExecOp(opPath);
+            int exitCode = waitForExecOp(opPath);
+            joinQuietly(controlThread);
+            return exitCode;
         });
     }
 
@@ -797,6 +808,9 @@ class IncusApi {
         var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
         var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
 
+        var controlThread = Thread.ofVirtual().start(() ->
+                wsDiscard(opPath, fds.path("control").asText()));
+
         // Forward stdin to the container
         var stdinThread  = Thread.ofVirtual().start(() -> wsForward(opPath, stdinSecret, stdin));
         var stdoutThread = Thread.ofVirtual().start(() -> wsStream(opPath, stdoutSecret, outDst));
@@ -815,7 +829,9 @@ class IncusApi {
             Thread.currentThread().interrupt();
         }
 
-        return waitForExecOp(opPath);
+        int exitCode = waitForExecOp(opPath);
+        joinQuietly(controlThread);
+        return exitCode;
     }
 
     /**
