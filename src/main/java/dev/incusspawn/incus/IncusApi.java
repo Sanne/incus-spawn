@@ -458,10 +458,7 @@ class IncusApi {
                                        Integer uid, Integer gid, String cwd,
                                        Map<String, String> env) {
         return retryOnNotRunning(() -> {
-            if (transport instanceof HttpsTransport) {
-                return execCaptureRecordOutput(instance, command, uid, gid, cwd, env);
-            }
-            return execCaptureWebSocket(instance, command, uid, gid, cwd, env);
+            return execCaptureRecordOutput(instance, command, uid, gid, cwd, env);
         });
     }
 
