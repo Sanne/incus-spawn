@@ -983,6 +983,26 @@ public class IncusClient {
         }
         var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
         if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
+        cleanupStaleVolumes(name);
+    }
+
+    private void cleanupStaleVolumes(String instanceName) {
+        try {
+            var pools = http().get("/1.0/storage-pools?recursion=1");
+            if (!pools.isSuccess()) return;
+            for (var pool : pools.body().path("metadata")) {
+                var poolName = pool.path("name").asText();
+                var volResp = http().get("/1.0/storage-pools/" + poolName
+                        + "/volumes/container/" + instanceName);
+                if (volResp.isSuccess()) {
+                    http().requestAndWait("DELETE",
+                            "/1.0/storage-pools/" + poolName
+                                    + "/volumes/container/" + instanceName, null);
+                }
+            }
+        } catch (Exception ignored) {
+            // Best-effort cleanup — don't fail the destroy if volume removal fails.
+        }
     }
 
     public void deleteIfExists(String name) {
