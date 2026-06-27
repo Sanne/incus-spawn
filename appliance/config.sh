@@ -2,6 +2,7 @@
 # Post-install script — runs inside the chroot during image build.
 # Configures the minimal Alpine appliance for running Incus containers.
 
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 set -eu
 
 #-- Incus: ensure subuid/subgid exist (Alpine's incus package may set these) --#

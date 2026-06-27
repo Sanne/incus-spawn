@@ -9,7 +9,7 @@ A minimal Alpine Linux VM image with Incus pre-installed, built from a declarati
 
 `build.sh` avoids tools that require block devices or KVM. The entire build runs inside a chroot, making it portable across CI runners, containers, and bare metal:
 
-1. Pull the official Alpine Linux edge container image via podman
+1. Download the Alpine Linux minirootfs from the official CDN
 2. Extract rootfs to a temporary directory
 3. Copy overlay files (`root/`) into the rootfs
 4. Install packages via chroot (`apk add --no-cache`)
