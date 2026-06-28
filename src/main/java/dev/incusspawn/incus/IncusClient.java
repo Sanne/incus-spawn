@@ -904,6 +904,7 @@ public class IncusClient {
      * Automatically selects the best CoW storage pool if available.
      */
     public void copy(String source, String target) {
+        cleanupStaleVolumes(target);
         var http = http();
         var cowPool = findCowPool();
         var body = new LinkedHashMap<String, Object>();
