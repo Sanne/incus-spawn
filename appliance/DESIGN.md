@@ -80,13 +80,27 @@ BusyBox init handles PID 1 responsibilities (zombie reaping, signal forwarding) 
 3. Set hostname
 4. Apply sysctl settings (IP forwarding for Incus bridge NAT)
 5. Bring up loopback and DHCP on the first network interface (`udhcpc`)
-6. Start `dbus-daemon` (required by Incus)
-7. Start `lxcfs` (required by Incus for /proc virtualization)
-8. Start `incusd`
-9. Run `incus-spawn-vm-init` (bridge, storage pool, iptables)
-10. Run smoke test if `isx.smoke_test` is on kernel cmdline
-11. Schedule diagnostics dump (30s delay, background)
-12. Echo `=== ISX READY ===` marker
+6. Seed clock from kernel cmdline (`isx.time`) and start `qemu-ga` for vfkit timesync
+7. Start `chronyd` for NTP clock sync (see [Clock Synchronization](#clock-synchronization))
+8. Start `dbus-daemon` (required by Incus)
+9. Start `lxcfs` (required by Incus for /proc virtualization)
+10. Start `incusd`
+11. Run `incus-spawn-vm-init` (bridge, storage pool, iptables)
+12. Run smoke test if `isx.smoke_test` is on kernel cmdline
+13. Schedule diagnostics dump (30s delay, background)
+14. Echo `=== ISX READY ===` marker
+
+### Clock Synchronization
+
+The VM has no hardware RTC. Three layers keep the guest clock accurate:
+
+1. **Boot-time seed**: The kernel cmdline carries `isx.time=<epoch>` (stamped by the host at VM start). `rcS` sets the system clock from this immediately, so TLS works before NTP is reachable.
+
+2. **QEMU Guest Agent (vfkit)**: `qemu-ga` listens on virtio-vsock port 1024. vfkit's `--timesync` is supposed to send `guest-set-time` on host wake, but does not do so reliably after macOS sleep. This layer is kept as a best-effort complement.
+
+3. **chrony (NTP)**: `chronyd` polls `pool.ntp.org` and steps the clock whenever the offset exceeds 1 second (`makestep 1 -1`). After a host sleep, the guest network recovers within ~30 seconds (udhcpc DHCP), then chrony detects the drift and corrects it within a few seconds via `iburst`. This is the primary post-resume clock correction mechanism and works regardless of vfkit behavior.
+
+On QEMU with KVM, `kvmclock` (CONFIG_PARAVIRT_CLOCK) keeps the guest in sync natively. chrony provides an additional safety net and handles non-KVM QEMU scenarios.
 
 ## Image Stripping
 

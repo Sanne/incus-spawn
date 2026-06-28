@@ -7,5 +7,6 @@ echo "incus-spawn: shutting down..."
 incus admin shutdown --timeout 10 2>/dev/null || true
 killall lxcfs 2>/dev/null || true
 killall dbus-daemon 2>/dev/null || true
+killall chronyd 2>/dev/null || true
 
 sync

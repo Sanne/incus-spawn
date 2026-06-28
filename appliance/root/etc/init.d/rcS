@@ -87,6 +87,13 @@ if [ -n "$VSOCK_PORT" ] && [ -x /usr/bin/qemu-ga ]; then
     echo "incus-spawn: guest agent on vsock port $VSOCK_PORT ($(date -Iseconds))"
 fi
 
+#-- NTP clock sync (corrects drift after host sleep/resume) --#
+if [ -x /usr/sbin/chronyd ]; then
+    mkdir -p /var/lib/chrony /var/log/chrony
+    chronyd -f /etc/chrony/chrony.conf
+    echo "incus-spawn: chronyd started ($(date -Iseconds))"
+fi
+
 #-- D-Bus (required by Incus) --#
 mkdir -p /run/dbus
 dbus-daemon --system --nofork &

@@ -132,6 +132,7 @@ apk add --no-cache \
     lxcfs \
     dbus \
     btrfs-progs \
+    chrony \
     iptables \
     nftables \
     iproute2 \
