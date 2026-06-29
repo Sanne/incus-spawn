@@ -3,6 +3,16 @@
 # Verifies that Incus daemon, storage pool, and bridge are functional.
 # Called from rcS when isx.smoke_test is on the kernel cmdline.
 # Output goes to the serial console for CI verification.
+#
+# KNOWN LIMITATION (vfkit / macOS): this picks /dev/ttyS0 first, but under
+# vfkit the console is hvc0 and /dev/ttyS0 is a backing-less stub whose
+# open-for-write blocks (no carrier). rcS runs this synchronously before
+# "ISX READY", so enabling isx.smoke_test on vfkit hangs the boot before the
+# script prints anything. It is therefore only used on QEMU (CI), where ttyS0
+# is the real console; the macOS test path (appliance/test-boot.sh on vfkit)
+# verifies the daemon over the vsock socket instead. To make this work on
+# vfkit, select the console from the kernel cmdline's console= token (resolves
+# to hvc0 on vfkit, ttyS0/ttyAMA0 on QEMU) rather than guessing ttyS0 first.
 
 set -eu
 
