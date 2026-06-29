@@ -458,12 +458,8 @@ class IncusApi {
     IncusClient.ExecResult execCapture(String instance, List<String> command,
                                        Integer uid, Integer gid, String cwd,
                                        Map<String, String> env) {
-        return retryOnNotRunning(() -> {
-            if (transport instanceof HttpsTransport) {
-                return execCaptureRecordOutput(instance, command, uid, gid, cwd, env);
-            }
-            return execCaptureWebSocket(instance, command, uid, gid, cwd, env);
-        });
+        return retryOnNotRunning(() ->
+                execCaptureWebSocket(instance, command, uid, gid, cwd, env));
     }
 
     private IncusClient.ExecResult execCaptureRecordOutput(String instance, List<String> command,
@@ -511,9 +507,8 @@ class IncusApi {
         var stdoutBuf = new ByteArrayOutputStream();
         var stderrBuf = new ByteArrayOutputStream();
 
-        // Connect control fd — wait-for-websocket requires all fds connected before the command starts
         var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscard(opPath, fds.path("control").asText()));
+                wsDiscardWithKeepalive(opPath, fds.path("control").asText()));
 
         wsCloseOnly(opPath, fds.path("0").asText());
 
@@ -550,9 +545,8 @@ class IncusApi {
             var fds    = opMeta.path("metadata").path("fds");
             var opPath = "/1.0/operations/" + opId;
 
-            // Connect control fd — wait-for-websocket requires all fds connected before the command starts
             var controlThread = Thread.ofVirtual().start(() ->
-                    wsDiscard(opPath, fds.path("control").asText()));
+                    wsDiscardWithKeepalive(opPath, fds.path("control").asText()));
 
             wsCloseOnly(opPath, fds.path("0").asText());
 
@@ -729,6 +723,25 @@ class IncusApi {
         } catch (IOException ignored) {}
     }
 
+    /** Like wsDiscard, but sends periodic keepalive pings to prevent vsock idle timeout. */
+    private void wsDiscardWithKeepalive(String opPath, String secret) {
+        try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
+            var keepalive = Thread.ofVirtual().start(() -> {
+                try {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        Thread.sleep(WS_PING_INTERVAL_MS);
+                        ws.sendPing();
+                    }
+                } catch (IOException | InterruptedException ignored) {}
+            });
+            try {
+                while (ws.readPayload() != null) {}
+            } finally {
+                keepalive.interrupt();
+            }
+        } catch (IOException ignored) {}
+    }
+
     /** Like wsDiscard, but sets connectionLost if the socket died due to an I/O error. */
     private void wsDiscardTracked(String opPath, String secret,
                                   java.util.concurrent.atomic.AtomicBoolean connectionLost) {
@@ -825,7 +838,7 @@ class IncusApi {
         var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
 
         var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscard(opPath, fds.path("control").asText()));
+                wsDiscardWithKeepalive(opPath, fds.path("control").asText()));
 
         // Forward stdin to the container
         var stdinThread  = Thread.ofVirtual().start(() -> wsForward(opPath, stdinSecret, stdin));
