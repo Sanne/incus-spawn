@@ -1,0 +1,41 @@
+name: webdav
+description: WebDAV file server + host-open for browsing container files from the host
+
+packages:
+  - python3-pip
+  - nmap-ncat
+
+run:
+  - python3 -m pip install --user wsgidav cheroot
+  - |
+    cat > /usr/local/bin/webdav-start << 'SCRIPTEOF'
+    #!/bin/bash
+    PORT="${1:-8888}"
+    ROOT="${2:-$HOME}"
+    pkill -f wsgidav 2>/dev/null
+    nohup ~/.local/bin/wsgidav --host 0.0.0.0 --port "$PORT" --root "$ROOT" --auth anonymous > /tmp/wsgidav.log 2>&1 &
+    echo "WebDAV serving $ROOT on port $PORT"
+    SCRIPTEOF
+    chmod +x /usr/local/bin/webdav-start
+  - |
+    cat > /usr/local/bin/host-open << 'SCRIPTEOF'
+    #!/bin/bash
+    PORT=9999
+    if [ $# -eq 0 ]; then
+      echo "Usage: host-open [app] <file>"
+      echo "  host-open ~/path/to/file.md"
+      echo "  host-open Typora ~/path/to/file.md"
+      exit 0
+    fi
+    if [ $# -eq 1 ]; then
+      FILEPATH="$(realpath "$1" 2>/dev/null || echo "$1")"
+      printf '%s\n' "$FILEPATH" | ncat localhost $PORT 2>/dev/null
+    else
+      APP="$1"
+      FILEPATH="$(realpath "$2" 2>/dev/null || echo "$2")"
+      printf '%s\n' "$APP|$FILEPATH" | ncat localhost $PORT 2>/dev/null
+    fi
+    SCRIPTEOF
+    chmod +x /usr/local/bin/host-open
+
+verify: test -x /usr/local/bin/host-open
