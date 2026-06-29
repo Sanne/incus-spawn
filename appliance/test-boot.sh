@@ -238,6 +238,7 @@ check_absent() {
 echo "-- Boot stages --"
 check "BTRFS\|btrfs"                          "btrfs root mounted"
 check "network up on"                          "network came up"
+check "chronyd started"                        "chrony NTP service started"
 check "incusd started"                         "incus daemon launched"
 check "incus-spawn-vm-init: ready"             "vm-init completed"
 check "ISX READY"                              "appliance reached ISX READY"

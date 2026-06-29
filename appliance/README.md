@@ -57,7 +57,7 @@ you want your containers to survive.
 
 ## Run
 
-### Quick boot test (non-interactive, 3 checks)
+### Quick boot test (non-interactive)
 
 ```bash
 # Linux (requires root for disk image creation on first run)
