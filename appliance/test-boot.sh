@@ -51,22 +51,64 @@ REMOTE
 fi
 
 LOGFILE=$(mktemp)
-trap 'rm -f "$LOGFILE"' EXIT
+VSOCK_DIR=""
+BACKEND=""
+cleanup() { rm -f "$LOGFILE"; [ -n "$VSOCK_DIR" ] && rm -rf "$VSOCK_DIR"; }
+trap cleanup EXIT
+
+# Verify the Incus API is reachable over the forwarded vsock socket — the exact
+# path isx uses on macOS: host Unix socket -> vfkit vsock -> in-guest socat
+# forwarder -> /var/lib/incus/unix.socket. Also confirm the daemon reports the
+# expected storage pool and bridge through that socket. Polls until incusd
+# answers (it comes up during boot) or a short deadline elapses. Markers are
+# appended to the boot log so the summary can assert on them.
+probe_vsock() {
+    local sock="$1" deadline body=""
+    deadline=$(( $(date +%s) + 30 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if [ -S "$sock" ]; then
+            body=$(curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0 2>/dev/null) || body=""
+            echo "$body" | grep -q '"metadata"' && break
+        fi
+        sleep 1
+    done
+    if echo "$body" | grep -q '"metadata"'; then
+        echo "ISX VSOCK API OK" >> "$LOGFILE"
+    else
+        echo "ISX VSOCK API FAIL: no Incus response over forwarded socket" >> "$LOGFILE"
+        return
+    fi
+    curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/storage-pools 2>/dev/null \
+        | grep -q 'storage-pools/cow' && echo "ISX VSOCK STORAGE OK" >> "$LOGFILE"
+    curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/networks 2>/dev/null \
+        | grep -q 'incusbr0' && echo "ISX VSOCK BRIDGE OK" >> "$LOGFILE"
+}
 
 boot_vfkit() {
+    BACKEND="vfkit"
     echo "  backend: vfkit (Apple Virtualization.framework)"
     # vfkit requires --initrd even though our kernel ignores it (CONFIG_BLK_DEV_INITRD=n)
     local dummy_initrd
     dummy_initrd=$(mktemp)
     echo | cpio -o -H newc 2>/dev/null | gzip > "$dummy_initrd"
+    # Forward the in-guest Incus socket to a host Unix socket over vsock, the
+    # same way isx does (VmManager). isx.vsock_incus tells vm-init to start the
+    # socat forwarder on that vsock port. We do NOT set isx.smoke_test here: the
+    # smoke test redirects its output to a serial console that does not exist
+    # under vfkit (which uses hvc0), so it blocks boot before ISX READY. The
+    # vsock probe below verifies the daemon directly instead, which is the path
+    # that actually matters on macOS.
+    VSOCK_DIR=$(mktemp -d)
+    local vsock_sock="$VSOCK_DIR/incus.sock"
     vfkit \
         --cpus 2 --memory 2048 \
         --kernel "$BUILD_DIR/vmlinuz" \
         --initrd "$dummy_initrd" \
-        --kernel-cmdline "root=/dev/vda rw rootflags=commit=300 console=hvc0 mitigations=off" \
+        --kernel-cmdline "root=/dev/vda rw rootflags=commit=300 console=hvc0 mitigations=off isx.vsock_incus=8443" \
         --device virtio-blk,path="$BUILD_DIR/disk.img" \
         --device virtio-net,nat \
         --device virtio-serial,logFilePath="$LOGFILE" \
+        --device "virtio-vsock,port=8443,socketURL=$vsock_sock,connect" \
         --restful-uri "tcp://localhost:0" \
         > /dev/null 2>&1 &
     local pid=$!
@@ -75,17 +117,20 @@ boot_vfkit() {
         if grep -q 'ISX READY' "$LOGFILE" 2>/dev/null; then
             local ms=$((elapsed * 100))
             echo "  ISX READY in ~${ms}ms"
-            sleep 5
             break
         fi
         sleep 0.1
         elapsed=$((elapsed + 1))
     done
+    # Probe the forwarded socket regardless of ISX READY (the daemon is up well
+    # before readiness; the probe polls on its own).
+    probe_vsock "$vsock_sock"
     kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -f "$dummy_initrd"
 }
 
 boot_qemu() {
+    BACKEND="qemu"
     local arch qemu_bin machine_args console
     arch=$(uname -m)
     qemu_bin="qemu-system-$arch"
@@ -114,7 +159,7 @@ boot_qemu() {
         -serial stdio \
         -kernel "$BUILD_DIR/vmlinuz" \
         -drive file="$BUILD_DIR/disk.img",format=raw,if=virtio \
-        -append "root=/dev/vda rw rootflags=commit=300 console=$console mitigations=off" \
+        -append "root=/dev/vda rw rootflags=commit=300 console=$console mitigations=off isx.smoke_test=1" \
         > "$LOGFILE" 2>&1 &
     local qemu_pid=$!
     local elapsed=0
@@ -151,6 +196,7 @@ echo "=== Boot Summary ==="
 PASS=0
 FAIL=0
 
+# Assert a pattern is present in the boot log.
 check() {
     if grep -q "$1" "$LOGFILE"; then
         echo "  PASS: $2"
@@ -161,14 +207,62 @@ check() {
     fi
 }
 
-check "BTRFS\|btrfs"                  "btrfs root mounted"
-check "Incus.*Hypervisor\|incusd"     "Incus activated"
-check "ISX READY"                     "appliance ready (implies network, bridge, storage)"
+# Assert a pattern is ABSENT (regression / failure markers must not appear).
+check_absent() {
+    if grep -q "$1" "$LOGFILE"; then
+        echo "  FAIL: $2"
+        FAIL=$((FAIL + 1))
+    else
+        echo "  PASS: $2"
+        PASS=$((PASS + 1))
+    fi
+}
+
+# Boot-stage markers logged by rcS/vm-init on every boot (independent of
+# whether the bridge/storage pool already existed on a reused disk; those are
+# verified every boot by the smoke test section below instead).
+echo "-- Boot stages --"
+check "BTRFS\|btrfs"                          "btrfs root mounted"
+check "network up on"                          "network came up"
+check "incusd started"                         "incus daemon launched"
+check "incus-spawn-vm-init: ready"             "vm-init completed"
+check "ISX READY"                              "appliance reached ISX READY"
+
+# On vfkit the daemon is verified through the forwarded vsock socket (the macOS
+# isx path). On qemu (Linux) that forwarding is not wired up, so use the
+# in-guest smoke test, which CI runs the same way.
+if [ "$BACKEND" = "vfkit" ]; then
+    echo
+    echo "-- vsock Incus socket forwarding (isx.vsock_incus=8443) --"
+    check "vsock forwarder on port 8443"       "in-guest vsock forwarder started"
+    check "ISX VSOCK API OK"                    "Incus API reachable over forwarded host socket"
+    check "ISX VSOCK STORAGE OK"                "cow storage pool visible via API"
+    check "ISX VSOCK BRIDGE OK"                 "incusbr0 bridge visible via API"
+else
+    echo
+    echo "-- Smoke test (isx.smoke_test=1) --"
+    check "SMOKE TEST START"                    "smoke test ran"
+    check "incus daemon responsive"             "incus API responsive"
+    check "storage pool 'cow' exists"           "smoke test: storage pool"
+    check "bridge 'incusbr0' exists"            "smoke test: bridge"
+    check "SMOKE TEST PASSED"                    "smoke test passed"
+fi
+
+echo
+echo "-- Regression markers (must be absent) --"
+check_absent "SMOKE TEST FAILED"               "no smoke test failure"
+check_absent "incus-spawn-vm-init: ERROR"      "no vm-init error"
+check_absent "Daemon still not running"        "incusd did not time out"
+check_absent "Kernel panic"                    "no kernel panic"
+check_absent "Call Trace:\|kernel BUG"         "no kernel oops/BUG"
 
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "All $PASS checks passed."
 else
     echo "$FAIL of $((PASS + FAIL)) checks failed."
+    echo
+    echo "Last 40 log lines:"
+    tail -40 "$LOGFILE" | sed 's/\x1b\[[0-9;]*m//g'
     exit 1
 fi
