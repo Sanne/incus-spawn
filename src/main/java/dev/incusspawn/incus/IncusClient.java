@@ -983,6 +983,28 @@ public class IncusClient {
         }
         var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
         if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
+        cleanupStaleVolumes(name);
+    }
+
+    private void cleanupStaleVolumes(String instanceName) {
+        try {
+            var pools = http().get("/1.0/storage-pools?recursion=1");
+            if (!pools.isSuccess()) return;
+            for (var pool : pools.body().path("metadata")) {
+                var poolName = pool.path("name").asText();
+                var volPath = "/1.0/storage-pools/" + poolName
+                        + "/volumes/container/" + instanceName;
+                var volResp = http().get(volPath);
+                if (volResp.isSuccess()) {
+                    var delResp = http().requestAndWait("DELETE", volPath, null);
+                    if (!delResp.isSuccess()) {
+                        System.err.println("Warning: failed to remove stale volume "
+                                + instanceName + " from pool " + poolName);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     public void deleteIfExists(String name) {
