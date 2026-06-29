@@ -72,15 +72,15 @@ if [ -z "${ISX_INSIDE_CONTAINER:-}" ]; then
         ' || exit $?
 
     # The container cannot create loop devices on macOS; finish the disk image
-    # on the host. On Linux the container already produced disk.img.gz; if it
-    # didn't, the build is broken (CI needs disk.img.gz to publish a release).
-    if [ ! -f "$TARGET_DIR/disk.img.gz" ]; then
-        if [ "$(uname -s)" = "Darwin" ]; then
-            assemble_disk_image_macos
-        else
-            echo "ERROR: disk.img.gz was not produced (loop device unavailable in build container)." >&2
-            exit 1
-        fi
+    # on the host. Always (re)assemble so a rebuild reflects the new rootfs
+    # rather than leaving a stale disk.img.gz from a previous build. On Linux
+    # the container already produced disk.img.gz; if it didn't, the build is
+    # broken (CI needs disk.img.gz to publish a release).
+    if [ "$(uname -s)" = "Darwin" ]; then
+        assemble_disk_image_macos
+    elif [ ! -f "$TARGET_DIR/disk.img.gz" ]; then
+        echo "ERROR: disk.img.gz was not produced (loop device unavailable in build container)." >&2
+        exit 1
     fi
 
     echo
@@ -182,6 +182,7 @@ tar cf - -C "$ROOTFS_DIR" . | zstd -T0 -f -o "$TARGET_DIR/rootfs.tar.zst"
 chmod 644 "$TARGET_DIR/rootfs.tar.zst"
 
 echo "==> Creating pre-built disk image..."
+rm -f "$TARGET_DIR/disk.img" "$TARGET_DIR/disk.img.gz"
 truncate -s 2G "$TARGET_DIR/disk.img"
 if LOOP_DEV=$(losetup --find --show "$TARGET_DIR/disk.img" 2>/dev/null); then
     mkfs.btrfs -q -L isxroot "$LOOP_DEV"

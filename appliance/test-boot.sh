@@ -51,17 +51,19 @@ REMOTE
 fi
 
 LOGFILE=$(mktemp)
+VSOCK_RESULT=$(mktemp)
 VSOCK_DIR=""
 BACKEND=""
-cleanup() { rm -f "$LOGFILE"; [ -n "$VSOCK_DIR" ] && rm -rf "$VSOCK_DIR"; }
+cleanup() { rm -f "$LOGFILE" "$VSOCK_RESULT"; [ -n "$VSOCK_DIR" ] && rm -rf "$VSOCK_DIR"; }
 trap cleanup EXIT
 
 # Verify the Incus API is reachable over the forwarded vsock socket — the exact
 # path isx uses on macOS: host Unix socket -> vfkit vsock -> in-guest socat
 # forwarder -> /var/lib/incus/unix.socket. Also confirm the daemon reports the
 # expected storage pool and bridge through that socket. Polls until incusd
-# answers (it comes up during boot) or a short deadline elapses. Markers are
-# appended to the boot log so the summary can assert on them.
+# answers (it comes up during boot) or a short deadline elapses. Markers go to
+# VSOCK_RESULT, NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE
+# concurrently, and interleaved appends from this shell were being lost.
 probe_vsock() {
     local sock="$1" deadline body=""
     deadline=$(( $(date +%s) + 30 ))
@@ -73,15 +75,15 @@ probe_vsock() {
         sleep 1
     done
     if echo "$body" | grep -q '"metadata"'; then
-        echo "ISX VSOCK API OK" >> "$LOGFILE"
+        echo "ISX VSOCK API OK" >> "$VSOCK_RESULT"
     else
-        echo "ISX VSOCK API FAIL: no Incus response over forwarded socket" >> "$LOGFILE"
+        echo "ISX VSOCK API FAIL: no Incus response over forwarded socket" >> "$VSOCK_RESULT"
         return
     fi
     curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/storage-pools 2>/dev/null \
-        | grep -q 'storage-pools/cow' && echo "ISX VSOCK STORAGE OK" >> "$LOGFILE"
+        | grep -q 'storage-pools/cow' && echo "ISX VSOCK STORAGE OK" >> "$VSOCK_RESULT"
     curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/networks 2>/dev/null \
-        | grep -q 'incusbr0' && echo "ISX VSOCK BRIDGE OK" >> "$LOGFILE"
+        | grep -q 'incusbr0' && echo "ISX VSOCK BRIDGE OK" >> "$VSOCK_RESULT"
 }
 
 boot_vfkit() {
@@ -207,6 +209,18 @@ check() {
     fi
 }
 
+# Assert a marker written by probe_vsock (kept in a separate file from the
+# concurrently-written serial log).
+check_result() {
+    if grep -q "$1" "$VSOCK_RESULT"; then
+        echo "  PASS: $2"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $2"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # Assert a pattern is ABSENT (regression / failure markers must not appear).
 check_absent() {
     if grep -q "$1" "$LOGFILE"; then
@@ -235,9 +249,9 @@ if [ "$BACKEND" = "vfkit" ]; then
     echo
     echo "-- vsock Incus socket forwarding (isx.vsock_incus=8443) --"
     check "vsock forwarder on port 8443"       "in-guest vsock forwarder started"
-    check "ISX VSOCK API OK"                    "Incus API reachable over forwarded host socket"
-    check "ISX VSOCK STORAGE OK"                "cow storage pool visible via API"
-    check "ISX VSOCK BRIDGE OK"                 "incusbr0 bridge visible via API"
+    check_result "ISX VSOCK API OK"            "Incus API reachable over forwarded host socket"
+    check_result "ISX VSOCK STORAGE OK"        "cow storage pool visible via API"
+    check_result "ISX VSOCK BRIDGE OK"         "incusbr0 bridge visible via API"
 else
     echo
     echo "-- Smoke test (isx.smoke_test=1) --"
