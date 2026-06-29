@@ -215,7 +215,18 @@ class HttpsTransport implements IncusTransport {
                 ? HttpRequest.BodyPublishers.ofByteArray(body)
                 : HttpRequest.BodyPublishers.noBody();
         return sendRequest(method, path, contentType, extraHeaders, bodyPublisher,
-                body.length > 0);
+                body.length > 0, null);
+    }
+
+    @Override
+    public RawResponse request(String method, String path,
+                               String contentType, Map<String, String> extraHeaders,
+                               byte[] body, int timeoutSeconds) throws IOException {
+        var bodyPublisher = body.length > 0
+                ? HttpRequest.BodyPublishers.ofByteArray(body)
+                : HttpRequest.BodyPublishers.noBody();
+        return sendRequest(method, path, contentType, extraHeaders, bodyPublisher,
+                body.length > 0, java.time.Duration.ofSeconds(timeoutSeconds));
     }
 
     @Override
@@ -223,16 +234,17 @@ class HttpsTransport implements IncusTransport {
                                String contentType, Map<String, String> extraHeaders,
                                Path bodyFile) throws IOException {
         return sendRequest(method, path, contentType, extraHeaders,
-                HttpRequest.BodyPublishers.ofFile(bodyFile), true);
+                HttpRequest.BodyPublishers.ofFile(bodyFile), true, null);
     }
 
     private RawResponse sendRequest(String method, String path,
                                     String contentType, Map<String, String> extraHeaders,
                                     HttpRequest.BodyPublisher bodyPublisher,
-                                    boolean hasBody) throws IOException {
+                                    boolean hasBody, java.time.Duration timeout) throws IOException {
         var builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .method(method, bodyPublisher)
                 .header("Accept", "application/json");
+        if (timeout != null) builder.timeout(timeout);
         if (hasBody && contentType != null)
             builder.header("Content-Type", contentType);
         for (var e : extraHeaders.entrySet())
@@ -240,6 +252,9 @@ class HttpsTransport implements IncusTransport {
         try {
             var resp = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
             return new RawResponse(resp.statusCode(), resp.body());
+        } catch (java.net.http.HttpTimeoutException e) {
+            throw new IOException("Request timed out after " + timeout.toSeconds() + "s ("
+                    + path + ")", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted", e);
