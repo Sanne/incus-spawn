@@ -1066,6 +1066,13 @@ public class IncusClient {
         }
     }
 
+    public boolean deleteStorageVolume(String pool, String volumeName) {
+        var resp = http().delete("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName);
+        if (resp.isSuccess()) return true;
+        if (resp.statusCode() == 404) return false;
+        throw new IncusException("Failed to delete storage volume " + volumeName + " from pool " + pool);
+    }
+
     public void devicesRemoveAll(String container, Collection<String> deviceNames) {
         if (deviceNames.isEmpty()) return;
         var resp = http().removeDevices(container, deviceNames);

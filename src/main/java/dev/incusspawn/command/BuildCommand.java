@@ -763,8 +763,8 @@ public class BuildCommand extends BaseCommand {
             removePackages(container, imageDef);
 
             System.out.println("Updating system packages...");
-            container.runInteractive("Failed to update system packages",
-                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs", "upgrade");
+            runDnf(container, "Failed to update system packages",
+                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs", "upgrade");
 
             // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
             // it. Masking prevents package scripts from restarting it. Also remove
@@ -807,8 +807,8 @@ public class BuildCommand extends BaseCommand {
             container.appendToProfile("fi");
 
             System.out.println("Installing base packages...");
-            container.runInteractive("Failed to install base packages",
-                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs",
+            runDnf(container, "Failed to install base packages",
+                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs",
                     "git", "curl", "which", "procps-ng", "findutils");
         }
 
@@ -1121,9 +1121,9 @@ public class BuildCommand extends BaseCommand {
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages) + "...");
         var args = new ArrayList<String>();
-        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=14400", "--setopt=tsflags=nodocs"));
+        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs"));
         args.addAll(allPackages);
-        container.runInteractive("Failed to install packages", args.toArray(String[]::new));
+        runDnf(container, "Failed to install packages", args.toArray(String[]::new));
     }
 
     /**
@@ -1198,6 +1198,18 @@ public class BuildCommand extends BaseCommand {
             if (t.name().equals(name)) return t;
         }
         return null;
+    }
+
+    private void runDnf(Container container, String failureMessage, String... args) {
+        try {
+            container.runInteractive(failureMessage, args);
+        } catch (IncusException e) {
+            System.out.println("DNF failed, clearing metadata and retrying with --refresh...");
+            container.sh("dnf clean metadata");
+            var retryArgs = new ArrayList<>(List.of(args));
+            retryArgs.add(1, "--refresh");
+            container.runInteractive(failureMessage, retryArgs.toArray(String[]::new));
+        }
     }
 
     private void cleanCaches(String container) {
@@ -1453,7 +1465,7 @@ public class BuildCommand extends BaseCommand {
      * metadata and downloaded packages across builds, avoiding redundant
      * downloads when building a parent→child image chain.
      */
-    private static final String DNF_CACHE_VOLUME = "dnf-cache";
+    static final String DNF_CACHE_VOLUME = "dnf-cache";
 
     private void mountDnfCache(String container) {
         if (Environment.isMacOS()) {

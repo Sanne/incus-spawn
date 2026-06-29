@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -172,6 +173,30 @@ public class CleanCommand extends BaseCommand {
         return CommandResult.SUCCESS;
     }
 
+    static void cleanDnfCacheVolume(boolean dryRun) {
+        if (!Environment.isMacOS()) return;
+        try {
+            var incus = RuntimeServices.incus();
+            var pool = incus.findCowPool();
+            if (pool == null) return;
+            var volume = BuildCommand.DNF_CACHE_VOLUME;
+            if (dryRun) {
+                System.out.println("Would delete DNF cache volume (" + volume + ") from pool " + pool);
+                return;
+            }
+            if (incus.deleteStorageVolume(pool, volume)) {
+                System.out.println("Deleted DNF cache volume (" + volume + ") from pool " + pool);
+            }
+        } catch (Exception e) {
+            var msg = e.getMessage();
+            if (msg != null && msg.toLowerCase().contains("in use")) {
+                System.err.println("Warning: could not clean DNF cache volume — it is in use by a running build. Try again after the build finishes.");
+            } else {
+                System.err.println("Warning: could not clean DNF cache volume: " + msg);
+            }
+        }
+    }
+
     // -- subcommands --
 
     @CommandDefinition(
@@ -189,7 +214,9 @@ public class CleanCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            return cleanDirs(List.of(Environment.cacheDir()), dryRun, skipConfirmation, "cache");
+            var result = cleanDirs(List.of(Environment.cacheDir()), dryRun, skipConfirmation, "cache");
+            cleanDnfCacheVolume(dryRun);
+            return result;
         }
     }
 
@@ -318,6 +345,7 @@ public class CleanCommand extends BaseCommand {
                 deleteDir(info.path);
             }
             System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
+            cleanDnfCacheVolume(dryRun);
             return CommandResult.SUCCESS;
         }
     }
