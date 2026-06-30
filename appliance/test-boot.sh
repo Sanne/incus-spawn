@@ -86,6 +86,29 @@ probe_vsock() {
         | grep -q 'incusbr0' && echo "ISX VSOCK BRIDGE OK" >> "$VSOCK_RESULT"
 }
 
+# Verify the in-guest control agent answers over its dedicated vsock port (the channel
+# isx doctor uses for introspection/recovery). One verb per connection: send "ping",
+# expect "ok"; then record the socat-count it reports.
+probe_agent() {
+    local sock="$1" deadline resp=""
+    deadline=$(( $(date +%s) + 30 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if [ -S "$sock" ]; then
+            resp=$(printf 'ping\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || resp=""
+            [ "$resp" = "ok" ] && break
+        fi
+        sleep 1
+    done
+    if [ "$resp" = "ok" ]; then
+        echo "ISX AGENT OK" >> "$VSOCK_RESULT"
+        local count
+        count=$(printf 'socat-count\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || count=""
+        echo "ISX AGENT SOCAT COUNT: $count" >> "$VSOCK_RESULT"
+    else
+        echo "ISX AGENT FAIL: no response from control agent" >> "$VSOCK_RESULT"
+    fi
+}
+
 boot_vfkit() {
     BACKEND="vfkit"
     echo "  backend: vfkit (Apple Virtualization.framework)"
@@ -102,15 +125,17 @@ boot_vfkit() {
     # that actually matters on macOS.
     VSOCK_DIR=$(mktemp -d)
     local vsock_sock="$VSOCK_DIR/incus.sock"
+    local agent_sock="$VSOCK_DIR/agent.sock"
     vfkit \
         --cpus 2 --memory 2048 \
         --kernel "$BUILD_DIR/vmlinuz" \
         --initrd "$dummy_initrd" \
-        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443" \
+        --kernel-cmdline "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=hvc0 isx.vsock_incus=8443 isx.agent_vsock=1025" \
         --device virtio-blk,path="$BUILD_DIR/disk.img" \
         --device virtio-net,nat \
         --device virtio-serial,logFilePath="$LOGFILE" \
         --device "virtio-vsock,port=8443,socketURL=$vsock_sock,connect" \
+        --device "virtio-vsock,port=1025,socketURL=$agent_sock,connect" \
         --restful-uri "tcp://localhost:0" \
         > /dev/null 2>&1 &
     local pid=$!
@@ -127,6 +152,7 @@ boot_vfkit() {
     # Probe the forwarded socket regardless of ISX READY (the daemon is up well
     # before readiness; the probe polls on its own).
     probe_vsock "$vsock_sock"
+    probe_agent "$agent_sock"
     kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -f "$dummy_initrd"
 }
@@ -253,6 +279,10 @@ if [ "$BACKEND" = "vfkit" ]; then
     check_result "ISX VSOCK API OK"            "Incus API reachable over forwarded host socket"
     check_result "ISX VSOCK STORAGE OK"        "cow storage pool visible via API"
     check_result "ISX VSOCK BRIDGE OK"         "incusbr0 bridge visible via API"
+    echo
+    echo "-- Control agent (isx.agent_vsock=1025) --"
+    check "control agent on vsock port 1025"   "in-guest control agent started"
+    check_result "ISX AGENT OK"                "control agent answered ping over vsock"
 else
     echo
     echo "-- Smoke test (isx.smoke_test=1) --"
