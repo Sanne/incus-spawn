@@ -41,6 +41,58 @@ class UnixSocketTransport implements IncusTransport {
     private final String socketPath;
     private final int timeoutSeconds;
 
+    // Diagnostics: track how many transport connections are open at once. Every
+    // request and every WebSocket opens a fresh connection (we intentionally do not
+    // pool), and on macOS each one is a vsock stream held by vfkit until the guest
+    // forwarder closes it. A climbing high-water mark is the signature of the socat
+    // forwarder leaking streams, so this is the cheapest way to see it accumulate.
+    private static final java.util.concurrent.atomic.AtomicInteger OPEN_CONNECTIONS =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile int peakConnections = 0;
+
+    // Per-process safety valve: cap how many connections one isx invocation holds open
+    // at once, so a runaway fan-out can't pile streams onto the forwarder. This bounds a
+    // single process only — it cannot limit aggregate consumption across the many
+    // concurrent/short-lived isx processes a script spawns; that requires forwarder-side
+    // reaping. The cap is set well above any single operation's need (an exec holds ~5
+    // fds), so it never engages in normal use, and acquisition is fail-open after a
+    // timeout so it can never deadlock or wedge a legitimate burst.
+    private static final int MAX_CONCURRENT_CONNECTIONS = 48;
+    private static final long PERMIT_TIMEOUT_MS = 10_000;
+    private static final java.util.concurrent.Semaphore CONNECTION_PERMITS =
+            new java.util.concurrent.Semaphore(MAX_CONCURRENT_CONNECTIONS);
+
+    /** Number of transport connections currently open. */
+    static int openConnectionCount() { return OPEN_CONNECTIONS.get(); }
+
+    /** Highest number of simultaneously-open connections seen this process. */
+    static int peakConnectionCount() { return peakConnections; }
+
+    /**
+     * Record a newly-opened connection and try to claim a concurrency permit.
+     * @return true if a permit was acquired (must be passed to {@link #connectionClosed}).
+     *         A false return means we proceeded without throttling (fail-open).
+     */
+    private static boolean connectionOpened() {
+        boolean permit;
+        try {
+            permit = CONNECTION_PERMITS.tryAcquire(PERMIT_TIMEOUT_MS,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            permit = false;
+        }
+        int now = OPEN_CONNECTIONS.incrementAndGet();
+        // Benign race on the compare/store — this is a diagnostic counter, not a lock.
+        if (now > peakConnections) peakConnections = now;
+        return permit;
+    }
+
+    private static void connectionClosed(boolean permit) {
+        OPEN_CONNECTIONS.decrementAndGet();
+        if (permit) CONNECTION_PERMITS.release();
+    }
+
     UnixSocketTransport(String socketPath) {
         this(socketPath, DEFAULT_TIMEOUT_SECONDS);
     }
@@ -64,8 +116,12 @@ class UnixSocketTransport implements IncusTransport {
         var addr = UnixDomainSocketAddress.of(socketPath);
         try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
             var watchdog = startWatchdog(channel, requestTimeout);
+            boolean opened = false;
+            boolean permit = false;
             try {
                 channel.connect(addr);
+                opened = true;
+                permit = connectionOpened();
                 var out = Channels.newOutputStream(channel);
                 var in  = Channels.newInputStream(channel);
                 writeRequest(out, method, path, contentType, extraHeaders, bodyBytes);
@@ -77,6 +133,7 @@ class UnixSocketTransport implements IncusTransport {
                 throw timeoutException(path, requestTimeout);
             } finally {
                 watchdog.interrupt();
+                if (opened) connectionClosed(permit);
             }
         }
     }
@@ -88,8 +145,12 @@ class UnixSocketTransport implements IncusTransport {
         var addr = UnixDomainSocketAddress.of(socketPath);
         try (var channel = SocketChannel.open(StandardProtocolFamily.UNIX)) {
             var watchdog = startWatchdog(channel, timeoutSeconds);
+            boolean opened = false;
+            boolean permit = false;
             try {
                 channel.connect(addr);
+                opened = true;
+                permit = connectionOpened();
                 var out = Channels.newOutputStream(channel);
                 var in  = Channels.newInputStream(channel);
                 writeRequestFromFile(out, method, path, contentType, extraHeaders, bodyFile);
@@ -98,6 +159,7 @@ class UnixSocketTransport implements IncusTransport {
                 throw timeoutException(path, timeoutSeconds);
             } finally {
                 watchdog.interrupt();
+                if (opened) connectionClosed(permit);
             }
         }
     }
@@ -106,11 +168,17 @@ class UnixSocketTransport implements IncusTransport {
     public WsConnection openWebSocket(String wsPath) throws IOException {
         var addr = UnixDomainSocketAddress.of(socketPath);
         var channel = SocketChannel.open(StandardProtocolFamily.UNIX);
-        channel.connect(addr);
-        var out = Channels.newOutputStream(channel);
-        var in  = Channels.newInputStream(channel);
-        wsHandshake(out, in, wsPath);
-        return new UnixWsConnection(channel, out, in);
+        try {
+            channel.connect(addr);
+            var out = Channels.newOutputStream(channel);
+            var in  = Channels.newInputStream(channel);
+            wsHandshake(out, in, wsPath);
+            boolean permit = connectionOpened();
+            return new UnixWsConnection(channel, out, in, permit);
+        } catch (IOException e) {
+            try { channel.close(); } catch (IOException ignored) {}
+            throw e;
+        }
     }
 
     private void writeRequest(OutputStream out, String method, String path,
@@ -330,11 +398,15 @@ class UnixSocketTransport implements IncusTransport {
         private final OutputStream out;
         private final InputStream in;
         private final Object writeLock = new Object();
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        private final boolean permit;
 
-        UnixWsConnection(SocketChannel channel, OutputStream out, InputStream in) {
+        UnixWsConnection(SocketChannel channel, OutputStream out, InputStream in, boolean permit) {
             this.channel = channel;
             this.out     = out;
             this.in      = in;
+            this.permit  = permit;
         }
 
         @Override
@@ -366,6 +438,11 @@ class UnixSocketTransport implements IncusTransport {
 
         @Override
         public void close() {
+            // close() is called more than once (try-with-resources + the watcher
+            // force-close in IncusApi), so only count the first.
+            if (closed.compareAndSet(false, true)) {
+                connectionClosed(permit);
+            }
             try { channel.close(); } catch (IOException ignored) {}
         }
     }

@@ -340,17 +340,65 @@ public final class VmManager {
                 } catch (IOException ignored) {}
             }
             sb.append("\n  Log: ").append(Environment.vmLogFile());
+            int vsockConns = vsockForwarderConnectionCount();
+            if (vsockConns >= 0) {
+                sb.append("\n  vsock forwarder connections: ").append(vsockConns);
+                if (vsockConns > VSOCK_CONN_WARN_THRESHOLD) {
+                    sb.append("  ⚠ high — the in-VM forwarder may be leaking streams; 'isx vm restart' clears them");
+                }
+            }
             return sb.toString();
         }
         cleanupStaleFiles();
         return "VM not running";
     }
 
+    // Above this many held vsock connections, the appliance's socat forwarder is
+    // likely leaking streams (it does not reap connections whose close never
+    // propagates across the vsock boundary), which degrades new-connection latency.
+    private static final int VSOCK_CONN_WARN_THRESHOLD = 64;
+
+    /**
+     * Count the host-side connections currently open on the vsock Unix socket
+     * (macOS only). These are held by vfkit and are reclaimed when the in-VM
+     * forwarder closes its end; a steadily climbing count is the signature of the
+     * forwarder leak. Returns -1 if the count can't be determined (non-macOS, no
+     * socket, or lsof unavailable).
+     */
+    private static int vsockForwarderConnectionCount() {
+        var sock = Environment.vmVsockSocket();
+        if (!Environment.isMacOS() || !Files.exists(sock)) return -1;
+        try {
+            var pb = new ProcessBuilder("lsof", "-nP", "-U");
+            pb.redirectErrorStream(false);
+            var proc = pb.start();
+            int count;
+            try (var r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream()))) {
+                count = (int) r.lines().filter(l -> l.contains(sock.toString())).count();
+            }
+            if (!proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                proc.destroyForcibly();
+                return -1;
+            }
+            return count;
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
     /**
      * Wait for the Incus daemon inside the VM to become reachable.
+     *
+     * Bounded by a wall-clock deadline, not an iteration count: each isReachable()
+     * probe can take up to the connect watchdog (seconds) when the vsock is stalled,
+     * so a count-based loop would silently overrun its "maxWaitSeconds" budget several
+     * fold in exactly the degraded state we need to bound.
      */
     public static boolean waitUntilReady(int maxWaitSeconds) {
-        for (int i = 0; i < maxWaitSeconds; i++) {
+        long deadline = System.nanoTime() + maxWaitSeconds * 1_000_000_000L;
+        while (System.nanoTime() < deadline) {
             if (IncusClient.isReachable()) return true;
             try { Thread.sleep(1000); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

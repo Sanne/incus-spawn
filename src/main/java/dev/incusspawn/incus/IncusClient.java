@@ -165,22 +165,33 @@ public class IncusClient {
 
     /**
      * Poll a command inside a container until it succeeds or the timeout expires.
-     * @param timeoutSeconds maximum wait time in seconds; polls every 200ms for fast detection.
+     *
+     * Each probe is a full exec (~6 vsock connections), so a fixed 200ms cadence
+     * fires up to ~150 execs and creates hundreds of short-lived connections per
+     * wait — multiplied across every branch/shell/build and amplified by the
+     * forwarder leak. We instead start tight (100ms) for fast detection on quick
+     * starts and back off geometrically to a 1s ceiling, which keeps responsiveness
+     * but cuts the number of probes (and connections) several-fold for slow starts.
+     * The total wait budget is unchanged.
+     *
+     * @param timeoutSeconds maximum wait time in seconds.
      */
     public boolean pollUntilReady(String name, int timeoutSeconds, String... command) {
-        int maxAttempts = timeoutSeconds * 5;
-        for (int i = 0; i < maxAttempts; i++) {
+        long deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
+        long delayMs = 100;
+        while (System.nanoTime() < deadline) {
             try {
                 if (shellExec(name, command).success()) return true;
             } catch (Exception ignored) {
                 // Container may not be Running yet — treat any exec failure as not-ready and retry.
             }
             try {
-                Thread.sleep(200);
+                Thread.sleep(delayMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             }
+            delayMs = Math.min(delayMs * 2, 1000);
         }
         return false;
     }
