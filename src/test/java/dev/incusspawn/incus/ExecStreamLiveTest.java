@@ -33,32 +33,24 @@ class ExecStreamLiveTest {
 
     @BeforeAll
     static void connect() {
+        // Opt-in only: requires an explicitly-named throwaway container. We deliberately do
+        // NOT auto-discover a running container — a plain `mvn test` must never exec into a
+        // user's real instance (or add a 90s idle test to every CI run).
+        container = System.getProperty("isx.test.container");
+        if (container == null || container.isBlank()) {
+            System.out.println("Skipping exec stream live tests: set -Disx.test.container=<throwaway> to run.");
+            return;
+        }
         http = IncusApi.tryConnect();
         if (http == null) {
             System.out.println("Skipping exec stream live tests: Incus not reachable.");
             return;
-        }
-        container = System.getProperty("isx.test.container");
-        if (container == null || container.isBlank()) {
-            container = firstRunningContainer();
         }
         System.out.println("ExecStreamLiveTest target container: " + container);
     }
 
     private static boolean skip() {
         return http == null || container == null;
-    }
-
-    private static String firstRunningContainer() {
-        var resp = http.get("/1.0/instances?recursion=2");
-        if (!resp.isSuccess()) return null;
-        for (var inst : resp.body().path("metadata")) {
-            if ("Running".equalsIgnoreCase(inst.path("status").asText())
-                    && "container".equalsIgnoreCase(inst.path("type").asText())) {
-                return inst.path("name").asText();
-            }
-        }
-        return null;
     }
 
     @Test
