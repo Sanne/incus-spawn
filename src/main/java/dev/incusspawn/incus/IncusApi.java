@@ -40,7 +40,9 @@ class IncusApi {
         this.transport = transport;
     }
 
-    private static final int PROBE_TIMEOUT_SECONDS = 5;
+    // Short enough that a stalled vsock fails fast (a healthy connect is sub-millisecond),
+    // so reachability polling stays responsive instead of blocking the full request watchdog.
+    private static final int PROBE_TIMEOUT_SECONDS = 3;
 
     /**
      * Try each candidate Unix socket path: Linux daemon sockets, then vsock (macOS).
@@ -468,14 +470,7 @@ class IncusApi {
         var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
         var stdoutBuf = new ByteArrayOutputStream();
         var stderrBuf = new ByteArrayOutputStream();
-
-        var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscardWithKeepalive(exec.opPath, exec.fds.path("control").asText()));
-        wsCloseOnly(exec.opPath, exec.fds.path("0").asText());
-        readOutputWithWatcher(exec, controlThread, stdoutBuf, stderrBuf);
-
-        int exitCode = waitForExecOp(exec.opPath);
-        joinQuietly(controlThread);
+        int exitCode = execWebSocket(exec, stdoutBuf, stderrBuf, null);
         return new IncusClient.ExecResult(exitCode,
                 stdoutBuf.toString(StandardCharsets.UTF_8),
                 stderrBuf.toString(StandardCharsets.UTF_8));
@@ -490,17 +485,7 @@ class IncusApi {
                    OutputStream stdout, OutputStream stderr) {
         return retryOnNotRunning(() -> {
             var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
-
-            var controlThread = Thread.ofVirtual().start(() ->
-                    wsDiscardWithKeepalive(exec.opPath, exec.fds.path("control").asText()));
-            wsCloseOnly(exec.opPath, exec.fds.path("0").asText());
-            readOutputWithWatcher(exec, controlThread,
-                    stdout != null ? stdout : OutputStream.nullOutputStream(),
-                    stderr != null ? stderr : OutputStream.nullOutputStream());
-
-            int exitCode = waitForExecOp(exec.opPath);
-            joinQuietly(controlThread);
-            return exitCode;
+            return execWebSocket(exec, stdout, stderr, null);
         });
     }
 
@@ -650,28 +635,125 @@ class IncusApi {
     }
 
     /**
-     * Open stdout/stderr WebSockets with the watcher pattern: when controlThread
-     * finishes (process exited), force-close both connections. Reads data from each
-     * fd into the provided OutputStreams until done.
+     * Grace window after the operation completes during which the data sockets are
+     * allowed to drain any bytes still in flight over the tunnel before we force-close
+     * them. In the healthy case the server's own close frames arrive first and this is
+     * never reached; it only bounds the wait when close frames never arrive (macOS vsock).
      */
-    private void readOutputWithWatcher(ExecOp exec, Thread controlThread,
-                                       OutputStream stdout, OutputStream stderr) {
-        try (var stdoutWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("1").asText());
-             var stderrWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("2").asText())) {
+    private static final long DRAIN_GRACE_MS = 250;
 
-            Thread.ofVirtual().start(() -> {
-                joinQuietly(controlThread);
+    /**
+     * Unified non-interactive exec over WebSockets, used for capture, streaming and
+     * bidirectional (git) exec — the destination streams just differ.
+     *
+     * Streams stdout/stderr to the provided sinks in real time. Crucially, process
+     * completion is detected via the operation /wait endpoint (a normal HTTP request
+     * backed by the daemon's operation state machine) — NOT via WebSocket close frames,
+     * which the macOS vsock tunnel may never deliver. Once the operation completes we
+     * give the data sockets a brief grace window to drain, then force-close them so the
+     * reader threads always unblock. This makes the termination signal independent of
+     * the (unreliable) close-frame propagation that every prior iteration depended on.
+     *
+     * @param stdin null → stdin is closed immediately; non-null → forwarded to the container.
+     */
+    private int execWebSocket(ExecOp exec, OutputStream stdout, OutputStream stderr, InputStream stdin) {
+        var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
+        var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
+        try (var controlWs = transport.openWebSocket(wsUrl(exec, "control"));
+             var stdoutWs  = transport.openWebSocket(wsUrl(exec, "1"));
+             var stderrWs  = transport.openWebSocket(wsUrl(exec, "2"))) {
+
+            // Control fd is connected only to satisfy wait-for-websocket and kept alive
+            // with pings; it is no longer used as the termination signal.
+            // Keepalive pings on EVERY fd, not just control: each exec fd is a separate
+            // vsock connection (a separate forwarder child in the VM), so an inactivity
+            // reaper in the forwarder would otherwise collect the stdout/stderr connections
+            // of a long, quiet command and truncate it. Pings keep every live connection
+            // visibly alive so only genuinely-dead ones can be reaped.
+            var keepalive    = startKeepalive(controlWs);
+            var stdoutAlive  = startKeepalive(stdoutWs);
+            var stderrAlive  = startKeepalive(stderrWs);
+            var controlDrain = Thread.ofVirtual().start(() -> drainQuietly(controlWs));
+
+            var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst));
+            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst));
+
+            Thread stdinThread = null;
+            if (stdin != null) {
+                stdinThread = Thread.ofVirtual().start(() ->
+                        wsForward(exec.opPath, exec.fds.path("0").asText(), stdin));
+            } else {
+                wsCloseOnly(exec.opPath, exec.fds.path("0").asText());
+            }
+            assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
+
+            // Authoritative completion + exit code (HTTP, reliable over vsock).
+            int exitCode = waitForExecOp(exec.opPath);
+
+            // Process has exited: stop pinging the data fds, let them drain, then
+            // force-close so the reader threads unblock even if no close frame arrives.
+            stdoutAlive.interrupt();
+            stderrAlive.interrupt();
+            if (!joinWithin(DRAIN_GRACE_MS, stdoutThread, stderrThread)) {
                 stdoutWs.close();
                 stderrWs.close();
-            });
+                joinQuietly(stdoutThread, stderrThread);
+            }
 
-            var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, stdout));
-            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, stderr));
-            assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
-            joinQuietly(stdoutThread, stderrThread);
+            keepalive.interrupt();
+            controlWs.close();
+            joinQuietly(controlDrain);
+
+            if (stdinThread != null) {
+                // In the git pack protocol the caller closes stdin before we reach here;
+                // otherwise abandon the (uninterruptible) System.in read after 2 s.
+                try { stdinThread.join(2000); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return exitCode;
         } catch (IOException e) {
             throw new IncusException("Failed to open exec WebSocket", e);
         }
+    }
+
+    private String wsUrl(ExecOp exec, String fd) {
+        return exec.opPath + "/websocket?secret=" + exec.fds.path(fd).asText();
+    }
+
+    /** Start a virtual thread that pings the socket until interrupted (idle-timeout guard). */
+    private Thread startKeepalive(IncusTransport.WsConnection ws) {
+        return Thread.ofVirtual().start(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    Thread.sleep(WS_PING_INTERVAL_MS);
+                    ws.sendPing();
+                }
+            } catch (IOException | InterruptedException ignored) {}
+        });
+    }
+
+    /** Read and discard all frames until the socket closes. */
+    private static void drainQuietly(IncusTransport.WsConnection ws) {
+        try {
+            while (ws.readPayload() != null) {}
+        } catch (IOException ignored) {}
+    }
+
+    /** Join all threads within a total budget. Returns true iff all finished in time. */
+    private static boolean joinWithin(long millis, Thread... threads) {
+        long deadline = System.currentTimeMillis() + millis;
+        for (var t : threads) {
+            long remaining = deadline - System.currentTimeMillis();
+            try {
+                t.join(Math.max(1, remaining));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        for (var t : threads) if (t.isAlive()) return false;
+        return true;
     }
 
     private static void assertAllFdsConnected(JsonNode fds, Set<String> connected) {
@@ -687,30 +769,9 @@ class IncusApi {
     }
 
     /**
-     * Connect a WebSocket and read/discard all frames until the server closes it.
-     * Sends periodic keepalive pings to prevent vsock idle timeout.
-     */
-    private void wsDiscardWithKeepalive(String opPath, String secret) {
-        try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + secret)) {
-            var keepalive = Thread.ofVirtual().start(() -> {
-                try {
-                    while (!Thread.currentThread().isInterrupted()) {
-                        Thread.sleep(WS_PING_INTERVAL_MS);
-                        ws.sendPing();
-                    }
-                } catch (IOException | InterruptedException ignored) {}
-            });
-            try {
-                while (ws.readPayload() != null) {}
-            } finally {
-                keepalive.interrupt();
-            }
-        } catch (IOException ignored) {}
-    }
-
-    /**
-     * Like {@link #wsDiscardWithKeepalive}, but also sets connectionLost if the
-     * socket died due to an I/O error (used by execPty for reconnect logic).
+     * Connect a WebSocket, read/discard all frames with keepalive pings until it closes,
+     * and set connectionLost if the socket died due to an I/O error (used by execPty for
+     * reconnect logic).
      */
     private void wsDiscardTrackedWithKeepalive(String opPath, String secret,
                                                java.util.concurrent.atomic.AtomicBoolean connectionLost) {
@@ -753,17 +814,32 @@ class IncusApi {
         } catch (IOException ignored) {}
     }
 
-    /** GET /1.0/operations/{id}/wait and extract the exit code from metadata.metadata.return. */
+    /**
+     * Block until the exec operation finishes and return the command's exit code.
+     *
+     * The /wait long-poll returns after at most WAIT_TIMEOUT_SECONDS even if the command
+     * is still running, so we re-issue it until the operation leaves the Running/Pending
+     * state. This is the authoritative termination signal for {@link #execWebSocket} — it
+     * must report completion only when the process has actually exited, otherwise we would
+     * force-close the data sockets mid-stream and truncate output on long commands.
+     */
     private int waitForExecOp(String opPath) {
-        var waitResp = requestWithTimeout("GET",
-                opPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS,
-                null, WAIT_TIMEOUT_SECONDS + 30);
-        if (!waitResp.isSuccess()) {
-            System.err.println("Warning: exec operation lost (HTTP " + waitResp.statusCode()
-                    + " on " + opPath + "/wait) — exit code unknown");
-            return -1;
+        while (true) {
+            var waitResp = requestWithTimeout("GET",
+                    opPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS,
+                    null, WAIT_TIMEOUT_SECONDS + 30);
+            if (!waitResp.isSuccess()) {
+                System.err.println("Warning: exec operation lost (HTTP " + waitResp.statusCode()
+                        + " on " + opPath + "/wait) — exit code unknown");
+                return -1;
+            }
+            var meta = waitResp.body().path("metadata");
+            var status = meta.path("status").asText();
+            if ("Running".equals(status) || "Pending".equals(status)) {
+                continue; // long-poll window elapsed; command still running
+            }
+            return meta.path("metadata").path("return").asInt(0);
         }
-        return waitResp.body().path("metadata").path("metadata").path("return").asInt(0);
     }
 
     private static void joinQuietly(Thread... threads) {
@@ -802,48 +878,7 @@ class IncusApi {
                                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                                     InputStream stdin, OutputStream stdout, OutputStream stderr) {
         var exec = postExec(instance, command, uid, gid, cwd, env, false, 0, 0);
-
-        var stdinSecret  = exec.fds.path("0").asText();
-        var outDst = stdout != null ? stdout : OutputStream.nullOutputStream();
-        var errDst = stderr != null ? stderr : OutputStream.nullOutputStream();
-
-        var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscardWithKeepalive(exec.opPath, exec.fds.path("control").asText()));
-
-        try (var stdoutWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("1").asText());
-             var stderrWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("2").asText())) {
-
-            // Watcher: when control closes (process exited), force-close data fds.
-            // vsock may never deliver the WebSocket close frame.
-            Thread.ofVirtual().start(() -> {
-                joinQuietly(controlThread);
-                stdoutWs.close();
-                stderrWs.close();
-            });
-
-            // Forward stdin to the container
-            var stdinThread  = Thread.ofVirtual().start(() -> wsForward(exec.opPath, stdinSecret, stdin));
-            var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst));
-            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst));
-            assertAllFdsConnected(exec.fds, Set.of("0", "1", "2", "control"));
-
-            // Join stdout/stderr first: they finish when the container process exits
-            // or when the watcher closes the WebSockets.
-            // After 2 s the stdin virtual thread is abandoned (System.in.read() cannot
-            // be interrupted; the thread dies when the JVM exits).
-            joinQuietly(stdoutThread, stderrThread);
-            try {
-                stdinThread.join(2000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        } catch (IOException e) {
-            throw new IncusException("Failed to open exec WebSocket", e);
-        }
-
-        int exitCode = waitForExecOp(exec.opPath);
-        joinQuietly(controlThread);
-        return exitCode;
+        return execWebSocket(exec, stdout, stderr, stdin);
     }
 
     /**
