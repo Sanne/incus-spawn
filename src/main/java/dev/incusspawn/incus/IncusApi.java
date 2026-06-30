@@ -602,8 +602,21 @@ class IncusApi {
         // and we return immediately. We do NOT call waitForExecOp — that waits ~8s for Incus to
         // finalize the operation. For interactive logout, instant detach is the right behavior.
         var controlLostConnection = new java.util.concurrent.atomic.AtomicBoolean(false);
-        var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscardTracked(opPath, fds.path("control").asText(), controlLostConnection));
+
+        // Open control WebSocket for both reading (close detection) and writing (resize).
+        IncusTransport.WsConnection controlWs;
+        try {
+            controlWs = transport.openWebSocket(opPath + "/websocket?secret=" + fds.path("control").asText());
+        } catch (IOException e) {
+            throw new IncusException("Failed to open control WebSocket", e);
+        }
+        var controlThread = Thread.ofVirtual().start(() -> {
+            try {
+                while (controlWs.readPayload() != null) {}
+            } catch (IOException e) {
+                controlLostConnection.set(true);
+            }
+        });
         assertAllFdsConnected(fds, Set.of("0", "control"));
 
         try (var ws = transport.openWebSocket(opPath + "/websocket?secret=" + fds.path("0").asText())) {
@@ -621,6 +634,25 @@ class IncusApi {
                         ws.sendPing();
                     }
                 } catch (IOException | InterruptedException ignored) {}
+            });
+
+            // Terminal resize: poll for size changes and send window-resize control messages.
+            var resizeThread = Thread.ofVirtual().start(() -> {
+                var lastWidth = width;
+                var lastHeight = height;
+                try {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        Thread.sleep(500);
+                        var size = terminalSize();
+                        if (size[0] != lastWidth || size[1] != lastHeight) {
+                            lastWidth = size[0];
+                            lastHeight = size[1];
+                            try {
+                                controlWs.sendText("{\"command\":\"window-resize\",\"args\":{\"width\":" + lastWidth + ",\"height\":" + lastHeight + "}}");
+                            } catch (IOException ignored) { break; }
+                        }
+                    }
+                } catch (InterruptedException ignored) {}
             });
 
             setRawTerminal();
@@ -644,12 +676,14 @@ class IncusApi {
                 // Connection closed by watcher — normal PTY session end.
             } finally {
                 keepaliveThread.interrupt();
+                resizeThread.interrupt();
                 restoreTerminal();
             }
         } catch (IOException e) {
             throw new IncusException("PTY exec failed", e);
         }
         joinQuietly(controlThread);
+        controlWs.close();
 
         return controlLostConnection.get();
     }
