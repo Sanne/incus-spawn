@@ -104,7 +104,16 @@ incus config set core.https_address :8443
 # socket instead of TCP to the VM subnet (bypasses VPN socket filters).
 VSOCK_INCUS_PORT=$(parse_cmdline "isx.vsock_incus")
 if [ -n "$VSOCK_INCUS_PORT" ]; then
-    socat -b 65536 VSOCK-LISTEN:"$VSOCK_INCUS_PORT",reuseaddr,fork \
+    # -T 180: total inactivity timeout. Each accepted connection forks a child, and a
+    # close that never propagates across the vsock boundary would otherwise leave that
+    # child (and the host-side vfkit fd it pins) alive forever — the leak that degrades
+    # new-connection latency. This reaps any connection idle for 180s as a backstop.
+    #
+    # The 180s floor is deliberate: the client keepalives every live exec fd every ~15s,
+    # but the Incus operation /wait long-poll is a plain HTTP request that legitimately
+    # carries no traffic for up to 120s (and the client request watchdog is 150s). -T must
+    # sit above that window or it would reap the long-poll that signals exec completion.
+    socat -b 65536 -T 180 VSOCK-LISTEN:"$VSOCK_INCUS_PORT",reuseaddr,fork \
         UNIX-CONNECT:/var/lib/incus/unix.socket &
     echo "incus-spawn-vm-init: vsock forwarder on port $VSOCK_INCUS_PORT"
 fi
