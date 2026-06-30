@@ -133,6 +133,11 @@ public final class Environment {
         return vmStateDir().resolve("vm.incus.sock");
     }
 
+    /** Host-side Unix socket for the in-VM control agent (introspection/recovery). */
+    public static Path vmAgentSocket() {
+        return vmStateDir().resolve("vm.agent.sock");
+    }
+
     public static Path vmDiskImage() {
         return vmStateDir().resolve("disk.img");
     }

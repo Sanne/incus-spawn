@@ -38,6 +38,7 @@ public final class VmManager {
     private static final String DEFAULT_DISK_SIZE = "60G";
     private static final String DEFAULT_SWAP_SIZE = "12G";
     private static final int GA_VSOCK_PORT = 1024;
+    private static final int AGENT_VSOCK_PORT = 1025;
     private static final int INCUS_VSOCK_PORT = 8443;
 
     private static final String LATEST_KNOWN_RELEASE = "0.2.2";
@@ -582,6 +583,8 @@ public final class VmManager {
                 "--device", "virtio-fs,sharedDir=" + System.getProperty("user.home") + ",mountTag=hostfs",
                 "--device", "virtio-vsock,port=" + INCUS_VSOCK_PORT
                         + ",socketURL=" + Environment.vmVsockSocket() + ",connect",
+                "--device", "virtio-vsock,port=" + AGENT_VSOCK_PORT
+                        + ",socketURL=" + Environment.vmAgentSocket() + ",connect",
                 "--timesync", "vsockPort=" + GA_VSOCK_PORT,
                 "--restful-uri", "tcp://localhost:" + restPort
         ));
@@ -839,6 +842,7 @@ public final class VmManager {
                 + " isx.time=" + (System.currentTimeMillis() / 1000)
                 + " isx.ga_vsock=" + GA_VSOCK_PORT
                 + " isx.vsock_incus=" + INCUS_VSOCK_PORT
+                + " isx.agent_vsock=" + AGENT_VSOCK_PORT
                 + " isx.proxy=remote"
                 + " isx.shared=/host";
     }
@@ -900,6 +904,7 @@ public final class VmManager {
         try { Files.deleteIfExists(Environment.vmPidFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmRestUriFile()); } catch (IOException ignored) {}
         try { Files.deleteIfExists(Environment.vmVsockSocket()); } catch (IOException ignored) {}
+        try { Files.deleteIfExists(Environment.vmAgentSocket()); } catch (IOException ignored) {}
     }
 
     private static String humanSize(long bytes) {

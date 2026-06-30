@@ -1,0 +1,43 @@
+#!/bin/sh
+# Allowlisted control agent, reached from the macOS host over a dedicated vsock port
+# (one verb per connection, via `socat ... EXEC:`). This is intentionally NOT a general
+# guest-exec channel: it dispatches only the fixed verbs below, so the host can introspect
+# and recover the forwarder without granting arbitrary in-guest command execution.
+#
+# Protocol: read one verb line from stdin, write the result to stdout, exit.
+
+# The forwarder's distinctive cmdline fragment — matches the parent and every fork child,
+# and nothing else (the agent's own socat uses EXEC:, not UNIX-CONNECT).
+FORWARDER_MATCH='UNIX-CONNECT:/var/lib/incus/unix.socket'
+INCUS_VSOCK_PORT=8443
+
+read -r verb || exit 0
+
+case "$verb" in
+    ping)
+        echo ok
+        ;;
+    socat-count)
+        # In-guest count of forwarder socat processes (parent + per-connection children).
+        # Compared against the host-side vfkit fd count, this locates where streams leak:
+        # if this is low while the host count is high, vfkit is not reaping (link 2);
+        # if both are high, the forwarder is lingering children (link 3).
+        pgrep -f "$FORWARDER_MATCH" 2>/dev/null | wc -l | tr -d '[:space:]'
+        echo
+        ;;
+    sshd-status)
+        if pgrep -x sshd >/dev/null 2>&1; then echo running; else echo stopped; fi
+        ;;
+    forwarder-restart)
+        # Recover a leaked/wedged forwarder without rebooting the VM: drop every forwarder
+        # socat (parent + children, freeing the host fds vfkit pinned) and relaunch it.
+        # The agent's own listener is untouched (different cmdline).
+        pkill -f "$FORWARDER_MATCH" 2>/dev/null || true
+        sleep 1
+        /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" &
+        echo restarted
+        ;;
+    *)
+        echo "error: unknown verb"
+        ;;
+esac

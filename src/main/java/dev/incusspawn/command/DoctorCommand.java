@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -135,7 +136,34 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkForwarderLeak() {
-        return forwarderFinding(VmManager.vsockForwarderConnectionCount());
+        var base = forwarderFinding(VmManager.vsockForwarderConnectionCount());
+
+        // If the in-VM control agent is present, enrich with the in-guest socat child count.
+        // Comparing it to the host-side count locates the leak: low in-guest + high host = vfkit
+        // not reaping (link 2); both high = forwarder lingering children (link 3).
+        var guest = VmAgentClient.socatCount();
+        var detail = base.detail();
+        if (guest.isPresent()) {
+            var sep = detail == null || detail.isBlank() ? "" : " ";
+            detail = (detail == null ? "" : detail) + sep + "(in-guest socat: " + guest.getAsInt() + ")";
+        }
+
+        if (base.status() == Status.OK) {
+            return new Finding(Status.OK, base.label(), detail, null);
+        }
+        // Leak: prefer no-reboot recovery via the agent; fall back to the VM restart otherwise.
+        if (VmAgentClient.ping()) {
+            return Finding.warn(base.label(), detail,
+                    new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
+                            false, DoctorCommand::restartForwarderViaAgent));
+        }
+        return new Finding(base.status(), base.label(), detail, base.remediation());
+    }
+
+    private static void restartForwarderViaAgent() {
+        if (!VmAgentClient.restartForwarder()) {
+            throw new RuntimeException("control agent did not confirm forwarder restart");
+        }
     }
 
     /** Pure decision from a forwarder connection count (-1 = unmeasurable). Package-private for testing. */

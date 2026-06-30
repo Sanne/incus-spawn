@@ -1,0 +1,16 @@
+#!/bin/sh
+# Launch the Incus API vsock forwarder. Shared by incus-spawn-vm-init at boot and by
+# isx-agent when recovering a leaked/wedged forwarder, so the socat invocation lives in
+# exactly one place.
+#
+# -T 180: total inactivity timeout. Each accepted connection forks a child; a close that
+# never propagates across the vsock boundary would otherwise leave that child (and the
+# host-side vfkit fd it pins) alive forever. The 180s floor sits above the Incus /wait
+# long-poll (up to 120s of legitimate silence) and the client request watchdog (150s);
+# live exec fds are keepalived (~15s) so they are never reaped. See incus-spawn-vm-init.
+set -eu
+
+PORT="${1:?usage: isx-start-vsock-forwarder <vsock-port>}"
+
+exec socat -b 65536 -T 180 VSOCK-LISTEN:"$PORT",reuseaddr,fork \
+    UNIX-CONNECT:/var/lib/incus/unix.socket
