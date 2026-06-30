@@ -41,7 +41,7 @@ public class IncusSpawn implements QuarkusApplication {
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
-                VmCommand.class, UpdateBaseCommand.class
+                VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class
             }, generateHelp = true)
     public static class IncusSpawnCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")

@@ -356,7 +356,7 @@ public final class VmManager {
     // Above this many held vsock connections, the appliance's socat forwarder is
     // likely leaking streams (it does not reap connections whose close never
     // propagates across the vsock boundary), which degrades new-connection latency.
-    private static final int VSOCK_CONN_WARN_THRESHOLD = 64;
+    public static final int VSOCK_CONN_WARN_THRESHOLD = 64;
 
     /**
      * Count the host-side connections currently open on the vsock Unix socket
@@ -365,7 +365,7 @@ public final class VmManager {
      * forwarder leak. Returns -1 if the count can't be determined (non-macOS, no
      * socket, or lsof unavailable).
      */
-    private static int vsockForwarderConnectionCount() {
+    public static int vsockForwarderConnectionCount() {
         var sock = Environment.vmVsockSocket();
         if (!Environment.isMacOS() || !Files.exists(sock)) return -1;
         try {
