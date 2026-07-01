@@ -1,0 +1,25 @@
+name: zmx
+description: zmx 0.6.0 – session attach/detach for the terminal
+
+parameters:
+  auto_attach:
+    type: boolean
+    default: "true"
+    description: "Automatically attach to a zmx session when shelling into the container"
+
+downloads:
+  - url: https://zmx.sh/a/zmx-0.6.0-linux-x86_64.tar.gz
+    sha256: 7ee4b12150dd0d736d271ba1cb06942244c10b857841a663517297ac65c720dd
+    extract: /tmp/zmx-dl
+    arch: x86_64
+  - url: https://zmx.sh/a/zmx-0.6.0-linux-aarch64.tar.gz
+    sha256: dbbb3df7428bbe645cc26f34dd67b61b07953a8ce3daa6f3e501c49d392724f8
+    extract: /tmp/zmx-dl
+    arch: aarch64
+run:
+  - install -m 755 /tmp/zmx-dl/zmx /usr/local/bin/zmx
+  - rm -rf /tmp/zmx-dl
+  - mkdir -p /home/agentuser/.zmx && chown agentuser:agentuser /home/agentuser/.zmx
+env:
+  - export ZMX_DIR=/home/agentuser/.zmx
+verify: zmx --version

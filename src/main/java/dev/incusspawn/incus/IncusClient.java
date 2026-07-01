@@ -222,18 +222,20 @@ public class IncusClient {
      * container start (the daemon blocks REST calls during startup).
      */
     public record ShellPrep(String workdir, String shellCommand,
-                            boolean autoAttachTmux, String subnetDiagnostic,
-                            boolean terminfoHandled) {
+                            boolean autoAttachTmux, boolean autoAttachZmx,
+                            String subnetDiagnostic, boolean terminfoHandled) {
 
         public static ShellPrep from(IncusClient incus, String container) {
             var workdir = incus.configGet(container, Metadata.WORKDIR);
             var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
-            var autoAttach = shouldAutoAttachTmux(incus.configGet(container, Metadata.BUILD_SOURCE));
+            var buildSource = incus.configGet(container, Metadata.BUILD_SOURCE);
             var diag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
             return new ShellPrep(
                     workdir.isBlank() ? null : workdir,
                     shellCmd.isBlank() ? null : shellCmd,
-                    autoAttach, diag, false);
+                    shouldAutoAttach(buildSource, "tmux"),
+                    shouldAutoAttach(buildSource, "zmx"),
+                    diag, false);
         }
 
         public static ShellPrep fromPrefetched(String workdir, String shellCommand,
@@ -242,16 +244,28 @@ public class IncusClient {
             return new ShellPrep(
                     workdir != null && !workdir.isBlank() ? workdir : null,
                     shellCommand != null && !shellCommand.isBlank() ? shellCommand : null,
-                    shouldAutoAttachTmux(buildSourceJson),
+                    shouldAutoAttach(buildSourceJson, "tmux"),
+                    shouldAutoAttach(buildSourceJson, "zmx"),
                     subnetDiagnostic, terminfoHandled);
         }
 
-        private static boolean shouldAutoAttachTmux(String buildSourceJson) {
+        private static boolean shouldAutoAttach(String buildSourceJson, String toolName) {
             var bs = BuildSource.fromJson(buildSourceJson);
             if (bs == null) return false;
-            var tmux = bs.getToolInstances().get("tmux");
-            return tmux != null && Boolean.parseBoolean(tmux.getParameterValues().get("auto_attach"));
+            var tool = bs.getToolInstances().get(toolName);
+            return tool != null && Boolean.parseBoolean(tool.getParameterValues().get("auto_attach"));
         }
+    }
+
+    private static final java.util.regex.Pattern SIMPLE_COMMAND =
+            java.util.regex.Pattern.compile("^[a-zA-Z0-9_./ -]+$");
+
+    static String zmxCommand(String shellCommand) {
+        if (SIMPLE_COMMAND.matcher(shellCommand).matches()) {
+            return shellCommand;
+        }
+        var escaped = shellCommand.replace("'", "'\\''");
+        return "bash -c '" + escaped + "'";
     }
 
     public void interactiveShell(String container, String user) {
@@ -286,7 +300,13 @@ public class IncusClient {
             var targetCwd = prep.workdir() != null ? prep.workdir() : homeDir;
 
             List<String> shellArgs;
-            if (prep.shellCommand() != null) {
+            if (prep.shellCommand() != null && prep.autoAttachZmx()) {
+                var zmxCmd = zmxCommand(prep.shellCommand());
+                shellArgs = List.of("bash", "--login", "-c",
+                        "if command -v zmx >/dev/null 2>&1; then "
+                        + "exec zmx attach isx " + zmxCmd
+                        + "; fi; " + prep.shellCommand() + " || exec bash --login");
+            } else if (prep.shellCommand() != null) {
                 shellArgs = List.of("bash", "--login", "-c", prep.shellCommand() + " || exec bash --login");
             } else if (inTmux) {
                 shellArgs = List.of("bash", "--login");
@@ -295,6 +315,10 @@ public class IncusClient {
                         "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
                         + "exec tmux new-session -A -s isx; fi; exec bash --login");
+            } else if (prep.autoAttachZmx()) {
+                shellArgs = List.of("bash", "--login", "-c",
+                        "if command -v zmx >/dev/null 2>&1; then "
+                        + "exec zmx attach isx bash --login; fi; exec bash --login");
             } else {
                 shellArgs = List.of("bash", "--login");
             }

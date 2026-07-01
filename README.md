@@ -469,6 +469,36 @@ tools:
       memory: "8g"
 ```
 
+### Terminal Session Persistence (zmx)
+
+[zmx](https://zmx.sh) provides session attach/detach for the terminal — persistent shell sessions that survive disconnections, with native scrollback and multi-client support. Unlike tmux, it delegates window management to your OS rather than reimplementing it.
+
+```yaml
+name: tpl-agent
+parent: tpl-dev
+tools:
+  - zmx
+```
+
+By default, `auto_attach` is enabled: shelling into the container automatically attaches to a persistent zmx session named `isx`. To install zmx without auto-attaching:
+
+```yaml
+tools:
+  - zmx:
+      auto_attach: "false"
+```
+
+On Linux, the container's zmx socket directory is shared with the host via a disk device. Container sessions appear in your native zmx socket directory with an `isx-` prefix — no configuration needed:
+
+```bash
+zmx list                              # shows isx-my-branch alongside local sessions
+zmx attach isx-my-branch              # attach to the container's session from the host
+zmx history isx-my-branch             # view scrollback from the container
+zmx run isx-my-branch git status      # run a command in the container's session
+```
+
+All zmx commands work natively, including interactive `zmx attach`. On macOS, where Incus runs inside a VM, host-side socket sharing is not available. zmx sessions still work inside containers — `isx shell` (or Enter in the TUI) auto-attaches, and sessions persist across disconnections.
+
 ### Tool Parameters
 
 Tools can define parameters for build-time configuration. Parameter types: `string` (with optional `pattern`), `integer` (with `min`/`max`), `boolean`, and `enum` (with `options`). Use `${param_name}` to reference values in scripts, env, and file content:

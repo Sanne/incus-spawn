@@ -19,6 +19,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tui.BackgroundTaskManager;
@@ -998,6 +999,7 @@ public class ListCommand extends BaseCommand {
                                     incus.delete(name, true);
                                     AutoRemoteService.removeRemotes(name, msg -> {});
                                     SshKeyManager.cleanupInstance(name);
+                                    ZmxSocketForward.cleanup(name);
                                     destroyed++;
                                 } catch (Exception e) {
                                     setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
@@ -1073,6 +1075,7 @@ public class ListCommand extends BaseCommand {
                             incus.delete(pendingDeleteName, true);
                             AutoRemoteService.removeRemotes(pendingDeleteName, msg -> {});
                             SshKeyManager.cleanupInstance(pendingDeleteName);
+                            ZmxSocketForward.cleanup(pendingDeleteName);
                         });
             }
         }
@@ -3336,7 +3339,8 @@ public class ListCommand extends BaseCommand {
         if (defaultCmd != null) {
             shellPrep = new IncusClient.ShellPrep(
                     shellPrep.workdir(), defaultCmd,
-                    false, shellPrep.subnetDiagnostic(), shellPrep.terminfoHandled());
+                    false, shellPrep.autoAttachZmx(),
+                    shellPrep.subnetDiagnostic(), shellPrep.terminfoHandled());
         }
         incus.interactiveShell(name, "agentuser", shellPrep);
         System.out.println();
@@ -3457,13 +3461,15 @@ public class ListCommand extends BaseCommand {
             incus.start(name);
             incus.waitForReady(name);
         }
+        ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
         if (commandOverride != null) {
             var prep = IncusClient.ShellPrep.from(incus, name);
             var withCommand = new IncusClient.ShellPrep(
                     prep.workdir(), commandOverride,
-                    false, prep.subnetDiagnostic(), prep.terminfoHandled());
+                    false, prep.autoAttachZmx(),
+                    prep.subnetDiagnostic(), prep.terminfoHandled());
             incus.interactiveShell(name, "agentuser", withCommand);
         } else {
             incus.interactiveShell(name, "agentuser");

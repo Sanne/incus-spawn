@@ -124,6 +124,11 @@ public final class InstanceLifecycle {
 
         if (instanceType == InstanceType.INSTANCE) {
             AutoRemoteService.addRemotes(incus, name);
+
+            var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+            if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {
+                ZmxSocketForward.configure(incus, name);
+            }
         }
     }
 

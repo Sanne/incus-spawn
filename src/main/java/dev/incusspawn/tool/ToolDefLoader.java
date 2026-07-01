@@ -29,7 +29,8 @@ public class ToolDefLoader {
             "idea-backend.yaml",
             "vscode-remote.yaml",
             "starship.yaml",
-            "tmux.yaml"
+            "tmux.yaml",
+            "zmx.yaml"
     );
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
