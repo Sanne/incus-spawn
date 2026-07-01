@@ -477,6 +477,14 @@ class UnixSocketTransport implements IncusTransport {
         }
 
         @Override
+        public void sendText(String text) throws IOException {
+            var bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            synchronized (writeLock) {
+                wsSendMasked(out, 0x1 /* WS_TEXT */, bytes, 0, bytes.length);
+            }
+        }
+
+        @Override
         public void sendPing() throws IOException {
             synchronized (writeLock) {
                 wsSendMasked(out, WS_PING, new byte[0], 0, 0);

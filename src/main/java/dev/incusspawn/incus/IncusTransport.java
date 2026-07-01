@@ -72,6 +72,11 @@ interface IncusTransport {
         byte[] readPayload() throws IOException;
         /** Send binary data to the server. */
         void sendData(byte[] data, int offset, int length) throws IOException;
+        /** Send a text frame to the server. */
+        default void sendText(String text) throws IOException {
+            var bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            sendData(bytes, 0, bytes.length);
+        }
         /** Send a WebSocket ping frame (keepalive). */
         void sendPing() throws IOException;
         /** Send a WebSocket close frame. */

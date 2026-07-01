@@ -510,54 +510,100 @@ class IncusApi {
         // and we return immediately. We do NOT call waitForExecOp — that waits ~8s for Incus to
         // finalize the operation. For interactive logout, instant detach is the right behavior.
         var controlLostConnection = new java.util.concurrent.atomic.AtomicBoolean(false);
-        var controlThread = Thread.ofVirtual().start(() ->
-                wsDiscardTrackedWithKeepalive(exec.opPath, exec.fds.path("control").asText(), controlLostConnection));
-        assertAllFdsConnected(exec.fds, Set.of("0", "control"));
 
-        try (var ws = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("0").asText())) {
-            // Watcher: closes fd "0" when control closes.
-            Thread.ofVirtual().start(() -> {
-                joinQuietly(controlThread);
-                ws.close();
-            });
-
-            // Keepalive: periodic pings to prevent idle connection timeout.
-            var keepaliveThread = Thread.ofVirtual().start(() -> {
-                try {
-                    while (!Thread.currentThread().isInterrupted()) {
-                        Thread.sleep(WS_PING_INTERVAL_MS);
-                        ws.sendPing();
-                    }
-                } catch (IOException | InterruptedException ignored) {}
-            });
-
-            setRawTerminal();
-            try {
-                // Thread: System.in → WebSocket (no close frame on EOF to avoid losing output).
-                var stdinThread = Thread.ofVirtual().start(() -> {
+        IncusTransport.WsConnection controlWs;
+        try {
+            controlWs = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("control").asText());
+        } catch (IOException e) {
+            throw new IncusException("Failed to open control WebSocket", e);
+        }
+        try {
+            var controlThread = Thread.ofVirtual().start(() -> {
+                var keepalive = Thread.ofVirtual().start(() -> {
                     try {
-                        var buf = new byte[4096];
-                        int n;
-                        while ((n = System.in.read(buf)) != -1) ws.sendData(buf, 0, n);
-                    } catch (IOException ignored) {}
+                        while (!Thread.currentThread().isInterrupted()) {
+                            Thread.sleep(WS_PING_INTERVAL_MS);
+                            controlWs.sendPing();
+                        }
+                    } catch (IOException | InterruptedException ignored) {}
+                });
+                try {
+                    while (controlWs.readPayload() != null) {}
+                } catch (IOException e) {
+                    controlLostConnection.set(true);
+                } finally {
+                    keepalive.interrupt();
+                }
+            });
+            assertAllFdsConnected(exec.fds, Set.of("0", "control"));
+
+            try (var ws = transport.openWebSocket(exec.opPath + "/websocket?secret=" + exec.fds.path("0").asText())) {
+                // Watcher: closes fd "0" when control closes.
+                Thread.ofVirtual().start(() -> {
+                    joinQuietly(controlThread);
+                    ws.close();
                 });
 
-                // Main: WebSocket → System.out (exits when watcher closes the connection).
-                byte[] payload;
-                while ((payload = ws.readPayload()) != null) {
-                    System.out.write(payload);
-                    System.out.flush();
+                // Keepalive: periodic pings to prevent idle connection timeout.
+                var keepaliveThread = Thread.ofVirtual().start(() -> {
+                    try {
+                        while (!Thread.currentThread().isInterrupted()) {
+                            Thread.sleep(WS_PING_INTERVAL_MS);
+                            ws.sendPing();
+                        }
+                    } catch (IOException | InterruptedException ignored) {}
+                });
+
+                // Terminal resize: poll for size changes and send window-resize control messages.
+                var resizeThread = Thread.ofVirtual().start(() -> {
+                    var lastWidth = width;
+                    var lastHeight = height;
+                    try {
+                        while (!Thread.currentThread().isInterrupted()) {
+                            Thread.sleep(500);
+                            var size = terminalSize();
+                            if (size[0] != lastWidth || size[1] != lastHeight) {
+                                lastWidth = size[0];
+                                lastHeight = size[1];
+                                try {
+                                    controlWs.sendText("{\"command\":\"window-resize\",\"args\":{\"width\":" + lastWidth + ",\"height\":" + lastHeight + "}}");
+                                } catch (IOException ignored) { break; }
+                            }
+                        }
+                    } catch (InterruptedException ignored) {}
+                });
+
+                setRawTerminal();
+                try {
+                    // Thread: System.in → WebSocket (no close frame on EOF to avoid losing output).
+                    var stdinThread = Thread.ofVirtual().start(() -> {
+                        try {
+                            var buf = new byte[4096];
+                            int n;
+                            while ((n = System.in.read(buf)) != -1) ws.sendData(buf, 0, n);
+                        } catch (IOException ignored) {}
+                    });
+
+                    // Main: WebSocket → System.out (exits when watcher closes the connection).
+                    byte[] payload;
+                    while ((payload = ws.readPayload()) != null) {
+                        System.out.write(payload);
+                        System.out.flush();
+                    }
+                } catch (IOException ignored) {
+                    // Connection closed by watcher — normal PTY session end.
+                } finally {
+                    keepaliveThread.interrupt();
+                    resizeThread.interrupt();
+                    restoreTerminal();
                 }
-            } catch (IOException ignored) {
-                // Connection closed by watcher — normal PTY session end.
-            } finally {
-                keepaliveThread.interrupt();
-                restoreTerminal();
+            } catch (IOException e) {
+                throw new IncusException("PTY exec failed", e);
             }
-        } catch (IOException e) {
-            throw new IncusException("PTY exec failed", e);
+            joinQuietly(controlThread);
+        } finally {
+            controlWs.close();
         }
-        joinQuietly(controlThread);
 
         return controlLostConnection.get();
     }
