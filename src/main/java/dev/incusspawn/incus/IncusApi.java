@@ -634,14 +634,16 @@ class IncusApi {
                 opMeta.path("metadata").path("fds"));
     }
 
-    /**
-     * Grace window after the operation completes during which the data sockets are
-     * allowed to drain any bytes still in flight over the tunnel before we force-close
-     * them. 2 s is generous enough for a slow/loaded vsock tunnel to flush its buffers.
-     * In the healthy case the server's own close frames arrive first and this is
-     * never reached; it only bounds the wait when close frames never arrive (macOS vsock).
-     */
-    private static final long DRAIN_GRACE_MS = 2000;
+    // After the operation completes we drain the data sockets before force-closing them, so
+    // trailing output isn't truncated when close frames never arrive (macOS vsock). Rather than
+    // a blind fixed wait (too short risks truncation on a slow tunnel; too long adds that latency
+    // to *every* exec on machines where close frames don't arrive), the drain is adaptive: wait a
+    // short minimum for in-flight bytes, extend while output is still arriving, and close once it
+    // has been idle briefly — bounded by an absolute cap. On the healthy path the close frames
+    // arrive and the reader threads finish at once, so none of this is reached.
+    private static final long DRAIN_MIN_MS  = 200;   // always wait this for bytes in flight
+    private static final long DRAIN_IDLE_MS = 200;   // then close once output has been idle this long
+    private static final long DRAIN_MAX_MS  = 5000;  // absolute ceiling
 
     /**
      * Unified non-interactive exec over WebSockets, used for capture, streaming and
@@ -676,8 +678,10 @@ class IncusApi {
             var stderrAlive  = startKeepalive(stderrWs);
             var controlDrain = Thread.ofVirtual().start(() -> drainQuietly(controlWs));
 
-            var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst));
-            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst));
+            // Timestamp of the last byte received on either data fd, for the adaptive drain.
+            var lastData = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+            var stdoutThread = Thread.ofVirtual().start(() -> wsWriteTo(stdoutWs, outDst, lastData));
+            var stderrThread = Thread.ofVirtual().start(() -> wsWriteTo(stderrWs, errDst, lastData));
 
             Thread stdinThread = null;
             if (stdin != null) {
@@ -691,15 +695,11 @@ class IncusApi {
             // Authoritative completion + exit code (HTTP, reliable over vsock).
             int exitCode = waitForExecOp(exec.opPath);
 
-            // Process has exited: stop pinging the data fds, let them drain, then
-            // force-close so the reader threads unblock even if no close frame arrives.
+            // Process has exited: stop pinging the data fds, drain, then force-close so the
+            // reader threads unblock even if no close frame arrives.
             stdoutAlive.interrupt();
             stderrAlive.interrupt();
-            if (!joinWithin(DRAIN_GRACE_MS, stdoutThread, stderrThread)) {
-                stdoutWs.close();
-                stderrWs.close();
-                joinQuietly(stdoutThread, stderrThread);
-            }
+            drainThenClose(lastData, stdoutThread, stderrThread, stdoutWs, stderrWs);
 
             keepalive.interrupt();
             controlWs.close();
@@ -741,20 +741,36 @@ class IncusApi {
         } catch (IOException ignored) {}
     }
 
-    /** Join all threads within a total budget. Returns true iff all finished in time. */
-    private static boolean joinWithin(long millis, Thread... threads) {
-        long deadline = System.currentTimeMillis() + millis;
-        for (var t : threads) {
-            long remaining = deadline - System.currentTimeMillis();
+    /**
+     * Drain the data reader threads, then force-close their sockets. Returns immediately when
+     * the readers finish on their own (close frames arrived — the healthy path). Otherwise it
+     * waits a short minimum for bytes still in flight, extends while output is still arriving
+     * (so trailing output isn't truncated), and force-closes once output has been idle for
+     * {@link #DRAIN_IDLE_MS} — bounded by {@link #DRAIN_MAX_MS}.
+     */
+    private static void drainThenClose(java.util.concurrent.atomic.AtomicLong lastData,
+                                       Thread stdoutThread, Thread stderrThread,
+                                       IncusTransport.WsConnection stdoutWs,
+                                       IncusTransport.WsConnection stderrWs) {
+        long start = System.nanoTime();
+        while (stdoutThread.isAlive() || stderrThread.isAlive()) {
+            long now = System.nanoTime();
+            long sinceStartMs = (now - start) / 1_000_000L;
+            long sinceDataMs  = (now - lastData.get()) / 1_000_000L;
+            if (sinceStartMs >= DRAIN_MAX_MS) break;
+            if (sinceStartMs >= DRAIN_MIN_MS && sinceDataMs >= DRAIN_IDLE_MS) break;
             try {
-                t.join(Math.max(1, remaining));
+                Thread.sleep(20);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return false;
+                break;
             }
         }
-        for (var t : threads) if (t.isAlive()) return false;
-        return true;
+        if (stdoutThread.isAlive() || stderrThread.isAlive()) {
+            stdoutWs.close();
+            stderrWs.close();
+            joinQuietly(stdoutThread, stderrThread);
+        }
     }
 
     private static void assertAllFdsConnected(JsonNode fds, Set<String> connected) {
@@ -804,11 +820,17 @@ class IncusApi {
         }
     }
 
-    /** Read all data from an already-open WebSocket into dst until the connection closes. */
-    private static void wsWriteTo(IncusTransport.WsConnection ws, OutputStream dst) {
+    /**
+     * Read all data from an already-open WebSocket into dst until the connection closes,
+     * recording the arrival time of each payload so the adaptive drain knows when output has
+     * stopped flowing.
+     */
+    private static void wsWriteTo(IncusTransport.WsConnection ws, OutputStream dst,
+                                  java.util.concurrent.atomic.AtomicLong lastData) {
         try {
             byte[] payload;
             while ((payload = ws.readPayload()) != null) {
+                lastData.set(System.nanoTime());
                 dst.write(payload);
                 dst.flush();
             }

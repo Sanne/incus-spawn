@@ -31,4 +31,18 @@ class DoctorCommandTest {
         assertTrue(f.label().contains(String.valueOf(VmManager.VSOCK_CONN_WARN_THRESHOLD + 1)),
                 "label should report the actual count");
     }
+
+    @Test
+    void leakLayerLocatesVfkitWhenGuestCountStaysLow() {
+        // Host fds high but few in-guest socat children → vfkit isn't reaping (link 2).
+        assertEquals(DoctorCommand.LeakLayer.VFKIT, DoctorCommand.leakLayer(300, 5));
+        assertEquals(DoctorCommand.LeakLayer.VFKIT, DoctorCommand.leakLayer(100, 50), "boundary: guest*2 == host");
+    }
+
+    @Test
+    void leakLayerLocatesForwarderWhenBothCountsClimb() {
+        // Host and in-guest counts climb together → forwarder lingering children (link 3).
+        assertEquals(DoctorCommand.LeakLayer.FORWARDER, DoctorCommand.leakLayer(300, 280));
+        assertEquals(DoctorCommand.LeakLayer.FORWARDER, DoctorCommand.leakLayer(100, 51));
+    }
 }

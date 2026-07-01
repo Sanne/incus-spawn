@@ -136,28 +136,62 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkForwarderLeak() {
-        var base = forwarderFinding(VmManager.vsockForwarderConnectionCount());
+        int host = VmManager.vsockForwarderConnectionCount();
+        var base = forwarderFinding(host);
 
-        // If the in-VM control agent is present, enrich with the in-guest socat child count.
-        // Comparing it to the host-side count locates the leak: low in-guest + high host = vfkit
-        // not reaping (link 2); both high = forwarder lingering children (link 3).
+        // If the in-VM control agent is present, report the in-guest socat child count too.
         var guest = VmAgentClient.socatCount();
         var detail = base.detail();
         if (guest.isPresent()) {
-            var sep = detail == null || detail.isBlank() ? "" : " ";
-            detail = (detail == null ? "" : detail) + sep + "(in-guest socat: " + guest.getAsInt() + ")";
+            detail = append(detail, "(in-guest socat: " + guest.getAsInt() + ")");
         }
 
         if (base.status() == Status.OK) {
             return new Finding(Status.OK, base.label(), detail, null);
         }
-        // Leak: prefer no-reboot recovery via the agent; fall back to the VM restart otherwise.
+        // Leak: if we have both counts, localize which layer is leaking, and pick the matching
+        // remediation — link 3 (forwarder) clears with the no-reboot restart; link 2 (vfkit) needs
+        // a VM restart.
+        if (guest.isPresent()) {
+            var layer = leakLayer(host, guest.getAsInt());
+            detail = append(detail, "— " + layer.description);
+            if (layer == LeakLayer.FORWARDER && VmAgentClient.ping()) {
+                return Finding.warn(base.label(), detail,
+                        new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
+                                false, DoctorCommand::restartForwarderViaAgent));
+            }
+            return new Finding(base.status(), base.label(), detail, base.remediation());
+        }
+        // No in-guest count: try the non-destructive forwarder restart first if the agent answers.
         if (VmAgentClient.ping()) {
             return Finding.warn(base.label(), detail,
                     new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
                             false, DoctorCommand::restartForwarderViaAgent));
         }
         return new Finding(base.status(), base.label(), detail, base.remediation());
+    }
+
+    /** Where forwarder streams are leaking, inferred from host vs in-guest connection counts. */
+    enum LeakLayer {
+        FORWARDER("forwarder is lingering children (link 3) — the in-VM forwarder-restart clears it"),
+        VFKIT("vfkit is not reaping host fds (link 2) — a VM restart is required");
+        final String description;
+        LeakLayer(String description) { this.description = description; }
+    }
+
+    /**
+     * Localize a forwarder leak from the host-side connection count and the in-guest socat child
+     * count. Under a link-3 leak both climb together (each leaked stream is a socat child and a
+     * host fd); under link-2 the host count climbs while the in-guest children are reaped, so the
+     * guest count stays low. Package-private for testing.
+     */
+    static LeakLayer leakLayer(int hostCount, int guestCount) {
+        return guestCount * 2 <= hostCount ? LeakLayer.VFKIT : LeakLayer.FORWARDER;
+    }
+
+    private static String append(String detail, String extra) {
+        if (detail == null || detail.isBlank()) return extra;
+        return detail + " " + extra;
     }
 
     private static void restartForwarderViaAgent() {
