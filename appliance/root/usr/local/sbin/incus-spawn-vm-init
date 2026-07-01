@@ -113,7 +113,9 @@ fi
 # fixed-verb isx-agent — not an arbitrary guest-exec channel.
 AGENT_VSOCK_PORT=$(parse_cmdline "isx.agent_vsock")
 if [ -n "$AGENT_VSOCK_PORT" ]; then
-    socat VSOCK-LISTEN:"$AGENT_VSOCK_PORT",reuseaddr,fork EXEC:/usr/local/sbin/isx-agent &
+    # -T 30: agent verbs are sub-second, so any connection idle for 30s is stuck; reap it.
+    # Bounds a hypothetical future blocking verb (the agent itself never lingers today).
+    socat -T 30 VSOCK-LISTEN:"$AGENT_VSOCK_PORT",reuseaddr,fork EXEC:/usr/local/sbin/isx-agent &
     echo "incus-spawn-vm-init: control agent on vsock port $AGENT_VSOCK_PORT"
 fi
 

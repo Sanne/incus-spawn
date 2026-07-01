@@ -87,10 +87,12 @@ probe_vsock() {
 }
 
 # Verify the in-guest control agent answers over its dedicated vsock port (the channel
-# isx doctor uses for introspection/recovery). One verb per connection: send "ping",
-# expect "ok"; then record the socat-count it reports.
+# isx doctor uses for introspection/recovery), and that its no-reboot forwarder recovery
+# works: ping -> ok, record socat-count, then forwarder-restart and confirm the Incus API
+# is reachable again over the relaunched forwarder and the agent itself survived.
+# $1 = agent socket, $2 = incus vsock socket (to re-probe after recovery).
 probe_agent() {
-    local sock="$1" deadline resp=""
+    local sock="$1" incus_sock="$2" deadline resp=""
     deadline=$(( $(date +%s) + 30 ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
         if [ -S "$sock" ]; then
@@ -99,13 +101,36 @@ probe_agent() {
         fi
         sleep 1
     done
-    if [ "$resp" = "ok" ]; then
-        echo "ISX AGENT OK" >> "$VSOCK_RESULT"
-        local count
-        count=$(printf 'socat-count\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || count=""
-        echo "ISX AGENT SOCAT COUNT: $count" >> "$VSOCK_RESULT"
-    else
+    if [ "$resp" != "ok" ]; then
         echo "ISX AGENT FAIL: no response from control agent" >> "$VSOCK_RESULT"
+        return
+    fi
+    echo "ISX AGENT OK" >> "$VSOCK_RESULT"
+    local count
+    count=$(printf 'socat-count\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || count=""
+    echo "ISX AGENT SOCAT COUNT: $count" >> "$VSOCK_RESULT"
+
+    # No-reboot recovery: restart the forwarder, then confirm the Incus API answers again
+    # over the relaunched forwarder, and that the agent listener is still up afterwards.
+    local recover
+    recover=$(printf 'forwarder-restart\n' | nc -U -w 8 "$sock" 2>/dev/null | tr -d '\r\n') || recover=""
+    if [ "$recover" = "restarted" ]; then
+        local rdeadline body=""
+        rdeadline=$(( $(date +%s) + 20 ))
+        while [ "$(date +%s)" -lt "$rdeadline" ]; do
+            body=$(curl -s --max-time 5 --unix-socket "$incus_sock" http://localhost/1.0 2>/dev/null) || body=""
+            echo "$body" | grep -q '"metadata"' && break
+            sleep 1
+        done
+        if echo "$body" | grep -q '"metadata"'; then
+            echo "ISX AGENT RECOVER OK" >> "$VSOCK_RESULT"
+        else
+            echo "ISX AGENT RECOVER FAIL: Incus not reachable after forwarder-restart" >> "$VSOCK_RESULT"
+        fi
+        [ "$(printf 'ping\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n')" = "ok" ] \
+            && echo "ISX AGENT SURVIVED RECOVER OK" >> "$VSOCK_RESULT"
+    else
+        echo "ISX AGENT RECOVER FAIL: forwarder-restart not confirmed" >> "$VSOCK_RESULT"
     fi
 }
 
@@ -152,7 +177,7 @@ boot_vfkit() {
     # Probe the forwarded socket regardless of ISX READY (the daemon is up well
     # before readiness; the probe polls on its own).
     probe_vsock "$vsock_sock"
-    probe_agent "$agent_sock"
+    probe_agent "$agent_sock" "$vsock_sock"
     kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -f "$dummy_initrd"
 }
@@ -283,6 +308,8 @@ if [ "$BACKEND" = "vfkit" ]; then
     echo "-- Control agent (isx.agent_vsock=1025) --"
     check "control agent on vsock port 1025"   "in-guest control agent started"
     check_result "ISX AGENT OK"                "control agent answered ping over vsock"
+    check_result "ISX AGENT RECOVER OK"        "no-reboot forwarder recovery restored the tunnel"
+    check_result "ISX AGENT SURVIVED RECOVER OK" "control agent still up after forwarder recovery"
 else
     echo
     echo "-- Smoke test (isx.smoke_test=1) --"

@@ -32,9 +32,14 @@ case "$verb" in
         # Recover a leaked/wedged forwarder without rebooting the VM: drop every forwarder
         # socat (parent + children, freeing the host fds vfkit pinned) and relaunch it.
         # The agent's own listener is untouched (different cmdline).
+        #
+        # Detach the relaunch with setsid + std fds to /dev/null so the new forwarder neither
+        # inherits this connection's socket fds (which would leave a dangling dup) nor shares
+        # our process group (so socat tearing this connection down can't signal it). The agent
+        # connection then closes cleanly when this script exits — no lingering fd.
         pkill -f "$FORWARDER_MATCH" 2>/dev/null || true
         sleep 1
-        /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" &
+        setsid /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" </dev/null >/dev/null 2>&1 &
         echo restarted
         ;;
     *)
