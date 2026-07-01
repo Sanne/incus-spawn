@@ -38,8 +38,8 @@ if $NATIVE; then
             echo "Error: docker or podman is required for native builds on Linux."
             exit 1
         fi
-        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:25.0.3"
-        BUILDER_TAG="incus-spawn-graalvm-builder:25.0.3"
+        GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:latest"
+        BUILDER_TAG="incus-spawn-graalvm-builder:25.1"
         if ! $CTR image inspect "$BUILDER_TAG" >/dev/null 2>&1; then
             echo "Preparing GraalVM builder image (one-time)..."
             printf 'FROM %s\nWORKDIR /project\n' "$GRAALVM_BASE" | $CTR build -t "$BUILDER_TAG" -
