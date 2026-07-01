@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>incus-spawn &mdash; Isolated Linux environments in seconds</title>
-  <meta name="description" content="Full system containers with copy-on-write branching and transparent credential isolation. Run AI coding agents, triage untrusted patches, reproduce bug reports — without risking your host.">
-  <meta property="og:title" content="incus-spawn">
-  <meta property="og:description" content="Isolated Linux environments in seconds — full system containers with CoW branching and transparent credential isolation.">
+  <title>isx &mdash; Give your AI coding agents their own machines</title>
+  <meta name="description" content="Give your AI coding agents their own machines — not your credentials. Full Linux workstations with copy-on-write branching and transparent credential isolation, on your hardware.">
+  <meta property="og:title" content="isx">
+  <meta property="og:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://sanne.github.io/incus-spawn/">
   <meta name="twitter:card" content="summary_large_image">
@@ -27,10 +27,11 @@
 </nav>
 
 <header class="hero">
-  <h1>Isolated Linux environments in seconds</h1>
+  <h1>Give your AI coding agents their own machines &mdash; not your credentials</h1>
   <p class="subtitle">
-    Full system containers with copy-on-write branching and transparent credential isolation.
-    Run AI coding agents, triage untrusted patches, reproduce bug reports &mdash; without risking your host.
+    isx onboards agents the way you'd onboard a new teammate: a real Linux workstation of their own,
+    credentials that never enter the environment, and disposable copy-on-write branches.
+    Just as good for triaging untrusted patches and reproducing bug reports &mdash; without risking your host.
   </p>
 
   <div class="install-tabs">
@@ -49,7 +50,7 @@ sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus
 sudo dnf install incus-spawn</code></pre>
     </div>
     <div class="tab-panel" id="tab-linux">
-      <code>curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh</code>
+      <code>curl -fsSL https://isx.run | sh</code>
     </div>
     <div class="tab-panel" id="tab-jbang">
       <code>jbang app install isx@Sanne/incus-spawn</code>
@@ -65,23 +66,6 @@ sudo dnf install incus-spawn</code></pre>
 <main class="features">
 
   <section class="feature">
-    <h2>Real machines, not process jails</h2>
-    <p>
-      <strong>Docker and Podman are built for shipping applications</strong> &mdash;
-      minimal filesystems, single-process isolation, fast startup.
-      incus-spawn solves a different problem: full <strong>system containers</strong> powered by
-      <a href="https://linuxcontainers.org/incus/">Incus</a> that behave like real machines.
-      Each environment runs its own init system, has real networking
-      (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
-      and supports GUI and audio passthrough.
-      Templates pre-install your baseline tools and repos, but the environment is a real Linux system &mdash;
-      agents and users can freely <code>dnf install</code>, <code>pip install</code>,
-      build from source, or run Docker Compose just like on a workstation.
-      For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
-    </p>
-  </section>
-
-  <section class="feature">
     <h2>Credentials never enter containers</h2>
     <p>
       A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently &mdash;
@@ -92,6 +76,23 @@ sudo dnf install incus-spawn</code></pre>
     <p>
       The proxy also caches container image layers and build artifacts on the host &mdash;
       the same dependency is never downloaded twice.
+    </p>
+  </section>
+
+  <section class="feature">
+    <h2>Real machines, not process jails</h2>
+    <p>
+      <strong>Docker and Podman are built for shipping applications</strong> &mdash;
+      minimal filesystems, single-process isolation, fast startup.
+      isx solves a different problem: full <strong>system containers</strong> powered by
+      <a href="https://linuxcontainers.org/incus/">Incus</a> that behave like real machines.
+      Each environment runs its own init system, has real networking
+      (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
+      and supports GUI and audio passthrough.
+      Templates pre-install your baseline tools and repos, but the environment is a real Linux system &mdash;
+      agents and users can freely <code>dnf install</code>, <code>pip install</code>,
+      build from source, or run Docker Compose just like on a workstation.
+      For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
     </p>
   </section>
 

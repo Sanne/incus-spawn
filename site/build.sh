@@ -44,7 +44,7 @@ node -e "
   // Generate TOC HTML
   let tocHtml = '<nav class=\"docs-toc\" aria-label=\"Table of contents\"><ul>';
   // Add Overview link to the top (h1 title)
-  tocHtml += '<li class=\"toc-item\"><a href=\"#incus-spawn\">Overview</a></li>';
+  tocHtml += '<li class=\"toc-item\"><a href=\"#isx\">Overview</a></li>';
   tocItems.forEach(item => {
     const className = item.level === 3 ? 'toc-item toc-item-nested' : 'toc-item';
     tocHtml += '<li class=\"' + className + '\"><a href=\"#' + item.id + '\">' + item.text + '</a></li>';
