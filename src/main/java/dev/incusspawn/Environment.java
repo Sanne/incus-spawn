@@ -91,6 +91,14 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy-lifecycle.log");
     }
 
+    /**
+     * Client-side diagnostic log. Written to a file only (never stdout/stderr) so it is safe
+     * to emit from inside the TUI, which owns the terminal.
+     */
+    public static Path clientLogFile() {
+        return home().resolve(".local/state/incus-spawn/client.log");
+    }
+
     public static final String PROXY_SERVICE_NAME = "incus-spawn-proxy";
 
     public static Path proxyServiceFile() {

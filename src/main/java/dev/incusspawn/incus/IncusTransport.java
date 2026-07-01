@@ -34,6 +34,25 @@ interface IncusTransport {
     }
 
     /**
+     * Like {@link #request(String, String, String, Map, byte[], int)} but may reuse a pooled
+     * keep-alive connection for the request path. Implementations without their own pooling
+     * (UnixSocketTransport) override this; those that already pool (HttpsTransport via the JDK
+     * HttpClient) inherit the default, which just delegates to request().
+     */
+    default RawResponse requestPooled(String method, String path,
+                                      String contentType, Map<String, String> extraHeaders,
+                                      byte[] body, int timeoutSeconds) throws IOException {
+        return request(method, path, contentType, extraHeaders, body, timeoutSeconds);
+    }
+
+    /** Pooled request using the transport's own default timeout. */
+    default RawResponse requestPooled(String method, String path,
+                                      String contentType, Map<String, String> extraHeaders,
+                                      byte[] body) throws IOException {
+        return request(method, path, contentType, extraHeaders, body);
+    }
+
+    /**
      * Execute an HTTP request with body streamed from a file.
      * Implementations must stream the content to avoid loading it entirely into memory.
      */

@@ -166,19 +166,19 @@ public class IncusClient {
     /**
      * Poll a command inside a container until it succeeds or the timeout expires.
      *
-     * Each probe is a full exec (~6 vsock connections), so a fixed 200ms cadence
-     * fires up to ~150 execs and creates hundreds of short-lived connections per
-     * wait — multiplied across every branch/shell/build and amplified by the
-     * forwarder leak. We instead start tight (100ms) for fast detection on quick
-     * starts and back off geometrically to a 1s ceiling, which keeps responsiveness
-     * but cuts the number of probes (and connections) several-fold for slow starts.
-     * The total wait budget is unchanged.
+     * Polls aggressively (tight fixed cadence) so a container that becomes ready is detected
+     * with minimal latency — the snappy behaviour we want. This is affordable because while the
+     * container is not yet ready each probe fails at the {@code POST /exec} — a request-path call
+     * that reuses a warm keep-alive connection from the pool instead of reconnecting — so the
+     * repeated probes no longer each open a new connection. The one successful probe still opens
+     * its exec WebSocket fds (which are per-operation and not pooled), but that happens once.
      *
      * @param timeoutSeconds maximum wait time in seconds.
      */
+    private static final long POLL_INTERVAL_MS = 50;
+
     public boolean pollUntilReady(String name, int timeoutSeconds, String... command) {
         long deadline = System.nanoTime() + timeoutSeconds * 1_000_000_000L;
-        long delayMs = 100;
         while (System.nanoTime() < deadline) {
             try {
                 if (shellExec(name, command).success()) return true;
@@ -186,12 +186,11 @@ public class IncusClient {
                 // Container may not be Running yet — treat any exec failure as not-ready and retry.
             }
             try {
-                Thread.sleep(delayMs);
+                Thread.sleep(POLL_INTERVAL_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             }
-            delayMs = Math.min(delayMs * 2, 1000);
         }
         return false;
     }

@@ -85,6 +85,21 @@ class IncusApiLiveTest {
     }
 
     @Test
+    void pooledGetsReuseOneConnection() {
+        if (skip()) return;
+        http.get("/1.0"); // warm the pool
+        long before = UnixSocketTransport.openedConnectionCount();
+        int n = 30;
+        for (int i = 0; i < n; i++) {
+            assertTrue(http.get("/1.0").isSuccess());
+        }
+        long opened = UnixSocketTransport.openedConnectionCount() - before;
+        System.out.println(n + " sequential GETs opened " + opened + " connection(s)");
+        assertTrue(opened <= 3,
+                "keep-alive reuse expected: " + n + " GETs should open ~1 connection, opened " + opened);
+    }
+
+    @Test
     void networkConfigGetReadsIpv4Address() {
         if (skip()) return;
         var resp = http.get("/1.0/networks/incusbr0");

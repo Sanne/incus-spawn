@@ -62,18 +62,27 @@ class UnixSocketTransport implements IncusTransport {
     private static final java.util.concurrent.Semaphore CONNECTION_PERMITS =
             new java.util.concurrent.Semaphore(MAX_CONCURRENT_CONNECTIONS);
 
+    // Monotonic count of connections ever opened this process — the churn metric. With the
+    // keep-alive pool, many sequential request-path calls should open only a handful of
+    // connections instead of one each.
+    private static final java.util.concurrent.atomic.AtomicLong TOTAL_OPENED =
+            new java.util.concurrent.atomic.AtomicLong();
+
     /** Number of transport connections currently open. */
     static int openConnectionCount() { return OPEN_CONNECTIONS.get(); }
 
     /** Highest number of simultaneously-open connections seen this process. */
     static int peakConnectionCount() { return peakConnections; }
 
+    /** Total connections opened this process (monotonic) — reuse keeps this low. */
+    static long openedConnectionCount() { return TOTAL_OPENED.get(); }
+
     /**
      * Record a newly-opened connection and try to claim a concurrency permit.
      * @return true if a permit was acquired (must be passed to {@link #connectionClosed}).
      *         A false return means we proceeded without throttling (fail-open).
      */
-    private static boolean connectionOpened() {
+    static boolean connectionOpened() {
         boolean permit;
         try {
             permit = CONNECTION_PERMITS.tryAcquire(PERMIT_TIMEOUT_MS,
@@ -82,13 +91,14 @@ class UnixSocketTransport implements IncusTransport {
             Thread.currentThread().interrupt();
             permit = false;
         }
+        TOTAL_OPENED.incrementAndGet();
         int now = OPEN_CONNECTIONS.incrementAndGet();
         // Benign race on the compare/store — this is a diagnostic counter, not a lock.
         if (now > peakConnections) peakConnections = now;
         return permit;
     }
 
-    private static void connectionClosed(boolean permit) {
+    static void connectionClosed(boolean permit) {
         OPEN_CONNECTIONS.decrementAndGet();
         if (permit) CONNECTION_PERMITS.release();
     }
@@ -107,6 +117,51 @@ class UnixSocketTransport implements IncusTransport {
                                String contentType, Map<String, String> extraHeaders,
                                byte[] bodyBytes) throws IOException {
         return request(method, path, contentType, extraHeaders, bodyBytes, timeoutSeconds);
+    }
+
+    @Override
+    public RawResponse requestPooled(String method, String path,
+                                     String contentType, Map<String, String> extraHeaders,
+                                     byte[] body) throws IOException {
+        return requestPooled(method, path, contentType, extraHeaders, body, timeoutSeconds);
+    }
+
+    @Override
+    public RawResponse requestPooled(String method, String path,
+                                     String contentType, Map<String, String> extraHeaders,
+                                     byte[] body, int requestTimeout) throws IOException {
+        var pool = ConnectionPool.global();
+        var conn = pool.borrow(socketPath);
+        boolean reused = conn != null;
+        if (conn == null) conn = KeepAliveConnection.open(socketPath);
+        try {
+            var resp = conn.execute(method, path, contentType, extraHeaders, body, requestTimeout);
+            pool.release(conn); // park warm, or close if full/unhealthy
+            return resp;
+        } catch (KeepAliveConnection.StaleConnectionException stale) {
+            // The request provably did not execute — recycle and retry once on a fresh
+            // connection. Expected keep-alive hygiene: diagnoseable in the file log, never
+            // surfaced to the user or the TUI.
+            conn.close();
+            dev.incusspawn.ClientLog.debug("recycled stale pooled connection ("
+                    + (reused ? "reused" : "fresh") + ") for " + method + " " + path
+                    + ": " + stale.getMessage());
+            var fresh = KeepAliveConnection.open(socketPath);
+            try {
+                var resp = fresh.execute(method, path, contentType, extraHeaders, body, requestTimeout);
+                pool.release(fresh);
+                return resp;
+            } catch (IOException | RuntimeException e) {
+                fresh.close();
+                throw e;
+            }
+        } catch (IOException | RuntimeException e) {
+            // Anything else may have executed (or is a real failure) — do not retry; surface it.
+            // Include RuntimeException (e.g. a parse error) so the connection is always closed
+            // and its accounting/permit released rather than leaked.
+            conn.close();
+            throw e;
+        }
     }
 
     @Override

@@ -400,7 +400,7 @@ class IncusApi {
     private ApiResponse request(String method, String path, Object bodyObj) {
         try {
             byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
-            var raw = transport.request(method, path, "application/json", Map.of(), bodyBytes);
+            var raw = transport.requestPooled(method, path, "application/json", Map.of(), bodyBytes);
             var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
             return new ApiResponse(raw.statusCode(), bodyJson);
         } catch (IOException e) {
@@ -412,7 +412,7 @@ class IncusApi {
                                            int timeoutSeconds) {
         try {
             byte[] bodyBytes = bodyObj != null ? JSON.writeValueAsBytes(bodyObj) : new byte[0];
-            var raw = transport.request(method, path, "application/json", Map.of(),
+            var raw = transport.requestPooled(method, path, "application/json", Map.of(),
                     bodyBytes, timeoutSeconds);
             var bodyJson = raw.body().length == 0 ? JSON.nullNode() : JSON.readTree(raw.body());
             return new ApiResponse(raw.statusCode(), bodyJson);
