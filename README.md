@@ -1,16 +1,20 @@
-# incus-spawn
+# isx
 
-Spin up isolated Linux environments in seconds — full system containers with copy-on-write branching and transparent credential isolation. Run AI coding agents, triage untrusted patches, reproduce bug reports — without risking your host.
+**Give your AI coding agents their own machines — not your credentials.**
 
-**Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. incus-spawn solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation. For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
+You're about to hand an AI agent a terminal. On your laptop, that terminal can read your API keys, your GitHub token, your `~/.ssh`, and every repo you have checked out — and anything it writes, your IDE and build tools will happily execute.
 
-**API keys and tokens never enter containers.** A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently — `claude`, `pi`, `gh`, `git`, `curl`, and any other tool work unmodified, with no configuration or wrappers needed inside the environment. Branches run with full internet, proxy-only egress, or completely airgapped. The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice.
+isx onboards agents the way you'd onboard a new teammate:
 
-**Branching is instant.** Like `git branch`, each clone is a copy-on-write snapshot that shares storage with its parent. Build a template once with your preferred tools and repos, then spin up complete, disposable environments in seconds — each with its own filesystem, networking, and process tree. Get your work back via standard `git fetch` using `isx://` remotes.
+- **A real machine of their own.** Each agent gets a full Linux workstation — its own filesystem, init system, networking, and process tree. It can `dnf install`, run Docker Compose, use `strace` and nested containers — everything works, because it *is* a real system, not an app container. Hardware-isolated KVM virtual machines are one flag away for untrusted code.
+- **Zero credential exposure.** API keys and tokens never enter the environment in any form. A host-side TLS proxy injects real credentials upstream, so `claude`, `pi`, `gh`, `git`, and `curl` work unmodified inside — with nothing worth stealing. See [Credential Isolation](#credential-isolation).
+- **Disposable in seconds.** Branch a prepared template like you'd branch a repo — instant copy-on-write clones. Review the agent's work as immutable git commits via [`isx://` remotes](#git-remotes), merge what you like, destroy the rest.
 
-**Built for developer workflows.** Templates are YAML: packages, tools, repos. Branch and it's all there. Git remotes are managed automatically — `git fetch fix-auth` from your host pulls commits straight out of the container. VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
+Runs on Linux and macOS, on your hardware. Your code and credentials never leave the building.
 
-Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/).
+Agents are the headline, not the limit: the same disposable machines are ideal for triaging untrusted patches, reproducing bug reports, and testing on a clean system — anything you'd rather not run on your host.
+
+Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), powered by [Incus](https://linuxcontainers.org/incus/) system containers. *(isx was formerly known as incus-spawn.)*
 
 ## Quick Start
 
@@ -27,7 +31,7 @@ brew install Sanne/tap/incus-spawn
 On Linux (x86_64):
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
+curl -fsSL https://isx.run | sh
 ```
 
 On other Linux architectures:
@@ -49,6 +53,23 @@ isx
 
 Fedora users can also install via `dnf`, and JBang users via `jbang` — see [Installation](#installation) for all options. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
 
+## Credential Isolation
+
+**API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
+
+- The proxy uses bridge-level DNS overrides and a custom CA certificate so containers transparently route intercepted domains through the proxy
+- The proxy terminates TLS, injects real authentication headers, and forwards to the real upstream over TLS — tools (`curl`, `git`, `gh`, `claude`, `pi`) work unmodified inside containers
+- Containers hold only placeholder values (e.g. `sk-ant-placeholder`) that satisfy tools' local auth checks; placeholders cannot authenticate against any real service
+- **Vertex AI support**: the proxy transparently translates requests to Vertex AI format — no GCP credentials enter the container
+- **Claude Pro/Max support**: authenticate via `claude setup-token`; the proxy injects the OAuth Bearer token transparently
+- **HTTPS only**: Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS; for `git clone`, use `https://github.com/...`
+
+There is no API, endpoint, environment variable, or file that code inside the container can access to obtain real credentials — the injection happens entirely outside the trust boundary.
+
+The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service, or run `isx proxy` in a separate terminal. The CLI verifies proxy reachability and version compatibility before builds, branches, and shell access.
+
+The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice (see [Caching](#caching)).
+
 ## Branching
 
 Like `git branch`, branching creates an instant copy-on-write clone of any template. Each branch has its own independent filesystem -- changes in one branch cannot affect the template or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications. `isx init` automatically creates a btrfs storage pool if needed.
@@ -64,17 +85,7 @@ You can install packages, break things, and destroy a branch when done. The temp
 
 Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
 
-### Credential Isolation
-
-**API keys and tokens never enter containers in any form.** A host-side MITM TLS proxy (`isx proxy`) provides completely transparent authentication:
-
-- The proxy uses bridge-level DNS overrides and a custom CA certificate so containers transparently route intercepted domains through the proxy
-- The proxy terminates TLS, injects real authentication headers, and forwards to the real upstream over TLS — tools (`curl`, `git`, `gh`, `claude`, `pi`) work unmodified inside containers
-- **Vertex AI support**: the proxy transparently translates requests to Vertex AI format — no GCP credentials enter the container
-- **Claude Pro/Max support**: authenticate via `claude setup-token`; the proxy injects the OAuth Bearer token transparently
-- **HTTPS only**: Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS; for `git clone`, use `https://github.com/...`
-
-The proxy must be running for non-airgapped containers. `isx init` can install it as a systemd user service, or run `isx proxy` in a separate terminal. The CLI verifies proxy reachability and version compatibility before builds, branches, and shell access.
+Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills.
 
 ### Network Modes
 
@@ -88,14 +99,17 @@ Each branch runs in one of three network modes:
 
 ### Git Remotes
 
-Containers created with `isx branch` are isolated environments, but you need a way to get your changes back. incus-spawn integrates with git's native remote helper protocol so you can use standard `git fetch`, `git push`, and `git pull` between host repos and container repos:
+Containers created with `isx branch` are isolated environments, but you need a way to get your changes back. isx integrates with git's native remote helper protocol so you can use standard `git fetch`, `git push`, and `git pull` between host repos and container repos:
 
 ```shell
-# Inside the container, you make some commits...
+# Inside the container, the agent makes some commits...
 # Back on the host:
 git fetch fix-auth
-git cherry-pick fix-auth/main
+git diff main..fix-auth/main    # review exactly what it did
+git cherry-pick fix-auth/main   # take what you like
 ```
+
+This is the intended review workflow: you always act on a specific, immutable commit — never on a live directory the agent can still modify (see the [FAQ](#faq) for why there is deliberately no read-write project mount).
 
 #### isx:// URLs
 
@@ -128,22 +142,13 @@ repo-paths:
 
 With this configuration, `isx branch` adds a git remote named after the instance in each matching host repo (protocol-lenient — SSH and HTTPS URLs for the same repo are treated as equal), and `isx destroy` removes it.
 
-## Caching
+## Why full system containers?
 
-The proxy and build system cache artifacts on the host, shared across all templates and branches. Only immutable, content-addressed artifacts are cached — mutable data (Maven SNAPSHOTs, repository metadata, version listings) always passes through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
+**Docker and Podman are built for shipping applications** — minimal filesystems, single-process isolation, fast startup. isx solves a different problem: full **system containers** powered by [Incus](https://linuxcontainers.org/incus/) that behave like real machines. Each environment runs its own init system, has real networking (`ping`, `strace`, nested Podman/Docker), and supports GUI and audio passthrough (Linux only). Templates pre-install your baseline tools and repos, but the environment is a real Linux system — agents and users can freely `dnf install`, `pip install`, build from source, or run Docker Compose just like on a workstation.
 
-Proxy caches (from container traffic):
+This matters for agents in particular: an agent boxed into an app container hits walls constantly (no systemd services, no nested containers for Testcontainers, no debugging tools). An agent on an isx branch works exactly as it would on a developer workstation — because that's what it has.
 
-- **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed by SHA256 content digest
-- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal
-- **Gradle distributions** — verified against the upstream `.sha256` sidecar
-
-Build-time caches:
-
-- **DNF packages** — host-side cache mounted during builds so child images reuse parent downloads
-- **Tool downloads** — cached on the host by SHA256; rebuilds reuse unchanged artifacts
-
-All caches live under `~/.cache/incus-spawn/`. There is no automatic eviction — every entry is content-addressed or version-pinned, so it is either correct forever or superseded by a newer version with its own entry.
+For untrusted code, KVM virtual machines (`--vm`) provide hardware-level isolation with a separate kernel.
 
 ## Template Images
 
@@ -552,6 +557,27 @@ actions:
     auto_return: true
 ```
 
+## Caching
+
+The proxy and build system cache artifacts on the host, shared across all templates and branches. Only immutable, content-addressed artifacts are cached — mutable data (Maven SNAPSHOTs, repository metadata, version listings) always passes through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
+
+Proxy caches (from container traffic):
+
+- **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed by SHA256 content digest
+- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal
+- **Gradle distributions** — verified against the upstream `.sha256` sidecar
+
+Build-time caches:
+
+- **DNF packages** — host-side cache mounted during builds so child images reuse parent downloads
+- **Tool downloads** — cached on the host by SHA256; rebuilds reuse unchanged artifacts
+
+All caches live under `~/.cache/incus-spawn/`. There is no automatic eviction — every entry is content-addressed or version-pinned, so it is either correct forever or superseded by a newer version with its own entry.
+
+## Roadmap
+
+isx is evolving from a container manager into **mission control for parallel coding agents**: per-agent identities and audited commit signing ([#271](https://github.com/Sanne/incus-spawn/issues/271)), proxy-derived monitoring of agent status and spend, task dispatch, and an in-TUI review lane ([#322](https://github.com/Sanne/incus-spawn/issues/322)). Local-first stays the core conviction — your hardware, your network, your repos. See [docs/VISION.md](docs/VISION.md) for the full direction.
+
 ## Installation
 
 ### macOS (Homebrew)
@@ -575,7 +601,7 @@ Updates automatically with `sudo dnf upgrade`.
 ### Any Linux distro (native binary)
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/Sanne/incus-spawn/main/get-isx.sh | sh
+curl -fsSL https://isx.run | sh
 ```
 
 Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. Set `INSTALL_DIR` to change the install location. To update, re-run the same command. To uninstall, run `uninstall.sh` (caches at `~/.cache/incus-spawn/` are preserved unless you pass `--purge`).
@@ -621,7 +647,7 @@ Resolution order (later sources override earlier ones with the same name):
 
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?
 
-A project directory is not just data — it is an implicit code execution channel. Build tools, package managers, and IDEs all trust its contents and execute them with your full host privileges. A read-write mount turns the agent's output into unreviewed host-side code execution, which is exactly the threat model incus-spawn exists to prevent.
+A project directory is not just data — it is an implicit code execution channel. Build tools, package managers, and IDEs all trust its contents and execute them with your full host privileges. A read-write mount turns the agent's output into unreviewed host-side code execution, which is exactly the threat model isx exists to prevent.
 
 Two attack surfaces make this dangerous even for "just the project directory":
 
@@ -665,6 +691,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | `isx proxy uninstall` | Stop and remove the systemd proxy service |
 | `isx proxy logs` | View proxy logs |
 | `isx proxy dump` | Run a local pass-through proxy for API traffic capture |
+| `isx doctor` | Diagnose host, proxy, VM, and tunnel health |
 | `isx vm start` | Start the VM (macOS only) |
 | `isx vm stop` | Stop the VM (macOS only) |
 | `isx vm status` | Show VM status and system diagnostics (macOS only) |
