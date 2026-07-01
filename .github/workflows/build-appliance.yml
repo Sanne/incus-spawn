@@ -25,7 +25,7 @@ jobs:
       cache_key: ${{ steps.cache_key.outputs.key }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Compute cache key
         id: cache_key
@@ -33,7 +33,7 @@ jobs:
 
       - name: Restore cached image
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
@@ -53,13 +53,13 @@ jobs:
 
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
       - name: Upload as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: appliance-x86_64
           path: appliance/build/
@@ -71,7 +71,7 @@ jobs:
       cache_key: ${{ steps.cache_key.outputs.key }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Compute cache key
         id: cache_key
@@ -79,7 +79,7 @@ jobs:
 
       - name: Restore cached image
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
@@ -99,13 +99,13 @@ jobs:
 
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
       - name: Upload as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: appliance-aarch64
           path: appliance/build/

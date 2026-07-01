@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Oracle GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
@@ -31,11 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Restore appliance image
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: appliance/build/
           key: ${{ needs.build_appliance.outputs.cache_key_x86_64 }}
@@ -43,7 +43,7 @@ jobs:
 
       - name: Download appliance artifact (fallback)
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: appliance-x86_64
           path: appliance/build/
@@ -116,7 +116,7 @@ jobs:
 
       - name: Upload console log
         if: always() && steps.kvm.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vm-console-log
           path: vm-console.log
