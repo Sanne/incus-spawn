@@ -371,19 +371,21 @@ public final class VmManager {
         if (!Environment.isMacOS() || !Files.exists(sock)) return -1;
         try {
             var pb = new ProcessBuilder("lsof", "-nP", "-U");
-            pb.redirectErrorStream(false);
+            pb.redirectErrorStream(true);
             var proc = pb.start();
-            int count;
-            try (var r = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(proc.getInputStream()))) {
-                count = (int) r.lines().filter(l -> l.contains(sock.toString())).count();
-            }
-            if (!proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+            var future = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (var r = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(proc.getInputStream()))) {
+                    return (int) r.lines().filter(l -> l.contains(sock.toString())).count();
+                } catch (IOException e) { return -1; }
+            });
+            if (!proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
                 proc.destroyForcibly();
                 return -1;
             }
-            return count;
-        } catch (IOException | InterruptedException e) {
+            return future.get(1, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (IOException | InterruptedException | java.util.concurrent.ExecutionException
+                 | java.util.concurrent.TimeoutException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             return -1;
         }

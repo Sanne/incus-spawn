@@ -20,9 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * can't: high-throughput output, a long idle stream (keepalive must hold the data fds open),
  * and bidirectional stdin/stdout.
  *
- * Skipped automatically when Incus is unreachable. Target a specific container with
- *   -Disx.test.container=isx-validate-exec
- * otherwise the first Running container is used.
+ * Opt-in only: requires {@code -Disx.test.container=<name>} naming an explicitly
+ * chosen throwaway container. A plain {@code mvn test} never runs these tests.
  *
  *   mvn test -Dtest=ExecStreamLiveTest -Disx.test.container=isx-validate-exec
  */

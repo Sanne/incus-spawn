@@ -637,10 +637,11 @@ class IncusApi {
     /**
      * Grace window after the operation completes during which the data sockets are
      * allowed to drain any bytes still in flight over the tunnel before we force-close
-     * them. In the healthy case the server's own close frames arrive first and this is
+     * them. 2 s is generous enough for a slow/loaded vsock tunnel to flush its buffers.
+     * In the healthy case the server's own close frames arrive first and this is
      * never reached; it only bounds the wait when close frames never arrive (macOS vsock).
      */
-    private static final long DRAIN_GRACE_MS = 250;
+    private static final long DRAIN_GRACE_MS = 2000;
 
     /**
      * Unified non-interactive exec over WebSockets, used for capture, streaming and
@@ -823,8 +824,13 @@ class IncusApi {
      * must report completion only when the process has actually exited, otherwise we would
      * force-close the data sockets mid-stream and truncate output on long commands.
      */
+    // Absolute ceiling so a zombie process or daemon bug cannot block the caller forever.
+    // Well above any real command (4 hours); the per-iteration budget is WAIT_TIMEOUT_SECONDS.
+    private static final long MAX_EXEC_WAIT_SECONDS = 4 * 3600L;
+
     private int waitForExecOp(String opPath) {
-        while (true) {
+        long deadline = System.nanoTime() + MAX_EXEC_WAIT_SECONDS * 1_000_000_000L;
+        while (System.nanoTime() < deadline) {
             var waitResp = requestWithTimeout("GET",
                     opPath + "/wait?timeout=" + WAIT_TIMEOUT_SECONDS,
                     null, WAIT_TIMEOUT_SECONDS + 30);
@@ -840,6 +846,9 @@ class IncusApi {
             }
             return meta.path("metadata").path("return").asInt(0);
         }
+        System.err.println("Warning: exec operation timed out after "
+                + MAX_EXEC_WAIT_SECONDS + "s on " + opPath + " — exit code unknown");
+        return -1;
     }
 
     private static void joinQuietly(Thread... threads) {

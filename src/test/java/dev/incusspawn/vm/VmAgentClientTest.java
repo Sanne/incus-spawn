@@ -40,8 +40,9 @@ class VmAgentClientTest {
     }
 
     @AfterEach
-    void stop() throws IOException {
+    void stop() throws IOException, InterruptedException {
         try { server.close(); } catch (IOException ignored) {}
+        serverThread.join(2000);
         Files.deleteIfExists(sock);
         Files.deleteIfExists(dir);
     }
