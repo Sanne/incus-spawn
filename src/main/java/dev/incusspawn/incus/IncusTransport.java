@@ -6,8 +6,9 @@ import java.util.Map;
 
 /**
  * Transport abstraction for the Incus REST API.
- * Decouples the protocol layer (Unix socket, HTTPS) from API semantics.
- * Linux uses UnixSocketTransport; macOS uses HttpsTransport.
+ * Decouples the protocol layer from API semantics. Both Linux and macOS use
+ * {@link UnixSocketTransport} (a Unix domain socket directly, or the vfkit vsock tunnel
+ * exposed as one). {@link HttpsTransport} is no longer wired into connection selection.
  */
 interface IncusTransport {
 

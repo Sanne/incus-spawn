@@ -162,6 +162,7 @@ vfkit --cpus 2 --memory 2048 \
   --device virtio-net,nat \
   --device virtio-serial,logFilePath=vm.log \
   --device virtio-vsock,port=8443,socketURL=~/.local/state/incus-spawn/vm.incus.sock,connect \
+  --device virtio-vsock,port=1025,socketURL=~/.local/state/incus-spawn/vm.agent.sock,connect \
   --restful-uri tcp://localhost:$PORT
 ```
 
@@ -170,6 +171,7 @@ vfkit --cpus 2 --memory 2048 \
 - REST API for lifecycle management (stop via `POST /vm/state {"state":"Stop"}`)
 - NAT networking with DHCP (interface appears as `enp0s1`)
 - **vsock tunnel**: the `virtio-vsock` device exposes the VM's vsock port 8443 as a Unix domain socket on the host. Inside the VM, socat bridges this to the Incus daemon's Unix socket, giving the host direct plain-HTTP access to the Incus API without TCP or TLS. This bypasses corporate VPN socket filters (e.g. Cisco AnyConnect) that block non-Apple-signed binaries from TCP connections to the VM subnet
+- **control agent channel**: a second `virtio-vsock` device (port 1025 → `vm.agent.sock`) exposes the allowlisted in-VM control agent on an independent channel, so the host can introspect and recover the forwarder even when the Incus tunnel itself is wedged. See "Control agent and forwarder recovery" below.
 
 ### QEMU (Linux / CI)
 
@@ -189,6 +191,7 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 - `vm.log` -- serial console output
 - `vm.rest-uri` -- vfkit REST API endpoint (macOS only)
 - `vm.incus.sock` -- vsock Unix socket for Incus API (macOS/vfkit only, created by vfkit, cleaned up on stop)
+- `vm.agent.sock` -- vsock Unix socket for the in-VM control agent (macOS/vfkit only, cleaned up on stop)
 
 **Configuration** via environment variables (overrides adaptive defaults):
 - `ISX_VM_DISK` -- disk size (default: `60G`)
@@ -206,17 +209,26 @@ Lifecycle script with subcommands: `start`, `stop`, `status`, `console`.
 
 ## First-Boot Initialization
 
-`incus-spawn-vm-init` runs from `rcS` after `incusd` is started. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`, `isx.vsock_incus`) and:
+`incus-spawn-vm-init` runs from `rcS` after `incusd` is started. It reads configuration from kernel command line parameters (`isx.gateway`, `isx.mitm_port`, `isx.shared`, `isx.vsock_incus`, `isx.agent_vsock`) and:
 
 1. Waits for DNS readiness (nameserver entry in `/etc/resolv.conf`, populated by `udhcpc`)
 2. Waits for the Incus daemon to become ready (up to 30 seconds)
 3. Creates the `incusbr0` bridge network with the configured gateway IP and NAT
 4. Creates a btrfs storage pool (`cow`) backed by a loop file, adaptively sized (half of free disk, capped at 30 GB, minimum 1 GB)
 5. Installs an iptables PREROUTING redirect rule (port 443 -> MITM proxy port) on the bridge interface
-6. Starts the vsock forwarder if `isx.vsock_incus` is set (socat bridges vsock port to `/var/lib/incus/unix.socket`)
-7. Symlinks the `isx` binary from the shared directory if available
+6. Starts the vsock forwarder if `isx.vsock_incus` is set — via the shared `isx-start-vsock-forwarder` launcher (`socat -T 180 VSOCK-LISTEN:<port>,reuseaddr,fork UNIX-CONNECT:/var/lib/incus/unix.socket`)
+7. Starts the control agent if `isx.agent_vsock` is set (`socat -T 30 VSOCK-LISTEN:<port>,reuseaddr,fork EXEC:/usr/local/sbin/isx-agent`)
+8. Symlinks the `isx` binary from the shared directory if available
 
 On subsequent boots, the script detects existing configuration and skips creation steps.
+
+## Control agent and forwarder recovery
+
+The host reaches Incus through `host → vfkit vsock → in-VM socat forwarder → /var/lib/incus/unix.socket`. The vfkit vsock boundary does not reliably propagate connection close/EOF, so the forwarder can accumulate connections whose close never crossed the boundary — leaked `socat` fork children, each pinning a host-side vfkit fd, degrading new-connection latency until cleared. Two appliance-side mechanisms address this:
+
+- **Inactivity backstop.** The forwarder runs with `socat -T 180`: any connection idle for 180 s is reaped. The floor sits above the Incus operation `/wait` long-poll (up to 120 s of legitimate silence) and the client request watchdog (150 s), and the host keepalive-pings every live exec fd, so `-T` only ever collects genuinely-dead connections. The forwarder launch lives in one place (`isx-start-vsock-forwarder`) so boot and recovery share the exact invocation.
+
+- **Allowlisted control agent (`isx-agent`).** A tiny POSIX-shell agent, fronted by `socat ... EXEC:` on its own vsock port (1025), dispatches a **fixed verb allowlist only** — `ping`, `socat-count`, `sshd-status`, `forwarder-restart` — never arbitrary input (the verb is matched against `case` arms, never `eval`'d). It's reached over an independent vsock channel, so it works even when the Incus tunnel is wedged. `forwarder-restart` `pkill`s the forwarder (freeing its leaked streams and the host fds vfkit pinned) and relaunches it via `isx-start-vsock-forwarder`, detached with `setsid` so the new forwarder doesn't inherit the agent connection's fds — recovering the tunnel **without rebooting the VM or stopping running containers**. `socat-count` reports the in-VM forwarder child count, which `isx doctor` compares against the host-side connection count to localize a leak (vfkit vs forwarder). `appliance/test-boot.sh` asserts the agent answers and that the no-reboot recovery restores the tunnel.
 
 ## Testing
 
