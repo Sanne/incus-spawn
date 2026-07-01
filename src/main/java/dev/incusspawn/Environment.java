@@ -196,7 +196,7 @@ public final class Environment {
         return applianceDir().resolve("disk.img.gz");
     }
 
-    // --- Incus client config paths (used by HttpsTransport on macOS) ---
+    // --- Incus client config paths (used by IncusRemoteSetup on macOS) ---
 
     public static Path incusConfigDir() {
         return configDir().resolve("vm");

@@ -7,8 +7,8 @@ import java.util.Map;
 /**
  * Transport abstraction for the Incus REST API.
  * Decouples the protocol layer from API semantics. Both Linux and macOS use
- * {@link UnixSocketTransport} (a Unix domain socket directly, or the vfkit vsock tunnel
- * exposed as one). {@link HttpsTransport} is no longer wired into connection selection.
+ * {@link UnixSocketTransport} — a Unix domain socket directly, or the vfkit vsock tunnel
+ * exposed as one.
  */
 interface IncusTransport {
 
@@ -36,9 +36,8 @@ interface IncusTransport {
 
     /**
      * Like {@link #request(String, String, String, Map, byte[], int)} but may reuse a pooled
-     * keep-alive connection for the request path. Implementations without their own pooling
-     * (UnixSocketTransport) override this; those that already pool (HttpsTransport via the JDK
-     * HttpClient) inherit the default, which just delegates to request().
+     * keep-alive connection for the request path. {@link UnixSocketTransport} overrides this;
+     * the default just delegates to request() for transports without their own pooling.
      */
     default RawResponse requestPooled(String method, String path,
                                       String contentType, Map<String, String> extraHeaders,
