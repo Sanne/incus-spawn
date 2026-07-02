@@ -30,6 +30,8 @@ import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolAction;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.tui.ShiftTabBindings;
+import dev.incusspawn.tui.TerminalThemeDetector;
+import dev.incusspawn.tui.TuiTheme;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -90,6 +92,9 @@ public class ListCommand extends BaseCommand {
     private BackgroundTaskManager backgroundTasks;
 
     private InstanceLockManager lockManager;
+
+    private final TuiTheme theme = TerminalThemeDetector.detect();
+    private final ModalRenderer modal = new ModalRenderer(theme);
 
     // Background operation state
     private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
@@ -1242,13 +1247,13 @@ public class ListCommand extends BaseCommand {
 
         // Progress overlay — rendered on top of everything else, regardless of mode
         if (progressMessage != null) {
-            ModalRenderer.renderProgressOverlay(frame, area, progressMessage);
+            modal.renderProgressOverlay(frame, area, progressMessage);
         }
     }
 
     private void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         boolean focused = focusedPanel == Panel.TEMPLATES;
-        var borderColor = focused ? Color.CYAN : Color.DARK_GRAY;
+        var borderColor = focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused();
 
         if (templateEntries.isEmpty()) {
             var block = Block.builder()
@@ -1260,7 +1265,7 @@ public class ListCommand extends BaseCommand {
             if (inner.height() > 0) {
                 frame.renderWidget(Paragraph.from(
                         Line.styled("  No template definitions found.",
-                                Style.EMPTY.fg(Color.GRAY))), inner);
+                                Style.EMPTY.fg(theme.textDim()))), inner);
             }
             return;
         }
@@ -1299,13 +1304,13 @@ public class ListCommand extends BaseCommand {
 
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "BUILT", "DESCRIPTION")
-                        .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
+                        .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(templateRows)
                 .widths(Constraint.length(20), Constraint.length(20), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
-            var highlightStyle = Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE);
+            var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
             // Preserve modifiers from selected row if it has a pending operation
             var selected = selectedTemplate();
             if (selected != null && !selected.pendingOp.isEmpty()) {
@@ -1327,7 +1332,7 @@ public class ListCommand extends BaseCommand {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
                     .thumbStyle(Style.EMPTY.fg(borderColor))
-                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
+                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
                     .build();
             var scrollState = new ScrollbarState()
                     .contentLength(templateRows.size())
@@ -1340,7 +1345,7 @@ public class ListCommand extends BaseCommand {
     private void renderLegend(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         var text = "! = outdated  \u25b3 = changed  \u2191 = parent rebuilt ";
         var padding = Math.max(0, area.width() - text.length());
-        var style = Style.EMPTY.fg(Color.GRAY);
+        var style = Style.EMPTY.fg(theme.textDim());
         frame.renderWidget(Paragraph.from(Line.from(
                 Span.styled(" ".repeat(padding) + text, style))), area);
     }
@@ -1348,7 +1353,7 @@ public class ListCommand extends BaseCommand {
     private void renderInstanceTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                       TableState tableState) {
         boolean focused = focusedPanel == Panel.INSTANCES;
-        var borderColor = focused ? Color.CYAN : Color.DARK_GRAY;
+        var borderColor = focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused();
 
         if (entries.isEmpty()) {
             var block = Block.builder()
@@ -1363,7 +1368,7 @@ public class ListCommand extends BaseCommand {
                         .split(inner);
                 frame.renderWidget(Paragraph.from(
                         Line.styled("  No instances. Select a template and press Enter to create one.",
-                                Style.EMPTY.fg(Color.GRAY))), hint.get(1));
+                                Style.EMPTY.fg(theme.textDim()))), hint.get(1));
             }
             return;
         }
@@ -1392,7 +1397,7 @@ public class ListCommand extends BaseCommand {
 
         var tableBuilder = Table.builder()
                 .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE")
-                        .style(Style.EMPTY.bold().fg(focused ? Color.CYAN : Color.DARK_GRAY)))
+                        .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(tableRows)
                 .widths(Constraint.fill(), Constraint.length(9),
                         Constraint.length(16), Constraint.length(14),
@@ -1400,7 +1405,7 @@ public class ListCommand extends BaseCommand {
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
-            var highlightStyle = Style.EMPTY.bg(Color.DARK_GRAY).fg(Color.WHITE);
+            var highlightStyle = Style.EMPTY.bg(theme.highlightBg()).fg(theme.highlightFg());
             // Preserve modifiers from selected row if it has a pending operation
             var selected = selectedEntry(tableState);
             if (selected != null && !selected.pendingOp.isEmpty()) {
@@ -1422,7 +1427,7 @@ public class ListCommand extends BaseCommand {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
                     .thumbStyle(Style.EMPTY.fg(borderColor))
-                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
+                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
                     .build();
             var scrollState = new ScrollbarState()
                     .contentLength(tableRows.size())
@@ -1436,7 +1441,7 @@ public class ListCommand extends BaseCommand {
 
     private void renderToolbar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area,
                                 TableState tableState, boolean hasStatus) {
-        fillBackground(frame, area, BAR_BG);
+        fillBackground(frame, area, theme.barBg());
 
         var template = selectedTemplate();
         boolean hasTemplate = template != null;
@@ -1466,8 +1471,8 @@ public class ListCommand extends BaseCommand {
             var singleLine = statusMessage.replaceAll("[\\n\\r]+", " ").strip();
             var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
                     || singleLine.startsWith("Template");
-            var statusBg = Color.rgb(0, 0, 80);
-            var msgFg = isError ? Color.LIGHT_RED : Color.WHITE;
+            var statusBg = theme.statusBarBg();
+            var msgFg = isError ? theme.statusBarErrorFg() : theme.contextPrimaryFg();
             frame.renderWidget(
                     Paragraph.builder()
                             .text(Text.from(Line.styled(" " + singleLine,
@@ -1483,16 +1488,15 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private static final Color CONTEXT_BG = Color.rgb(30, 30, 50);
 
     private Line buildContextLine(TemplateInfo template, InstanceInfo instance, boolean onTemplates) {
-        var bg = CONTEXT_BG;
+        var bg = theme.contextBg();
         if (onTemplates && template != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(Color.WHITE).bg(bg)));
+            spans.add(Span.styled(" " + template.name, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
             boolean hasWarning = false;
             if (!"not built".equals(template.buildStatus)) {
-                var warnStyle = Style.EMPTY.fg(Color.YELLOW).bg(bg);
+                var warnStyle = Style.EMPTY.fg(theme.statusWarning()).bg(bg);
                 var currentVersion = BuildInfo.instance().version();
                 if (!template.buildVersion.isEmpty() && !template.buildVersion.equals(currentVersion)) {
                     spans.add(Span.styled("  ! built with isx v" + template.buildVersion
@@ -1513,22 +1517,22 @@ public class ListCommand extends BaseCommand {
                 }
             }
             if (!hasWarning && template.description != null && !template.description.isEmpty()) {
-                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(Color.GRAY).bg(bg)));
+                spans.add(Span.styled("  " + template.description, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             return Line.from(spans);
         }
         if (!onTemplates && instance != null) {
             var spans = new ArrayList<Span>();
-            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(Color.WHITE).bg(bg)));
+            spans.add(Span.styled(" " + instance.name, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
             if (!instance.parent.isEmpty() && !"-".equals(instance.parent)) {
-                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(Color.GRAY).bg(bg)));
+                spans.add(Span.styled("  from " + instance.parent, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             if (!instance.ipv4.isEmpty()) {
-                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(Color.LIGHT_CYAN).bg(bg)));
+                spans.add(Span.styled("  " + instance.ipv4, Style.EMPTY.fg(theme.contextAccentFg()).bg(bg)));
             }
             if (!instance.networkMode.isEmpty()) {
                 spans.add(Span.styled("  [" + instance.networkMode.toLowerCase() + "]",
-                        Style.EMPTY.fg(Color.GRAY).bg(bg)));
+                        Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
             }
             return Line.from(spans);
         }
@@ -1536,7 +1540,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void renderContextLine(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area, Line line) {
-        fillBackground(frame, area, CONTEXT_BG);
+        fillBackground(frame, area, theme.contextBg());
 
         // Reserve right side for background tasks if any exist
         var tasks = backgroundTasks.getActiveTasks();
@@ -1598,14 +1602,14 @@ public class ListCommand extends BaseCommand {
         // Show running tasks
         if (!running.isEmpty()) {
             spans.add(Span.styled(" Running: " + running.size() + " ",
-                    Style.EMPTY.fg(Color.YELLOW).bg(CONTEXT_BG)));
+                    Style.EMPTY.fg(theme.statusWarning()).bg(theme.contextBg())));
             for (var task : running.stream().limit(2).toList()) {
                 spans.add(Span.styled(" " + task.displayName() + "... ",
-                        Style.EMPTY.fg(Color.WHITE).bg(CONTEXT_BG)));
+                        Style.EMPTY.fg(theme.contextPrimaryFg()).bg(theme.contextBg())));
             }
             if (running.size() > 2) {
                 spans.add(Span.styled(" +" + (running.size() - 2) + " more ",
-                        Style.EMPTY.fg(Color.GRAY).bg(CONTEXT_BG)));
+                        Style.EMPTY.fg(theme.contextSecondaryFg()).bg(theme.contextBg())));
             }
         }
 
@@ -1613,9 +1617,9 @@ public class ListCommand extends BaseCommand {
         for (var task : completed) {
             if (task instanceof dev.incusspawn.tui.BackgroundTask.Completed completedTask) {
                 var symbol = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? "✓" : "✗";
-                var color = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? Color.GREEN : Color.RED;
+                var color = task.status() == dev.incusspawn.tui.BackgroundTask.TaskStatus.SUCCESS ? theme.statusSuccess() : theme.statusFailure();
                 spans.add(Span.styled(" " + symbol + " " + completedTask.getDisplayText() + " ",
-                        Style.EMPTY.fg(color).bg(CONTEXT_BG)));
+                        Style.EMPTY.fg(color).bg(theme.contextBg())));
             }
         }
 
@@ -1639,7 +1643,7 @@ public class ListCommand extends BaseCommand {
 
     private void renderModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen,
                               TableState tableState) {
-        ModalRenderer.renderScrim(frame, screen);
+        modal.renderScrim(frame, screen);
         switch (mode) {
             case CONFIRM_DELETE -> {
                 var isAllTemplates = "--all".equals(pendingDeleteName);
@@ -1651,29 +1655,29 @@ public class ListCommand extends BaseCommand {
                 var message = isAllTemplates ? "This will destroy all built templates."
                         : isAllInstances ? "This will destroy all instances."
                         : "This action cannot be undone.";
-                ModalRenderer.renderConfirmModal(frame, screen, title, message, ModalRenderer.WARN);
+                modal.renderConfirmModal(frame, screen, title, message, modal.warn());
             }
             case BUILD_MENU -> renderBuildMenu(frame, screen);
             case CONFIRM_BUILD_FOR_BRANCH -> {
-                ModalRenderer.renderConfirmModal(frame, screen,
+                modal.renderConfirmModal(frame, screen,
                         " Branch from '" + branchSourceName + "' ",
-                        "Template is not built yet. Build it first?", ModalRenderer.BORDER,
+                        "Template is not built yet. Build it first?", modal.border(),
                         "Build", "y/Enter");
             }
             case CONFIRM_STOP_FOR_RENAME -> {
-                ModalRenderer.renderConfirmModal(frame, screen,
+                modal.renderConfirmModal(frame, screen,
                         " Rename '" + renameSourceName + "' ",
-                        "Instance is running. Stop it first?", ModalRenderer.BORDER,
+                        "Instance is running. Stop it first?", modal.border(),
                         "Stop & rename");
             }
             case BRANCH -> renderBranchModal(frame, screen);
-            case RENAME -> ModalRenderer.renderInputModal(frame, screen,
+            case RENAME -> modal.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
-            case ERROR -> ModalRenderer.renderErrorModal(frame, screen, errorMessage);
+            case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
             default -> {}
         }
     }
@@ -1684,12 +1688,12 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, 54, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" Branch from '" + branchSourceName + "' ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" Branch from '" + branchSourceName + "' ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var constraints = new ArrayList<Constraint>();
@@ -1712,16 +1716,16 @@ public class ListCommand extends BaseCommand {
 
         int row = 0;
         frame.renderWidget(Paragraph.from(Line.styled(
-                "Name:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG))), rows.get(row++));
+                "Name:", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(row++));
         if (branchFieldIndex == 0) {
             TextInput.builder()
                     .placeholder("branch-name")
-                    .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
+                    .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
                     .build()
                     .renderWithCursor(rows.get(row++), frame.buffer(), branchNameInput, frame);
         } else {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    branchNameInput.text(), Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.INPUT_BG))),
+                    branchNameInput.text(), Style.EMPTY.fg(theme.textDim()).bg(modal.inputBg()))),
                     rows.get(row++));
         }
 
@@ -1731,32 +1735,32 @@ public class ListCommand extends BaseCommand {
         }
 
         row++;
-        ModalRenderer.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
-        ModalRenderer.renderToggle(frame, rows.get(row++), "KVM passthrough", branchEnableKvm, branchFieldIndex == kvmFieldIndex());
-        ModalRenderer.renderNetworkModeRadio(frame, rows.get(row++), branchNetworkMode, branchFieldIndex == networkFieldIndex());
+        modal.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
+        modal.renderToggle(frame, rows.get(row++), "KVM passthrough", branchEnableKvm, branchFieldIndex == kvmFieldIndex());
+        modal.renderNetworkModeRadio(frame, rows.get(row++), branchNetworkMode, branchFieldIndex == networkFieldIndex());
         renderInboxField(frame, rows.get(row++));
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "Enter", "Confirm");
-        ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
-        ModalRenderer.addKey(hintSpans, "↑↓/Tab", "Navigate");
-        ModalRenderer.addKey(hintSpans, "Space", "Toggle");
+        modal.addKey(hintSpans, "Enter", "Confirm");
+        modal.addKey(hintSpans, "Esc", "Cancel");
+        modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
+        modal.addKey(hintSpans, "Space", "Toggle");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 
     private void renderVmResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        var labelStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+        var labelStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
 
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
+        spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("CPU ", labelStyle));
-        ModalRenderer.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
-        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
+        modal.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
+        spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("RAM ", labelStyle));
-        ModalRenderer.renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2);
-        spans.add(Span.styled("  ", Style.EMPTY.bg(ModalRenderer.BG)));
+        modal.renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2);
+        spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("Disk ", labelStyle));
-        ModalRenderer.renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3);
+        modal.renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
@@ -1764,30 +1768,30 @@ public class ListCommand extends BaseCommand {
         boolean toggleFocused = branchFieldIndex == inboxFieldIndex();
         boolean pathFocused = branchFieldIndex == inboxPathFieldIndex();
         var check = branchEnableInbox ? "☑" : "☐";
-        var checkColor = branchEnableInbox ? Color.GREEN : Color.GRAY;
+        var checkColor = branchEnableInbox ? theme.checkEnabled() : theme.checkDisabled();
         var prefix = toggleFocused ? "▸" : " ";
-        var labelColor = toggleFocused ? Color.WHITE : ModalRenderer.FG;
+        var labelColor = toggleFocused ? theme.focusedLabel() : modal.fg();
 
         int labelWidth = 18;
         var labelArea = new dev.tamboui.layout.Rect(area.x(), area.y(), labelWidth, 1);
         frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + prefix + " ", Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(ModalRenderer.BG)),
-                Span.styled("Inbox", Style.EMPTY.fg(labelColor).bg(ModalRenderer.BG))))), labelArea);
+                Span.styled(" " + prefix + " ", Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
+                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(modal.bg())),
+                Span.styled("Inbox", Style.EMPTY.fg(labelColor).bg(modal.bg()))))), labelArea);
 
         var pathArea = new dev.tamboui.layout.Rect(
                 area.x() + labelWidth, area.y(), area.width() - labelWidth, 1);
         if (pathFocused && branchEnableInbox) {
             TextInput.builder()
                     .placeholder("/path/to/dir")
-                    .style(Style.EMPTY.fg(Color.WHITE).bg(ModalRenderer.INPUT_BG))
+                    .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
                     .build()
                     .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
         } else {
             var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
-            var inputBg = branchEnableInbox ? ModalRenderer.INPUT_BG : ModalRenderer.INPUT_INACTIVE_BG;
-            var fg = branchInboxInput.text().isEmpty() ? ModalRenderer.PLACEHOLDER_FG
-                    : branchEnableInbox ? Color.GRAY : ModalRenderer.PLACEHOLDER_FG;
+            var inputBg = branchEnableInbox ? modal.inputBg() : modal.inputInactiveBg();
+            var fg = branchInboxInput.text().isEmpty() ? modal.placeholderFg()
+                    : branchEnableInbox ? theme.textDim() : modal.placeholderFg();
             frame.renderWidget(Paragraph.from(Line.styled(display, Style.EMPTY.fg(fg).bg(inputBg))), pathArea);
         }
     }
@@ -1934,30 +1938,30 @@ public class ListCommand extends BaseCommand {
         var info = dev.incusspawn.BuildInfo.instance();
         var lines = List.of(
                 Line.from(List.of(
-                        Span.styled("incus-spawn", Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)),
-                        Span.styled(" (isx) ", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                        Span.styled(info.version(), Style.EMPTY.fg(Color.GREEN).bg(ModalRenderer.BG)))),
+                        Span.styled("incus-spawn", Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())),
+                        Span.styled(" (isx) ", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                        Span.styled(info.version(), Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())))),
                 Line.styled("Commit " + info.gitSha(),
-                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled("Incus  client " + info.incusClient() + ", server " + info.incusServer(),
-                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled(info.runtime(),
-                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Copyright 2026 Sanne Grinovero",
-                        Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("Licensed under the Apache License 2.0",
-                        Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled("github.com/Sanne/incus-spawn",
-                        Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG))
+                        Style.EMPTY.fg(modal.accent()).bg(modal.bg()))
                         .hyperlink("https://github.com/Sanne/incus-spawn"),
                 Line.styled("", Style.EMPTY),
                 Line.styled("Manage isolated Incus development environments.",
-                        Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
-                Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                        Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                Line.styled("Templates define base images; Instances are", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
+                Line.styled("lightweight copy-on-write branches of them.", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
-                Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)),
+                Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
                 shortcutRow("Enter", "Default instance action", null, null),
                 shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
@@ -1979,12 +1983,12 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" About incus-spawn ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" About incus-spawn ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical()
@@ -1994,7 +1998,7 @@ public class ListCommand extends BaseCommand {
         infoScrollOffset = renderScrollableContent(frame, rows.get(0), lines, infoScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "F1/Esc", "Close");
+        modal.addKey(hintSpans, "F1/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
@@ -2027,9 +2031,9 @@ public class ListCommand extends BaseCommand {
         if (scrollbarArea != null) {
             var scrollbar = Scrollbar.builder()
                     .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(ModalRenderer.ACCENT))
-                    .trackStyle(Style.EMPTY.fg(Color.rgb(60, 62, 84)))
-                    .style(Style.EMPTY.bg(ModalRenderer.BG))
+                    .thumbStyle(Style.EMPTY.fg(modal.accent()))
+                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
+                    .style(Style.EMPTY.bg(modal.bg()))
                     .build();
             var state = new ScrollbarState()
                     .contentLength(contentLines.size())
@@ -2063,15 +2067,15 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private static Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
+    private Line shortcutRow(String key, String desc, String shiftKey, String shiftDesc) {
         var spans = new ArrayList<Span>();
         var keyStr = key != null ? key : "";
         var descStr = desc != null ? desc : "";
-        spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
-        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+        spans.add(Span.styled(String.format("  %-8s", keyStr), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
+        spans.add(Span.styled(String.format("%-18s", descStr), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         if (shiftKey != null) {
-            spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG)));
-            spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG)));
+            spans.add(Span.styled(String.format("%-9s", shiftKey), Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())));
+            spans.add(Span.styled(shiftDesc, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
         }
         return Line.from(spans);
     }
@@ -2097,12 +2101,12 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" " + template.name + " \u2014 " + viewLabel + " ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" " + template.name + " \u2014 " + viewLabel + " ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical()
@@ -2112,9 +2116,9 @@ public class ListCommand extends BaseCommand {
         detailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, detailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
-        ModalRenderer.addKey(hintSpans, "F4", "Edit");
-        ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
+        modal.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
+        modal.addKey(hintSpans, "F4", "Edit");
+        modal.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
@@ -2136,12 +2140,12 @@ public class ListCommand extends BaseCommand {
         var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" " + selected.name + " ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" " + selected.name + " ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = Layout.vertical()
@@ -2151,21 +2155,21 @@ public class ListCommand extends BaseCommand {
         instanceDetailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "F2", "Shell");
-        ModalRenderer.addKey(hintSpans, "F3/Esc", "Close");
+        modal.addKey(hintSpans, "F2", "Shell");
+        modal.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
     private List<Line> buildInstanceDetailLines(InstanceInfo info) {
         var lines = new ArrayList<Line>();
-        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
-        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
-        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
+        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
+        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
 
-        var statusColor = isRunning(info) ? Color.GREEN : Color.GRAY;
+        var statusColor = isRunning(info) ? theme.statusRunning() : theme.statusStopped();
         lines.add(Line.from(List.of(
                 Span.styled("Status:         ", labelStyle),
-                Span.styled(info.status, Style.EMPTY.fg(statusColor).bg(ModalRenderer.BG)))));
+                Span.styled(info.status, Style.EMPTY.fg(statusColor).bg(modal.bg())))));
 
         lines.add(Line.from(List.of(
                 Span.styled("Type:           ", labelStyle),
@@ -2254,9 +2258,9 @@ public class ListCommand extends BaseCommand {
 
         var lines = new ArrayList<Line>();
         var current = chain.get(chain.size() - 1);
-        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
-        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
-        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
+        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
+        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
 
         // Description
         if (!current.getDescription().isEmpty()) {
@@ -2685,10 +2689,10 @@ public class ListCommand extends BaseCommand {
         if (chain.isEmpty()) return List.of();
 
         var lines = new ArrayList<Line>();
-        var lineStyle = Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
-        var labelStyle = Style.EMPTY.fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
-        var nameStyle = Style.EMPTY.bold().fg(ModalRenderer.ACCENT).bg(ModalRenderer.BG);
-        var dimStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
+        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
+        var nameStyle = Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg());
+        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         var spawnConfig = SpawnConfig.load();
 
         for (int i = 0; i < chain.size(); i++) {
@@ -2787,22 +2791,16 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    // Midnight Commander-inspired toolbar palette
-    private static final Color BAR_BG = Color.CYAN;
-    private static final Color BAR_KEY_FG = Color.WHITE;
-    private static final Color BAR_LABEL_FG = Color.BLACK;
-    private static final Color BAR_DISABLED_FG = Color.rgb(0, 100, 110);
-    private static final Color BAR_SEPARATOR_FG = Color.rgb(0, 140, 150);
 
     private KeyItem makeKey(String key, String label, boolean disabled) {
         var spans = new ArrayList<Span>();
-        spans.add(Span.styled("│", Style.EMPTY.fg(BAR_SEPARATOR_FG).bg(BAR_BG)));
+        spans.add(Span.styled("│", Style.EMPTY.fg(theme.barSeparatorFg()).bg(theme.barBg())));
         if (disabled) {
-            spans.add(Span.styled(key, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
-            spans.add(Span.styled(label, Style.EMPTY.fg(BAR_DISABLED_FG).bg(BAR_BG)));
+            spans.add(Span.styled(key, Style.EMPTY.fg(theme.barDisabledFg()).bg(theme.barBg())));
+            spans.add(Span.styled(label, Style.EMPTY.fg(theme.barDisabledFg()).bg(theme.barBg())));
         } else {
-            spans.add(Span.styled(key, Style.EMPTY.bold().fg(BAR_KEY_FG).bg(BAR_BG)));
-            spans.add(Span.styled(label, Style.EMPTY.fg(BAR_LABEL_FG).bg(BAR_BG)));
+            spans.add(Span.styled(key, Style.EMPTY.bold().fg(theme.barKeyFg()).bg(theme.barBg())));
+            spans.add(Span.styled(label, Style.EMPTY.fg(theme.barLabelFg()).bg(theme.barBg())));
         }
         return new KeyItem(Line.from(spans), 1 + key.length() + label.length());
     }
@@ -2818,27 +2816,27 @@ public class ListCommand extends BaseCommand {
             var numPrefix = "[" + (i + 1) + "] ";
 
             var labelStyle = !opt.enabled()
-                    ? Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG)
+                    ? Style.EMPTY.fg(theme.textDim()).bg(modal.bg())
                     : selected
-                        ? Style.EMPTY.bold().fg(Color.WHITE).bg(ModalRenderer.BG)
-                        : Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+                        ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
+                        : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
             var spans = new ArrayList<Span>();
             spans.add(Span.styled(prefix + numPrefix + opt.label(), labelStyle));
             if (opt.badge() != null) {
-                var badgeStyle = Style.EMPTY.fg(opt.enabled() ? ModalRenderer.ACCENT : Color.GRAY).bg(ModalRenderer.BG);
+                var badgeStyle = Style.EMPTY.fg(opt.enabled() ? modal.accent() : theme.textDim()).bg(modal.bg());
                 spans.add(Span.styled("  " + opt.badge(), badgeStyle));
             }
             lines.add(Line.from(spans));
 
             // Description lines (may be multi-line via \n)
-            var descStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+            var descStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
             for (var descLine : opt.description().split("\n")) {
                 lines.add(Line.styled("       " + descLine, descStyle));
             }
 
             // Blank separator between options
             if (i < buildMenuOptions.size() - 1) {
-                lines.add(Line.styled("", Style.EMPTY.bg(ModalRenderer.BG)));
+                lines.add(Line.styled("", Style.EMPTY.bg(modal.bg())));
             }
         }
 
@@ -2849,12 +2847,12 @@ public class ListCommand extends BaseCommand {
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
                 .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" Build Templates ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" Build Templates ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = dev.tamboui.layout.Layout.vertical()
@@ -2865,14 +2863,14 @@ public class ListCommand extends BaseCommand {
 
         // Top spacing
         frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(
-                Line.styled("", Style.EMPTY.bg(ModalRenderer.BG))), rows.get(0));
+                Line.styled("", Style.EMPTY.bg(modal.bg()))), rows.get(0));
 
         renderScrollableContent(frame, rows.get(1), lines, 0);
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");
-        ModalRenderer.addKey(hintSpans, "Enter", "Build");
-        ModalRenderer.addKey(hintSpans, "Esc", "Cancel");
+        modal.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");
+        modal.addKey(hintSpans, "Enter", "Build");
+        modal.addKey(hintSpans, "Esc", "Cancel");
         frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(2));
     }
 
@@ -2885,15 +2883,15 @@ public class ListCommand extends BaseCommand {
             var selected = (i == actionsSelectedIndex);
             var prefix = selected ? " > " : "   ";
             var style = selected
-                    ? Style.EMPTY.bold().fg(Color.WHITE).bg(ModalRenderer.BG)
-                    : Style.EMPTY.fg(ModalRenderer.FG).bg(ModalRenderer.BG);
+                    ? Style.EMPTY.bold().fg(theme.focusedLabel()).bg(modal.bg())
+                    : Style.EMPTY.fg(modal.fg()).bg(modal.bg());
             if (action instanceof YamlToolAction ya && ya.isUrl()) {
                 var url = ya.resolveUrl(actionsContext);
                 if (url != null && !url.isBlank()) {
                     style = style.hyperlink(url);
                 }
             }
-            var toolStyle = Style.EMPTY.fg(Color.GRAY).bg(ModalRenderer.BG);
+            var toolStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
             lines.add(Line.from(List.of(
                     Span.styled(prefix + action.label(), style),
                     Span.styled("  (" + action.toolName() + ")", toolStyle))));
@@ -2907,12 +2905,12 @@ public class ListCommand extends BaseCommand {
         var block = dev.tamboui.widgets.block.Block.builder()
                 .borders(dev.tamboui.widgets.block.Borders.ALL)
                 .borderType(dev.tamboui.widgets.block.BorderType.DOUBLE)
-                .title(ModalRenderer.styledTitle(" Actions — " + instanceName + " ", ModalRenderer.BORDER))
-                .borderStyle(Style.EMPTY.fg(ModalRenderer.BORDER))
-                .style(Style.EMPTY.bg(ModalRenderer.BG))
+                .title(modal.styledTitle(" Actions — " + instanceName + " ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
                 .padding(dev.tamboui.layout.Padding.horizontal(1))
                 .build();
-        ModalRenderer.renderBlock(frame, block, modalArea);
+        modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
         var rows = dev.tamboui.layout.Layout.vertical()
@@ -2930,8 +2928,8 @@ public class ListCommand extends BaseCommand {
         actionsScrollOffset = renderScrollableContent(frame, rows.get(0), lines, actionsScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
-        ModalRenderer.addKey(hintSpans, "Enter", "Run");
-        ModalRenderer.addKey(hintSpans, "F9/Esc", "Close");
+        modal.addKey(hintSpans, "Enter", "Run");
+        modal.addKey(hintSpans, "F9/Esc", "Close");
         frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
 
@@ -3142,8 +3140,8 @@ public class ListCommand extends BaseCommand {
         for (var t : templateEntries) {
             var statusDisplay = "not built".equals(t.buildStatus) ? "not built" : Metadata.ageDescription(t.buildStatus);
             var statusStyle = "not built".equals(t.buildStatus)
-                    ? Style.EMPTY.fg(Color.GRAY)
-                    : Style.EMPTY.fg(Color.GREEN);
+                    ? Style.EMPTY.fg(theme.statusStopped())
+                    : Style.EMPTY.fg(theme.statusRunning());
             if (!"not built".equals(t.buildStatus)) {
                 var symbols = new StringBuilder();
                 if (!t.buildVersion.isEmpty() && !t.buildVersion.equals(currentVersion)) {
@@ -3175,7 +3173,7 @@ public class ListCommand extends BaseCommand {
                 }
                 if (!symbols.isEmpty()) {
                     statusDisplay += " " + symbols;
-                    statusStyle = Style.EMPTY.fg(Color.YELLOW);
+                    statusStyle = Style.EMPTY.fg(theme.statusWarning());
                 }
             }
             var desc = t.description == null ? "" : t.description;
@@ -3257,8 +3255,8 @@ public class ListCommand extends BaseCommand {
             var age = entry.created.isEmpty() ? "-" : Metadata.ageDescription(entry.created);
             var parent = entry.parent.isEmpty() ? "-" : entry.parent;
             var statusStyle = switch (entry.status.toUpperCase()) {
-                case "RUNNING" -> Style.EMPTY.fg(Color.GREEN);
-                case "STOPPED" -> Style.EMPTY.fg(Color.GRAY);
+                case "RUNNING" -> Style.EMPTY.fg(theme.statusRunning());
+                case "STOPPED" -> Style.EMPTY.fg(theme.statusStopped());
                 default -> Style.EMPTY;
             };
 

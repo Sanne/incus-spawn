@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.tui.TuiTheme;
 import dev.tamboui.buffer.Cell;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -24,18 +25,20 @@ import dev.tamboui.widgets.paragraph.Paragraph;
 
 final class ModalRenderer {
 
-    static final Color BG = Color.rgb(55, 60, 95);
-    static final Color FG = Color.rgb(210, 218, 248);
-    static final Color BORDER = Color.CYAN;
-    static final Color ACCENT = Color.LIGHT_CYAN;
-    static final Color WARN = Color.LIGHT_RED;
-    static final Color INPUT_BG = Color.rgb(70, 74, 110);
-    static final Color INPUT_INACTIVE_BG = Color.rgb(48, 52, 78);
-    static final Color PLACEHOLDER_FG = Color.rgb(90, 94, 120);
-    private static final Color SHADOW = Color.rgb(8, 8, 16);
+    private final TuiTheme theme;
 
-    private ModalRenderer() {
+    ModalRenderer(TuiTheme theme) {
+        this.theme = theme;
     }
+
+    Color bg() { return theme.modalBg(); }
+    Color fg() { return theme.modalFg(); }
+    Color border() { return theme.modalBorder(); }
+    Color accent() { return theme.modalAccent(); }
+    Color warn() { return theme.modalWarn(); }
+    Color inputBg() { return theme.inputBg(); }
+    Color inputInactiveBg() { return theme.inputInactiveBg(); }
+    Color placeholderFg() { return theme.placeholderFg(); }
 
     static Rect centerRect(Rect screen, int width, int height) {
         int w = Math.min(width, screen.width());
@@ -45,7 +48,7 @@ final class ModalRenderer {
         return new Rect(x, y, w, h);
     }
 
-    static void renderScrim(Frame frame, Rect screen) {
+    void renderScrim(Frame frame, Rect screen) {
         var buf = frame.buffer();
         var dimStyle = Style.EMPTY.dim();
         for (int y = screen.y(); y < screen.bottom(); y++) {
@@ -58,15 +61,15 @@ final class ModalRenderer {
         }
     }
 
-    static void renderBlock(Frame frame, Block block, Rect modalArea) {
+    void renderBlock(Frame frame, Block block, Rect modalArea) {
         renderShadow(frame, modalArea);
-        frame.buffer().fill(modalArea, new Cell(" ", Style.EMPTY.bg(BG)));
+        frame.buffer().fill(modalArea, new Cell(" ", Style.EMPTY.bg(theme.modalBg())));
         frame.renderWidget(block, modalArea);
     }
 
-    private static void renderShadow(Frame frame, Rect area) {
+    private void renderShadow(Frame frame, Rect area) {
         var buf = frame.buffer();
-        var shadowCell = new Cell(" ", Style.EMPTY.bg(SHADOW));
+        var shadowCell = new Cell(" ", Style.EMPTY.bg(theme.modalShadow()));
         var bufArea = buf.area();
         int shadowRight = area.right();
         int shadowBottom = area.bottom();
@@ -81,67 +84,67 @@ final class ModalRenderer {
         }
     }
 
-    static Title styledTitle(String text, Color color) {
+    Title styledTitle(String text, Color color) {
         return Title.from(Span.styled(text, Style.EMPTY.bold().fg(color)));
     }
 
-    static void addKey(List<Span> spans, String key, String label) {
-        spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(ACCENT).bg(BG)));
-        spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(FG).bg(BG)));
+    void addKey(List<Span> spans, String key, String label) {
+        spans.add(Span.styled(" " + key, Style.EMPTY.bold().fg(theme.modalAccent()).bg(theme.modalBg())));
+        spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg())));
     }
 
-    static void renderToggle(Frame frame, Rect area,
+    void renderToggle(Frame frame, Rect area,
                               String label, boolean enabled, boolean focused) {
-        var check = enabled ? "\u2611" : "\u2610";
-        var checkColor = enabled ? Color.GREEN : Color.GRAY;
-        var prefix = focused ? "\u25b8" : " ";
-        var labelColor = focused ? Color.WHITE : FG;
+        var check = enabled ? "☑" : "☐";
+        var checkColor = enabled ? theme.checkEnabled() : theme.checkDisabled();
+        var prefix = focused ? "▸" : " ";
+        var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
         frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + prefix + " ", Style.EMPTY.fg(ACCENT).bg(BG)),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(BG)),
-                Span.styled(label, Style.EMPTY.fg(labelColor).bg(BG))))), area);
+                Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
+                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(theme.modalBg())),
+                Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg()))))), area);
     }
 
-    static void renderNetworkModeRadio(Frame frame, Rect area,
+    void renderNetworkModeRadio(Frame frame, Rect area,
                                         NetworkMode selected, boolean focused) {
         var spans = new ArrayList<Span>();
-        var prefix = focused ? "\u25b8" : " ";
-        spans.add(Span.styled(" " + prefix + " ", Style.EMPTY.fg(ACCENT).bg(BG)));
+        var prefix = focused ? "▸" : " ";
+        spans.add(Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())));
         for (NetworkMode mode : NetworkMode.values()) {
             boolean isSelected = (mode == selected);
-            var symbol = isSelected ? "\u25c9" : "\u25cb";
-            var color = isSelected ? Color.GREEN : Color.GRAY;
-            spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(BG)));
+            var symbol = isSelected ? "◉" : "○";
+            var color = isSelected ? theme.checkEnabled() : theme.checkDisabled();
+            spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(theme.modalBg())));
             var labelStyle = isSelected
-                    ? Style.EMPTY.bold().fg(focused ? Color.WHITE : FG).bg(BG)
-                    : Style.EMPTY.fg(Color.GRAY).bg(BG);
+                    ? Style.EMPTY.bold().fg(focused ? theme.focusedLabel() : theme.modalFg()).bg(theme.modalBg())
+                    : Style.EMPTY.fg(theme.checkDisabled()).bg(theme.modalBg());
             spans.add(Span.styled(mode.label(), labelStyle));
-            spans.add(Span.styled("  ", Style.EMPTY.bg(BG)));
+            spans.add(Span.styled("  ", Style.EMPTY.bg(theme.modalBg())));
         }
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
-    static void renderInlineField(List<Span> spans, String value, boolean disabled,
+    void renderInlineField(List<Span> spans, String value, boolean disabled,
                                    boolean active) {
         var display = String.format("%-6s", value);
         if (disabled) {
-            spans.add(Span.styled(display, Style.EMPTY.fg(PLACEHOLDER_FG).bg(INPUT_INACTIVE_BG)));
+            spans.add(Span.styled(display, Style.EMPTY.fg(theme.placeholderFg()).bg(theme.inputInactiveBg())));
         } else if (active) {
-            spans.add(Span.styled(display, Style.EMPTY.bold().fg(Color.WHITE).bg(INPUT_BG)));
+            spans.add(Span.styled(display, Style.EMPTY.bold().fg(theme.focusedLabel()).bg(theme.inputBg())));
         } else {
-            spans.add(Span.styled(display, Style.EMPTY.fg(Color.GRAY).bg(INPUT_INACTIVE_BG)));
+            spans.add(Span.styled(display, Style.EMPTY.fg(theme.checkDisabled()).bg(theme.inputInactiveBg())));
         }
     }
 
-    static void renderInputModal(Frame frame, Rect screen,
+    void renderInputModal(Frame frame, Rect screen,
                                   String title, String label, String placeholder,
                                   TextInputState inputState) {
         var modalArea = centerRect(screen, 54, 7);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(styledTitle(" " + title + " ", BORDER))
-                .borderStyle(Style.EMPTY.fg(BORDER))
-                .style(Style.EMPTY.bg(BG))
+                .title(styledTitle(" " + title + " ", theme.modalBorder()))
+                .borderStyle(Style.EMPTY.fg(theme.modalBorder()))
+                .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
@@ -150,10 +153,10 @@ final class ModalRenderer {
                 .constraints(Constraint.length(1), Constraint.length(1), Constraint.length(1), Constraint.fill())
                 .split(inner);
         frame.renderWidget(Paragraph.from(Line.styled(
-                label, Style.EMPTY.fg(FG).bg(BG))), rows.get(0));
+                label, Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), rows.get(0));
         TextInput.builder()
                 .placeholder(placeholder)
-                .style(Style.EMPTY.fg(Color.WHITE).bg(INPUT_BG))
+                .style(Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg()))
                 .build()
                 .renderWithCursor(rows.get(1), frame.buffer(), inputState, frame);
         var hintSpans = new ArrayList<Span>();
@@ -162,18 +165,18 @@ final class ModalRenderer {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(3));
     }
 
-    static void renderConfirmModal(Frame frame, Rect screen,
+    void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor) {
         renderConfirmModal(frame, screen, title, message, borderColor, "Confirm");
     }
 
-    static void renderConfirmModal(Frame frame, Rect screen,
+    void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor,
                                     String confirmLabel) {
         renderConfirmModal(frame, screen, title, message, borderColor, confirmLabel, "y");
     }
 
-    static void renderConfirmModal(Frame frame, Rect screen,
+    void renderConfirmModal(Frame frame, Rect screen,
                                     String title, String message, Color borderColor,
                                     String confirmLabel, String confirmKey) {
         int modalWidth = 54;
@@ -185,7 +188,7 @@ final class ModalRenderer {
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(styledTitle(title, borderColor))
                 .borderStyle(Style.EMPTY.fg(borderColor))
-                .style(Style.EMPTY.bg(BG))
+                .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
@@ -204,7 +207,7 @@ final class ModalRenderer {
         // Render message lines
         for (int i = 0; i < wrappedLines.size(); i++) {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    wrappedLines.get(i), Style.EMPTY.fg(borderColor).bg(BG))), rows.get(1 + i));
+                    wrappedLines.get(i), Style.EMPTY.fg(borderColor).bg(theme.modalBg()))), rows.get(1 + i));
         }
 
         var btnSpans = new ArrayList<Span>();
@@ -244,16 +247,16 @@ final class ModalRenderer {
         return result;
     }
 
-    static void renderErrorModal(Frame frame, Rect screen, String message) {
+    void renderErrorModal(Frame frame, Rect screen, String message) {
         var lines = message.lines().toList();
         int height = lines.size() + 5;
         int width = Math.min(lines.stream().mapToInt(String::length).max().orElse(30) + 6, screen.width() - 4);
         var modalArea = centerRect(screen, Math.max(width, 40), height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(styledTitle(" Error ", WARN))
-                .borderStyle(Style.EMPTY.fg(WARN))
-                .style(Style.EMPTY.bg(BG))
+                .title(styledTitle(" Error ", theme.modalWarn()))
+                .borderStyle(Style.EMPTY.fg(theme.modalWarn()))
+                .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
@@ -265,25 +268,25 @@ final class ModalRenderer {
         var rows = Layout.vertical().constraints(constraints).split(inner);
         for (int i = 0; i < lines.size(); i++) {
             frame.renderWidget(Paragraph.from(Line.styled(
-                    " " + lines.get(i), Style.EMPTY.fg(FG).bg(BG))), rows.get(i));
+                    " " + lines.get(i), Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), rows.get(i));
         }
         var hintSpans = new ArrayList<Span>();
         addKey(hintSpans, "any key", "Dismiss");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(rows.size() - 1));
     }
 
-    static void renderProgressOverlay(Frame frame, Rect screen, String message) {
+    void renderProgressOverlay(Frame frame, Rect screen, String message) {
         int width = Math.min(message.length() + 8, screen.width() - 4);
         var modalArea = centerRect(screen, width, 3);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .borderStyle(Style.EMPTY.fg(ACCENT))
-                .style(Style.EMPTY.bg(BG))
+                .borderStyle(Style.EMPTY.fg(theme.modalAccent()))
+                .style(Style.EMPTY.bg(theme.modalBg()))
                 .padding(Padding.horizontal(1))
                 .build();
         renderBlock(frame, block, modalArea);
         frame.renderWidget(Paragraph.from(Line.styled(
                 " " + message,
-                Style.EMPTY.fg(FG).bg(BG))), block.inner(modalArea));
+                Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), block.inner(modalArea));
     }
 }
