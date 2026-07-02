@@ -146,7 +146,14 @@ final class KeepAliveConnection {
     }
 
     private IncusTransport.RawResponse readResponse() throws IOException {
-        var statusLine = readLine();
+        String statusLine;
+        try {
+            statusLine = readLine();
+        } catch (java.net.SocketException e) {
+            // A RST before any response byte is semantically the same as EOF —
+            // the request provably did not execute, so the caller may retry.
+            throw new StaleConnectionException("connection reset before status line: " + e.getMessage());
+        }
         if (statusLine == null) {
             throw new StaleConnectionException("connection closed before status line");
         }
