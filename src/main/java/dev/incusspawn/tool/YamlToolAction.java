@@ -316,9 +316,31 @@ public class YamlToolAction implements ToolAction {
             }
         }
         if (dev.incusspawn.Environment.isMacOS()) {
-            return isMacAppInstalled("JetBrains Gateway");
+            return isMacSchemeHandlerAvailable(scheme);
         }
         return true;
+    }
+
+    private static boolean isMacSchemeHandlerAvailable(String scheme) {
+        try {
+            var script = "ObjC.import('AppKit');" +
+                    "var ws = $.NSWorkspace.sharedWorkspace;" +
+                    "var url = $.NSURL.URLWithString('" + scheme + "://x');" +
+                    "var r = '';" +
+                    "try { r = ws.URLForApplicationToOpenURL(url).path.js; } catch(e) {}" +
+                    "r;";
+            var process = new ProcessBuilder("osascript", "-l", "JavaScript", "-e", script)
+                    .redirectErrorStream(true).start();
+            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            if (!process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return true;
+            }
+            if (process.exitValue() != 0) return true;
+            return !output.trim().isEmpty();
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     private static boolean isMacAppInstalled(String appName) {
