@@ -3,7 +3,6 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -96,17 +95,12 @@ public final class AutoRemoteService {
             }
         }
 
-        // Scan all host-paths base directories
+        // Scan all host-paths base directories (recursively, up to MAX_SCAN_DEPTH levels)
         for (var hostPath : config.getHostPaths()) {
             var basePath = Path.of(dev.incusspawn.config.HostResourceSetup.expandHostTilde(hostPath));
-            if (Files.isDirectory(basePath)) {
-                try (var stream = Files.list(basePath)) {
-                    stream.filter(Files::isDirectory)
-                          .filter(GitRemoteUtils::isGitRepo)
-                          .filter(seen::add)
-                          .forEach(dirs::add);
-                } catch (IOException ignored) {}
-            }
+            GitRemoteUtils.findAllGitRepos(basePath).stream()
+                    .filter(seen::add)
+                    .forEach(dirs::add);
         }
 
         return dirs;

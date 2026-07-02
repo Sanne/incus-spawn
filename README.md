@@ -129,7 +129,9 @@ If you configure `host-paths` in `~/.config/incus-spawn/config.yaml`, remotes ar
 
 ```yaml
 # Base directories where your repos live on the host
-# If a repo exists in multiple host-paths, you must add an explicit repo-paths entry
+# Subdirectories are scanned recursively (up to 4 levels deep),
+# so ~/projects finds ~/projects/java/my-repo, ~/projects/go/another-repo, etc.
+# If a repo name appears in multiple locations, add an explicit repo-paths entry
 host-paths:
   - ~/projects
   - ~/workspace

@@ -231,6 +231,97 @@ class GitRemoteUtilsTest {
         assertEquals(path2.resolve("myrepo"), result);
     }
 
+    // ── resolveHostRepoPath: recursive scanning ─────────────────────────
+
+    @Test
+    void resolveSingleHostPathFindsNestedRepo() throws IOException {
+        var nested = tempDir.resolve("java/quarkus");
+        Files.createDirectories(nested.resolve(".git"));
+
+        var config = new SpawnConfig();
+        config.setHostPath(tempDir.toString());
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(nested, result);
+    }
+
+    @Test
+    void resolveSingleHostPathPrefersDirectChild() throws IOException {
+        var direct = tempDir.resolve("quarkus");
+        Files.createDirectories(direct);
+        Files.createDirectories(tempDir.resolve("java/quarkus/.git"));
+
+        var config = new SpawnConfig();
+        config.setHostPath(tempDir.toString());
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(direct, result);
+    }
+
+    @Test
+    void resolveSingleHostPathFallsBackToDirectChildWhenNotFound() {
+        var config = new SpawnConfig();
+        config.setHostPath(tempDir.toString());
+        var result = GitRemoteUtils.resolveHostRepoPath("nonexistent", config);
+        assertNotNull(result);
+        assertEquals(tempDir.resolve("nonexistent"), result);
+    }
+
+    @Test
+    void resolveMultipleHostPathsFindsNestedRepo() throws IOException {
+        var base1 = tempDir.resolve("code1");
+        var base2 = tempDir.resolve("code2");
+        Files.createDirectories(base1);
+        var nested = base2.resolve("go/myrepo");
+        Files.createDirectories(nested.resolve(".git"));
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(base1.toString(), base2.toString()));
+        var result = GitRemoteUtils.resolveHostRepoPath("myrepo", config);
+        assertNotNull(result);
+        assertEquals(nested, result);
+    }
+
+    @Test
+    void resolveMultipleHostPathsDirectChildWinsOverNested() throws Exception {
+        var base1 = tempDir.resolve("code1");
+        var base2 = tempDir.resolve("code2");
+        var directChild = base1.resolve("quarkus");
+        Files.createDirectories(directChild);
+        runGit(directChild, "init");
+        Files.createDirectories(base2.resolve("java/quarkus/.git"));
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(base1.toString(), base2.toString()));
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(directChild, result);
+    }
+
+    @Test
+    void resolveThrowsOnAmbiguousNestedPaths() throws IOException {
+        var base = tempDir.resolve("code");
+        Files.createDirectories(base.resolve("java/quarkus/.git"));
+        Files.createDirectories(base.resolve("go/quarkus/.git"));
+
+        var config = new SpawnConfig();
+        config.setHostPath(base.toString());
+        var exception = assertThrows(IllegalStateException.class,
+                () -> GitRemoteUtils.resolveHostRepoPath("quarkus", config));
+        assertTrue(exception.getMessage().contains("Found multiple host directories"));
+    }
+
+    @Test
+    void resolveSkipsJunkDirectories() throws IOException {
+        Files.createDirectories(tempDir.resolve("node_modules/quarkus/.git"));
+
+        var config = new SpawnConfig();
+        config.setHostPath(tempDir.toString());
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(tempDir.resolve("quarkus"), result);
+    }
+
     // ── referenceDeviceName ───────────────────────────────────────────────
 
     private static final String QUARKUS_URL = "https://github.com/quarkusio/quarkus.git";

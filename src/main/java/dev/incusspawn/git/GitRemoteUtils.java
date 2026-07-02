@@ -8,14 +8,28 @@ import dev.incusspawn.incus.Metadata;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 public final class GitRemoteUtils {
 
     private static final String CONTAINER_HOME = "/home/agentuser";
+
+    static final int MAX_SCAN_DEPTH = 4;
+
+    private static final Set<String> SKIP_DIRS = Set.of(
+            ".git", "node_modules", "target", ".m2", "build", "vendor",
+            ".gradle", ".cache", "__pycache__", ".venv",
+            "dist", "out", ".idea", ".vscode"
+    );
 
     public record IsxUrl(String instance, String path) {}
 
@@ -107,17 +121,36 @@ public final class GitRemoteUtils {
         if (hostPaths.isEmpty()) return null;
 
         if (hostPaths.size() == 1) {
-            // Backwards compatibility: return path even if it doesn't exist
             var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
-            return Path.of(basePath, repoName);
+            var directChild = Path.of(basePath, repoName);
+            if (Files.isDirectory(directChild)) return directChild;
+            var found = findRepoDirsNamed(Path.of(basePath), repoName);
+            if (found.isEmpty()) {
+                // Backwards compatibility: return path even if it doesn't exist
+                return directChild;
+            } else if (found.size() == 1) {
+                return found.get(0);
+            } else {
+                throw new IllegalStateException(
+                    "Found multiple host directories for repo '" + repoName + "': " +
+                    found.stream().map(Path::toString).collect(java.util.stream.Collectors.joining(", ")) +
+                    ". Add an explicit 'repo-paths' entry to disambiguate."
+                );
+            }
         } else {
-            // Multiple paths: find all matches and fail if ambiguous
+            // Multiple paths: check direct children first, then recursive scan
             var matches = new ArrayList<Path>();
             for (var hostPath : hostPaths) {
                 var basePath = HostResourceSetup.expandHostTilde(hostPath);
                 var candidatePath = Path.of(basePath, repoName);
                 if (Files.isDirectory(candidatePath) && isGitRepo(candidatePath)) {
                     matches.add(candidatePath);
+                }
+            }
+            if (matches.isEmpty()) {
+                for (var hostPath : hostPaths) {
+                    var basePath = HostResourceSetup.expandHostTilde(hostPath);
+                    matches.addAll(findRepoDirsNamed(Path.of(basePath), repoName));
                 }
             }
             if (matches.isEmpty()) {
@@ -193,6 +226,64 @@ public final class GitRemoteUtils {
             Thread.currentThread().interrupt();
             return null;
         }
+    }
+
+    private static List<Path> findRepoDirsNamed(Path basePath, String repoName) {
+        var results = new ArrayList<Path>();
+        if (!Files.isDirectory(basePath)) return results;
+        try {
+            Files.walkFileTree(basePath,
+                    EnumSet.noneOf(FileVisitOption.class),
+                    MAX_SCAN_DEPTH,
+                    new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                            if (dir.equals(basePath)) return FileVisitResult.CONTINUE;
+                            var dirName = dir.getFileName().toString();
+                            if (SKIP_DIRS.contains(dirName)) return FileVisitResult.SKIP_SUBTREE;
+                            if (dirName.equals(repoName) && isGitRepo(dir)) {
+                                results.add(dir);
+                                return FileVisitResult.SKIP_SUBTREE;
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+        } catch (IOException ignored) {}
+        return results;
+    }
+
+    static List<Path> findAllGitRepos(Path basePath) {
+        var results = new ArrayList<Path>();
+        if (!Files.isDirectory(basePath)) return results;
+        try {
+            Files.walkFileTree(basePath,
+                    EnumSet.noneOf(FileVisitOption.class),
+                    MAX_SCAN_DEPTH,
+                    new SimpleFileVisitor<>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                            if (dir.equals(basePath)) return FileVisitResult.CONTINUE;
+                            var dirName = dir.getFileName().toString();
+                            if (SKIP_DIRS.contains(dirName)) return FileVisitResult.SKIP_SUBTREE;
+                            if (isGitRepo(dir)) {
+                                results.add(dir);
+                                return FileVisitResult.SKIP_SUBTREE;
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+        } catch (IOException ignored) {}
+        return results;
     }
 
     private static final String REPO_REF_BASE = "/var/lib/incus-spawn/repo-ref";
