@@ -116,7 +116,7 @@ public final class GitRemoteUtils {
             for (var hostPath : hostPaths) {
                 var basePath = HostResourceSetup.expandHostTilde(hostPath);
                 var candidatePath = Path.of(basePath, repoName);
-                if (Files.isDirectory(candidatePath)) {
+                if (Files.isDirectory(candidatePath) && isGitRepo(candidatePath)) {
                     matches.add(candidatePath);
                 }
             }

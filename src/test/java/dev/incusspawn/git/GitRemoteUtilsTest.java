@@ -178,12 +178,14 @@ class GitRemoteUtilsTest {
     }
 
     @Test
-    void resolveThrowsOnAmbiguousHostPaths() throws IOException {
-        // Create two directories with the same repo subdirectory
+    void resolveThrowsOnAmbiguousHostPaths() throws Exception {
+        // Create two directories with the same repo subdirectory, both git repos
         var path1 = tempDir.resolve("projects");
         var path2 = tempDir.resolve("workspace");
         Files.createDirectories(path1.resolve("quarkus"));
         Files.createDirectories(path2.resolve("quarkus"));
+        runGit(path1.resolve("quarkus"), "init");
+        runGit(path2.resolve("quarkus"), "init");
 
         var config = new SpawnConfig();
         config.setHostPaths(java.util.List.of(path1.toString(), path2.toString()));
@@ -192,6 +194,41 @@ class GitRemoteUtilsTest {
             () -> GitRemoteUtils.resolveHostRepoPath("quarkus", config));
         assertTrue(exception.getMessage().contains("Found multiple host directories"));
         assertTrue(exception.getMessage().contains("repo-paths"));
+    }
+
+    @Test
+    void resolveDuplicateDirectoryNamesPicksGitRepo() throws Exception {
+        // ~/Code/quarkus/quarkus layout: parent is a plain dir, child is the git repo
+        var codePath = tempDir.resolve("Code");
+        var quarkusParent = codePath.resolve("quarkus");
+        var quarkusRepo = quarkusParent.resolve("quarkus");
+        Files.createDirectories(quarkusRepo);
+        runGit(quarkusRepo, "init");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(codePath.toString(), quarkusParent.toString()));
+
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(quarkusRepo, result);
+    }
+
+    @Test
+    void resolveMultipleHostPathsIgnoresNonGitDirs() throws Exception {
+        // Only git repos should be considered as matches
+        var path1 = tempDir.resolve("projects");
+        var path2 = tempDir.resolve("workspace");
+        Files.createDirectories(path1.resolve("myrepo"));
+        Files.createDirectories(path2.resolve("myrepo"));
+        // Only the second one is a git repo
+        runGit(path2.resolve("myrepo"), "init");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of(path1.toString(), path2.toString()));
+
+        var result = GitRemoteUtils.resolveHostRepoPath("myrepo", config);
+        assertNotNull(result);
+        assertEquals(path2.resolve("myrepo"), result);
     }
 
     // ── referenceDeviceName ───────────────────────────────────────────────
