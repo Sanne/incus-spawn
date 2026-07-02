@@ -50,7 +50,11 @@ public class Container {
         }
     }
 
-    /** Like {@link #runAsUser} but with a PTY so isatty() returns true inside the container. */
+    /**
+     * Like {@link #runAsUser} but with a PTY so isatty() returns true inside the container.
+     * Stdin is not forwarded and cannot receive EOF (the PTY muxes stdin/stdout on a single
+     * channel); the script must not read from stdin.
+     */
     public void runAsUserPty(String user, String script, String failureMessage) {
         int exitCode = incus.shellExecInteractivePtyAsUser(name, user, script);
         if (exitCode != 0) {
