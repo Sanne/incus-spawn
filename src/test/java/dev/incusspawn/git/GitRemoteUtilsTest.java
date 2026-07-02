@@ -246,9 +246,10 @@ class GitRemoteUtilsTest {
     }
 
     @Test
-    void resolveSingleHostPathPrefersDirectChild() throws IOException {
+    void resolveSingleHostPathPrefersDirectChild() throws Exception {
         var direct = tempDir.resolve("quarkus");
         Files.createDirectories(direct);
+        runGit(direct, "init");
         Files.createDirectories(tempDir.resolve("java/quarkus/.git"));
 
         var config = new SpawnConfig();
@@ -256,6 +257,21 @@ class GitRemoteUtilsTest {
         var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
         assertNotNull(result);
         assertEquals(direct, result);
+    }
+
+    @Test
+    void resolveSingleHostPathNonGitDirectChildDoesNotBlockNested() throws IOException {
+        // ~/Code/quarkus exists as a plain dir (not a git repo)
+        Files.createDirectories(tempDir.resolve("quarkus"));
+        // ~/Code/java/quarkus is the actual git repo
+        var nested = tempDir.resolve("java/quarkus");
+        Files.createDirectories(nested.resolve(".git"));
+
+        var config = new SpawnConfig();
+        config.setHostPath(tempDir.toString());
+        var result = GitRemoteUtils.resolveHostRepoPath("quarkus", config);
+        assertNotNull(result);
+        assertEquals(nested, result);
     }
 
     @Test

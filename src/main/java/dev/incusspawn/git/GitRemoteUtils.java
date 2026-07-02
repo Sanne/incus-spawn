@@ -123,7 +123,7 @@ public final class GitRemoteUtils {
         if (hostPaths.size() == 1) {
             var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
             var directChild = Path.of(basePath, repoName);
-            if (Files.isDirectory(directChild)) return directChild;
+            if (Files.isDirectory(directChild) && isGitRepo(directChild)) return directChild;
             var found = findRepoDirsNamed(Path.of(basePath), repoName);
             if (found.isEmpty()) {
                 // Backwards compatibility: return path even if it doesn't exist
