@@ -38,6 +38,20 @@ jobs:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
+      - name: Extract kernel version
+        if: steps.cache.outputs.cache-hit != 'true'
+        id: kernel
+        run: |
+          ver=$(grep '^KERNEL_VERSION=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached kernel source
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: kernel-source-${{ steps.kernel.outputs.version }}
+
       - name: Install build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -46,7 +60,14 @@ jobs:
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo appliance/build.sh appliance/build
+        run: sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache appliance/build.sh appliance/build
+
+      - name: Cache kernel source
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: kernel-source-${{ steps.kernel.outputs.version }}
 
       - name: Report image size
         run: ls -lh appliance/build/
@@ -84,6 +105,20 @@ jobs:
           path: appliance/build/
           key: ${{ steps.cache_key.outputs.key }}
 
+      - name: Extract kernel version
+        if: steps.cache.outputs.cache-hit != 'true'
+        id: kernel
+        run: |
+          ver=$(grep '^KERNEL_VERSION=' appliance/kernel/build-kernel.sh | head -1 | cut -d'"' -f2)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Restore cached kernel source
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: kernel-source-${{ steps.kernel.outputs.version }}
+
       - name: Install build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -92,7 +127,14 @@ jobs:
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo appliance/build.sh appliance/build
+        run: sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache appliance/build.sh appliance/build
+
+      - name: Cache kernel source
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/kernel-cache/
+          key: kernel-source-${{ steps.kernel.outputs.version }}
 
       - name: Report image size
         run: ls -lh appliance/build/

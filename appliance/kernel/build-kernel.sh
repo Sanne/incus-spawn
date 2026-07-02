@@ -12,7 +12,11 @@ set -euo pipefail
 
 KERNEL_VERSION="7.0.14"
 KERNEL_MAJOR="${KERNEL_VERSION%%.*}"
-KERNEL_URL="https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+KERNEL_URLS=(
+    "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+    "https://mirrors.edge.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+    "https://www.kernel.org/pub/linux/kernel/v${KERNEL_MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz"
+)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_DIR="${1:-$SCRIPT_DIR/../build}"
@@ -37,8 +41,18 @@ mkdir -p "$CACHE_DIR"
 TARBALL="$CACHE_DIR/linux-${KERNEL_VERSION}.tar.xz"
 if [ ! -f "$TARBALL" ]; then
     echo "==> Downloading kernel source..."
-    curl -fSL "$KERNEL_URL" -o "$TARBALL.tmp"
-    mv "$TARBALL.tmp" "$TARBALL"
+    for url in "${KERNEL_URLS[@]}"; do
+        echo "    Trying $url"
+        if curl -fSL --connect-timeout 10 "$url" -o "$TARBALL.tmp" 2>/dev/null; then
+            mv "$TARBALL.tmp" "$TARBALL"
+            break
+        fi
+        rm -f "$TARBALL.tmp"
+    done
+    if [ ! -f "$TARBALL" ]; then
+        echo "ERROR: failed to download linux-${KERNEL_VERSION}.tar.xz from any mirror" >&2
+        exit 1
+    fi
 else
     echo "==> Using cached kernel source"
 fi
