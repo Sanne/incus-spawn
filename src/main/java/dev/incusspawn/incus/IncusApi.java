@@ -505,28 +505,40 @@ class IncusApi {
             try (var controlWs = transport.openWebSocket(wsUrl(exec, "control"));
                  var dataWs    = transport.openWebSocket(wsUrl(exec, "0"))) {
 
-                var keepalive    = startKeepalive(controlWs);
-                var dataAlive    = startKeepalive(dataWs);
-                var controlDrain = Thread.ofVirtual().start(() -> drainQuietly(controlWs));
+                var keepalive = startKeepalive(controlWs);
+                var dataAlive = startKeepalive(dataWs);
 
                 var lastData = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
                 var dataThread = Thread.ofVirtual().start(() -> wsWriteTo(dataWs, outDst, lastData));
 
                 assertAllFdsConnected(exec.fds, Set.of("0", "control"));
 
-                int exitCode = waitForExecOp(exec.opPath);
-
-                dataAlive.interrupt();
-                awaitDrain(lastData, dataThread);
-                if (dataThread.isAlive()) {
-                    dataWs.close();
+                // Completion for an INTERACTIVE op cannot be taken from waitForExecOp the way the
+                // non-interactive execWebSocket does: the daemon does not finalize an interactive
+                // operation until the fd "0" websocket is torn down, and over the vfkit vsock the
+                // daemon's fd "0" close frame is not reliably delivered. Gating the teardown on
+                // op-finalization (as execWebSocket does) therefore deadlocks — the client waits
+                // for the op to finish while the daemon waits for the client to close fd "0".
+                //
+                // So a watcher thread detects process exit from the control fd closing (the daemon
+                // closes control when the process exits — the same signal execPty relies on), then
+                // drains and force-closes fd "0" locally so the daemon can finalize. The main
+                // thread meanwhile blocks in waitForExecOp, which returns the authoritative exit
+                // code once the daemon finalizes. Keeping waitForExecOp on the main thread
+                // preserves its MAX_EXEC_WAIT_SECONDS ceiling as a hard backstop: if the control
+                // close is itself lost, the watcher parks in drainQuietly but the main thread
+                // still gives up after the ceiling (returning -1 with a warning) rather than
+                // hanging forever.
+                var teardown = Thread.ofVirtual().start(() -> {
+                    drainQuietly(controlWs);          // blocks until the daemon closes control (process exited)
+                    dataAlive.interrupt();
+                    awaitDrain(lastData, dataThread);
+                    dataWs.close();                   // force-close fd "0" so the daemon can finalize the op
                     joinQuietly(dataThread);
-                }
+                });
 
+                int exitCode = waitForExecOp(exec.opPath);
                 keepalive.interrupt();
-                controlWs.close();
-                joinQuietly(controlDrain);
-
                 return exitCode;
             } catch (IOException e) {
                 throw new IncusException("Failed to open exec WebSocket", e);
