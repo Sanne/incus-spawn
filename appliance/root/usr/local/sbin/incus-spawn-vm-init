@@ -97,9 +97,6 @@ if [ -n "$ACTUAL_GW" ]; then
     fi
 fi
 
-# Enable HTTPS API access so the macOS host can connect
-incus config set core.https_address :8443
-
 # Start vsock forwarder so the macOS host can reach the Incus API via a Unix
 # socket instead of TCP to the VM subnet (bypasses VPN socket filters).
 VSOCK_INCUS_PORT=$(parse_cmdline "isx.vsock_incus")
@@ -117,19 +114,6 @@ if [ -n "$AGENT_VSOCK_PORT" ]; then
     # Bounds a hypothetical future blocking verb (the agent itself never lingers today).
     socat -T 30 VSOCK-LISTEN:"$AGENT_VSOCK_PORT",reuseaddr,fork EXEC:/usr/local/sbin/isx-agent &
     echo "incus-spawn-vm-init: control agent on vsock port $AGENT_VSOCK_PORT"
-fi
-
-# Trust the host's client certificate via the virtio-fs shared directory.
-# The host generates its cert in ~/.config/incus-spawn/vm/client.crt,
-# which is visible here at $SHARED_DIR/.config/incus-spawn/vm/client.crt.
-HOST_CERT="${SHARED_DIR}/.config/incus-spawn/vm/client.crt"
-if [ -f "$HOST_CERT" ]; then
-    incus config trust add-certificate "$HOST_CERT" --name incus-spawn 2>/dev/null \
-        || true
-    echo "incus-spawn-vm-init: host certificate trusted"
-else
-    echo "incus-spawn-vm-init: WARNING: no host certificate at $HOST_CERT"
-    echo "incus-spawn-vm-init: run 'isx init' on the host first"
 fi
 
 # Symlink isx binary from shared directory if available

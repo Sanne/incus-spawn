@@ -862,9 +862,9 @@ public class IncusClient {
      * Launch a new container or VM from an image.
      * The image may be a local alias ("my-image") or a remote reference
      * ("images:fedora/44"). Remote references are resolved by reading the
-     * Incus client config (~/.config/incus-spawn/vm/config.yml) to get the server
-     * URL and protocol — the REST API does not understand the "remote:alias"
-     * CLI shorthand and needs the full server URL instead.
+     * Incus client config to get the server URL and protocol — the REST API
+     * does not understand the "remote:alias" CLI shorthand and needs the full
+     * server URL instead.
      */
     public void launch(String image, String name, boolean vm) {
         var http = http();
@@ -913,9 +913,14 @@ public class IncusClient {
 
     private record RemoteConfig(String addr, String protocol) {}
 
+    private static final Map<String, RemoteConfig> WELL_KNOWN_REMOTES = Map.of(
+            "images", new RemoteConfig("https://images.linuxcontainers.org", "simplestreams")
+    );
+
     /**
      * Read a named remote's configuration from the Incus client config file.
-     * Returns null if the remote is not found.
+     * Falls back to well-known defaults (e.g. "images") when no config file
+     * defines the remote — common on macOS where there is no host-side Incus CLI.
      */
     private static RemoteConfig readIncusRemote(String name) {
         for (var path : Environment.incusConfigCandidates()) {
@@ -930,7 +935,7 @@ public class IncusClient {
                 if (!addr.isEmpty()) return new RemoteConfig(addr, protocol);
             } catch (Exception ignored) {}
         }
-        return null;
+        return WELL_KNOWN_REMOTES.get(name);
     }
 
     /**

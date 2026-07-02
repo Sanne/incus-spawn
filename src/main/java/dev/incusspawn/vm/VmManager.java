@@ -243,12 +243,6 @@ public final class VmManager {
             return false;
         }
 
-        try {
-            IncusRemoteSetup.ensureCertExists();
-        } catch (java.io.IOException e) {
-            System.err.println("Warning: could not ensure client certificate: " + e.getMessage());
-        }
-
         var backend = detectBackend();
         int cpus = detectCpus();
         int memoryMiB = detectMemoryMiB();
@@ -418,9 +412,6 @@ public final class VmManager {
     public static boolean ensureRunning() {
         if (isRunning()) {
             if (IncusClient.isReachable()) return true;
-            if (Environment.isMacOS()) {
-                return configureRemoteAndWait();
-            }
             System.err.println("VM is running but Incus is not reachable. Waiting...");
             return waitUntilReady(30);
         }
@@ -439,48 +430,6 @@ public final class VmManager {
 
         System.err.print("Starting incus-spawn VM... ");
         if (!start()) return false;
-
-        if (Environment.isMacOS()) {
-            return configureRemoteAndWait();
-        }
-
-        System.err.println("Waiting for Incus daemon...");
-        if (waitUntilReady(60)) {
-            System.err.println("VM is ready.");
-            return true;
-        }
-        System.err.println("Warning: VM started but Incus daemon did not become reachable within 60s.");
-        System.err.println("Check 'isx vm console' for boot logs.");
-        return false;
-    }
-
-    private static boolean configureRemoteAndWait() {
-        System.err.println("Waiting for VM network...");
-        var vmIp = VmNetwork.waitForVmIp(30);
-        if (vmIp == null) {
-            System.err.println("Error: could not discover VM IP address.");
-            System.err.println("Check that the VM is running: isx vm status");
-            return false;
-        }
-        System.err.println("  VM IP: " + vmIp);
-
-        if (!IncusRemoteSetup.isConfigured()) {
-            try {
-                IncusRemoteSetup.configure(vmIp);
-            } catch (IOException e) {
-                System.err.println("Failed to configure Incus remote: " + e.getMessage());
-                return false;
-            }
-        } else {
-            try {
-                IncusRemoteSetup.updateVmIp(vmIp);
-            } catch (IOException e) {
-                System.err.println("Warning: could not update VM IP: " + e.getMessage());
-            }
-            if (!IncusClient.isReachable()) {
-                IncusRemoteSetup.saveServerCert(vmIp);
-            }
-        }
 
         System.err.println("Waiting for Incus daemon...");
         if (waitUntilReady(60)) {

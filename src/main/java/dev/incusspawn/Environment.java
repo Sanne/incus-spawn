@@ -196,38 +196,14 @@ public final class Environment {
         return applianceDir().resolve("disk.img.gz");
     }
 
-    // --- Incus client config paths (used by IncusRemoteSetup on macOS) ---
+    // --- Incus client config paths ---
 
-    public static Path incusConfigDir() {
-        return configDir().resolve("vm");
-    }
-
-    public static Path incusConfigFile() {
-        return incusConfigDir().resolve("config.yml");
-    }
-
-    /**
-     * Candidate paths for reading the Incus client config, in priority order:
-     * our own VM config first, then the standard Incus locations.
-     */
+    /** Candidate paths for reading the Incus client config, in priority order. */
     public static List<Path> incusConfigCandidates() {
         return List.of(
-                incusConfigFile(),
                 home().resolve(".config/incus/config.yml"),
                 home().resolve(".local/share/incus/config.yml")
         );
-    }
-
-    public static Path incusClientCert() {
-        return incusConfigDir().resolve("client.crt");
-    }
-
-    public static Path incusClientKey() {
-        return incusConfigDir().resolve("client.key");
-    }
-
-    public static Path incusServerCertsDir() {
-        return incusConfigDir().resolve("servercerts");
     }
 
     private static volatile String incusServer;
