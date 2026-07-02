@@ -48,14 +48,17 @@ else
     if curl -fSL --connect-timeout 10 "$CDN_URL" -o "$TARBALL_XZ.tmp"; then
         mv "$TARBALL_XZ.tmp" "$TARBALL_XZ"
         TARBALL="$TARBALL_XZ"
-    elif curl -fSL --connect-timeout 10 "$GH_URL" -o "$TARBALL_GZ.tmp"; then
-        echo "    cdn.kernel.org unavailable, using GitHub archive"
-        mv "$TARBALL_GZ.tmp" "$TARBALL_GZ"
-        TARBALL="$TARBALL_GZ"
     else
-        rm -f "$TARBALL_XZ.tmp" "$TARBALL_GZ.tmp"
-        echo "ERROR: failed to download linux-${KERNEL_VERSION} from cdn.kernel.org or GitHub" >&2
-        exit 1
+        rm -f "$TARBALL_XZ.tmp"
+        if curl -fSL --connect-timeout 10 "$GH_URL" -o "$TARBALL_GZ.tmp"; then
+            echo "    cdn.kernel.org download failed, using GitHub archive"
+            mv "$TARBALL_GZ.tmp" "$TARBALL_GZ"
+            TARBALL="$TARBALL_GZ"
+        else
+            rm -f "$TARBALL_GZ.tmp"
+            echo "ERROR: failed to download linux-${KERNEL_VERSION} from cdn.kernel.org or GitHub" >&2
+            exit 1
+        fi
     fi
 fi
 
