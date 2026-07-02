@@ -152,6 +152,13 @@ public class CompletionCommand extends BaseCommand {
                 '1:clone name:_isx_instances'
             }
 
+            _isx_run() {
+              _arguments \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '--action=[Action to run (tool-name or tool-name\\:action-id)]:action' \\
+                '1:instance name:_isx_instances'
+            }
+
             _isx_project() {
               local state line; typeset -A opt_args
               _arguments -C \\
@@ -303,6 +310,7 @@ public class CompletionCommand extends BaseCommand {
                     'project:manage project templates'
                     'branch:create a new instance from an existing one'
                     'shell:open a shell in an existing clone'
+                    'run:run the default action or a specific action on an instance'
                     'list:list all incus-spawn environments'
                     'destroy:destroy a clone environment'
                     'update-all:update all templates (packages, git repos, dependencies)'
@@ -327,6 +335,7 @@ public class CompletionCommand extends BaseCommand {
                     destroy)    _isx_destroy ;;
                     list)       _isx_list ;;
                     shell)      _isx_shell ;;
+                    run)        _isx_run ;;
                     project)    _isx_project ;;
                     proxy)      _isx_proxy ;;
                     completion) _isx_completion ;;
@@ -360,14 +369,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
+              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
+                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -440,6 +449,15 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                  ;;
+                run)
+                  case "$prev" in
+                    run)
+                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --action" -- "$cur") )
+                      return ;;
+                    --action) return ;;
+                  esac
+                  COMPREPLY=( $(compgen -W "--help --action" -- "$cur") )
                   ;;
                 project)
                   local proj_subcmds="create update"
@@ -571,7 +589,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -587,6 +605,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a project      -d 'Manage project templates'
             complete -c isx -f -n __isx_no_subcommand -a branch       -d 'Create a new instance from an existing one'
             complete -c isx -f -n __isx_no_subcommand -a shell        -d 'Open a shell in an existing clone'
+            complete -c isx -f -n __isx_no_subcommand -a run          -d 'Run the default action or a specific action on an instance'
             complete -c isx -f -n __isx_no_subcommand -a list         -d 'List all incus-spawn environments'
             complete -c isx -f -n __isx_no_subcommand -a destroy      -d 'Destroy a clone environment'
             complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
@@ -645,6 +664,11 @@ public class CompletionCommand extends BaseCommand {
             # ── shell ────────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand shell' -a '(__isx_instances)' -d 'Clone name'
+
+            # ── run ─────────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand run' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_using_subcommand run' -l action -d 'Action to run (tool-name or tool-name:action-id)'
 
             # ── project ──────────────────────────────────────────────────────────────────
 
