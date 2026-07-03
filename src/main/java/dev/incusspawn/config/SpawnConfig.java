@@ -24,6 +24,7 @@ public class SpawnConfig {
 
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
+    private BobConfig bob = new BobConfig();
     private java.util.List<String> searchPaths = java.util.List.of();
     @JsonProperty("host-path")
     private String hostPath = "";
@@ -77,10 +78,21 @@ public class SpawnConfig {
         public void setToken(String token) { this.token = token == null ? "" : token; }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class BobConfig {
+        private String apiKey = "";
+
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
+        public boolean hasAuth() { return !apiKey.isBlank(); }
+    }
+
     public ClaudeConfig getClaude() { return claude; }
     public void setClaude(ClaudeConfig claude) { this.claude = claude; }
     public GitHubConfig getGithub() { return github; }
     public void setGithub(GitHubConfig github) { this.github = github; }
+    public BobConfig getBob() { return bob; }
+    public void setBob(BobConfig bob) { this.bob = bob; }
     public java.util.List<String> getSearchPaths() { return searchPaths; }
     public void setSearchPaths(java.util.List<String> searchPaths) { this.searchPaths = searchPaths == null ? java.util.List.of() : searchPaths; }
     public String getHostPath() { return hostPath; }
@@ -137,6 +149,11 @@ public class SpawnConfig {
         if (tools.contains("gh")) {
             if (config.getGithub().getToken().isBlank()) {
                 missing.add("GitHub token");
+            }
+        }
+        if (tools.contains("bob")) {
+            if (!config.getBob().hasAuth()) {
+                missing.add("Bob API key");
             }
         }
 

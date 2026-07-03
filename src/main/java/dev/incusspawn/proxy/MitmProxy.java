@@ -34,6 +34,7 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -78,6 +79,20 @@ public class MitmProxy {
             "plugins.gradle.org"
     );
     private static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
+    private static final String BOB_BASE_DOMAIN = "bob.ibm.com";
+    // Regional subdomains need explicit entries so the proxy generates wildcard
+    // certs at each level (*.us-east.bob.ibm.com, etc.) — a single *.bob.ibm.com
+    // cert only covers one subdomain level and won't match api.us-east.bob.ibm.com.
+    private static final java.util.List<String> BOB_REGIONAL_DOMAINS = List.of(
+            "us-east.bob.ibm.com",
+            "eu-de.bob.ibm.com",
+            "jp-tok.bob.ibm.com"
+    );
+
+    // Domains where all subdomains should also be intercepted with credential injection.
+    // Exact matches go into INTERCEPTED_DOMAIN_SET; this list adds suffix matching
+    // so e.g. "api.us-east.bob.ibm.com" is caught without enumerating every subdomain.
+    private static final java.util.List<String> WILDCARD_DOMAIN_SUFFIXES;
 
     private static final Set<String> INTERCEPTED_DOMAIN_SET;
     static {
@@ -87,7 +102,23 @@ public class MitmProxy {
         all.addAll(REGISTRY_DOMAINS);
         all.addAll(MAVEN_DOMAINS);
         all.addAll(GRADLE_DOMAINS);
+        all.add(BOB_BASE_DOMAIN);
+        all.addAll(BOB_REGIONAL_DOMAINS);
         INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
+
+        WILDCARD_DOMAIN_SUFFIXES = List.of("." + BOB_BASE_DOMAIN);
+    }
+
+    private static boolean isInterceptedDomain(String domain) {
+        if (INTERCEPTED_DOMAIN_SET.contains(domain)) return true;
+        for (var suffix : WILDCARD_DOMAIN_SUFFIXES) {
+            if (domain.endsWith(suffix)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isBobDomain(String domain) {
+        return domain.equals(BOB_BASE_DOMAIN) || domain.endsWith("." + BOB_BASE_DOMAIN);
     }
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
@@ -129,6 +160,7 @@ public class MitmProxy {
     private final String anthropicApiKey;
     private final String oauthToken;
     private final String ghToken;
+    private final String bobApiKey;
 
     // Vertex AI configuration. When useVertex=true, the proxy transparently translates
     // standard Anthropic API requests (to api.anthropic.com) into Vertex AI rawPredict
@@ -170,7 +202,7 @@ public class MitmProxy {
 
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, String anthropicApiKey, String oauthToken,
-                     String ghToken,
+                     String ghToken, String bobApiKey,
                      boolean useVertex, String vertexRegion, String vertexProjectId) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
@@ -180,6 +212,7 @@ public class MitmProxy {
         this.anthropicApiKey = anthropicApiKey != null ? anthropicApiKey : "";
         this.oauthToken = oauthToken != null ? oauthToken : "";
         this.ghToken = ghToken;
+        this.bobApiKey = bobApiKey != null ? bobApiKey : "";
         this.useVertex = useVertex;
         this.vertexRegion = vertexRegion != null ? vertexRegion : "";
         this.vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
@@ -224,6 +257,7 @@ public class MitmProxy {
                 claude.getApiKey(),
                 claude.getOauthToken(),
                 config.getGithub().getToken(),
+                config.getBob().getApiKey(),
                 claude.isUseVertex(),
                 claude.getCloudMlRegion(),
                 claude.getVertexProjectId());
@@ -410,7 +444,7 @@ public class MitmProxy {
                 .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"))
                 .setIdleTimeout(120)
                 .setIdleTimeoutUnit(TimeUnit.SECONDS)
-                .setAlpnVersions(java.util.List.of(HttpVersion.HTTP_1_1));
+                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1));
 
         // Upstream HTTPS client with connection pooling.
         // GraalVM native images don't embed the build-time trust store reliably
@@ -528,7 +562,7 @@ public class MitmProxy {
                 handleMavenRequest(clientReq, domain);
             } else if (GRADLE_DOMAINS.contains(domain)) {
                 handleGradleRequest(clientReq, domain);
-            } else if (INTERCEPTED_DOMAIN_SET.contains(domain)) {
+            } else if (isInterceptedDomain(domain)) {
                 handleApiRequest(clientReq, domain);
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
@@ -1309,6 +1343,10 @@ public class MitmProxy {
                     // API and CDN domains accept Bearer tokens
                     upReq.putHeader("Authorization", "Bearer " + ghToken);
                 }
+            }
+        } else if (isBobDomain(domain)) {
+            if (!bobApiKey.isBlank()) {
+                upReq.putHeader("Authorization", "Apikey " + bobApiKey);
             }
         }
         return true;
