@@ -237,6 +237,7 @@ public class InitCommand extends BaseCommand {
         setupSshKeyPair();
         setupClaudeAuth();
         setupGitHubAuth();
+        setupBobAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -294,6 +295,7 @@ public class InitCommand extends BaseCommand {
         setupSshKeyPair();
         setupClaudeAuth();
         setupGitHubAuth();
+        setupBobAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -302,7 +304,8 @@ public class InitCommand extends BaseCommand {
 
         startStep("DNS Configuration", DNS_HINT);
         var spawnConfig = SpawnConfig.load();
-        if (spawnConfig.getClaude().hasAuth() || !spawnConfig.getGithub().getToken().isBlank()) {
+        if (spawnConfig.getClaude().hasAuth() || !spawnConfig.getGithub().getToken().isBlank()
+                || spawnConfig.getBob().hasAuth()) {
             MitmProxy.configureBridgeDns(incus);
         } else {
             System.out.println("  Skipped — no API keys configured yet.");
@@ -1287,6 +1290,41 @@ public class InitCommand extends BaseCommand {
         for (int i = 0; i < paths.size(); i++) {
             System.out.println("    " + (i + 1) + ". " + paths.get(i));
         }
+    }
+
+    private void setupBobAuth() {
+        startStep("Bob Shell Authentication",
+                "Sets up an IBM Bob API key so containers can use Bob Shell",
+                "for AI-assisted coding. The real key stays on the host —",
+                "containers only hold a placeholder value, and the MITM",
+                "proxy injects the real credential transparently.",
+                "Create an API key at: https://bob.ibm.com (Admin > API keys, scope: Inference)");
+        var config = SpawnConfig.load();
+        var console = System.console();
+        if (console == null) {
+            System.err.println("  Error: no console available for interactive setup.");
+            return;
+        }
+
+        if (config.getBob().hasAuth()) {
+            System.out.println("  Bob auth: API key configured (" + maskSecret(config.getBob().getApiKey()) + ")");
+            System.out.print("  Keep current? (Y/n): ");
+            var keep = console.readLine();
+            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+                return;
+            }
+        }
+
+        System.out.print("  Bob API key (or press Enter to skip): ");
+        var apiKey = new String(console.readPassword());
+        if (apiKey.isBlank()) {
+            System.out.println("  Skipped Bob setup. You can configure it later by re-running 'isx init'.");
+            return;
+        }
+
+        config.getBob().setApiKey(apiKey);
+        config.save();
+        System.out.println("  Bob configuration saved.");
     }
 
     private void setupPathList(

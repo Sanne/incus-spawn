@@ -326,6 +326,25 @@ shell-command: pi
 
 Pi works out of the box with all three auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](#credential-isolation) injects credentials transparently. To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
 
+### Bob Shell
+
+Bob Shell is IBM's AI-powered coding assistant. Add it to any template with `tools: [bob]`:
+
+```yaml
+name: tpl-bob-dev
+description: Isolated dev environment with Bob Shell
+parent: tpl-dev
+repos:
+  - url: https://github.com/myorg/myproject.git
+    path: ~/myproject
+workdir: ~/myproject
+tools:
+  - bob
+default-action: bob
+```
+
+Bob Shell requires an IBM API key. Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it transparently. Containers only hold a placeholder value. The IBM license agreement and API key auth method are pre-configured during template build so no interactive prompts appear on first use.
+
 ### Claude Code Skills
 
 Template images can declare [Claude Code skills](https://skills.sh) to bake in at build time. Skills are installed once into the template and inherited by every instance branched from it.

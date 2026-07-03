@@ -81,6 +81,7 @@ public class ProxyCommand extends BaseCommand {
             var apiKey = claude.getApiKey();
             var oauthToken = claude.getOauthToken();
             var ghToken = config.getGithub().getToken();
+            var bobApiKey = config.getBob().getApiKey();
 
             if (!claude.hasAuth()) {
                 System.err.println("Error: no Claude credentials configured. Run 'isx init' first.");
@@ -136,13 +137,14 @@ public class ProxyCommand extends BaseCommand {
                 System.out.println("  API key:       " + (apiKey.isBlank() ? "(not configured)" : "configured"));
             }
             System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
+            System.out.println("  Bob API key:   " + (bobApiKey.isBlank() ? "(not configured)" : "configured"));
             System.out.println("  Log file:      " + logFile());
             System.out.println();
 
             var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
             var vertx = Arc.container().instance(Vertx.class).get();
             var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
-                    apiKey, oauthToken, ghToken,
+                    apiKey, oauthToken, ghToken, bobApiKey,
                     claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
 
             if (debug) {

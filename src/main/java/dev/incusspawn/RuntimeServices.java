@@ -1,6 +1,7 @@
 package dev.incusspawn;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.BobSetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.PiSetup;
@@ -25,7 +26,7 @@ public final class RuntimeServices {
     private static final BackgroundTaskManager BG_TASKS = new BackgroundTaskManager();
     private static final FlockInstanceLockManager LOCK_MGR = new FlockInstanceLockManager();
     private static final ToolDefLoader TOOL_DEF_LOADER = new ToolDefLoader();
-    private static final List<ToolSetup> TOOL_SETUPS = List.of(new ClaudeSetup(), new GhSetup(), new PiSetup());
+    private static final List<ToolSetup> TOOL_SETUPS = List.of(new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup());
 
     private RuntimeServices() {}
 
