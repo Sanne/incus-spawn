@@ -147,4 +147,44 @@ class VmManagerTest {
 
         assertEquals(modifiedFirst, modifiedSecond);
     }
+
+    // --- recoverReachability orchestration (grace -> forwarder restart -> backstop) ---
+
+    @Test
+    void recoverReachabilityReturnsEarlyWhenGraceClears() {
+        var restarts = new java.util.concurrent.atomic.AtomicInteger();
+        boolean ok = VmManager.recoverReachability(
+                secs -> true,                                       // reachable on the grace probe
+                () -> { restarts.incrementAndGet(); return true; });
+        assertTrue(ok);
+        assertEquals(0, restarts.get(), "must not restart the forwarder if the grace probe succeeds");
+    }
+
+    @Test
+    void recoverReachabilityRestartsForwarderThenRecovers() {
+        var probes = new java.util.ArrayDeque<>(java.util.List.of(false, true)); // grace fails, post-restart succeeds
+        var restarts = new java.util.concurrent.atomic.AtomicInteger();
+        boolean ok = VmManager.recoverReachability(
+                secs -> probes.poll(),
+                () -> { restarts.incrementAndGet(); return true; });
+        assertTrue(ok);
+        assertEquals(1, restarts.get());
+        assertTrue(probes.isEmpty(), "must not fall through to the backstop probe once recovery succeeds");
+    }
+
+    @Test
+    void recoverReachabilityFallsBackToBackstopWhenAgentDoesNotConfirm() {
+        var probes = new java.util.ArrayDeque<>(java.util.List.of(false, true)); // grace fails, backstop succeeds
+        boolean ok = VmManager.recoverReachability(
+                secs -> probes.poll(),
+                () -> false);                                       // agent unreachable or unconfirmed
+        assertTrue(ok);
+        assertTrue(probes.isEmpty(), "must probe the backstop after the restart cannot be confirmed");
+    }
+
+    @Test
+    void recoverReachabilityGivesUpWhenNothingRecovers() {
+        boolean ok = VmManager.recoverReachability(secs -> false, () -> false);
+        assertFalse(ok, "must return false so the caller can surface an actionable error");
+    }
 }

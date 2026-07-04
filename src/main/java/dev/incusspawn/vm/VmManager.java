@@ -20,6 +20,8 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
+import java.util.function.IntPredicate;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -405,7 +407,12 @@ public final class VmManager {
         return false;
     }
 
-    // Recovery budget for a VM that is up but whose Incus tunnel is unreachable.
+    // Recovery budget for a VM that is up but whose Incus tunnel is not answering. The primary
+    // recovery is the agent-driven forwarder restart (~1 s); the grace and backstop are short
+    // bounded probes around it. This is deliberately NOT sized to outwait the forwarder's own
+    // `socat -T 180` self-heal: if the agent cannot restart the forwarder and it does not clear
+    // within the budget, we give up so the caller can surface an actionable error rather than
+    // blocking the command for minutes.
     private static final int REACHABILITY_GRACE_SECONDS = 10;
     private static final int FORWARDER_RECOVERY_WAIT_SECONDS = 15;
     private static final int REACHABILITY_BACKSTOP_SECONDS = 30;
@@ -413,29 +420,41 @@ public final class VmManager {
     /**
      * Recover reachability when the VM is running but the Incus tunnel is not answering.
      *
-     * Almost always this means the vsock forwarder is wedged with leaked socat fork-children:
-     * the vfkit boundary does not reliably propagate connection close, so children pin host-side
-     * fds and degrade new-connection latency until the forwarder's own {@code socat -T 180}
-     * inactivity backstop reaps them. Rather than block a command for up to that 180 s, we give a
-     * brief transient a chance to clear, then proactively restart the forwarder via the control
-     * agent — an independent vsock port that answers even when the Incus tunnel is wedged, so
-     * recovery is ~1 s. Restarting only drops connections that are already stalled (nothing is
-     * getting through, or we would not be here), so it is safe to trigger for other isx processes.
+     * Almost always this means the vsock forwarder is wedged with leaked connections: the vfkit
+     * boundary does not reliably propagate connection close, so stranded streams pin host-side fds
+     * and degrade new-connection latency until the forwarder's own {@code socat -T 180} inactivity
+     * backstop reaps them. Rather than block a command for that long, we give a brief transient a
+     * chance to clear, then proactively restart the forwarder via the control agent — an
+     * independent vsock port that answers even when the Incus tunnel is wedged, so recovery is
+     * ~1 s. Restarting only drops connections that are already stalled (nothing is getting through,
+     * or we would not be here), so it is safe to trigger even for other isx processes.
      */
     private static boolean recoverReachability() {
+        return recoverReachability(VmManager::waitUntilReady, VmAgentClient::restartForwarder);
+    }
+
+    /**
+     * Testable core of {@link #recoverReachability()}. {@code waitUntilReady} probes reachability
+     * for a given number of seconds; {@code restartForwarder} asks the control agent to restart the
+     * forwarder and returns whether it confirmed. Split out so the grace / restart / backstop
+     * orchestration can be unit-tested without a live VM.
+     */
+    static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder) {
         // A momentary blip (e.g. the daemon finishing a burst of work) may clear on its own.
-        if (waitUntilReady(REACHABILITY_GRACE_SECONDS)) return true;
+        if (waitUntilReady.test(REACHABILITY_GRACE_SECONDS)) return true;
 
         // Still unreachable after the grace window: restart the wedged forwarder in place.
-        if (VmAgentClient.restartForwarder()) {
+        if (restartForwarder.getAsBoolean()) {
             System.err.println("Restarted the vsock forwarder; waiting for Incus...");
-            if (waitUntilReady(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
+            if (waitUntilReady.test(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
         } else {
-            System.err.println("Could not reach the control agent to restart the forwarder.");
+            // False covers both an unreachable agent and an unexpected reply — we cannot tell which.
+            System.err.println("The control agent did not confirm a forwarder restart.");
         }
 
-        // Last resort: keep waiting in case the forwarder's own -T backstop is mid-reap.
-        return waitUntilReady(REACHABILITY_BACKSTOP_SECONDS);
+        // Bounded final probe; if this fails, ensureRunning() returns false and the caller surfaces
+        // an actionable connection error (rather than blocking for the forwarder's ~180 s self-heal).
+        return waitUntilReady.test(REACHABILITY_BACKSTOP_SECONDS);
     }
 
     /**
@@ -445,7 +464,7 @@ public final class VmManager {
     public static boolean ensureRunning() {
         if (isRunning()) {
             if (IncusClient.isReachable()) return true;
-            System.err.println("VM is running but Incus is not reachable. Waiting...");
+            System.err.println("VM is running but Incus is not reachable; attempting recovery...");
             return recoverReachability();
         }
 
