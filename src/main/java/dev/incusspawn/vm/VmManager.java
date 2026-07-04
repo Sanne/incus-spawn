@@ -405,6 +405,39 @@ public final class VmManager {
         return false;
     }
 
+    // Recovery budget for a VM that is up but whose Incus tunnel is unreachable.
+    private static final int REACHABILITY_GRACE_SECONDS = 10;
+    private static final int FORWARDER_RECOVERY_WAIT_SECONDS = 15;
+    private static final int REACHABILITY_BACKSTOP_SECONDS = 30;
+
+    /**
+     * Recover reachability when the VM is running but the Incus tunnel is not answering.
+     *
+     * Almost always this means the vsock forwarder is wedged with leaked socat fork-children:
+     * the vfkit boundary does not reliably propagate connection close, so children pin host-side
+     * fds and degrade new-connection latency until the forwarder's own {@code socat -T 180}
+     * inactivity backstop reaps them. Rather than block a command for up to that 180 s, we give a
+     * brief transient a chance to clear, then proactively restart the forwarder via the control
+     * agent — an independent vsock port that answers even when the Incus tunnel is wedged, so
+     * recovery is ~1 s. Restarting only drops connections that are already stalled (nothing is
+     * getting through, or we would not be here), so it is safe to trigger for other isx processes.
+     */
+    private static boolean recoverReachability() {
+        // A momentary blip (e.g. the daemon finishing a burst of work) may clear on its own.
+        if (waitUntilReady(REACHABILITY_GRACE_SECONDS)) return true;
+
+        // Still unreachable after the grace window: restart the wedged forwarder in place.
+        if (VmAgentClient.restartForwarder()) {
+            System.err.println("Restarted the vsock forwarder; waiting for Incus...");
+            if (waitUntilReady(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
+        } else {
+            System.err.println("Could not reach the control agent to restart the forwarder.");
+        }
+
+        // Last resort: keep waiting in case the forwarder's own -T backstop is mid-reap.
+        return waitUntilReady(REACHABILITY_BACKSTOP_SECONDS);
+    }
+
     /**
      * Auto-start hook: ensure VM is running and Incus is reachable.
      * Prints progress to stderr so it doesn't interfere with command output.
@@ -413,7 +446,7 @@ public final class VmManager {
         if (isRunning()) {
             if (IncusClient.isReachable()) return true;
             System.err.println("VM is running but Incus is not reachable. Waiting...");
-            return waitUntilReady(30);
+            return recoverReachability();
         }
 
         if (!Files.exists(Environment.applianceKernel())
