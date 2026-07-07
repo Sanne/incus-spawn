@@ -130,8 +130,10 @@ class IncusApiLiveTest {
         assertTrue(imagesResp.isSuccess());
 
         String imageFingerprint = null;
+        String imageType = "container";
         for (var img : imagesResp.body().path("metadata")) {
             imageFingerprint = img.path("fingerprint").asText();
+            imageType = img.path("type").asText("container");
             break;
         }
 
@@ -148,7 +150,7 @@ class IncusApiLiveTest {
             // Create (privileged to avoid nested idmap issues in CI/nested environments)
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", "container");
+            createBody.put("type", imageType);
             createBody.put("source", java.util.Map.of("type", "image", "fingerprint", imageFingerprint));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             var createResp = http.requestAndWait("POST", "/1.0/instances", createBody);
@@ -238,19 +240,18 @@ class IncusApiLiveTest {
     void copyInstance() throws Exception {
         if (skip()) return;
 
-        var imagesResp = http.get("/1.0/images?recursion=1");
-        if (imagesResp.body().path("metadata").size() == 0) {
+        var image = testImage();
+        if (image == null) {
             System.out.println("Skipping copy test: no local images."); return;
         }
-        var fingerprint = imagesResp.body().path("metadata").get(0).path("fingerprint").asText();
         String src = "isx-copy-src-" + System.currentTimeMillis() % 10000;
         String dst = src + "-copy";
 
         try {
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", src);
-            createBody.put("type", "container");
-            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
+            createBody.put("type", image.type());
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
             createBody.put("config", java.util.Map.of("security.privileged", "true",
                     "user.test-marker", "original"));
             assertTrue(http.requestAndWait("POST", "/1.0/instances", createBody).isSuccess(),
@@ -285,13 +286,15 @@ class IncusApiLiveTest {
         if (imagesResp.body().path("metadata").size() == 0) {
             System.out.println("Skipping launch test: no local images."); return;
         }
-        var fingerprint = imagesResp.body().path("metadata").get(0).path("fingerprint").asText();
+        var imageNode = imagesResp.body().path("metadata").get(0);
+        var fingerprint = imageNode.path("fingerprint").asText();
+        var imageType = imageNode.path("type").asText("container");
 
         String name = "isx-launch-test-" + System.currentTimeMillis() % 10000;
         try {
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", "container");
+            createBody.put("type", imageType);
             createBody.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             var createResp = http.requestAndWait("POST", "/1.0/instances", createBody);
@@ -320,17 +323,16 @@ class IncusApiLiveTest {
     void deviceConfigSet() throws Exception {
         if (skip()) return;
 
-        var imagesResp = http.get("/1.0/images?recursion=1");
-        if (imagesResp.body().path("metadata").size() == 0) {
+        var image = testImage();
+        if (image == null) {
             System.out.println("Skipping deviceConfigSet test: no local images."); return;
         }
-        var fingerprint = imagesResp.body().path("metadata").get(0).path("fingerprint").asText();
         String name = "isx-devset-test-" + System.currentTimeMillis() % 10000;
         try {
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", "container");
-            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
+            createBody.put("type", image.type());
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             assertTrue(http.requestAndWait("POST", "/1.0/instances", createBody).isSuccess());
 
@@ -353,19 +355,22 @@ class IncusApiLiveTest {
     // Exec via WebSocket
     // =========================================================================
 
-    private static String testImageFingerprint() throws Exception {
+    private record TestImage(String fingerprint, String type) {}
+
+    private static TestImage testImage() throws Exception {
         if (skip()) return null;
         var r = http.get("/1.0/images?recursion=1");
         var meta = r.body().path("metadata");
         if (meta.size() == 0) return null;
-        return meta.get(0).path("fingerprint").asText();
+        var img = meta.get(0);
+        return new TestImage(img.path("fingerprint").asText(), img.path("type").asText("container"));
     }
 
-    private static String createAndStartContainer(String name, String fingerprint) throws Exception {
+    private static String createAndStartContainer(String name, TestImage image) throws Exception {
         var body = new java.util.LinkedHashMap<String, Object>();
         body.put("name", name);
-        body.put("type", "container");
-        body.put("source", java.util.Map.of("type", "image", "fingerprint", fingerprint));
+        body.put("type", image.type());
+        body.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
         body.put("config", java.util.Map.of("security.privileged", "true"));
         assertTrue(http.requestAndWait("POST", "/1.0/instances", body).isSuccess());
         assertTrue(http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
@@ -385,12 +390,12 @@ class IncusApiLiveTest {
     @Timeout(30)
     void execCaptureReturnsStdoutStderrAndExitCode() throws Exception {
         if (skip()) return;
-        var fp = testImageFingerprint();
-        if (fp == null) { System.out.println("Skipping exec test: no images."); return; }
+        var image = testImage();
+        if (image == null) { System.out.println("Skipping exec test: no images."); return; }
 
         String name = "isx-exec-test-" + System.currentTimeMillis() % 10000;
         try {
-            createAndStartContainer(name, fp);
+            createAndStartContainer(name, image);
 
             var result = http.execCapture(name,
                     List.of("sh", "-c", "echo hello-stdout; echo hello-stderr >&2; exit 7"),
@@ -411,12 +416,12 @@ class IncusApiLiveTest {
     @Timeout(30)
     void execCaptureWithUserAndGroup() throws Exception {
         if (skip()) return;
-        var fp = testImageFingerprint();
-        if (fp == null) { System.out.println("Skipping exec user test: no images."); return; }
+        var image = testImage();
+        if (image == null) { System.out.println("Skipping exec user test: no images."); return; }
 
         String name = "isx-execuser-test-" + System.currentTimeMillis() % 10000;
         try {
-            createAndStartContainer(name, fp);
+            createAndStartContainer(name, image);
 
             // Run id as root (uid=0)
             var rootResult = http.execCapture(name, List.of("id", "-u"), 0, 0, "/root", java.util.Map.of());
@@ -448,12 +453,12 @@ class IncusApiLiveTest {
     @Timeout(30)
     void execStreamWritesToOutputStreams() throws Exception {
         if (skip()) return;
-        var fp = testImageFingerprint();
-        if (fp == null) { System.out.println("Skipping execStream test: no images."); return; }
+        var image = testImage();
+        if (image == null) { System.out.println("Skipping execStream test: no images."); return; }
 
         String name = "isx-stream-test-" + System.currentTimeMillis() % 10000;
         try {
-            createAndStartContainer(name, fp);
+            createAndStartContainer(name, image);
 
             var stdoutBuf = new java.io.ByteArrayOutputStream();
             var stderrBuf = new java.io.ByteArrayOutputStream();
@@ -473,12 +478,12 @@ class IncusApiLiveTest {
     @Test
     void getLogReturnsContent() throws Exception {
         if (skip()) return;
-        var fp = testImageFingerprint();
-        if (fp == null) { System.out.println("Skipping log test: no images."); return; }
+        var image = testImage();
+        if (image == null) { System.out.println("Skipping log test: no images."); return; }
 
         String name = "isx-log-test-" + System.currentTimeMillis() % 10000;
         try {
-            createAndStartContainer(name, fp);
+            createAndStartContainer(name, image);
             var logsResp = http.get("/1.0/instances/" + name + "/logs");
             assertTrue(logsResp.isSuccess(), "logs endpoint should return 200");
             var logs = logsResp.body().path("metadata");
@@ -526,19 +531,18 @@ class IncusApiLiveTest {
         if (skip()) return;
 
         // Need a running instance for file push
-        var imagesResp = http.get("/1.0/images?recursion=1");
-        if (imagesResp.body().path("metadata").size() == 0) {
+        var image = testImage();
+        if (image == null) {
             System.out.println("Skipping file push test: no local images.");
             return;
         }
-        var imageFingerprint = imagesResp.body().path("metadata").get(0).path("fingerprint").asText();
         String name = "isx-filepush-test-" + System.currentTimeMillis() % 10000;
 
         try {
             var createBody = new java.util.LinkedHashMap<String, Object>();
             createBody.put("name", name);
-            createBody.put("type", "container");
-            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", imageFingerprint));
+            createBody.put("type", image.type());
+            createBody.put("source", java.util.Map.of("type", "image", "fingerprint", image.fingerprint()));
             createBody.put("config", java.util.Map.of("security.privileged", "true"));
             assertTrue(http.requestAndWait("POST", "/1.0/instances", createBody).isSuccess());
 

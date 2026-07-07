@@ -381,8 +381,16 @@ public class IncusClient {
     private record UidGid(String uid, String gid) {}
 
     private UidGid getUserUidGid(String container, String username) {
-        var result = shellExec(container, "id", "-u", username);
-        if (!result.success()) {
+        ExecResult result = null;
+        for (int i = 0; i < 5; i++) {
+            result = shellExec(container, "id", "-u", username);
+            if (result.success()) break;
+            try { Thread.sleep(1000); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (result == null || !result.success()) {
             throw new IncusException("Failed to get UID for user " + username);
         }
         var uid = result.stdout().strip();
@@ -878,6 +886,16 @@ public class IncusClient {
      * server URL instead.
      */
     public void launch(String image, String name, boolean vm) {
+        create(image, name, vm);
+        start(name);
+    }
+
+    /**
+     * Create a new instance from an image without starting it.
+     * Use this when you need to configure the instance (e.g. disk size)
+     * before first boot.
+     */
+    public void create(String image, String name, boolean vm) {
         var http = http();
         var cowPool = findCowPool();
         var body = new LinkedHashMap<String, Object>();
@@ -886,10 +904,7 @@ public class IncusClient {
         body.put("source", resolveImageSource(image));
         if (cowPool != null) body.put("storage", cowPool);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
-        if (!resp.isSuccess()) throw new IncusException("Failed to launch " + name);
-        var startResp = http.requestAndWait("PUT", "/1.0/instances/" + name + "/state",
-                Map.of("action", "start", "timeout", 30, "force", false));
-        if (!startResp.isSuccess()) throw new IncusException("Failed to start " + name + " after launch");
+        if (!resp.isSuccess()) throw new IncusException("Failed to create " + name);
     }
 
     /**
@@ -1193,6 +1208,12 @@ public class IncusClient {
         return resp.body().path("metadata").path("status").asText("");
     }
 
+    public boolean isVm(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) return false;
+        return "virtual-machine".equals(resp.body().path("metadata").path("type").asText(""));
+    }
+
     /**
      * Get a specific config value. Returns empty string if the key is not set.
      */
@@ -1390,5 +1411,11 @@ public class IncusClient {
         if (!resp.isSuccess()) return null;
         var val = resp.body().path("metadata").path("properties").path(key);
         return val.isMissingNode() ? null : val.asText(null);
+    }
+
+    public String getImageType(String fingerprint) {
+        var resp = http().get("/1.0/images/" + fingerprint);
+        if (!resp.isSuccess()) return null;
+        return resp.body().path("metadata").path("type").asText(null);
     }
 }

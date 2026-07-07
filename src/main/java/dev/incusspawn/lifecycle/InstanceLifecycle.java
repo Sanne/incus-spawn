@@ -70,7 +70,9 @@ public final class InstanceLifecycle {
                 Metadata.STATIC_IP, ip,
                 Metadata.STATIC_GATEWAY, gateway));
 
-        pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        if (!incus.isVm(name)) {
+            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        }
         return ip;
     }
 
@@ -104,6 +106,25 @@ public final class InstanceLifecycle {
         }
     }
 
+    /**
+     * Push files that can't be written to a stopped VM (file push requires the
+     * incus-agent). Call after {@code incus.start()} + {@code waitForReady()}.
+     */
+    public static void pushDeferredVmFiles(IncusClient incus, String name,
+                                           NetworkMode networkMode, RuntimeConfig prefetched) {
+        if (networkMode != NetworkMode.AIRGAP) {
+            var ip = incus.configGet(name, Metadata.STATIC_IP);
+            var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
+            if (!ip.isEmpty() && !gateway.isEmpty()) {
+                pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+            }
+        }
+        if (prefetched != null) {
+            injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+            pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+        }
+    }
+
     public static void tagMetadata(IncusClient incus, String name, String type, String parent) {
         incus.configSetAll(name, Map.of(
                 Metadata.TYPE, type,
@@ -119,7 +140,7 @@ public final class InstanceLifecycle {
         var hostResources = HostResourceSetup.deserialize(hrJson);
         if (!hostResources.isEmpty()) {
             System.out.println("Applying host-resource devices...");
-            HostResourceSetup.applyForInstance(incus, name, hostResources);
+            HostResourceSetup.applyForInstance(incus, name, hostResources, incus.isVm(name));
         }
 
         if (instanceType == InstanceType.INSTANCE) {

@@ -90,6 +90,10 @@ public class ImageDef {
     private String imageTag;
     @JsonProperty("image_sha256")
     private Map<String, String> imageSha256;
+    @JsonProperty("vm_image_url")
+    private String vmImageUrl;
+    @JsonProperty("vm_image_sha256")
+    private Map<String, String> vmImageSha256;
     private String parent;
     private List<String> packages = List.of();
     @JsonProperty("remove_packages")
@@ -108,6 +112,7 @@ public class ImageDef {
     private List<String> maskServices = List.of();
     private boolean gui;
     private boolean pinned;
+    private String type;
     private String workdir;
     @JsonProperty("shell-command")
     private String shellCommand;
@@ -131,6 +136,10 @@ public class ImageDef {
     public void setImageTag(String imageTag) { this.imageTag = imageTag; }
     public Map<String, String> getImageSha256() { return imageSha256; }
     public void setImageSha256(Map<String, String> imageSha256) { this.imageSha256 = imageSha256; }
+    public String getVmImageUrl() { return vmImageUrl; }
+    public void setVmImageUrl(String vmImageUrl) { this.vmImageUrl = vmImageUrl; }
+    public Map<String, String> getVmImageSha256() { return vmImageSha256; }
+    public void setVmImageSha256(Map<String, String> vmImageSha256) { this.vmImageSha256 = vmImageSha256; }
     public String getParent() { return parent; }
     public void setParent(String parent) { this.parent = parent; }
     public List<String> getPackages() { return packages; }
@@ -153,6 +162,12 @@ public class ImageDef {
     public void setGui(boolean gui) { this.gui = gui; }
     public boolean isPinned() { return pinned; }
     public void setPinned(boolean pinned) { this.pinned = pinned; }
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+    public boolean isVm() { return "vm".equals(type); }
+    public boolean isKvm() { return "kvm".equals(type); }
+    @Deprecated
+    public void setVm(boolean vm) { if (vm) this.type = "vm"; }
     public String getWorkdir() { return workdir; }
     public void setWorkdir(String workdir) { this.workdir = workdir; }
     public String getShellCommand() { return shellCommand; }
@@ -318,6 +333,12 @@ public class ImageDef {
                     .forEach(e -> sb.append("image_sha256.").append(e.getKey())
                             .append('=').append(e.getValue()).append('\n'));
         }
+        if (vmImageUrl != null) sb.append("vm_image_url=").append(vmImageUrl).append('\n');
+        if (vmImageSha256 != null) {
+            vmImageSha256.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                    .forEach(e -> sb.append("vm_image_sha256.").append(e.getKey())
+                            .append('=').append(e.getValue()).append('\n'));
+        }
         sb.append("parent=").append(parent != null ? parent : "").append('\n');
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
         for (var t : tools.stream().sorted(java.util.Comparator.comparing(ToolDef.ToolRef::getName)).toList()) {
@@ -352,6 +373,7 @@ public class ImageDef {
                 .sorted()
                 .forEach(e -> sb.append(e).append('\n'));
         if (gui) sb.append("gui=true\n");
+        if (type != null) sb.append("type=").append(type).append('\n');
         if (workdir != null && !workdir.isEmpty()) sb.append("workdir=").append(workdir).append('\n');
         if (shellCommand != null && !shellCommand.isEmpty()) sb.append("shell-command=").append(shellCommand).append('\n');
         return sha256hex(sb.toString());
@@ -382,6 +404,22 @@ public class ImageDef {
             parentName = parent.getParent();
         }
         return result;
+    }
+
+    /**
+     * Resolve the instance type by walking up the parent chain.
+     * Returns the first non-null {@code type} found, or null if none is set.
+     */
+    public static String resolveType(ImageDef start, Map<String, ImageDef> defs) {
+        if (start.getType() != null) return start.getType();
+        for (var ancestor : ancestors(start, defs)) {
+            if (ancestor.getType() != null) return ancestor.getType();
+        }
+        return null;
+    }
+
+    public static boolean resolveVm(ImageDef start, Map<String, ImageDef> defs) {
+        return "vm".equals(resolveType(start, defs));
     }
 
     /** Whether this image is built from scratch (no parent). */
@@ -422,7 +460,22 @@ public class ImageDef {
             loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings);
         }
         loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings);
+        inheritTypes(defs);
         return defs;
+    }
+
+    /**
+     * Propagate {@code type} from parent to child when the child doesn't set its own.
+     */
+    private static void inheritTypes(Map<String, ImageDef> defs) {
+        for (var def : defs.values()) {
+            if (def.type == null && !def.isRoot()) {
+                var resolved = resolveType(def, defs);
+                if (resolved != null) {
+                    def.type = resolved;
+                }
+            }
+        }
     }
 
     /**

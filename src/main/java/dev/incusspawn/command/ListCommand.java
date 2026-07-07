@@ -800,7 +800,8 @@ public class ListCommand extends BaseCommand {
         var def = imageDefs.get(sourceName);
         branchEnableGui = (def != null && def.isGui())
                 || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED));
-        branchEnableKvm = false;
+        branchEnableKvm = (def != null && def.isKvm())
+                || "kvm".equals(incus.configGet(sourceName, Metadata.INSTANCE_MODE));
         branchNetworkMode = NetworkMode.FULL;
         branchEnableInbox = false;
         branchInboxInput = new TextInputState("");
@@ -3345,9 +3346,16 @@ public class ListCommand extends BaseCommand {
         }
 
         var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
-        InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
-        InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+        boolean isVm = incus.isVm(name);
+        if (!isVm) {
+            InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+            InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+        }
         incus.start(name);
+        if (isVm) {
+            incus.waitForReady(name);
+            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
+        }
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);

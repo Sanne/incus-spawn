@@ -204,7 +204,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef);
+        cmd.cloneRepos(container, imageDef, false);
 
         verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
@@ -757,7 +757,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef);
+        cmd.cloneRepos(container, imageDef, false);
 
         verify(incus).shellExecInteractiveAsUser("test", "agentuser",
                 "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
@@ -782,7 +782,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef);
+        cmd.cloneRepos(container, imageDef, false);
 
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).shellExecInteractiveAsUser(eq("test"), anyString(), anyString());
@@ -805,9 +805,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any());
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
-        cmd.cloneRepos(container, imageDef);
+        cmd.cloneRepos(container, imageDef, false);
 
         // Reference clone command
         verify(incus).shellExecInteractiveAsUser("test", "agentuser",
@@ -841,9 +841,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any());
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
-        cmd.cloneRepos(container, imageDef);
+        cmd.cloneRepos(container, imageDef, false);
 
         // Should fall back to normal clone
         verify(incus).shellExecInteractiveAsUser("test", "agentuser",

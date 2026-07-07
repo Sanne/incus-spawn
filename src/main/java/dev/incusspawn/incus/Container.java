@@ -19,6 +19,30 @@ public class Container {
         return name;
     }
 
+    public boolean isVm() {
+        return incus.isVm(name);
+    }
+
+    public void waitForPath(String path) {
+        for (int i = 0; i < 30; i++) {
+            if (exec("test", "-e", path).success()) return;
+            try { Thread.sleep(500); } catch (InterruptedException e) { break; }
+        }
+        throw new IncusException("Timed out waiting for " + path + " in " + name);
+    }
+
+    public void addDiskDevice(String deviceName, String hostSource, String containerPath, boolean readonly) {
+        var args = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + hostSource,
+                "path=" + containerPath));
+        if (readonly) args.add("readonly=true");
+        incus.deviceAdd(name, deviceName, "disk", args.toArray(String[]::new));
+    }
+
+    public void removeDiskDevice(String deviceName) {
+        incus.deviceRemove(name, deviceName);
+    }
+
     /** Run a command as root. Returns the result for inspection. */
     public IncusClient.ExecResult exec(String... command) {
         return incus.shellExec(name, command);

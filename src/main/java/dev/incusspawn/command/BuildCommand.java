@@ -19,6 +19,7 @@ import dev.incusspawn.incus.IncusClient;
 import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -79,8 +80,8 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "missing", hasValue = false, description = "Build only templates that don't exist yet")
     boolean missing;
 
-    @Option(name = "vm", hasValue = false, description = "Build as a VM instead of a container")
-    boolean vm;
+    @Option(name = "type", description = "Instance type: container, vm, or kvm (overrides image definition)")
+    InstanceType type;
 
     @Option(name = "yes", hasValue = false, description = "Skip interactive confirmations (for TUI integration)")
     boolean yes;
@@ -443,17 +444,24 @@ public class BuildCommand extends BaseCommand {
                 System.exit(1);
             }
 
-            boolean parentMissing = !incus.exists(parentName);
-            boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs);
+            // When the target type differs from the parent's resolved type
+            // (e.g. building a VM from container parents), buildFromScratch
+            // applies the entire ancestor chain from definitions alone —
+            // parent Incus instances are not needed.
+            boolean typeChange = effectiveVm(imageDef) != effectiveVm(parentDef);
+            if (!typeChange) {
+                boolean parentMissing = !incus.exists(parentName);
+                boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs);
 
-            if (needsRebuild) {
-                if (parentMissing) {
-                    System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
-                } else {
-                    System.out.println("Parent image '" + parentName + "' is outdated, rebuilding it first...\n");
+                if (needsRebuild) {
+                    if (parentMissing) {
+                        System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
+                    } else {
+                        System.out.println("Parent image '" + parentName + "' is outdated, rebuilding it first...\n");
+                    }
+                    buildChain(parentDef, defs);
+                    System.out.println();
                 }
-                buildChain(parentDef, defs);
-                System.out.println();
             }
         }
 
@@ -483,7 +491,9 @@ public class BuildCommand extends BaseCommand {
         activeBuild = new String[]{tempName, canonicalName};
 
         try {
-            if (imageDef.isRoot()) {
+            boolean typeChange = !imageDef.isRoot()
+                    && effectiveVm(imageDef) != incus.isVm(imageDef.getParent());
+            if (imageDef.isRoot() || typeChange) {
                 buildFromScratch(imageDef, defs, tempName);
             } else {
                 buildFromParent(imageDef, defs, tempName, imageDef.getParent());
@@ -492,6 +502,10 @@ public class BuildCommand extends BaseCommand {
             System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
             System.err.println("\033[1mBuild failed for " + canonicalName + ": " + e.getMessage() + "\033[0m");
             printBuildDiagnostics(tempName);
+            try {
+                var failedHostResources = HostResourceSetup.collectEffective(imageDef, defs);
+                HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
+            } catch (Exception ignored) {}
             promoteToFailedInstance(tempName, canonicalName);
             activeBuild = null;
             throw new BuildFailedException(canonicalName);
@@ -613,26 +627,31 @@ public class BuildCommand extends BaseCommand {
                                   String buildName, String parentSource) {
         var canonicalName = imageDef.getName();
         var parentCanonical = imageDef.getParent();
+        var effectiveVm = effectiveVm(imageDef);
 
         System.out.println("Deriving from parent image '" + parentCanonical + "'...");
         incus.copy(parentSource, buildName);
-        incus.configSet(buildName, "security.idmap.size", "165536");
-        incus.configSet(buildName, "security.nesting", "true");
-        if (Environment.isLinux()) {
-            incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        if (!effectiveVm) {
+            incus.configSet(buildName, "security.idmap.size", "165536");
+            incus.configSet(buildName, "security.nesting", "true");
+            if (Environment.isLinux()) {
+                incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+            }
+            incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
         }
-        incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
         incus.start(buildName);
         incus.waitForReady(buildName);
 
         var container = new Container(incus, buildName);
-        // Write the DHCP .network file before waiting for systemd — otherwise
-        // networkd-wait-online blocks systemd from reaching "running".
-        prepareContainerForPackageInstall(container);
+        if (!effectiveVm) {
+            prepareContainerForPackageInstall(container);
+        }
 
         incus.waitForSystemd(buildName);
 
-        waitForIpv4(container);
+        if (!effectiveVm) {
+            waitForIpv4(container);
+        }
 
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         container.sh(
@@ -643,12 +662,12 @@ public class BuildCommand extends BaseCommand {
 
         waitForNetwork(buildName);
 
-        mountDnfCache(buildName);
+        mountDnfCache(buildName, effectiveVm);
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             System.out.println("Applying host-resources...");
-            HostResourceSetup.applyForBuild(incus, container, hostResources);
+            HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
         }
 
         removePackages(container, imageDef);
@@ -656,13 +675,14 @@ public class BuildCommand extends BaseCommand {
         var toolResolution = collectEffectiveTools(imageDef, defs);
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
+
         runToolSetup(container, toolResolution.effective());
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
-        cloneRepos(container, imageDef);
+        cloneRepos(container, imageDef, effectiveVm);
         updateClaudeJsonTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -683,17 +703,65 @@ public class BuildCommand extends BaseCommand {
      * This is the full setup path: DNS, user, packages, tools.
      * @param buildName the Incus container name to create (may be a temp name)
      */
+    private boolean effectiveVm(ImageDef imageDef) {
+        if (type != null) return type == InstanceType.vm;
+        return imageDef.isVm();
+    }
+
+    private String effectiveType(ImageDef imageDef) {
+        if (type != null) return type.name();
+        if (imageDef.getType() != null) return imageDef.getType();
+        return "container";
+    }
+
     private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs, String buildName) {
         var canonicalName = imageDef.getName();
-        var image = imageDef.getImage();
-        var prebaked = imageDef.getImageUrl() != null;
+        var ancestors = ImageDef.ancestors(imageDef, defs);
+        var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
+        var image = rootDef.getImage();
+        var effectiveVm = effectiveVm(imageDef);
+        var prebaked = false;
 
-        ensureBaseImage(imageDef);
+        if (effectiveVm && rootDef.getVmImageUrl() != null) {
+            // Prebaked VM disk image available — use it directly
+            var vmAlias = rootDef.getImage() + "-vm";
+            ensureBaseImage(imageDef);
+            downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
+                    rootDef.getVmImageSha256(), rootDef.getImageTag());
+            image = vmAlias;
+            prebaked = true;
+        } else {
+            ensureBaseImage(imageDef);
+            prebaked = imageDef.getImageUrl() != null;
 
-        // Launch base image
-        System.out.println("Launching " + image + "...");
+            // Prebaked images are container format (.tar.xz) — VMs need a disk image.
+            // Detect container-only images and fall back to the standard remote source.
+            if (effectiveVm && !image.contains(":")) {
+                var fingerprint = incus.imageAliasTarget(image);
+                if (fingerprint != null) {
+                    var imageType = incus.getImageType(fingerprint);
+                    if (!"virtual-machine".equals(imageType)) {
+                        var os = incus.getImageProperty(fingerprint, "os");
+                        var release = incus.getImageProperty(fingerprint, "release");
+                        if (os != null && release != null) {
+                            image = "images:" + os.toLowerCase() + "/" + release;
+                            prebaked = false;
+                            System.out.println("Base image is container-only, using " + image + " for VM build.");
+                        } else {
+                            throw new RuntimeException(
+                                    "Cannot build VM from container image '" + rootDef.getImage() + "'. "
+                                    + "The image lacks OS/release metadata to derive a VM image source.");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create instance — for VMs, expand the disk before first boot so
+        // cloud-init's growpart module handles partition + filesystem resize.
+        System.out.println("Launching " + image + (effectiveVm ? " (VM)..." : "..."));
         try {
-            incus.launch(image, buildName, vm);
+            incus.create(image, buildName, effectiveVm);
         } catch (IncusException e) {
             if (incus.exists(buildName)) {
                 var log = incus.getLog(buildName);
@@ -707,7 +775,11 @@ public class BuildCommand extends BaseCommand {
             }
             throw e;
         }
-
+        if (effectiveVm) {
+            incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
+            incus.configSet(buildName, "limits.memory", ResourceLimits.adaptiveMemoryLimit());
+        }
+        incus.start(buildName);
         waitForReady(buildName);
 
         var container = new Container(incus, buildName);
@@ -724,31 +796,24 @@ public class BuildCommand extends BaseCommand {
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
 
-        // UID mapping for Wayland passthrough, nested containers, and no dropped
-        // capabilities since the container itself is the security boundary.
-        // mknod intercept is NOT enabled: the seccomp_notify handler causes
-        // per-container lock contention during startup, adding 5+ seconds to
-        // every exec call while systemd-tmpfiles processes device nodes.
-        // Podman uses fuse-overlayfs instead of native mknod-based whiteouts.
-        incus.configSet(buildName, "raw.idmap", "both 1000 1000");
-        // Map 165536 UIDs (0-165535) so subordinate UIDs 100000-165535
-        // are available for rootless podman inside the container.
-        incus.configSet(buildName, "security.idmap.size", "165536");
-        incus.configSet(buildName, "security.nesting", "true");
-        if (Environment.isLinux()) {
-            incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+        // Container-only security tweaks: UID mapping, nesting, capability
+        // retention, and setxattr interception. VMs run a full kernel and
+        // don't need any of these. Restart activates the new config.
+        if (!effectiveVm) {
+            incus.configSet(buildName, "raw.idmap", "both 1000 1000");
+            incus.configSet(buildName, "security.idmap.size", "165536");
+            incus.configSet(buildName, "security.nesting", "true");
+            if (Environment.isLinux()) {
+                incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
+            }
+            incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+            prepareContainerForPackageInstall(container);
+
+            System.out.println("Restarting container with updated security config...");
+            incus.restart(buildName);
+            incus.waitForSystemd(buildName);
+            waitForIpv4(container);
         }
-        incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
-        // Write network config before restart so systemd-networkd finds the
-        // DHCP .network file on boot — otherwise networkd-wait-online blocks
-        // systemd from reaching "running" for its full timeout.
-        prepareContainerForPackageInstall(container);
-
-        System.out.println("Restarting container with updated security config...");
-        incus.restart(buildName);
-        incus.waitForSystemd(buildName);
-
-        waitForIpv4(container);
 
         System.out.println("Configuring DNS...");
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
@@ -760,7 +825,16 @@ public class BuildCommand extends BaseCommand {
 
         waitForNetwork(buildName);
 
-        mountDnfCache(buildName);
+        mountDnfCache(buildName, effectiveVm);
+
+        if (effectiveVm) {
+            System.out.println("Expanding VM root filesystem...");
+            container.runInteractive("Failed to expand VM root filesystem",
+                    "sh", "-c",
+                    "dnf install -y -q cloud-utils-growpart e2fsprogs xfsprogs && " +
+                    "growpart /dev/sda 2 && " +
+                    "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi");
+        }
 
         if (!prebaked) {
             removePackages(container, imageDef);
@@ -768,6 +842,12 @@ public class BuildCommand extends BaseCommand {
             System.out.println("Updating system packages...");
             runDnf(container, "Failed to update system packages",
                     "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs", "upgrade");
+
+            if (effectiveVm) {
+                System.out.println("Regenerating initramfs for VM...");
+                container.runInteractive("Failed to regenerate initramfs",
+                        "dracut", "--force", "--regenerate-all");
+            }
 
             // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
             // it. Masking prevents package scripts from restarting it. Also remove
@@ -819,24 +899,44 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             System.out.println("Applying host-resources...");
-            HostResourceSetup.applyForBuild(incus, container, hostResources);
+            HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
         }
 
-        var tools = resolveTools(imageDef);
-        enablePackageRepos(container, imageDef, tools, List.of(), defs);
-        installAllPackages(container, imageDef, tools, List.of(), defs);
-        runToolSetup(container, tools);
-        writeEnvFile(container, imageDef, defs, tools, canonicalName);
-        installSkills(container, imageDef, defs);
-        cloneRepos(container, imageDef);
-        updateClaudeJsonTrust(container, imageDef);
+        // Build the full ancestor chain (root first) so that each layer's
+        // packages, tools, repos, and skills are applied in order. For root
+        // images this list contains only imageDef itself.
+        var chain = new ArrayList<ImageDef>();
+        for (int i = ancestors.size() - 1; i >= 0; i--) {
+            chain.add(ancestors.get(i));
+        }
+        chain.add(imageDef);
+
+        var allTools = new ArrayList<ResolvedTool>();
+        for (var layer : chain) {
+            if (chain.size() > 1) {
+                System.out.println("\nApplying layer: " + layer.getName());
+            }
+            removePackages(container, layer);
+            var toolResolution = collectEffectiveTools(layer, defs);
+            enablePackageRepos(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
+            installAllPackages(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
+
+            runToolSetup(container, toolResolution.effective());
+            allTools.addAll(toolResolution.effective());
+            maskServices(container, layer);
+            installSkills(container, layer, defs);
+            cloneRepos(container, layer, effectiveVm);
+            updateClaudeJsonTrust(container, layer);
+        }
+        writeEnvFile(container, imageDef, defs, allTools, canonicalName);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
 
         cleanCaches(buildName);
 
-        tagTemplateMetadata(buildName, canonicalName, imageDef, null, hostResources, defs);
+        var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
+        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
 
         System.out.println("Stopping image...");
         incus.stop(buildName);
@@ -859,21 +959,21 @@ public class BuildCommand extends BaseCommand {
 
     private void ensureBaseImage(ImageDef imageDef) {
         checkPinnedWarning(imageDef);
+        downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
+                imageDef.getImageSha256(), imageDef.getImageTag());
+    }
 
-        var imageUrl = imageDef.getImageUrl();
+    private void downloadAndAliasImage(String localAlias, String imageUrl,
+            Map<String, String> sha256Map, String tag) {
         if (imageUrl == null || imageUrl.isBlank()) return;
-
-        var localAlias = imageDef.getImage();
         if (localAlias.contains(":")) return;
 
         var arch = normalizeHostArch();
         String expectedSha256 = null;
-        var sha256Map = imageDef.getImageSha256();
         if (sha256Map != null) {
             expectedSha256 = sha256Map.get(arch);
         }
 
-        var tag = imageDef.getImageTag();
         var existingFingerprint = incus.imageAliasTarget(localAlias);
         if (existingFingerprint != null) {
             var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
@@ -928,6 +1028,7 @@ public class BuildCommand extends BaseCommand {
                 "mkdir -p /etc/systemd/network; " +
                 "printf '[Match]\\nName=eth0\\n\\n[Network]\\nDHCP=ipv4\\n\\n[DHCPv4]\\nUseDNS=no\\n' " +
                 "> /etc/systemd/network/10-eth0.network; " +
+                "systemctl enable systemd-networkd 2>/dev/null; " +
                 "systemctl restart systemd-networkd 2>/dev/null; " +
                 // Legacy: also configure dhcpcd if present (old base images)
                 "if [ -f /etc/dhcpcd.conf ]; then " +
@@ -1243,11 +1344,9 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void cleanCaches(String container) {
-        // DNF cache volume is unmounted before this call — only clean the
-        // container-local mount point and temp files to minimize image size.
         System.out.println("Cleaning up caches...");
         incus.shellExec(container, "sh", "-c",
-                "rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*");
+                "dnf clean all; rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*; true");
     }
 
     private void waitForIpv4(Container container) {
@@ -1400,6 +1499,7 @@ public class BuildCommand extends BaseCommand {
                                     Map<String, ImageDef> defs) {
         incus.configSet(buildName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(buildName, Metadata.PROFILE, canonicalName);
+        incus.configSet(buildName, Metadata.INSTANCE_MODE, effectiveType(imageDef));
         if (parentCanonicalName != null) {
             incus.configSet(buildName, Metadata.PARENT, parentCanonicalName);
         }
@@ -1477,6 +1577,12 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
+    enum InstanceType {
+        container,
+        vm,
+        kvm
+    }
+
     static class BuildFailedException extends RuntimeException {
         final String containerName;
 
@@ -1497,7 +1603,8 @@ public class BuildCommand extends BaseCommand {
      */
     static final String DNF_CACHE_VOLUME = "dnf-cache";
 
-    private void mountDnfCache(String container) {
+    private void mountDnfCache(String container, boolean isVm) {
+        if (isVm) return;
         try {
             var pool = incus.findCowPool();
             if (pool == null) return;
@@ -1786,7 +1893,7 @@ public class BuildCommand extends BaseCommand {
      * alternates removal makes the clone self-contained while the reference device
      * is still mounted.
      */
-    void cloneRepos(Container container, ImageDef imageDef) {
+    void cloneRepos(Container container, ImageDef imageDef, boolean isVm) {
         var config = SpawnConfig.load();
 
         for (var repo : imageDef.getRepos()) {
@@ -1796,7 +1903,7 @@ public class BuildCommand extends BaseCommand {
             RepoReference ref = null;
 
             try {
-                ref = tryMountReference(container, repo.getUrl(), config);
+                ref = tryMountReference(container, repo.getUrl(), config, isVm);
                 if (ref != null) {
                     System.out.println("  \033[1;32mUsing local host reference to speed up clone...\033[0m");
                     try {
@@ -1868,7 +1975,7 @@ public class BuildCommand extends BaseCommand {
         return cmd.toString();
     }
 
-    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config) {
+    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config, boolean isVm) {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
@@ -1896,7 +2003,7 @@ public class BuildCommand extends BaseCommand {
                     "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
                     "path=" + containerPath,
                     "readonly=true"));
-            HostResourceSetup.addShiftIfSupported(refArgs);
+            HostResourceSetup.addShiftIfSupported(refArgs, isVm);
             incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
             return new RepoReference(deviceName, containerPath);

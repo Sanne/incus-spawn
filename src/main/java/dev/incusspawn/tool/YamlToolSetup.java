@@ -128,7 +128,12 @@ public class YamlToolSetup implements ToolSetup {
         try {
             var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
 
-            if (dl.isExtractInContainer()) {
+            if (container.isVm()) {
+                // VMs use the incus-agent for file I/O (over vsock), which
+                // cannot handle pushing large files. Mount the host directory
+                // as a disk device and copy locally inside the VM instead.
+                extractOnHostAndMountCopy(dl, cached, container);
+            } else if (dl.isExtractInContainer()) {
                 extractInContainer(dl, cached, container);
             } else {
                 extractOnHostAndPush(dl, cached, container);
@@ -152,6 +157,35 @@ public class YamlToolSetup implements ToolSetup {
 
         for (var linkEntry : dl.getLinks().entrySet()) {
             container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
+        }
+    }
+
+    private void extractOnHostAndMountCopy(ToolDef.DownloadEntry dl, Path cached, Container container)
+            throws IOException {
+        var extractDir = Files.createTempDirectory("isx-extract-");
+        var deviceName = "dl-" + def.getName();
+        var mountPath = "/mnt/isx-download";
+        try {
+            extractOnHost(cached, extractDir);
+            ensureWorldReadable(extractDir);
+
+            // Remove stale mount point from a previous tool's download so
+            // waitForPath detects the new virtio-fs mount, not the leftover dir
+            container.exec("rm", "-rf", mountPath);
+            container.addDiskDevice(deviceName, extractDir.toString(), mountPath, true);
+            container.waitForPath(mountPath);
+            container.exec("mkdir", "-p", dl.getExtract());
+            container.runInteractive("Failed to copy download for " + def.getName(),
+                    "cp", "-a", mountPath + "/.", dl.getExtract());
+            container.exec("chmod", "-R", "a+rX", dl.getExtract());
+
+            for (var linkEntry : dl.getLinks().entrySet()) {
+                container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
+            }
+        } finally {
+            try { container.removeDiskDevice(deviceName); } catch (Exception ignored) {}
+            try { container.exec("rm", "-rf", mountPath); } catch (Exception ignored) {}
+            deleteRecursive(extractDir);
         }
     }
 

@@ -52,10 +52,15 @@ public class InstancePrep {
             fixCaMismatch(incus, name);
         }
 
-        // Start if stopped
+        // Start if stopped, or restart VMs with unresponsive agent
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
             HostResourceSetup.removeStaleDevices(incus, name);
+            incus.start(name);
+            incus.waitForReady(name);
+        } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
+            System.out.println("VM agent not responding, restarting " + name + "...");
+            incus.forceStop(name);
             incus.start(name);
             incus.waitForReady(name);
         }

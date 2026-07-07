@@ -41,6 +41,9 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "kvm", description = "Expose /dev/kvm for nested virtualization", hasValue = false)
     boolean kvm;
 
+    @Option(name = "no-kvm", description = "Disable KVM even if the template was built with type: kvm", hasValue = false)
+    boolean noKvm;
+
     @Option(name = "airgap", description = "Disable network access (complete isolation)", hasValue = false)
     boolean airgap;
 
@@ -112,7 +115,8 @@ public class BranchCommand extends BaseCommand {
             warnIfTemplateWantsGui(resolvedSource);
         }
 
-        if (kvm) {
+        var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
+        if (enableKvm) {
             if (!KvmPassthrough.configureKvm(incus, name)) {
                 System.err.println("Continuing without KVM — VMs inside this branch will not work.");
             }
@@ -125,15 +129,28 @@ public class BranchCommand extends BaseCommand {
             return CommandResult.SUCCESS;
         }
 
-        // Pre-fetch config, inject SSH keys, and push terminfo while container
-        // is stopped — the Incus daemon blocks API calls after start
+        // Pre-fetch config while instance is stopped — the Incus daemon blocks
+        // API calls after start due to seccomp_notify lock contention.
         var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
-        System.out.println("Configuring SSH access...");
-        InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
-        InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+        boolean isVm = incus.isVm(name);
 
-        System.out.println("Starting container...");
+        // Push SSH keys and terminfo into stopped containers (direct filesystem
+        // access). VMs require the incus-agent, so these are deferred to after start.
+        if (!isVm) {
+            System.out.println("Configuring SSH access...");
+            InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+            InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
+        }
+
+        System.out.println(isVm ? "Starting VM..." : "Starting container...");
         incus.start(name);
+
+        if (isVm) {
+            System.out.println("Waiting for VM agent...");
+            incus.waitForReady(name);
+            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
+        }
+
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
 
         System.out.println("Branch '" + name + "' is ready.\n");
