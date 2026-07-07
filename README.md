@@ -206,6 +206,9 @@ Image schema fields (all optional except `name`):
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders)
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
+- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is a VM with `/dev/kvm` passthrough for nested virtualization. Inherits from parent -- a child without `type` inherits its parent's type
+- `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm` or `kvm`. Supports `{arch}` and `{tag}` placeholders
+- `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
 - `tools` -- tool names to run (resolved from YAML or Java, see [Custom Tools](#custom-tools))
@@ -220,6 +223,9 @@ Image schema fields (all optional except `name`):
 ```shell
 # Build a specific image (builds missing parents automatically)
 isx build tpl-java
+
+# Build as a VM instead of a container (overrides the definition's type)
+isx build tpl-java --type vm
 
 # Rebuild a template and all its parents from scratch
 isx build tpl-java --with-parents
@@ -389,6 +395,8 @@ Three modes are available:
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
+
+**VM note:** VMs mount disk devices via virtiofs (asynchronously, after the incus-agent starts). For overlay mode, the build waits up to 15 seconds for the device to appear before mounting. File-level host resources (single files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for VMs.
 
 ## Custom Tools
 

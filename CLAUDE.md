@@ -37,17 +37,19 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 
 ### Image Hierarchy and Build System
 
-Templates are YAML definitions (`src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents.
+Templates are YAML definitions (`src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents. Each definition can set `type` (`container`, `vm`, or `kvm`) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time. VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.
 
 `BuildCommand` has two build paths:
 - **`buildFromScratch`** (root image, no parent): launches base OS, configures security/DNS/user, installs packages and tools
 - **`buildFromParent`** (derived image): copies parent via CoW, applies only the delta (new packages/tools)
 
+For VMs, `buildFromScratch` applies the entire ancestor chain from YAML definitions — parent Incus instances are not needed. `buildChain` detects type changes (container→VM) and skips unnecessary parent rebuilds. Container-specific security config (raw.idmap, nesting, setxattr interception) is skipped for VMs. Tool downloads use a mount-and-copy strategy instead of file push (vsock can't handle large pushes). The `--type` CLI flag overrides the definition's type; `effectiveVm()` resolves the effective VM status considering both the flag and definition.
+
 Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.
 
 ### Host Resources
 
-`HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container.
+`HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container. VM-specific: virtiofs disk devices are mounted asynchronously by the incus-agent, so overlay mounts poll `mountpoint -q` for up to 15s before overlaying. File-level resources (not directories) fall back to `copy` mode on VMs since disk devices only support directories.
 
 ### Tool System
 

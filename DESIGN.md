@@ -60,6 +60,9 @@ Each image definition specifies:
 - `image_url` — download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders)
 - `image_tag` — release tag identifying the base image version
 - `image_sha256` — per-architecture checksums for integrity verification
+- `type` — instance type: `container` (default), `vm`, or `kvm`. Inherits through the parent chain via `inheritTypes()` at load time
+- `vm_image_url` — download URL for the VM base image (qcow2 tarball, supports `{arch}` and `{tag}` placeholders)
+- `vm_image_sha256` — per-architecture checksums for the VM base image
 - `parent` — parent image name (omit for root images)
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
@@ -71,13 +74,15 @@ from [`Sanne/incus-spawn-images`](https://github.com/Sanne/incus-spawn-images)
 instead of linuxcontainers.org. This image is a pre-baked systemd rootfs with
 agentuser, systemd-networkd, a connectivity watchdog, container-specific service
 masking, and a tmpfiles override for device node permissions — all the static
-setup that `buildFromScratch` would otherwise perform on every build. The base image tag and SHA256 checksums
-are pinned in `src/main/resources/images/minimal.yaml`. `isx update-base` manages
-base image versions: it fetches the release list from the GitHub API, retrieves
-per-architecture SHA256 checksums, and writes a user-level override to
-`~/.config/incus-spawn/images/minimal.yaml` when pinning. `--latest` removes the
-override so the built-in definition (updated with each isx release) is used.
-See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
+setup that `buildFromScratch` would otherwise perform on every build. A separate
+VM base image (`vm_image_url`) is also available — a stock Incus Fedora VM image
+customized with the same base configuration via `virt-customize`. The base image
+tag and SHA256 checksums are pinned in `src/main/resources/images/minimal.yaml`.
+`isx update-base` manages base image versions: it fetches the release list from
+the GitHub API, retrieves per-architecture SHA256 checksums, and writes a
+user-level override to `~/.config/incus-spawn/images/minimal.yaml` when pinning.
+`--latest` removes the override so the built-in definition (updated with each isx
+release) is used. See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
 for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones.
@@ -126,8 +131,8 @@ Execution order: packages → downloads → run → run_as_user → files → ve
 **`buildFromScratch` (root image, no parent):**
 1. Import and launch base image (pre-baked with agentuser, systemd-networkd, service masks)
 2. Install MITM proxy CA certificate
-3. Configure security (idmap, nesting, syscall interception, no capability dropping)
-4. Prepare container for package install (tmpfiles overrides, temporary DHCP network config, man dirs)
+3. Configure security (idmap, nesting, syscall interception, no capability dropping) — *skipped for VMs*
+4. Prepare container for package install (tmpfiles overrides, temporary DHCP network config, man dirs) — *skipped for VMs*
 5. Configure DNS (disable systemd-resolved, point at Incus bridge gateway)
 6. Upgrade system packages
 7. Install image-defined packages via dnf
@@ -137,6 +142,17 @@ Execution order: packages → downloads → run → run_as_user → files → ve
 11. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
 12. Clean caches (dnf, /tmp)
 13. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
+
+**VM-specific build behavior:**
+
+When `type` is `vm` or `kvm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone — parent Incus instances are not needed, so container parent rebuilds are skipped when a type change is detected in `buildChain`. Additional differences:
+
+- **Base image**: uses `vm_image_url` (pre-baked VM qcow2) when available, falls back to a stock Incus VM image otherwise
+- **Disk expansion**: runs `growpart` + `resize2fs`/`xfs_growfs` before package install (both for pre-baked images that ship at 10G and the final build which defaults to 100G)
+- **Security config**: container-specific security settings (raw.idmap, nesting, setxattr interception) are skipped — VMs have their own kernel and don't need them
+- **No restart**: VMs don't need the container restart that applies security config changes
+- **Tool downloads**: large file pushes over vsock are slow, so `YamlToolSetup` uses a mount-and-copy strategy — the extracted archive is attached as a disk device and copied locally inside the VM
+- **KVM passthrough**: when `type: kvm`, `/dev/kvm` is passed through to the VM for nested virtualization
 
 **`buildFromParent` (derived image):**
 1. Copy parent image, start, wait for network
@@ -156,6 +172,8 @@ Execution order: packages → downloads → run → run_as_user → files → ve
 Like `git branch`, branching creates an instant copy-on-write clone of any template image. Each branch has its own independent filesystem -- changes in one branch cannot affect the template image or any other branch. The CoW storage backend (btrfs/zfs/lvm) deduplicates unchanged data transparently at the block level, so branches are instant to create and only consume disk space for their own modifications.
 
 **Static IP assignment**: Each branch receives a deterministic static IP on the bridge subnet at creation time. `StaticIpAllocator` scans all existing instances for claimed `ipv4.address` values on NIC devices and picks the lowest free host address (`.2`–`.254`). The IP is set on the Incus NIC device (so Incus is authoritative) and a `systemd-networkd` `.network` file is pushed into the stopped container before start, so the interface comes up statically at boot with no DHCP lease to expire. Templates do not have baked-in addresses — all CoW branches share the template filesystem, so a static address in the template would collide. The base image (from `Sanne/incus-spawn-images`) provides `systemd-networkd` and bakes in a connectivity watchdog (30s systemd timer) that detects IP loss after host sleep/wake and restarts `systemd-networkd` to recover; `isx` only supplies the per-branch address.
+
+**VM deferred file pushes**: File push to a stopped VM is not possible (it requires the running `incus-agent` inside the VM). For VMs, `BranchCommand` and `ListCommand` skip pre-start file pushes (network config, SSH keys, terminfo) and instead call `InstanceLifecycle.pushDeferredVmFiles()` after starting the VM and waiting for the agent to become ready. The network config (IP and gateway) is read from Incus metadata at push time.
 
 The TUI branch modal supports:
 - Custom name
@@ -357,6 +375,12 @@ The overlay directory structure mirrors the container path directly under `/var/
 ```
 
 Incus disk device names are derived from the container path for readability (e.g. `hr-home-agentuser--m2-repository`). They are removed from stopped templates to avoid host-path dependencies and re-attached at branch time.
+
+#### VM behavior
+
+VMs mount Incus disk devices asynchronously via virtiofs (managed by the `incus-agent`). For overlay mode, `applyOverlay` polls `mountpoint -q` for up to 15 seconds before running the overlay mount, since the lower directory may not be populated yet when the mount command runs. If the device doesn't appear in time, the overlay is skipped with a warning.
+
+File-level host resources (individual files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for virtual machines. The fallback is logged: "VM: falling back to copy mode for file ...".
 
 #### Missing sources
 

@@ -698,11 +698,6 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Image " + canonicalName + " built successfully.");
     }
 
-    /**
-     * Build an image from scratch using the base OS image.
-     * This is the full setup path: DNS, user, packages, tools.
-     * @param buildName the Incus container name to create (may be a temp name)
-     */
     private boolean effectiveVm(ImageDef imageDef) {
         if (type != null) return type == InstanceType.vm;
         return imageDef.isVm();
