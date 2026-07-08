@@ -606,7 +606,9 @@ public class BuildCommand extends BaseCommand {
         try {
             incus.deleteIfExists(promotedName);
             try { unmountDnfCache(buildName); } catch (Exception ignored) {}
-            incus.forceStop(buildName);
+            if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(buildName))) {
+                incus.forceStop(buildName);
+            }
             incus.rename(buildName, promotedName);
             incus.configSet(promotedName, Metadata.TYPE, Metadata.TYPE_FAILED_BUILD);
             incus.configSet(promotedName, Metadata.PARENT, canonicalName);
