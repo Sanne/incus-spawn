@@ -422,7 +422,7 @@ Tool schema fields (all optional except `name`):
 - `run` -- shell commands as root
 - `run_as_user` -- shell commands as agentuser
 - `files` -- files to write (with optional `owner`)
-- `env` -- lines appended to agentuser's `.bashrc`
+- `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies; see below)
 - `verify` -- verification command (logged, non-fatal)
 - `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
 
@@ -434,7 +434,48 @@ Download entry fields:
 
 Supported archive formats: `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
-Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `env` → `verify`. Resolution follows the same order as templates (see [Configuration](#configuration)).
+Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `verify`. Environment variables are collected from all tools and the template chain after install, then written centrally. Resolution follows the same order as templates (see [Configuration](#configuration)).
+
+#### Environment Variables
+
+Environment variables support four merge strategies:
+
+```yaml
+env:
+  # Simple set (default strategy):
+  - name: MAVEN_HOME
+    value: /opt/apache-maven-3.9.16
+
+  # Set only if not already defined:
+  - name: DOCKER_HOST
+    value: "unix:///var/run/docker.sock"
+    strategy: set-if-unset
+
+  # Prepend to existing value (with separator):
+  - name: JAVA_TOOL_OPTIONS
+    value: "-Dfoo=true"
+    strategy: prepend
+    separator: " "
+
+  # Append to existing value:
+  - name: PATH
+    value: /opt/bin
+    strategy: append
+    separator: ":"
+```
+
+All env entries from the template chain and installed tools are collected by the build system and written to `/etc/profile.d/isx-env.sh`. **Conflicting definitions are caught at build time**: if two tools both `set` the same variable to different values, the build fails with a descriptive error naming both sources. Backward-compatible raw shell strings (`- export FOO=bar`) are still accepted but bypass conflict detection.
+
+Templates can also declare environment variables directly:
+
+```yaml
+name: tpl-my-project
+parent: tpl-dev
+env:
+  - name: MY_DEBUG
+    value: "true"
+    strategy: set-if-unset
+```
 
 ### Remote IDE Access
 
@@ -519,7 +560,8 @@ parameters:
     default: "2g"
     pattern: "^[0-9]+[gGmM]$"
 env:
-  - export SERVER_MEMORY=${param_memory}
+  - name: SERVER_MEMORY
+    value: ${param_memory}
 ```
 
 Pass parameter values using the map form in image definitions (the `idea-backend` memory example above shows this pattern).

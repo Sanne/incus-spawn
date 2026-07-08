@@ -105,15 +105,17 @@ Schema fields (all optional except `name`):
 - `run` — shell commands as root
 - `run_as_user` — shell commands as agentuser
 - `files` — files to write (path, content, optional owner)
-- `env` — lines appended to agentuser's `.bashrc`
+- `env` — environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies)
 - `verify` — verification command (logged, non-fatal)
 
-Execution order: packages → downloads → run → run_as_user → files → env → verify.
+Execution order: packages → downloads → run → run_as_user → files → verify. Environment variables are collected centrally after all tools run.
+
+**Environment variable system** (`EnvEntry` + `EnvResolver`): Env entries from the full template parent chain and all tools are collected by `BuildCommand.writeEnvFile()` into a single `/etc/profile.d/isx-env.sh`. Four strategies: `set` (unconditional), `set-if-unset` (conditional default), `prepend`/`append` (additive with separator). Conflict detection: two `set` entries for the same variable with different values fail the build with both sources named. Templates (`ImageDef`) can also declare env entries. Java tools participate via `ToolSetup.envEntries()`. Raw shell strings are still accepted for backward compatibility.
 
 **Transitive dependency resolution** (`requires`): Tools can declare dependencies on other tools. During build, `resolveWithDeps()` performs a recursive depth-first traversal to build the full dependency graph. Circular dependencies are detected and reported. Auto-added dependencies are logged: "Auto-adding dependency: sshd (required by idea-backend)". Dependencies are installed before the tools that require them.
 
 **Java tools** (fallback) — for tools needing programmatic logic beyond what YAML supports:
-- Implement `ToolSetup` interface (`name()` + `install(Container, Map<String, String>)`)
+- Implement `ToolSetup` interface (`name()` + `install(Container, Map<String, String>)` + `envEntries(Map<String, String>)`)
 - Discovered via CDI (`@Dependent`)
 - Currently used by: `claude` (binary install + settings), `gh` (dnf install), `pi` (npm install + settings)
 
@@ -295,7 +297,7 @@ The body translation uses an allowlist approach: only known-good fields (`messag
 - **Base URL override**: `ANTHROPIC_VERTEX_BASE_URL` redirects all Vertex SDK requests to a custom endpoint. Setting it to `https://api.anthropic.com/v1` causes the container's Vertex SDK to send requests to `api.anthropic.com`, which resolves to the proxy via dnsmasq.
 - **Response format**: Vertex `rawPredict` returns standard Anthropic response format — no response translation is needed.
 
-**Pi coding agent support:** Pi is a provider-agnostic coding agent that always communicates via the standard Anthropic API (`/v1/messages`). Unlike Claude Code, Pi does not have a Vertex mode — it always sends standard API requests with an `x-api-key` header. The proxy handles both direct key injection and standard-to-Vertex translation transparently. No Vertex-specific environment variables are needed inside the container; `ANTHROPIC_API_KEY=sk-ant-placeholder` is the only auth configuration.
+**Pi coding agent support:** Pi is a provider-agnostic coding agent that always communicates via the standard Anthropic API (`/v1/messages`). Unlike Claude Code, Pi does not have a Vertex mode — it always sends standard API requests with an `x-api-key` header. The proxy handles both direct key injection and standard-to-Vertex translation transparently. No Vertex-specific environment variables are needed inside the container; `ANTHROPIC_API_KEY=sk-ant-placeholder` is the only auth configuration (declared via `PiSetup.envEntries()`).
 
 **Intercepted domains:** `api.anthropic.com`, `github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `codeload.github.com`, `uploads.github.com`, `registry-1.docker.io`, `auth.docker.io`, `ghcr.io`, `quay.io`, `repo.maven.apache.org`, `repo1.maven.org`, `plugins.gradle.org`
 

@@ -52,8 +52,8 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 ### Tool System
 
 `ToolSetup` interface with two implementations:
-- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> env -> verify
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`, `PiSetup`)
+- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`, `PiSetup`). Declare env vars via `envEntries(Map<String,String>)` method.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML. Java CDI tools are used as fallback when no YAML tool matches.
 
@@ -62,6 +62,14 @@ Tools can declare runtime actions (`ActionEntry`) shown in the TUI's F9 actions 
 Action resolution logic is centralized in `ActionResolver`, shared by both `ListCommand` (TUI) and `RunCommand` (CLI). `ActionResolver` handles discovering actions from installed tools, resolving default actions from template inheritance chains, finding specific actions by reference, and building `ActionContext` for execution.
 
 **Important**: Built-in YAML files are listed in a hardcoded `BUILTIN_FILES` constant (not classpath scanning) because GraalVM native image makes classpath directory listing unreliable. When adding a built-in image or tool, you must update the corresponding `BUILTIN_FILES` list.
+
+### Environment Variable System
+
+`EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`. Supports backward-compatible raw shell strings via a custom `ListDeserializer` that handles mixed-type YAML lists (strings and maps). Both `ToolDef.env` and `ImageDef.env` use this model.
+
+`EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values → `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
+
+`BuildCommand.writeEnvFile()` orchestrates collection: built-in entries (`ISX_CONTAINER`, `ISX_TEMPLATE`, `JAVA_TOOL_OPTIONS` truststore prepend) → template chain env → tool `envEntries()`. Called after `runToolSetup()` in both `buildFromScratch` and `buildFromParent`.
 
 ### Incus Interaction
 
