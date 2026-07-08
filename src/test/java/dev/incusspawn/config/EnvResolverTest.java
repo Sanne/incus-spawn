@@ -166,4 +166,18 @@ class EnvResolverTest {
         var script = resolver.resolve();
         assertTrue(script.contains("export PATH=\"/opt/bin${PATH:+:$PATH}\""));
     }
+
+    @Test
+    void rejectsNewlineInValue() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.set("BAD", "line1\nline2"), "test");
+        assertThrows(IllegalArgumentException.class, resolver::resolve);
+    }
+
+    @Test
+    void rejectsCarriageReturnInValue() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.set("BAD", "line1\rline2"), "test");
+        assertThrows(IllegalArgumentException.class, resolver::resolve);
+    }
 }

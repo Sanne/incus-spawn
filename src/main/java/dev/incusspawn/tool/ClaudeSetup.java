@@ -56,7 +56,7 @@ public class ClaudeSetup implements ToolSetup {
     public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
         var claude = SpawnConfig.load().getClaude();
         var entries = new ArrayList<EnvEntry>();
-        entries.add(EnvEntry.prepend("PATH", "$HOME/.local/bin", ":"));
+        entries.add(EnvEntry.raw("export PATH=\"$HOME/.local/bin${PATH:+:$PATH}\""));
         if (claude.isUseVertex()) {
             entries.add(EnvEntry.set("CLAUDE_CODE_USE_VERTEX", "1"));
             entries.add(EnvEntry.set("CLAUDE_CODE_SKIP_VERTEX_AUTH", "1"));

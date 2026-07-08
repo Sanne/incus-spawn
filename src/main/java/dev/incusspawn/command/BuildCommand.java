@@ -661,7 +661,7 @@ public class BuildCommand extends BaseCommand {
         runToolSetup(container, toolResolution.effective());
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
-        writeEnvFile(container, imageDef, defs, allTools, toolResolution.ancestors(), canonicalName);
+        writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
@@ -821,7 +821,7 @@ public class BuildCommand extends BaseCommand {
         enablePackageRepos(container, imageDef, tools, List.of(), defs);
         installAllPackages(container, imageDef, tools, List.of(), defs);
         runToolSetup(container, tools);
-        writeEnvFile(container, imageDef, defs, tools, List.of(), canonicalName);
+        writeEnvFile(container, imageDef, defs, tools, canonicalName);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
@@ -1192,11 +1192,10 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void writeEnvFile(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
-                               List<ResolvedTool> allTools, List<ResolvedTool> ancestorTools,
-                               String canonicalName) {
+                               List<ResolvedTool> allTools, String canonicalName) {
         var resolver = new EnvResolver();
 
-        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}"), "built-in");
+        resolver.add(EnvEntry.raw("export ISX_CONTAINER=\"${HOSTNAME}\""), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
         resolver.add(EnvEntry.prepend("JAVA_TOOL_OPTIONS",
                 "-Djavax.net.ssl.trustStore=/etc/pki/java/cacerts", " "), "built-in");

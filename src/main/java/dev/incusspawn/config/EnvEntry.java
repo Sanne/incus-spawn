@@ -153,6 +153,9 @@ public class EnvEntry {
                 "append", Strategy.APPEND
         );
 
+        private static final java.util.regex.Pattern VALID_NAME =
+                java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
+
         private static EnvEntry parseStructuredEntry(JsonParser p) throws IOException {
             var entry = new EnvEntry();
             while (p.nextToken() != JsonToken.END_OBJECT) {
@@ -177,8 +180,16 @@ public class EnvEntry {
             if (entry.getName() == null || entry.getName().isBlank()) {
                 throw new IOException("Structured env entry requires a 'name' field");
             }
+            if (!VALID_NAME.matcher(entry.getName()).matches()) {
+                throw new IOException("Invalid env var name '" + entry.getName()
+                        + "'; must match [a-zA-Z_][a-zA-Z0-9_]*");
+            }
             if (entry.getValue() == null) {
                 throw new IOException("Structured env entry '" + entry.getName() + "' requires a 'value' field");
+            }
+            if (entry.getValue().indexOf('\n') >= 0 || entry.getValue().indexOf('\r') >= 0) {
+                throw new IOException("Env var '" + entry.getName()
+                        + "' value must not contain newline or carriage return characters");
             }
             return entry;
         }

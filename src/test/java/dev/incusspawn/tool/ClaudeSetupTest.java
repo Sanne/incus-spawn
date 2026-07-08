@@ -20,6 +20,24 @@ class ClaudeSetupTest {
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
     private static final String CONTAINER = "test-container";
 
+    @TempDir
+    Path tempDir;
+
+    private String originalUserHome;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setup() {
+        originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        if (originalUserHome != null) {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
     @Test
     void envEntriesReturnsApiKeyPlaceholderByDefault() {
         var entries = new ClaudeSetup().envEntries(Map.of());
@@ -30,23 +48,26 @@ class ClaudeSetupTest {
 
     @Test
     void envEntriesReturnsOauthTokenWhenHostHasOauthToken() {
-        // This test requires SpawnConfig to report OAuth mode; since envEntries()
-        // reads SpawnConfig.load(), we verify the factory method structure instead.
+        var config = SpawnConfig.load();
+        config.getClaude().setOauthToken("sk-ant-oat01-real-token-on-host");
+        config.save();
+
         var entries = new ClaudeSetup().envEntries(Map.of());
 
-        // Default config has no OAuth token, so ANTHROPIC_API_KEY should be present
         assertTrue(entries.stream().anyMatch(e ->
-                "ANTHROPIC_API_KEY".equals(e.getName())));
+                        "CLAUDE_CODE_OAUTH_TOKEN".equals(e.getName())),
+                "Should set CLAUDE_CODE_OAUTH_TOKEN in OAuth mode");
+        assertFalse(entries.stream().anyMatch(e ->
+                        "ANTHROPIC_API_KEY".equals(e.getName())),
+                "Should not set ANTHROPIC_API_KEY in OAuth mode");
     }
 
     @Test
-    void envEntriesAlwaysIncludesPathPrepend() {
+    void envEntriesAlwaysIncludesPathRawEntry() {
         var entries = new ClaudeSetup().envEntries(Map.of());
 
         assertTrue(entries.stream().anyMatch(e ->
-                "PATH".equals(e.getName())
-                && e.getStrategy() == EnvEntry.Strategy.PREPEND
-                && "$HOME/.local/bin".equals(e.getValue())));
+                e.isRaw() && e.getRaw().contains("$HOME/.local/bin")));
     }
 
     @Test

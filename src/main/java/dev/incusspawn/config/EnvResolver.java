@@ -146,6 +146,8 @@ public class EnvResolver {
                 case '"'  -> sb.append("\\\"");
                 case '$'  -> sb.append("\\$");
                 case '`'  -> sb.append("\\`");
+                case '\n', '\r' -> throw new IllegalArgumentException(
+                        "Env var value must not contain newline or carriage return characters");
                 default   -> sb.append(c);
             }
         }

@@ -167,6 +167,36 @@ class EnvEntryTest {
         assertThrows(Exception.class, () -> parseEnvList(yaml));
     }
 
+    @Test
+    void deserializeRejectsInvalidName() {
+        var yaml = """
+                env:
+                  - name: "INVALID NAME"
+                    value: bar
+                """;
+        assertThrows(Exception.class, () -> parseEnvList(yaml));
+    }
+
+    @Test
+    void deserializeRejectsNameWithSemicolon() {
+        var yaml = """
+                env:
+                  - name: "FOO;echo pwned"
+                    value: bar
+                """;
+        assertThrows(Exception.class, () -> parseEnvList(yaml));
+    }
+
+    @Test
+    void deserializeRejectsValueWithNewline() {
+        var yaml = """
+                env:
+                  - name: FOO
+                    value: "line1\\nline2"
+                """;
+        assertThrows(Exception.class, () -> parseEnvList(yaml));
+    }
+
     private record Wrapper(
             @com.fasterxml.jackson.databind.annotation.JsonDeserialize(using = EnvEntry.ListDeserializer.class)
             List<EnvEntry> env
