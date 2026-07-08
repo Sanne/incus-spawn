@@ -152,6 +152,29 @@ public class CertificateAuthority {
     }
 
     /**
+     * Point all JVMs in the container at the system trust store, which update-ca-trust
+     * keeps in sync with the MITM CA. Non-RPM JDKs (e.g. SDKMAN-installed) bundle their
+     * own cacerts keystore without the MITM CA, so HTTPS through the proxy fails with
+     * SSLHandshakeException.
+     *
+     * This must be a profile.d script, not /etc/environment: /etc/environment is only
+     * applied by pam_env on PAM logins, and the interactive shells isx spawns via the
+     * Incus exec API ('bash --login') never go through PAM. profile.d is sourced by
+     * both that path and 'su -'. The guard keeps re-sourcing (nested login shells)
+     * from stacking duplicates and leaves a user-set trustStore alone.
+     */
+    public static void setJavaTrustStoreOverride(IncusClient incus, String container) {
+        incus.shellExec(container, "sh", "-c",
+                "cat > /etc/profile.d/isx-java-truststore.sh << 'PROFEOF'\n" +
+                "case \"${JAVA_TOOL_OPTIONS:-}\" in\n" +
+                "  *-Djavax.net.ssl.trustStore=*) ;;\n" +
+                "  *) export JAVA_TOOL_OPTIONS=\"-Djavax.net.ssl.trustStore=/etc/pki/java/cacerts${JAVA_TOOL_OPTIONS:+ $JAVA_TOOL_OPTIONS}\" ;;\n" +
+                "esac\n" +
+                "PROFEOF")
+                .assertSuccess("Failed to write Java trust store override");
+    }
+
+    /**
      * Check whether a container's stored CA fingerprint matches the current CA.
      * If mismatched, push the current cert into the container and update metadata.
      * Returns true if a fix was applied, false if no action was needed.
@@ -168,6 +191,7 @@ public class CertificateAuthority {
                 ca.caCertPem() +
                 "CERTEOF");
         incus.shellExec(container, "update-ca-trust");
+        setJavaTrustStoreOverride(incus, container);
         incus.configSet(container, Metadata.CA_FINGERPRINT, ca.caFingerprint());
         return true;
     }

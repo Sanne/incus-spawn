@@ -723,6 +723,7 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to install MITM CA certificate");
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
+        CertificateAuthority.setJavaTrustStoreOverride(incus, buildName);
 
         // UID mapping for Wayland passthrough, nested containers, and no dropped
         // capabilities since the container itself is the security boundary.
