@@ -3488,6 +3488,11 @@ public class ListCommand extends BaseCommand {
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
             incus.waitForReady(name);
+        } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
+            System.out.println("VM agent not responding, restarting " + name + "...");
+            incus.forceStop(name);
+            incus.start(name);
+            incus.waitForReady(name);
         }
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
