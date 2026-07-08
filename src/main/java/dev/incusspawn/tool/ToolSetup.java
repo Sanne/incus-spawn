@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 
@@ -31,6 +32,16 @@ public interface ToolSetup {
 
     /** Runtime actions this tool contributes to the TUI actions menu. */
     default java.util.List<ToolDef.ActionEntry> actions() { return java.util.List.of(); }
+
+    /**
+     * Environment variable declarations contributed by this tool.
+     * Returned entries are collected by the build system, merged with template
+     * env entries, validated for conflicts, and written to
+     * {@code /etc/profile.d/isx-env.sh}.
+     */
+    default java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        return java.util.List.of();
+    }
 
     /**
      * Install and configure this tool inside the given container. Packages are already installed.

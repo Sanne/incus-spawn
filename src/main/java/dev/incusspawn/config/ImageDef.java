@@ -111,6 +111,8 @@ public class ImageDef {
     private String workdir;
     @JsonProperty("shell-command")
     private String shellCommand;
+    @JsonDeserialize(using = EnvEntry.ListDeserializer.class)
+    private List<EnvEntry> env = List.of();
     @JsonProperty("default-action")
     private String defaultAction;
 
@@ -155,6 +157,8 @@ public class ImageDef {
     public void setWorkdir(String workdir) { this.workdir = workdir; }
     public String getShellCommand() { return shellCommand; }
     public void setShellCommand(String shellCommand) { this.shellCommand = shellCommand; }
+    public List<EnvEntry> getEnv() { return env; }
+    public void setEnv(List<EnvEntry> env) { this.env = env; }
     public String getDefaultAction() { return defaultAction; }
     public void setDefaultAction(String defaultAction) { this.defaultAction = defaultAction; }
     public String getSource() { return source; }
@@ -343,6 +347,10 @@ public class ImageDef {
             sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
                     .append(',').append(hr.getMode()).append('\n');
         }
+        env.stream()
+                .map(EnvEntry::fingerprintString)
+                .sorted()
+                .forEach(e -> sb.append(e).append('\n'));
         if (gui) sb.append("gui=true\n");
         if (workdir != null && !workdir.isEmpty()) sb.append("workdir=").append(workdir).append('\n');
         if (shellCommand != null && !shellCommand.isEmpty()) sb.append("shell-command=").append(shellCommand).append('\n');

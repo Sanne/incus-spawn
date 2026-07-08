@@ -28,7 +28,9 @@ run:
       > /etc/systemd/system/podman.socket.d/override.conf
 
 env:
-  - export DOCKER_HOST=unix:///var/run/docker.sock
-  - export TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=false
+  - name: DOCKER_HOST
+    value: unix:///var/run/docker.sock
+  - name: TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED
+    value: "false"
 
 verify: podman info --format '{{.Host.RemoteSocket.Path}}'

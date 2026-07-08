@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -84,61 +86,44 @@ class PiSetupTest {
     }
 
     @Test
-    void installSetsAnthropicApiKeyPlaceholder() {
-        var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+    void envEntriesSetsAnthropicApiKeyPlaceholderByDefault() {
+        var entries = new PiSetup().envEntries(Map.of());
 
-        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("ANTHROPIC_API_KEY=sk-ant-placeholder"));
+        assertTrue(entries.stream().anyMatch(e ->
+                "ANTHROPIC_API_KEY".equals(e.getName()) && "sk-ant-placeholder".equals(e.getValue())));
     }
 
     @Test
-    void installSetsOauthPlaceholderWhenHostHasOauthToken() {
+    void envEntriesSetsOauthPlaceholderWhenHostHasOauthToken() {
         var config = SpawnConfig.load();
         config.getClaude().setOauthToken("sk-ant-oat01-real-token-on-host");
         config.save();
 
-        var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        var entries = new PiSetup().envEntries(Map.of());
 
-        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        // Pi's own Anthropic provider detects an OAuth token by its "sk-ant-oat" prefix
-        // and builds the Bearer/identity-header request itself — Pi never sees the real
-        // host token, just a placeholder shaped like one.
-        verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("ANTHROPIC_OAUTH_TOKEN=sk-ant-oat01-placeholder"));
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("ANTHROPIC_API_KEY=sk-ant-placeholder"));
+        assertTrue(entries.stream().anyMatch(e ->
+                        "ANTHROPIC_OAUTH_TOKEN".equals(e.getName())),
+                "Should set ANTHROPIC_OAUTH_TOKEN in OAuth mode");
+        assertFalse(entries.stream().anyMatch(e ->
+                        "ANTHROPIC_API_KEY".equals(e.getName())),
+                "Should not set ANTHROPIC_API_KEY in OAuth mode");
     }
 
     @Test
-    void installSetsSkipVersionCheck() {
-        var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+    void envEntriesSetsSkipVersionCheck() {
+        var entries = new PiSetup().envEntries(Map.of());
 
-        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("PI_SKIP_VERSION_CHECK=1"));
+        assertTrue(entries.stream().anyMatch(e ->
+                "PI_SKIP_VERSION_CHECK".equals(e.getName()) && "1".equals(e.getValue())));
     }
 
     @Test
-    void doesNotSetVertexSpecificEnvVars() {
-        var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
-        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+    void envEntriesDoesNotSetVertexSpecificVars() {
+        var entries = new PiSetup().envEntries(Map.of());
 
-        new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("CLAUDE_CODE_USE_VERTEX"));
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("ANTHROPIC_VERTEX_PROJECT_ID"));
+        assertFalse(entries.stream().anyMatch(e ->
+                "CLAUDE_CODE_USE_VERTEX".equals(e.getName())));
+        assertFalse(entries.stream().anyMatch(e ->
+                "ANTHROPIC_VERTEX_PROJECT_ID".equals(e.getName())));
     }
 }

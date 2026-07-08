@@ -1,8 +1,11 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
+
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -22,27 +25,20 @@ class GhSetupTest {
     }
 
     @Test
-    void installSetsGhToken() {
-        var incus = stubIncus();
+    void envEntriesSetsGhToken() {
+        var entries = new GhSetup().envEntries(Map.of());
 
-        new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        verify(incus, never()).shellExecInteractive(anyString(), any(String[].class));
-        verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("GH_TOKEN=gho_placeholder"));
+        assertTrue(entries.stream().anyMatch(e ->
+                "GH_TOKEN".equals(e.getName()) && "gho_placeholder".equals(e.getValue())
+                        && e.getStrategy() == EnvEntry.Strategy.SET));
     }
 
     @Test
-    void usesEnvVarNotHostsYml() {
-        var incus = stubIncus();
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+    void envEntriesUsesEnvVarNotHostsYml() {
+        var entries = new GhSetup().envEntries(Map.of());
 
-        new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
-
-        verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("hosts.yml"));
-        verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("GH_TOKEN="));
+        assertEquals(1, entries.size());
+        assertEquals("GH_TOKEN", entries.get(0).getName());
     }
 
     @Test

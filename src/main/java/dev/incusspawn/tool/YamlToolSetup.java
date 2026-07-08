@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 
 import java.io.IOException;
@@ -54,6 +55,13 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        return def.getEnv().stream()
+                .map(e -> e.withSubstitution(s -> ParameterSubstitutor.substitute(s, resolvedParams)))
+                .toList();
+    }
+
+    @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
         System.out.println("Installing " + label + "...");
@@ -93,11 +101,8 @@ public class YamlToolSetup implements ToolSetup {
             }
         }
 
-        // 5. Environment variables (with parameter substitution)
-        for (var line : def.getEnv()) {
-            var substituted = ParameterSubstitutor.substitute(line, resolvedParams);
-            container.appendToProfile(substituted);
-        }
+        // 5. Environment variables are collected centrally by BuildCommand
+        // and written to /etc/profile.d/isx-env.sh — see envEntries().
 
         // 6. Verification (with parameter substitution)
         if (def.getVerify() != null && !def.getVerify().isBlank()) {

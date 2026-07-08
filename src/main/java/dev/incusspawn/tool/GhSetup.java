@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -20,23 +21,14 @@ public class GhSetup implements ToolSetup {
     }
 
     @Override
-    public void install(Container c, java.util.Map<String, String> resolvedParams) {
-        System.out.println("Installing GitHub CLI...");
-        configureAuth(c);
-        configureGit(c);
+    public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        return List.of(EnvEntry.set("GH_TOKEN", PLACEHOLDER_TOKEN));
     }
 
-    /**
-     * Set GH_TOKEN so the CLI believes it's authenticated and proceeds to make
-     * network requests. The placeholder is not a real credential — the MITM proxy
-     * replaces the Authorization header with the real token before it reaches GitHub.
-     * <p>
-     * We use GH_TOKEN instead of hosts.yml because newer gh versions store tokens
-     * in the system keyring (via D-Bus), which doesn't exist in containers. Any
-     * hosts.yml triggers a migration that fails without D-Bus.
-     */
-    private void configureAuth(Container c) {
-        c.appendToProfile("export GH_TOKEN=" + PLACEHOLDER_TOKEN);
+    @Override
+    public void install(Container c, java.util.Map<String, String> resolvedParams) {
+        System.out.println("Installing GitHub CLI...");
+        configureGit(c);
     }
 
     private void configureGit(Container c) {

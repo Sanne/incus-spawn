@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.Test;
@@ -55,7 +56,7 @@ class YamlToolSetupTest {
         file.setContent("content");
         file.setOwner("testuser:testuser");
         def.setFiles(List.of(file));
-        def.setEnv(List.of("export X=1"));
+        def.setEnv(List.of(EnvEntry.set("X", "1")));
         def.setVerify("test-tool --version");
 
         var setup = new YamlToolSetup(def);
@@ -81,9 +82,7 @@ class YamlToolSetupTest {
         order.verify(incus).shellExec(eq(CONTAINER),
                 eq("chown"), eq("-R"), eq("testuser:testuser"), eq("/etc/test.conf"));
 
-        // 5. env -> appendToProfile -> shellExec with sh -c
-        order.verify(incus).shellExec(eq(CONTAINER),
-                eq("sh"), eq("-c"), contains("export X=1"));
+        // 5. env is no longer written by install() — collected centrally by BuildCommand
 
         // 6. verify -> shellExec
         order.verify(incus).shellExec(eq(CONTAINER),

@@ -1,8 +1,10 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class PiSetup implements ToolSetup {
@@ -30,10 +32,22 @@ public class PiSetup implements ToolSetup {
     }
 
     @Override
+    public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        var claude = SpawnConfig.load().getClaude();
+        var entries = new ArrayList<EnvEntry>();
+        if (claude.isOauthMode()) {
+            entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
+        } else {
+            entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
+        }
+        entries.add(EnvEntry.set("PI_SKIP_VERSION_CHECK", "1"));
+        return entries;
+    }
+
+    @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
         configureSettings(c);
-        configureAuth(c);
     }
 
     private void installBinary(Container c) {
@@ -58,25 +72,4 @@ public class PiSetup implements ToolSetup {
         c.chown("/home/agentuser/.pi", "agentuser:agentuser");
     }
 
-    /**
-     * Pi always talks to the standard Anthropic API format (/v1/messages), so it can't
-     * be put in Vertex mode the way Claude Code can — the proxy keeps doing the
-     * standard-to-Vertex translation transparently for Pi's traffic.
-     * <p>
-     * For OAuth (Claude Pro/Max), Pi's own Anthropic provider already knows how to send
-     * an OAuth-shaped request (Bearer auth, Claude Code identity/beta headers) whenever
-     * its credential looks like an OAuth token (contains "sk-ant-oat"), read from
-     * ANTHROPIC_OAUTH_TOKEN in preference to ANTHROPIC_API_KEY. So we hand Pi a
-     * placeholder with that shape via ANTHROPIC_OAUTH_TOKEN and let Pi build its own
-     * request — the proxy only swaps the placeholder for the real token.
-     */
-    void configureAuth(Container c) {
-        var claude = SpawnConfig.load().getClaude();
-        if (claude.isOauthMode()) {
-            c.appendToProfile("export ANTHROPIC_OAUTH_TOKEN=" + SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
-        } else {
-            c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
-        }
-        c.appendToProfile("export PI_SKIP_VERSION_CHECK=1");
-    }
 }

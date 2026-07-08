@@ -50,7 +50,8 @@ class ToolDefTest {
         assertEquals("key=value\n", def.getFiles().get(0).getContent());
         assertEquals("testuser:testuser", def.getFiles().get(0).getOwner());
         assertEquals(1, def.getEnv().size());
-        assertEquals("export FOO=bar", def.getEnv().get(0));
+        assertTrue(def.getEnv().get(0).isRaw());
+        assertEquals("export FOO=bar", def.getEnv().get(0).getRaw());
         assertEquals("test-tool --version", def.getVerify());
     }
 

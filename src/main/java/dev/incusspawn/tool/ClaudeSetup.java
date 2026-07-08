@@ -1,11 +1,13 @@
 package dev.incusspawn.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -51,11 +53,29 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
+    public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
+        var claude = SpawnConfig.load().getClaude();
+        var entries = new ArrayList<EnvEntry>();
+        entries.add(EnvEntry.prepend("PATH", "$HOME/.local/bin", ":"));
+        if (claude.isUseVertex()) {
+            entries.add(EnvEntry.set("CLAUDE_CODE_USE_VERTEX", "1"));
+            entries.add(EnvEntry.set("CLAUDE_CODE_SKIP_VERTEX_AUTH", "1"));
+            entries.add(EnvEntry.set("CLOUD_ML_REGION", claude.getCloudMlRegion()));
+            entries.add(EnvEntry.set("ANTHROPIC_VERTEX_PROJECT_ID", claude.getVertexProjectId()));
+            entries.add(EnvEntry.set("ANTHROPIC_VERTEX_BASE_URL", "https://api.anthropic.com/v1"));
+        } else if (claude.isOauthMode()) {
+            entries.add(EnvEntry.set("CLAUDE_CODE_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
+        } else {
+            entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
+        }
+        return entries;
+    }
+
+    @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
         var claude = SpawnConfig.load().getClaude();
         configureSettings(c, claude, resolvedParams.get("model"));
-        configureAuth(c, claude);
     }
 
     @Override
@@ -67,9 +87,7 @@ public class ClaudeSetup implements ToolSetup {
     private void installBinary(Container c) {
         System.out.println("Installing Claude Code...");
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
-                "chown -R agentuser:agentuser /home/agentuser/.local && " +
-                "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
-                "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /home/agentuser/.bashrc");
+                "chown -R agentuser:agentuser /home/agentuser/.local");
 
         try {
             var version = Files.readString(
@@ -207,36 +225,4 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
     }
 
-    /**
-     * Configure auth env vars so Claude Code skips login and makes API requests.
-     * The MITM proxy replaces the placeholder credential with the real one — no real
-     * secrets enter the container.
-     * <p>
-     * When the host uses Vertex AI, the container also runs in Vertex mode (with auth
-     * skipped) so it gets the same model list and features. Requests go to
-     * api.anthropic.com via ANTHROPIC_VERTEX_BASE_URL, where the proxy intercepts them
-     * and forwards to the real Vertex endpoint with GCP credentials.
-     * <p>
-     * When the host has a Claude Pro/Max OAuth token configured, the container gets
-     * CLAUDE_CODE_OAUTH_TOKEN (not ANTHROPIC_API_KEY) so Claude Code itself builds the
-     * OAuth-shaped request (Bearer auth, Claude Code identity/beta headers) — the proxy
-     * only swaps the placeholder token for the real one and never has to replicate
-     * Anthropic's auth-header requirements itself.
-     * <p>
-     * Otherwise the container gets a placeholder direct API key and the proxy replaces
-     * the x-api-key header with the real key.
-     */
-    void configureAuth(Container c, SpawnConfig.ClaudeConfig claude) {
-        if (claude.isUseVertex()) {
-            c.appendToProfile("export CLAUDE_CODE_USE_VERTEX=1");
-            c.appendToProfile("export CLAUDE_CODE_SKIP_VERTEX_AUTH=1");
-            c.appendToProfile("export CLOUD_ML_REGION=" + claude.getCloudMlRegion());
-            c.appendToProfile("export ANTHROPIC_VERTEX_PROJECT_ID=" + claude.getVertexProjectId());
-            c.appendToProfile("export ANTHROPIC_VERTEX_BASE_URL=https://api.anthropic.com/v1");
-        } else if (claude.isOauthMode()) {
-            c.appendToProfile("export CLAUDE_CODE_OAUTH_TOKEN=" + SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN);
-        } else {
-            c.appendToProfile("export ANTHROPIC_API_KEY=sk-ant-placeholder");
-        }
-    }
 }

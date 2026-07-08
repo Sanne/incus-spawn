@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
+import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -645,9 +647,6 @@ public class BuildCommand extends BaseCommand {
 
         mountDnfCache(buildName);
 
-        container.sh("sed -i \"s/^export ISX_TEMPLATE=.*/export ISX_TEMPLATE='" + canonicalName + "'/\" /home/agentuser/.bashrc")
-                .assertSuccess("Failed to update ISX_TEMPLATE in .bashrc");
-
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             System.out.println("Applying host-resources...");
@@ -660,6 +659,9 @@ public class BuildCommand extends BaseCommand {
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         runToolSetup(container, toolResolution.effective());
+        var allTools = new ArrayList<>(toolResolution.ancestors());
+        allTools.addAll(toolResolution.effective());
+        writeEnvFile(container, imageDef, defs, allTools, toolResolution.ancestors(), canonicalName);
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
@@ -723,7 +725,6 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to install MITM CA certificate");
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
-        CertificateAuthority.setJavaTrustStoreOverride(incus, buildName);
 
         // UID mapping for Wayland passthrough, nested containers, and no dropped
         // capabilities since the container itself is the security boundary.
@@ -798,9 +799,6 @@ public class BuildCommand extends BaseCommand {
                     "echo 'PROMPT_COMMAND=\"printf \\\"\\033]0;isx:%s\\007\\\" \\\"${HOSTNAME}\\\"\"' >> /home/agentuser/.bashrc")
                     .assertSuccess("Failed to configure .bashrc");
         }
-        container.appendToProfile("export ISX_CONTAINER=\"${HOSTNAME}\"");
-        container.appendToProfile("export ISX_TEMPLATE=" + shellQuote(canonicalName));
-
         if (!prebaked) {
             // Enable bash completion
             container.appendToProfile("if [ -f /usr/share/bash-completion/bash_completion ]; then");
@@ -823,6 +821,7 @@ public class BuildCommand extends BaseCommand {
         enablePackageRepos(container, imageDef, tools, List.of(), defs);
         installAllPackages(container, imageDef, tools, List.of(), defs);
         runToolSetup(container, tools);
+        writeEnvFile(container, imageDef, defs, tools, List.of(), canonicalName);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef);
         updateClaudeJsonTrust(container, imageDef);
@@ -1190,6 +1189,32 @@ public class BuildCommand extends BaseCommand {
                 resolved.setup().install(container, resolved.parameters());
             }
         }
+    }
+
+    private void writeEnvFile(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                               List<ResolvedTool> allTools, List<ResolvedTool> ancestorTools,
+                               String canonicalName) {
+        var resolver = new EnvResolver();
+
+        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}"), "built-in");
+        resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
+        resolver.add(EnvEntry.prepend("JAVA_TOOL_OPTIONS",
+                "-Djavax.net.ssl.trustStore=/etc/pki/java/cacerts", " "), "built-in");
+
+        var ancestors = ImageDef.ancestors(imageDef, defs);
+        for (int i = ancestors.size() - 1; i >= 0; i--) {
+            var ancestor = ancestors.get(i);
+            resolver.addAll(ancestor.getEnv(), "template " + ancestor.getName());
+        }
+        resolver.addAll(imageDef.getEnv(), "template " + imageDef.getName());
+
+        for (var resolved : allTools) {
+            var entries = resolved.setup().envEntries(resolved.parameters());
+            resolver.addAll(entries, "tool " + resolved.name());
+        }
+
+        var script = resolver.resolve();
+        container.writeFile("/etc/profile.d/isx-env.sh", script);
     }
 
     private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {

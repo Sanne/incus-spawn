@@ -9,6 +9,7 @@ downloads:
       /opt/apache-maven-3.9.16/bin/mvn: /usr/local/bin/mvn
 
 env:
-  - export MAVEN_HOME=/opt/apache-maven-3.9.16
+  - name: MAVEN_HOME
+    value: /opt/apache-maven-3.9.16
 
 verify: mvn --version

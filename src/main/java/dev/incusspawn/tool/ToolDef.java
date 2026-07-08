@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.ImageDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -45,7 +46,8 @@ public class ToolDef {
     @JsonProperty("run_as_user")
     private List<String> runAsUser = List.of();
     private List<FileEntry> files = List.of();
-    private List<String> env = List.of();
+    @JsonDeserialize(using = EnvEntry.ListDeserializer.class)
+    private List<EnvEntry> env = List.of();
     @JsonDeserialize(using = ToolRef.Deserializer.class)
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolRef.Serializer.class)
     private List<ToolRef> requires = List.of();
@@ -72,8 +74,8 @@ public class ToolDef {
     public void setRunAsUser(List<String> runAsUser) { this.runAsUser = runAsUser; }
     public List<FileEntry> getFiles() { return files; }
     public void setFiles(List<FileEntry> files) { this.files = files; }
-    public List<String> getEnv() { return env; }
-    public void setEnv(List<String> env) { this.env = env; }
+    public List<EnvEntry> getEnv() { return env; }
+    public void setEnv(List<EnvEntry> env) { this.env = env; }
     public List<ToolRef> getRequires() { return requires; }
     public void setRequires(List<ToolRef> requires) { this.requires = requires; }
     public String getVerify() { return verify; }
@@ -342,7 +344,10 @@ public class ToolDef {
             sb.append("file=").append(f.path).append(',').append(f.content)
                     .append(',').append(f.owner).append('\n');
         }
-        env.stream().sorted().forEach(e -> sb.append("env=").append(e).append('\n'));
+        env.stream()
+                .map(EnvEntry::fingerprintString)
+                .sorted()
+                .forEach(e -> sb.append(e).append('\n'));
         for (var r : requires.stream().sorted(Comparator.comparing(ToolRef::getName)).toList()) {
             sb.append("requires=").append(r.getName());
             if (!r.getParams().isEmpty()) {

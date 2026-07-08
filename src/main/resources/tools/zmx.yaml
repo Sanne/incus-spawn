@@ -21,5 +21,6 @@ run:
   - rm -rf /tmp/zmx-dl
   - mkdir -p /home/agentuser/.zmx && chown agentuser:agentuser /home/agentuser/.zmx
 env:
-  - export ZMX_DIR=/home/agentuser/.zmx
+  - name: ZMX_DIR
+    value: /home/agentuser/.zmx
 verify: zmx --version
