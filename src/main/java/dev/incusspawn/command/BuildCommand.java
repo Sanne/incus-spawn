@@ -1953,7 +1953,7 @@ public class BuildCommand extends BaseCommand {
                 }
                 repoNames = GitRemoteUtils.parseManifestRepoNames(result.stdout());
             } else {
-                repoNames = GitRemoteUtils.scanHostPathForRepos(hostPath);
+                repoNames = GitRemoteUtils.scanHostPathForRepoNames(hostPath);
             }
 
             System.out.println("Mounting " + repoNames.size() + " repo references from " + source.getHostPath() + "...");

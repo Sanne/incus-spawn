@@ -504,7 +504,7 @@ class GitRemoteUtilsTest {
         assertEquals("ledger", names.get(1));
     }
 
-    // ── scanHostPathForRepos ──────────────────────────────────────────────
+    // ── scanHostPathForRepoNames ──────────────────────────────────────────────
 
     @Test
     void scanFindsGitRepos(@TempDir Path dir) throws IOException {
@@ -513,7 +513,7 @@ class GitRemoteUtilsTest {
         Files.createDirectories(dir.resolve("not-a-repo"));
         Files.createFile(dir.resolve("a-file.txt"));
 
-        var repos = GitRemoteUtils.scanHostPathForRepos(dir);
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(dir);
         assertEquals(2, repos.size());
         assertTrue(repos.contains("repo-a"));
         assertTrue(repos.contains("repo-b"));
@@ -522,13 +522,13 @@ class GitRemoteUtilsTest {
 
     @Test
     void scanReturnsEmptyForMissingDir() {
-        var repos = GitRemoteUtils.scanHostPathForRepos(Path.of("/nonexistent/path"));
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(Path.of("/nonexistent/path"));
         assertTrue(repos.isEmpty());
     }
 
     @Test
     void scanReturnsEmptyForEmptyDir(@TempDir Path dir) {
-        var repos = GitRemoteUtils.scanHostPathForRepos(dir);
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(dir);
         assertTrue(repos.isEmpty());
     }
 }

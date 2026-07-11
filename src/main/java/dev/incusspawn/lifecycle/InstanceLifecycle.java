@@ -144,7 +144,7 @@ public final class InstanceLifecycle {
                     var hostPath = java.nio.file.Path.of(expandedPath);
                     if (!java.nio.file.Files.isDirectory(hostPath)) continue;
 
-                    var repoNames = dev.incusspawn.git.GitRemoteUtils.scanHostPathForRepos(hostPath);
+                    var repoNames = dev.incusspawn.git.GitRemoteUtils.scanHostPathForRepoNames(hostPath);
                     for (var repoName : repoNames) {
                         var repoDir = hostPath.resolve(repoName);
                         if (!dev.incusspawn.git.GitRemoteUtils.isGitRepo(repoDir)) continue;

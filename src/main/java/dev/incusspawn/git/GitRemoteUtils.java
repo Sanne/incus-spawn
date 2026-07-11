@@ -305,17 +305,10 @@ public final class GitRemoteUtils {
         return base + suffix;
     }
 
-    public static List<String> scanHostPathForRepos(Path hostPath) {
-        var repos = new ArrayList<String>();
-        try (var stream = Files.list(hostPath)) {
-            stream.filter(Files::isDirectory)
-                  .filter(p -> Files.isDirectory(p.resolve(".git")))
-                  .map(p -> p.getFileName().toString())
-                  .forEach(repos::add);
-        } catch (IOException e) {
-            System.err.println("Warning: could not scan " + hostPath + ": " + e.getMessage());
-        }
-        return repos;
+    public static List<String> scanHostPathForRepoNames(Path hostPath) {
+        return findAllGitRepos(hostPath).stream()
+                .map(p -> p.getFileName().toString())
+                .toList();
     }
 
     public static List<String> parseManifestRepoNames(String csvContent) {
