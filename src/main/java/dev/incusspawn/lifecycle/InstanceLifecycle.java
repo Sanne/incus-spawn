@@ -130,6 +130,42 @@ public final class InstanceLifecycle {
                 ZmxSocketForward.configure(incus, name);
             }
         }
+
+        // Mount repo-source references (host repos available for fast cloning)
+        var repoSourcesJson = incus.configGet(name, Metadata.REPO_SOURCES);
+        if (!repoSourcesJson.isEmpty()) {
+            try {
+                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                List<dev.incusspawn.config.ImageDef.RepoSource> sources = mapper.readValue(repoSourcesJson,
+                        mapper.getTypeFactory().constructCollectionType(List.class,
+                                dev.incusspawn.config.ImageDef.RepoSource.class));
+                for (var source : sources) {
+                    var expandedPath = HostResourceSetup.expandHostTilde(source.getHostPath());
+                    var hostPath = java.nio.file.Path.of(expandedPath);
+                    if (!java.nio.file.Files.isDirectory(hostPath)) continue;
+
+                    var repoNames = dev.incusspawn.git.GitRemoteUtils.scanHostPathForRepoNames(hostPath);
+                    for (var repoName : repoNames) {
+                        var repoDir = hostPath.resolve(repoName);
+                        if (!dev.incusspawn.git.GitRemoteUtils.isGitRepo(repoDir)) continue;
+                        try {
+                            var containerPath = dev.incusspawn.git.GitRemoteUtils.referenceContainerPath(
+                                    repoName, "https://github.com/_/" + repoName + ".git");
+                            var deviceName = dev.incusspawn.git.GitRemoteUtils.referenceDeviceName(
+                                    repoName, "https://github.com/_/" + repoName + ".git");
+                            var refArgs = new java.util.ArrayList<String>(java.util.List.of(
+                                    "source=" + HostResourceSetup.translateForVm(repoDir.toString()),
+                                    "path=" + containerPath,
+                                    "readonly=true"));
+                            HostResourceSetup.addShiftIfSupported(refArgs);
+                            incus.deviceAdd(name, deviceName, "disk", refArgs.toArray(String[]::new));
+                        } catch (Exception ignored) {}
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Warning: could not mount repo-source references: " + e.getMessage());
+            }
+        }
     }
 
     /**

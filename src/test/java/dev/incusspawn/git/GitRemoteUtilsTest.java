@@ -467,4 +467,68 @@ class GitRemoteUtilsTest {
         runGit(dir, "init");
         runGit(dir, "remote", "add", remoteName, remoteUrl);
     }
+
+    // ── parseManifestRepoNames ────────────────────────────────────────────
+
+    @Test
+    void parseManifestSkipsCommentsAndEmpty() {
+        var csv = "# name,dep1,dep2\nplatform,parent\n\nledger,parent\n# another comment\neidos,ledger\n";
+        var names = GitRemoteUtils.parseManifestRepoNames(csv);
+        assertEquals(3, names.size());
+        assertEquals("platform", names.get(0));
+        assertEquals("ledger", names.get(1));
+        assertEquals("eidos", names.get(2));
+    }
+
+    @Test
+    void parseManifestTakesFirstColumnOnly() {
+        var csv = "engine,parent,ledger,work\nclaudony,parent,ledger,work,qhorus\n";
+        var names = GitRemoteUtils.parseManifestRepoNames(csv);
+        assertEquals(2, names.size());
+        assertEquals("engine", names.get(0));
+        assertEquals("claudony", names.get(1));
+    }
+
+    @Test
+    void parseManifestHandlesEmptyInput() {
+        assertEquals(0, GitRemoteUtils.parseManifestRepoNames("").size());
+        assertEquals(0, GitRemoteUtils.parseManifestRepoNames("# only comments\n").size());
+    }
+
+    @Test
+    void parseManifestStripsWhitespace() {
+        var csv = "  platform , parent \n  ledger , parent \n";
+        var names = GitRemoteUtils.parseManifestRepoNames(csv);
+        assertEquals(2, names.size());
+        assertEquals("platform", names.get(0));
+        assertEquals("ledger", names.get(1));
+    }
+
+    // ── scanHostPathForRepoNames ──────────────────────────────────────────────
+
+    @Test
+    void scanFindsGitRepos(@TempDir Path dir) throws IOException {
+        Files.createDirectories(dir.resolve("repo-a/.git"));
+        Files.createDirectories(dir.resolve("repo-b/.git"));
+        Files.createDirectories(dir.resolve("not-a-repo"));
+        Files.createFile(dir.resolve("a-file.txt"));
+
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(dir);
+        assertEquals(2, repos.size());
+        assertTrue(repos.contains("repo-a"));
+        assertTrue(repos.contains("repo-b"));
+        assertFalse(repos.contains("not-a-repo"));
+    }
+
+    @Test
+    void scanReturnsEmptyForMissingDir() {
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(Path.of("/nonexistent/path"));
+        assertTrue(repos.isEmpty());
+    }
+
+    @Test
+    void scanReturnsEmptyForEmptyDir(@TempDir Path dir) {
+        var repos = GitRemoteUtils.scanHostPathForRepoNames(dir);
+        assertTrue(repos.isEmpty());
+    }
 }

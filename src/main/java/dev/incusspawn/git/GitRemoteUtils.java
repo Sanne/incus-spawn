@@ -305,6 +305,23 @@ public final class GitRemoteUtils {
         return base + suffix;
     }
 
+    public static List<String> scanHostPathForRepoNames(Path hostPath) {
+        return findAllGitRepos(hostPath).stream()
+                .map(p -> p.getFileName().toString())
+                .toList();
+    }
+
+    public static List<String> parseManifestRepoNames(String csvContent) {
+        var repos = new ArrayList<String>();
+        for (var line : csvContent.split("\n")) {
+            line = line.strip();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            var name = line.split(",")[0].strip();
+            if (!name.isEmpty()) repos.add(name);
+        }
+        return repos;
+    }
+
     public static String referenceContainerPath(String repoName, String cloneUrl) {
         if (repoName == null || repoName.isBlank()
                 || repoName.contains("/") || repoName.equals(".") || repoName.equals("..")) {

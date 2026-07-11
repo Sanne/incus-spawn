@@ -658,4 +658,50 @@ class ImageDefTest {
         def.setTools(tools.stream().map(ToolDef.ToolRef::new).toList());
         return def;
     }
+
+    // ── repo-sources deserialization ──────────────────────────────────────
+
+    @Test
+    void repoSourcesDeserializesFromYaml(@TempDir Path dir) throws Exception {
+        var yaml = """
+                name: tpl-test
+                parent: tpl-dev
+                repo-sources:
+                  - host-path: ~/claude/casehub
+                  - host-path: ~/claude/casehub
+                    manifest: build/modules-core.csv
+                """;
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, yaml);
+
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper(
+                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+        var def = mapper.readValue(file.toFile(), ImageDef.class);
+
+        assertEquals(2, def.getRepoSources().size());
+
+        var source0 = def.getRepoSources().get(0);
+        assertEquals("~/claude/casehub", source0.getHostPath());
+        assertNull(source0.getManifest());
+
+        var source1 = def.getRepoSources().get(1);
+        assertEquals("~/claude/casehub", source1.getHostPath());
+        assertEquals("build/modules-core.csv", source1.getManifest());
+    }
+
+    @Test
+    void repoSourcesDefaultsToEmpty(@TempDir Path dir) throws Exception {
+        var yaml = """
+                name: tpl-test
+                parent: tpl-dev
+                """;
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, yaml);
+
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper(
+                new com.fasterxml.jackson.dataformat.yaml.YAMLFactory());
+        var def = mapper.readValue(file.toFile(), ImageDef.class);
+
+        assertTrue(def.getRepoSources().isEmpty());
+    }
 }

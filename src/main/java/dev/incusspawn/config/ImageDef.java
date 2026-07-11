@@ -98,6 +98,8 @@ public class ImageDef {
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolDef.ToolRef.Serializer.class)
     private List<ToolDef.ToolRef> tools = List.of();
     private List<RepoEntry> repos = List.of();
+    @JsonProperty("repo-sources")
+    private List<RepoSource> repoSources = List.of();
     @JsonDeserialize(using = SkillsDef.Deserializer.class)
     private SkillsDef skills = SkillsDef.EMPTY;
     @JsonProperty("package_repos")
@@ -141,6 +143,8 @@ public class ImageDef {
     public void setTools(List<ToolDef.ToolRef> tools) { this.tools = tools; }
     public List<RepoEntry> getRepos() { return repos; }
     public void setRepos(List<RepoEntry> repos) { this.repos = repos; }
+    public List<RepoSource> getRepoSources() { return repoSources; }
+    public void setRepoSources(List<RepoSource> repoSources) { this.repoSources = repoSources; }
     public SkillsDef getSkills() { return skills; }
     public void setSkills(SkillsDef skills) { this.skills = skills; }
     public List<PackageRepo> getPackageRepos() { return packageRepos; }
@@ -255,6 +259,21 @@ public class ImageDef {
         public void setBranch(String branch) { this.branch = branch; }
         public String getPrime() { return prime; }
         public void setPrime(String prime) { this.prime = prime; }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RepoSource {
+        @JsonProperty("host-path")
+        private String hostPath;
+        private String manifest;
+
+        public RepoSource() {}
+
+        public String getHostPath() { return hostPath; }
+        public void setHostPath(String hostPath) { this.hostPath = hostPath; }
+        public String getManifest() { return manifest; }
+        public void setManifest(String manifest) { this.manifest = manifest; }
     }
 
     public static class ToolsDeserializer extends StdDeserializer<List<ToolDef.ToolRef>> {
