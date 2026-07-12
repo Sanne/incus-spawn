@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
@@ -10,6 +12,10 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 
 @CommandDefinition(
         name = "sync",
@@ -21,10 +27,10 @@ public class SyncCommand extends BaseCommand {
     @Argument(description = "Name of the instance to sync", required = true)
     String name;
 
-    @Option(name = "push", hasValue = false, description = "Push only (host → container)")
+    @Option(name = "push", hasValue = false, description = "Push only (host to container)")
     boolean pushOnly;
 
-    @Option(name = "pull", hasValue = false, description = "Pull only (container → host)")
+    @Option(name = "pull", hasValue = false, description = "Pull only (container to host)")
     boolean pullOnly;
 
     @Override
@@ -42,7 +48,7 @@ public class SyncCommand extends BaseCommand {
         }
 
         var config = SpawnConfig.load();
-        var repos = GitRemoteUtils.collectReposForInstance(name, incus);
+        var repos = collectAllSyncTargets(incus, config);
         if (repos.isEmpty()) {
             System.out.println("No repos found for instance '" + name + "'.");
             return CommandResult.SUCCESS;
@@ -58,23 +64,26 @@ public class SyncCommand extends BaseCommand {
 
         int pulled = 0;
         int pushed = 0;
+        int skipped = 0;
         int failed = 0;
 
-        for (var repo : repos) {
-            var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
-            if (repoName.isEmpty()) continue;
-
-            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-            if (hostPath == null || !Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)) continue;
+        for (var target : repos) {
+            var hostPath = target.hostPath;
+            var repoName = target.name;
 
             var remoteUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, name);
-            if (remoteUrl == null || !remoteUrl.startsWith("isx://")) continue;
+            if (remoteUrl == null || !remoteUrl.startsWith("isx://")) {
+                skipped++;
+                continue;
+            }
 
             var hostBranch = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--abbrev-ref", "HEAD");
             if (hostBranch == null) hostBranch = "main";
 
             if (doPull) {
-                var containerBranch = getContainerBranch(incus, repo.getPath());
+                var containerPath = GitRemoteUtils.parseIsxUrl(remoteUrl);
+                var containerBranch = containerPath != null
+                        ? getContainerBranch(incus, containerPath.path()) : null;
                 if (containerBranch == null) containerBranch = hostBranch;
 
                 System.out.print("  Fetching " + repoName + " (" + containerBranch + ")... ");
@@ -112,15 +121,55 @@ public class SyncCommand extends BaseCommand {
             }
         }
 
-        var summary = new StringBuilder("Synced " + repos.size() + " repos with " + name + ":");
+        int synced = repos.size() - skipped;
+        var summary = new StringBuilder("Synced " + synced + " repos with " + name + ":");
         if (doPull) summary.append(" ").append(pulled).append(" pulled");
         if (doPull && doPush) summary.append(",");
         if (doPush) summary.append(" ").append(pushed).append(" pushed");
         if (failed > 0) summary.append(", ").append(failed).append(" failed");
+        if (skipped > 0) summary.append(", ").append(skipped).append(" skipped (no isx remote)");
         summary.append(".");
         System.out.println(summary);
 
         return failed > 0 ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+    }
+
+    record SyncTarget(String name, Path hostPath) {}
+
+    private List<SyncTarget> collectAllSyncTargets(IncusClient incus, SpawnConfig config) {
+        var targets = new ArrayList<SyncTarget>();
+        var seen = new HashSet<String>();
+
+        // Template-declared repos
+        var templateRepos = GitRemoteUtils.collectReposForInstance(name, incus);
+        for (var repo : templateRepos) {
+            var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
+            if (repoName.isEmpty() || !seen.add(repoName)) continue;
+            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            if (hostPath != null && Files.isDirectory(hostPath) && GitRemoteUtils.isGitRepo(hostPath)) {
+                targets.add(new SyncTarget(repoName, hostPath));
+            }
+        }
+
+        // All repos under host-paths that have an isx:// remote for this instance
+        for (var hp : config.getHostPaths()) {
+            var basePath = Path.of(HostResourceSetup.expandHostTilde(hp));
+            if (!Files.isDirectory(basePath)) continue;
+            try (var stream = Files.list(basePath)) {
+                stream.filter(Files::isDirectory)
+                      .filter(GitRemoteUtils::isGitRepo)
+                      .forEach(repoPath -> {
+                          var repoName = repoPath.getFileName().toString();
+                          if (!seen.add(repoName)) return;
+                          var remoteUrl = GitRemoteUtils.getHostRepoRemoteUrl(repoPath, name);
+                          if (remoteUrl != null && remoteUrl.startsWith("isx://")) {
+                              targets.add(new SyncTarget(repoName, repoPath));
+                          }
+                      });
+            } catch (java.io.IOException ignored) {}
+        }
+
+        return targets;
     }
 
     private String getContainerBranch(IncusClient incus, String containerRepoPath) {
