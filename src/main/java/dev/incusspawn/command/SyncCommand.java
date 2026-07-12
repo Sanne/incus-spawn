@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.incus.IncusClient;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -69,20 +70,28 @@ public class SyncCommand extends BaseCommand {
             var remoteUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, name);
             if (remoteUrl == null || !remoteUrl.startsWith("isx://")) continue;
 
-            var branch = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--abbrev-ref", "HEAD");
-            if (branch == null) branch = "main";
+            var hostBranch = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--abbrev-ref", "HEAD");
+            if (hostBranch == null) hostBranch = "main";
 
             if (doPull) {
-                System.out.print("  Fetching " + repoName + " (" + branch + ")... ");
-                var fetchResult = GitRemoteUtils.hostGitExec(hostPath, "fetch", name, branch);
+                var containerBranch = getContainerBranch(incus, repo.getPath());
+                if (containerBranch == null) containerBranch = hostBranch;
+
+                System.out.print("  Fetching " + repoName + " (" + containerBranch + ")... ");
+                var fetchResult = GitRemoteUtils.hostGitExec(hostPath, "fetch", name, containerBranch);
                 if (fetchResult != null) {
-                    var mergeResult = GitRemoteUtils.hostGitExec(hostPath, "merge", "--ff-only", "FETCH_HEAD");
-                    if (mergeResult != null) {
-                        System.out.println("done");
-                        pulled++;
+                    if (containerBranch.equals(hostBranch)) {
+                        var mergeResult = GitRemoteUtils.hostGitExec(hostPath, "merge", "--ff-only", "FETCH_HEAD");
+                        if (mergeResult != null) {
+                            System.out.println("done");
+                            pulled++;
+                        } else {
+                            System.out.println("fetched (can't fast-forward — diverged)");
+                            failed++;
+                        }
                     } else {
-                        System.out.println("fetched (can't fast-forward — diverged)");
-                        failed++;
+                        System.out.println("fetched (container on " + containerBranch + ", host on " + hostBranch + ")");
+                        pulled++;
                     }
                 } else {
                     System.out.println("failed");
@@ -91,8 +100,8 @@ public class SyncCommand extends BaseCommand {
             }
 
             if (doPush) {
-                System.out.print("  Pushing  " + repoName + " (" + branch + ")... ");
-                var result = GitRemoteUtils.hostGitExec(hostPath, "push", "--no-verify", name, branch);
+                System.out.print("  Pushing  " + repoName + " (" + hostBranch + ")... ");
+                var result = GitRemoteUtils.hostGitExec(hostPath, "push", "--no-verify", name, hostBranch);
                 if (result != null) {
                     System.out.println("done");
                     pushed++;
@@ -112,5 +121,19 @@ public class SyncCommand extends BaseCommand {
         System.out.println(summary);
 
         return failed > 0 ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+    }
+
+    private String getContainerBranch(IncusClient incus, String containerRepoPath) {
+        try {
+            var path = containerRepoPath;
+            if (path.startsWith("~/")) path = "/home/agentuser/" + path.substring(2);
+            var result = incus.execInContainer(name, "agentuser",
+                    "git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD");
+            if (result.success()) {
+                var branch = result.stdout().strip();
+                return branch.isEmpty() || "HEAD".equals(branch) ? null : branch;
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 }
