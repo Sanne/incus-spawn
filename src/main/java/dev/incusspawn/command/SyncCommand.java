@@ -77,13 +77,31 @@ public class SyncCommand extends BaseCommand {
                 continue;
             }
 
+            // Verify container path exists; fix stale remote if repo was renamed
+            var parsed = GitRemoteUtils.parseIsxUrl(remoteUrl);
+            if (parsed != null) {
+                var check = incus.execInContainer(name, "agentuser", "test", "-d", parsed.path());
+                if (!check.success()) {
+                    var fixedUrl = findRepoInContainer(incus, repoName, parsed.instance(), hostPath);
+                    if (fixedUrl != null) {
+                        GitRemoteUtils.hostGitExec(hostPath, "remote", "set-url", name, fixedUrl);
+                        remoteUrl = fixedUrl;
+                        parsed = GitRemoteUtils.parseIsxUrl(fixedUrl);
+                        System.out.println("  Fixed stale remote for " + repoName + " -> " + fixedUrl);
+                    } else {
+                        System.out.println("  Skipping " + repoName + " (not found in container)");
+                        skipped++;
+                        continue;
+                    }
+                }
+            }
+
             var hostBranch = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "--abbrev-ref", "HEAD");
             if (hostBranch == null) hostBranch = "main";
 
             if (doPull) {
-                var containerPath = GitRemoteUtils.parseIsxUrl(remoteUrl);
-                var containerBranch = containerPath != null
-                        ? getContainerBranch(incus, containerPath.path()) : null;
+                var containerBranch = parsed != null
+                        ? getContainerBranch(incus, parsed.path()) : null;
                 if (containerBranch == null) containerBranch = hostBranch;
 
                 System.out.print("  Fetching " + repoName + " (" + containerBranch + ")... ");
@@ -127,11 +145,38 @@ public class SyncCommand extends BaseCommand {
         if (doPull && doPush) summary.append(",");
         if (doPush) summary.append(" ").append(pushed).append(" pushed");
         if (failed > 0) summary.append(", ").append(failed).append(" failed");
-        if (skipped > 0) summary.append(", ").append(skipped).append(" skipped (no isx remote)");
+        if (skipped > 0) summary.append(", ").append(skipped).append(" skipped");
         summary.append(".");
         System.out.println(summary);
 
         return failed > 0 ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+    }
+
+    private String findRepoInContainer(IncusClient incus, String repoName, String instanceName, Path hostPath) {
+        var hostHead = GitRemoteUtils.hostGitExec(hostPath, "rev-parse", "HEAD");
+        if (hostHead == null) return null;
+
+        var staleUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, instanceName);
+        if (staleUrl == null) return null;
+        var staleIsxUrl = GitRemoteUtils.parseIsxUrl(staleUrl);
+        if (staleIsxUrl == null) return null;
+        var parentDir = staleIsxUrl.path().substring(0, staleIsxUrl.path().lastIndexOf('/'));
+
+        var result = incus.execInContainer(name, "agentuser",
+                "find", parentDir, "-maxdepth", "2", "-mindepth", "1",
+                "-type", "d", "-name", ".git");
+        if (!result.success()) return null;
+
+        for (var line : result.stdout().strip().split("\n")) {
+            if (line.isBlank()) continue;
+            var repoDir = line.replace("/.git", "");
+            var catResult = incus.execInContainer(name, "agentuser",
+                    "git", "-C", repoDir, "cat-file", "-t", hostHead);
+            if (catResult.success() && "commit".equals(catResult.stdout().strip())) {
+                return "isx://" + instanceName + repoDir;
+            }
+        }
+        return null;
     }
 
     record SyncTarget(String name, Path hostPath) {}
