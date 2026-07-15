@@ -57,4 +57,27 @@ class ProxyServiceTest {
         Files.writeString(wrapper, "#!/bin/bash\nexec /usr/bin/python3 app.py \"$@\"\n");
         assertNull(ProxyService.checkJvmWrapper(wrapper.toString()));
     }
+
+    @Test
+    void writeProxyStartScriptCreatesExecutableScript() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        ProxyService.writeProxyStartScript(script, "/home/user/.local/bin/isx");
+
+        var content = Files.readString(script);
+        assertTrue(content.startsWith("#!/bin/bash\n"));
+        assertTrue(content.contains("/home/user/.local/bin/isx"));
+        assertTrue(content.contains("proxy start"));
+        assertTrue(Files.isExecutable(script));
+    }
+
+    @Test
+    void writeProxyStartScriptEscapesSingleQuotes() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        ProxyService.writeProxyStartScript(script, "/home/user/it's here/isx");
+
+        var content = Files.readString(script);
+        assertTrue(content.contains("it"));
+        assertTrue(content.contains("s here"));
+        assertFalse(content.contains("it's"), "unescaped single quote would break the shell script");
+    }
 }

@@ -1,11 +1,13 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.regex.Matcher;
 
 public final class ProxyService {
@@ -68,6 +70,7 @@ public final class ProxyService {
                 """.formatted(execStartLine(isxPath));
 
         try {
+            writeProxyStartScript(proxyStartScript(), isxPath);
             Files.createDirectories(Environment.proxyServiceFile().getParent());
             Files.writeString(Environment.proxyServiceFile(), serviceContent);
         } catch (IOException e) {
@@ -109,6 +112,7 @@ public final class ProxyService {
 
         try {
             Files.deleteIfExists(Environment.proxyServiceFile());
+            Files.deleteIfExists(proxyStartScript());
         } catch (IOException e) {
             System.err.println("Failed to remove service file: " + e.getMessage());
             return false;
@@ -202,9 +206,10 @@ public final class ProxyService {
             var expected = execStartLine(isxPath);
             if (content.contains(expected)) return false;
             var updated = content.replaceFirst(
-                    "ExecStart=.*proxy start.*",
+                    "ExecStart=.*",
                     Matcher.quoteReplacement(expected));
             if (updated.equals(content)) return false;
+            writeProxyStartScript(proxyStartScript(), isxPath);
             Files.writeString(Environment.proxyServiceFile(), updated);
             runQuiet("systemctl", "--user", "daemon-reload");
             return true;
@@ -230,8 +235,9 @@ public final class ProxyService {
             if (!content.contains("ExecStart=")) return;
             var expected = execStartLine(isxPath);
             if (content.contains(expected)) return;
-            var updated = content.replaceFirst("ExecStart=.*proxy.*", Matcher.quoteReplacement(expected));
+            var updated = content.replaceFirst("ExecStart=.*", Matcher.quoteReplacement(expected));
             if (updated.equals(content)) return;
+            writeProxyStartScript(proxyStartScript(), isxPath);
             Files.writeString(Environment.proxyServiceFile(), updated);
             System.out.println("Updated proxy service ExecStart.");
             runQuiet("systemctl", "--user", "daemon-reload");
@@ -323,7 +329,12 @@ public final class ProxyService {
                 System.err.println(output);
                 if (output.contains("status=127")) {
                     System.err.println();
-                    System.err.println("Exit code 127 usually means the Java binary was not found.");
+                    System.err.println("Exit code 127 usually means a binary was not found.");
+                    try {
+                        var svc = Files.readString(Environment.proxyServiceFile());
+                        var m = java.util.regex.Pattern.compile("ExecStart=(.*)").matcher(svc);
+                        if (m.find()) System.err.println("ExecStart: " + m.group(1));
+                    } catch (Exception ignored) {}
                     System.err.println("If isx was installed as a JVM wrapper, ensure Java "
                             + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper.");
                     System.err.println("Alternatively, reinstall with: install.sh --native");
@@ -353,9 +364,18 @@ public final class ProxyService {
         return null;
     }
 
+    private static Path proxyStartScript() {
+        return Environment.configDir().resolve("proxy-start.sh");
+    }
+
+    static void writeProxyStartScript(Path script, String isxPath) throws IOException {
+        Files.createDirectories(script.getParent());
+        Files.writeString(script, "#!/bin/bash\nexec " + Container.shellQuote(isxPath) + " proxy start\n");
+        Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
+    }
+
     private static String execStartLine(String isxPath) {
-        var quoted = isxPath.replace("'", "'\\''");
-        return "ExecStart=/usr/bin/sg incus-admin -c \"exec '" + quoted + "' proxy start\"";
+        return "ExecStart=/usr/bin/sg incus-admin -c " + proxyStartScript();
     }
 
     // --- macOS launchd support ---
