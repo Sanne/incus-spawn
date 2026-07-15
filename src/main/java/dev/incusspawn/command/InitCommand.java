@@ -23,6 +23,8 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -235,9 +237,11 @@ public class InitCommand extends BaseCommand {
         configureFirewall();
         configureMitmProxy();
         setupSshKeyPair();
-        setupClaudeAuth();
-        setupGitHubAuth();
-        setupBobAuth();
+        var credentials = selectCredentials();
+        totalSteps = 10 + credentials.size();
+        if (credentials.contains("claude")) setupClaudeAuth();
+        if (credentials.contains("github")) setupGitHubAuth();
+        if (credentials.contains("bob")) setupBobAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -293,9 +297,11 @@ public class InitCommand extends BaseCommand {
         }
 
         setupSshKeyPair();
-        setupClaudeAuth();
-        setupGitHubAuth();
-        setupBobAuth();
+        var macCredentials = selectCredentials();
+        totalSteps = 7 + macCredentials.size();
+        if (macCredentials.contains("claude")) setupClaudeAuth();
+        if (macCredentials.contains("github")) setupGitHubAuth();
+        if (macCredentials.contains("bob")) setupBobAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -303,13 +309,7 @@ public class InitCommand extends BaseCommand {
         installGitRemoteShim();
 
         startStep("DNS Configuration", DNS_HINT);
-        var spawnConfig = SpawnConfig.load();
-        if (spawnConfig.getClaude().hasAuth() || !spawnConfig.getGithub().getToken().isBlank()
-                || spawnConfig.getBob().hasAuth()) {
-            MitmProxy.configureBridgeDns(incus);
-        } else {
-            System.out.println("  Skipped — no API keys configured yet.");
-        }
+        MitmProxy.configureBridgeDns(incus);
 
         startStep("macOS Services",
                 "Installs the Incus VM and MITM proxy as macOS launch",
@@ -820,6 +820,49 @@ public class InitCommand extends BaseCommand {
         } catch (Exception e) {
             System.err.println("  Warning: could not check bridge subnet: " + e.getMessage());
         }
+    }
+
+    private Set<String> selectCredentials() {
+        startStep("Credential Setup",
+                "Choose which API credentials to configure. Each credential",
+                "stays on your host — containers only hold placeholders, and",
+                "the MITM proxy injects real values transparently.");
+        var config = SpawnConfig.load();
+        var console = System.console();
+        if (console == null) {
+            return Set.of();
+        }
+
+        var claudeTag = config.getClaude().hasAuth() ? " [configured]" : "";
+        var githubTag = !config.getGithub().getToken().isBlank() ? " [configured]" : "";
+        var bobTag = config.getBob().hasAuth() ? " [configured]" : "";
+
+        System.out.println("  Which credentials do you want to configure?");
+        System.out.println("    1. Claude Code — AI coding assistant" + claudeTag);
+        System.out.println("    2. GitHub — PAT for git operations" + githubTag);
+        System.out.println("    3. Bob Shell — IBM AI coding assistant" + bobTag);
+        System.out.println();
+        System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
+        var input = console.readLine();
+        if (input == null || input.isBlank()) {
+            System.out.println("  Skipped credential setup.");
+            return Set.of();
+        }
+        var selected = new LinkedHashSet<String>();
+        if (input.strip().equalsIgnoreCase("all")) {
+            selected.add("claude");
+            selected.add("github");
+            selected.add("bob");
+        } else {
+            for (var part : input.split(",")) {
+                switch (part.strip()) {
+                    case "1" -> selected.add("claude");
+                    case "2" -> selected.add("github");
+                    case "3" -> selected.add("bob");
+                }
+            }
+        }
+        return selected;
     }
 
     private void setupClaudeAuth() {

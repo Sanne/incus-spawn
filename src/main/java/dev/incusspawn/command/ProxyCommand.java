@@ -83,11 +83,6 @@ public class ProxyCommand extends BaseCommand {
             var ghToken = config.getGithub().getToken();
             var bobApiKey = config.getBob().getApiKey();
 
-            if (!claude.hasAuth()) {
-                System.err.println("Error: no Claude credentials configured. Run 'isx init' first.");
-                return CommandResult.valueOf(1);
-            }
-
             if (claude.isUseVertex()) {
                 if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
                     System.err.println("Error: Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
@@ -133,8 +128,10 @@ public class ProxyCommand extends BaseCommand {
                         " (project: " + claude.getVertexProjectId() + ")");
             } else if (!oauthToken.isBlank()) {
                 System.out.println("  OAuth token:   configured");
+            } else if (!apiKey.isBlank()) {
+                System.out.println("  API key:       configured");
             } else {
-                System.out.println("  API key:       " + (apiKey.isBlank() ? "(not configured)" : "configured"));
+                System.out.println("  Claude:        (not configured)");
             }
             System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
             System.out.println("  Bob API key:   " + (bobApiKey.isBlank() ? "(not configured)" : "configured"));
