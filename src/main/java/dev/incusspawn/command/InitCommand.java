@@ -1282,6 +1282,12 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    private void printNumberedPaths(java.util.List<String> paths) {
+        for (int i = 0; i < paths.size(); i++) {
+            System.out.println("    " + (i + 1) + ". " + paths.get(i));
+        }
+    }
+
     private void setupPathList(
             java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
@@ -1291,9 +1297,7 @@ public class InitCommand extends BaseCommand {
 
         if (!existing.isEmpty()) {
             System.out.println("  Current paths:");
-            for (var path : existing) {
-                System.out.println("    - " + path);
-            }
+            printNumberedPaths(existing);
         }
 
         var console = System.console();
@@ -1304,9 +1308,28 @@ public class InitCommand extends BaseCommand {
 
         var paths = new java.util.ArrayList<>(existing);
         while (true) {
-            System.out.print("  Add a path (or press Enter to " + (paths.isEmpty() ? "skip" : "finish") + "): ");
+            var hasEntries = !paths.isEmpty();
+            System.out.print("  Add a local directory"
+                    + (hasEntries ? " or # to remove" : "")
+                    + " (or press Enter to " + (hasEntries ? "finish" : "skip") + "): ");
             var input = console.readLine().strip();
             if (input.isEmpty()) break;
+
+            if (input.contains("://")) {
+                System.out.println("  That looks like a URL — this needs a local directory path (e.g. ~/my-templates).");
+                continue;
+            }
+
+            if (input.matches("\\d+")) {
+                int index = Integer.parseInt(input) - 1;
+                if (index >= 0 && index < paths.size()) {
+                    System.out.println("  Removed: " + paths.remove(index));
+                    printNumberedPaths(paths);
+                } else {
+                    System.out.println("  No entry #" + input + ".");
+                }
+                continue;
+            }
 
             var expanded = HostResourceSetup.expandHostTilde(input);
             var path = java.nio.file.Path.of(expanded);
@@ -1319,6 +1342,7 @@ public class InitCommand extends BaseCommand {
             } else {
                 paths.add(resolved);
                 System.out.println("  Added: " + resolved);
+                printNumberedPaths(paths);
             }
         }
 
@@ -1335,11 +1359,13 @@ public class InitCommand extends BaseCommand {
 
     private void setupSearchPaths() {
         startStep("Template Search Paths",
-                "Optional directories where isx looks for custom image and",
+                "Local directories where isx looks for custom image and",
                 "tool definitions. Definitions found here can extend or",
                 "override the built-in templates. Each directory should",
                 "contain images/ and/or tools/ subdirectories with YAML",
-                "files. For examples see (experimental, opinionated):",
+                "files.",
+                "",
+                "For an example layout, see (clone it, don't enter the URL):",
                 "https://github.com/Sanne/incus-spawn-templates");
         setupPathList(
                 SpawnConfig::getSearchPaths,
