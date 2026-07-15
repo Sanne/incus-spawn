@@ -6,7 +6,7 @@
 # Usage: incus file push test-podman.sh <instance>/tmp/
 #        incus exec <instance> -- bash /tmp/test-podman.sh
 
-set -euo pipefail
+set -uo pipefail
 
 PASS=0
 FAIL=0
@@ -33,34 +33,49 @@ echo ""
 
 echo "[1] Rootless PostgreSQL via podman"
 
+# Diagnostics — helps debug user namespace issues
+echo "  subuid: $(cat /etc/subuid)"
+echo "  subgid: $(cat /etc/subgid)"
+echo "  newuidmap: $(which newuidmap 2>&1 || echo 'not found')"
+echo "  user_namespaces max: $(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 'unknown')"
+su -l agentuser -c "id"
+su -l agentuser -c "podman info --format '{{.Host.IDMappings.UIDMap}}'" 2>&1 || true
+
 # Run PostgreSQL as agentuser (rootless podman).
 # This requires working subordinate UID/GID mappings:
 # - security.idmap.size must cover the subordinate range
 # - /etc/subuid and /etc/subgid must have entries for agentuser
 echo "  Starting PostgreSQL container as agentuser (rootless)..."
-su -l agentuser -c '
+if ! su -l agentuser -c '
     podman run -d --name test-pg \
         -e POSTGRES_PASSWORD=testpass \
         -p 15432:5432 \
         docker.io/library/postgres:17-alpine
-'
-
-echo "  Waiting for PostgreSQL to be ready..."
-for i in $(seq 1 30); do
-    if su -l agentuser -c "podman exec test-pg pg_isready -U postgres" >/dev/null 2>&1; then
-        echo "  PostgreSQL ready after ${i}s"
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
+' 2>&1; then
+    echo "  FAIL: podman run failed (see diagnostics above)"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  - podman run failed\n"
+else
+    echo "  Waiting for PostgreSQL to be ready..."
+    pg_ready=false
+    for i in $(seq 1 30); do
+        if su -l agentuser -c "podman exec test-pg pg_isready -U postgres" >/dev/null 2>&1; then
+            echo "  PostgreSQL ready after ${i}s"
+            pg_ready=true
+            break
+        fi
+        sleep 1
+    done
+    if ! $pg_ready; then
         echo "  PostgreSQL did not become ready within 30s"
         su -l agentuser -c "podman logs test-pg" 2>&1 | tail -20
-        exit 1
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  - PostgreSQL did not start\n"
+    else
+        assert_eq "SELECT 1 returns 1" "1" \
+            su -l agentuser -c "podman exec test-pg psql -U postgres -tAc 'SELECT 1'"
     fi
-    sleep 1
-done
-
-assert_eq "SELECT 1 returns 1" "1" \
-    su -l agentuser -c "podman exec test-pg psql -U postgres -tAc 'SELECT 1'"
+fi
 
 echo ""
 echo "  Cleaning up..."

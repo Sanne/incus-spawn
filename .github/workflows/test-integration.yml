@@ -125,7 +125,7 @@ jobs:
   isx-integration-tests:
     needs: [unit-tests]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -138,7 +138,7 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
             | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
           sudo apt-get update -qq
-          sudo apt-get install -y -qq incus btrfs-progs
+          sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
           # Pre-initialize Incus and create a small btrfs CoW pool so
@@ -154,6 +154,13 @@ jobs:
           # at the top of FORWARD to allow traffic through the Incus bridge.
           sudo iptables -I FORWARD -i incusbr0 -j ACCEPT
           sudo iptables -I FORWARD -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Install Oracle GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
@@ -264,3 +271,32 @@ jobs:
       - name: 'Podman: cleanup'
         if: always()
         run: sg incus-admin -c "isx destroy test-podman" || true
+
+      - name: 'VM: build tpl-minimal --type vm'
+        run: sg incus-admin -c "isx build tpl-minimal --type vm --yes"
+
+      - name: 'VM: branch and start'
+        run: |
+          sg incus-admin -c "isx branch test-vm --from tpl-minimal --no-start"
+          sg incus-admin -c "incus start test-vm"
+          echo "Waiting for VM agent..."
+          for i in $(seq 1 60); do
+            if sg incus-admin -c "incus exec test-vm -- true" 2>/dev/null; then
+              echo "VM agent ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::VM agent did not become ready within 60s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: 'VM: run integration tests'
+        run: |
+          sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
+          sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
+
+      - name: 'VM: cleanup'
+        if: always()
+        run: sg incus-admin -c "isx destroy test-vm" || true
