@@ -154,8 +154,6 @@ public class ClaudeSetup implements ToolSetup {
                       "Bash(*)",
                       "Read(**)",
                       "Edit(**)",
-                      "Write(**)",
-                      "Glob(**)",
                       "Grep(**)",
                       "WebFetch",
                       "WebSearch",
