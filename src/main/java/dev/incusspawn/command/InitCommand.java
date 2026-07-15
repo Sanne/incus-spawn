@@ -352,9 +352,10 @@ public class InitCommand extends BaseCommand {
         if (installCmd == null) return;
 
         var missing = new ArrayList<String>();
-        if (!commandExists("openssl"))    missing.add("openssl");
-        if (!commandExists("ssh-keygen")) missing.add("openssh-clients");
-        if (!commandExists("btrfs"))      missing.add("btrfs-progs");
+        if (!commandExists("openssl"))      missing.add("openssl");
+        if (!commandExists("ssh-keygen"))  missing.add("openssh-clients");
+        if (!commandExists("btrfs"))       missing.add("btrfs-progs");
+        if (!commandExists("firewall-cmd")) missing.add("firewalld");
         if (missing.isEmpty()) return;
 
         System.out.println("Installing dependencies: " + String.join(", ", missing) + "...");
