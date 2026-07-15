@@ -67,7 +67,7 @@ public final class ProxyService {
 
                 [Install]
                 WantedBy=default.target
-                """.formatted(execStartLine(isxPath));
+                """.formatted(execStartLine());
 
         try {
             writeProxyStartScript(proxyStartScript(), isxPath);
@@ -114,7 +114,7 @@ public final class ProxyService {
             Files.deleteIfExists(Environment.proxyServiceFile());
             Files.deleteIfExists(proxyStartScript());
         } catch (IOException e) {
-            System.err.println("Failed to remove service file: " + e.getMessage());
+            System.err.println("Failed to remove service files: " + e.getMessage());
             return false;
         }
 
@@ -203,10 +203,10 @@ public final class ProxyService {
         if (isxPath == null) return false;
         try {
             var content = Files.readString(Environment.proxyServiceFile());
-            var expected = execStartLine(isxPath);
+            var expected = execStartLine();
             if (content.contains(expected)) return false;
             var updated = content.replaceFirst(
-                    "ExecStart=.*",
+                    "(?m)^ExecStart=.*",
                     Matcher.quoteReplacement(expected));
             if (updated.equals(content)) return false;
             writeProxyStartScript(proxyStartScript(), isxPath);
@@ -233,9 +233,9 @@ public final class ProxyService {
         try {
             var content = Files.readString(Environment.proxyServiceFile());
             if (!content.contains("ExecStart=")) return;
-            var expected = execStartLine(isxPath);
+            var expected = execStartLine();
             if (content.contains(expected)) return;
-            var updated = content.replaceFirst("ExecStart=.*", Matcher.quoteReplacement(expected));
+            var updated = content.replaceFirst("(?m)^ExecStart=.*", Matcher.quoteReplacement(expected));
             if (updated.equals(content)) return;
             writeProxyStartScript(proxyStartScript(), isxPath);
             Files.writeString(Environment.proxyServiceFile(), updated);
@@ -374,8 +374,8 @@ public final class ProxyService {
         Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
     }
 
-    private static String execStartLine(String isxPath) {
-        return "ExecStart=/usr/bin/sg incus-admin -c " + proxyStartScript();
+    private static String execStartLine() {
+        return "ExecStart=/usr/bin/sg incus-admin -c " + Container.shellQuote(proxyStartScript().toString());
     }
 
     // --- macOS launchd support ---
