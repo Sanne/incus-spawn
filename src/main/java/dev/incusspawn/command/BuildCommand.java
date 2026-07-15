@@ -1504,6 +1504,8 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void unmountDnfCache(String container) {
+        // Safe even if mountDnfCache was skipped: deviceRemove is a read-modify-write
+        // that filters the device map — a missing device is a no-op, not an error.
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
     }
 
