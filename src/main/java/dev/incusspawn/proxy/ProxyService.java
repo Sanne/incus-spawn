@@ -297,11 +297,15 @@ public final class ProxyService {
             if (process.waitFor() != 0) {
                 return "Could not determine Java version for " + javaBin;
             }
-            var vmatcher = java.util.regex.Pattern.compile("\"(\\d+)(?:\\.(\\d+))?")
-                    .matcher(output.lines().findFirst().orElse(""));
-            if (!vmatcher.find()) {
+            var vpattern = java.util.regex.Pattern.compile("\"(\\d+)(?:\\.(\\d+))?");
+            var vmatch = output.lines()
+                    .map(vpattern::matcher)
+                    .filter(java.util.regex.Matcher::find)
+                    .findFirst();
+            if (vmatch.isEmpty()) {
                 return "Could not determine Java version for " + javaBin;
             }
+            var vmatcher = vmatch.get();
             int major = Integer.parseInt(vmatcher.group(1));
             if (major == 1 && vmatcher.group(2) != null) {
                 major = Integer.parseInt(vmatcher.group(2));
