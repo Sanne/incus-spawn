@@ -667,6 +667,13 @@ public class InitCommand extends BaseCommand {
             return true;
         }
 
+        String[] entryParts = entry.split(":");
+        long neededBase = Long.parseLong(entryParts[1]);
+        long neededCount = Long.parseLong(entryParts[2]);
+        if (subidRangeCovers(existing.get(), entryParts[0], neededBase, neededCount)) {
+            return false;
+        }
+
         System.err.println();
         System.err.println("  " + path + " contains an unexpected entry: " + existing.get());
         System.err.println("  incus-spawn expects: " + entry);
@@ -681,6 +688,18 @@ public class InitCommand extends BaseCommand {
         }
         System.err.println("  Skipped — containers may not start correctly.");
         return false;
+    }
+
+    static boolean subidRangeCovers(String line, String user, long base, long count) {
+        String[] parts = line.split(":");
+        if (parts.length < 3 || !parts[0].equals(user)) return false;
+        try {
+            long existingBase = Long.parseLong(parts[1].trim());
+            long existingCount = Long.parseLong(parts[2].trim());
+            return existingBase <= base && existingBase + existingCount >= base + count;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private void initializeIncus() {

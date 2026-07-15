@@ -3,6 +3,8 @@ package dev.incusspawn.command;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InitCommandTest {
 
@@ -41,5 +43,32 @@ class InitCommandTest {
         assertEquals("****", InitCommand.maskSecret("github_pat_ABCD"));
         assertEquals("****", InitCommand.maskSecret("sk-ant-ABCD"));
         assertEquals("****", InitCommand.maskSecret("ghp_ABCD"));
+    }
+
+    @Test
+    void subidRangeCoversExactMatch() {
+        assertTrue(InitCommand.subidRangeCovers("root:1000:1", "root", 1000, 1));
+        assertTrue(InitCommand.subidRangeCovers("root:1000000:1000000000", "root", 1000000, 1000000000));
+    }
+
+    @Test
+    void subidRangeCoversSupersetCovers() {
+        assertTrue(InitCommand.subidRangeCovers("root:1000000:2000000000", "root", 1000000, 1000000000));
+    }
+
+    @Test
+    void subidRangeCoversSmallerCountDoesNotCover() {
+        assertFalse(InitCommand.subidRangeCovers("root:1000000:100", "root", 1000000, 1000000000));
+    }
+
+    @Test
+    void subidRangeCoversDifferentUserDoesNotCover() {
+        assertFalse(InitCommand.subidRangeCovers("nobody:1000:1", "root", 1000, 1));
+    }
+
+    @Test
+    void subidRangeCoversMalformedLine() {
+        assertFalse(InitCommand.subidRangeCovers("root:abc:1", "root", 1000, 1));
+        assertFalse(InitCommand.subidRangeCovers("root", "root", 1000, 1));
     }
 }
