@@ -10,6 +10,9 @@ mkdir -p "$OUT_DIR"
 
 cp "$SCRIPT_DIR/index.html" "$OUT_DIR/"
 cp "$SCRIPT_DIR/style.css" "$OUT_DIR/"
+cp "$SCRIPT_DIR/favicon.svg" "$OUT_DIR/"
+cp "$SCRIPT_DIR/robots.txt" "$OUT_DIR/"
+cp "$SCRIPT_DIR/sitemap.xml" "$OUT_DIR/"
 
 if [ -f "$SCRIPT_DIR/screenshot.png" ]; then
   cp "$SCRIPT_DIR/screenshot.png" "$OUT_DIR/"
