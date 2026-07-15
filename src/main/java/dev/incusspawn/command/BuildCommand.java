@@ -89,9 +89,6 @@ public class BuildCommand extends BaseCommand {
     ToolDefLoader toolDefLoader;
     Iterable<ToolSetup> toolSetups;
 
-
-    private static Path dnfCacheDir() { return Environment.dnfCacheDir(); }
-
     /**
      * Prompt the user for confirmation unless {@code --yes} was passed.
      * Returns {@code true} if the operation should proceed, {@code false} if
@@ -1238,8 +1235,8 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void cleanCaches(String container) {
-        // DNF cache is on the host mount (unmounted before this call) — only
-        // clean container-local leftovers and temp files to minimize image size.
+        // DNF cache volume is unmounted before this call — only clean the
+        // container-local mount point and temp files to minimize image size.
         System.out.println("Cleaning up caches...");
         incus.shellExec(container, "sh", "-c",
                 "rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*");
@@ -1486,14 +1483,14 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Mount a host-side DNF cache directory into the container. This shares
+     * Mount a shared DNF cache volume into the container. This shares
      * metadata and downloaded packages across builds, avoiding redundant
      * downloads when building a parent→child image chain.
      */
     static final String DNF_CACHE_VOLUME = "dnf-cache";
 
     private void mountDnfCache(String container) {
-        if (Environment.isMacOS()) {
+        try {
             var pool = incus.findCowPool();
             if (pool == null) return;
             incus.ensureStorageVolume(pool, DNF_CACHE_VOLUME);
@@ -1501,17 +1498,8 @@ public class BuildCommand extends BaseCommand {
                     "pool=" + pool,
                     "source=" + DNF_CACHE_VOLUME,
                     "path=/var/cache/libdnf5");
-        } else {
-            try {
-                Files.createDirectories(dnfCacheDir());
-            } catch (IOException e) {
-                System.err.println("Warning: could not create DNF cache directory: " + e.getMessage());
-                return;
-            }
-            incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
-                    "source=" + dnfCacheDir(),
-                    "path=/var/cache/libdnf5",
-                    "shift=true");
+        } catch (Exception e) {
+            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + e.getMessage());
         }
     }
 

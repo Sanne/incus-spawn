@@ -174,7 +174,6 @@ public class CleanCommand extends BaseCommand {
     }
 
     static void cleanDnfCacheVolume(boolean dryRun) {
-        if (!Environment.isMacOS()) return;
         try {
             var incus = RuntimeServices.incus();
             var pool = incus.findCowPool();

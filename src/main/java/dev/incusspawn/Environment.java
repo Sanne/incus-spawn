@@ -63,10 +63,6 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/gradle");
     }
 
-    public static Path dnfCacheDir() {
-        return home().resolve(".cache/incus-spawn/dnf");
-    }
-
     public static Path lockDir() {
         return home().resolve(".cache/incus-spawn/locks");
     }

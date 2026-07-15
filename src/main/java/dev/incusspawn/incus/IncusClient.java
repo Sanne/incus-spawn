@@ -1110,7 +1110,14 @@ public class IncusClient {
         }
         var resp = http().requestAndWait("PATCH", "/1.0/instances/" + container,
                 Map.of("devices", Map.of(deviceName, device)));
-        if (!resp.isSuccess()) throw new IncusException("Failed to add device " + deviceName + " to " + container);
+        if (!resp.isSuccess()) {
+            throw failedOp(resp, "Failed to add device " + deviceName + " to " + container);
+        }
+    }
+
+    static IncusException failedOp(IncusApi.ApiResponse resp, String context) {
+        var detail = resp.body().path("error").asText("");
+        return new IncusException(context + (detail.isEmpty() ? "" : ": " + detail));
     }
 
     /**
