@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 
 import java.io.IOException;
@@ -46,17 +47,18 @@ public class BobSetup implements ToolSetup {
     }
 
     @Override
+    public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
+        return List.of(EnvEntry.set("BOBSHELL_API_KEY", PLACEHOLDER_API_KEY));
+    }
+
+    @Override
     public void install(Container c, Map<String, String> resolvedParams) {
         installBinary(c);
-        configureAuth(c);
+        configureSettings(c);
     }
 
     private void installBinary(Container c) {
         System.out.println("Installing Bob Shell...");
-        c.sh("mkdir -p /home/agentuser/.local/bin && " +
-                "chown -R agentuser:agentuser /home/agentuser/.local && " +
-                "grep -q '.local/bin' /home/agentuser/.bashrc 2>/dev/null || " +
-                "echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /home/agentuser/.bashrc");
 
         try {
             var version = Files.readString(
@@ -76,12 +78,10 @@ public class BobSetup implements ToolSetup {
         }
     }
 
-    private void configureAuth(Container c) {
-        c.appendToProfile("export BOBSHELL_API_KEY=" + PLACEHOLDER_API_KEY);
-
-        c.sh("mkdir -p /home/agentuser/.bob && " +
-                "printf '%s' '{\"ibm\":{\"licenseConsent\":true},\"security\":{\"auth\":{\"selectedType\":\"api-key\"}}}' " +
-                "> /home/agentuser/.bob/settings.json && " +
-                "chown -R agentuser:agentuser /home/agentuser/.bob");
+    private void configureSettings(Container c) {
+        var settingsJson = "{\"ibm\":{\"licenseConsent\":true},\"security\":{\"auth\":{\"selectedType\":\"api-key\"}}}";
+        c.sh("mkdir -p /home/agentuser/.bob");
+        c.writeFile("/home/agentuser/.bob/settings.json", settingsJson);
+        c.chown("/home/agentuser/.bob", "agentuser:agentuser");
     }
 }
