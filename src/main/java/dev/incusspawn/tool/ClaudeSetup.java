@@ -154,7 +154,6 @@ public class ClaudeSetup implements ToolSetup {
                       "Bash(*)",
                       "Read(**)",
                       "Edit(**)",
-                      "Grep(**)",
                       "WebFetch",
                       "WebSearch",
                       "Agent(*)"
@@ -162,10 +161,8 @@ public class ClaudeSetup implements ToolSetup {
                   },
                   "env": {
                     "DISABLE_AUTOUPDATER": "1",
-                    "DISABLE_TELEMETRY": "1",
                     "DO_NOT_TRACK": "1",
                     "DISABLE_ERROR_REPORTING": "1",
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
                     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
                   },
