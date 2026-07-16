@@ -226,6 +226,9 @@ public class ListCommand extends BaseCommand {
                 reloadData();
             } catch (IncusException e) {
                 reloadError = e.getMessage();
+                templateEntries = List.of();
+                entries = List.of();
+                rowToEntry = List.of();
             }
             var previousAction = pendingAction;
             mode = Mode.BROWSE;
@@ -3128,7 +3131,13 @@ public class ListCommand extends BaseCommand {
         var selectedTpl = selectedTemplate();
         var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
 
-        reloadData();
+        try {
+            reloadData();
+        } catch (IncusException e) {
+            errorMessage = e.getMessage();
+            mode = Mode.ERROR;
+            return;
+        }
 
         // Restore template selection
         if (selectedTplName != null) {
