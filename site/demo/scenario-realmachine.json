@@ -1,0 +1,58 @@
+[
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "type": "isx shell experiment\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 60
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "sudo dnf install -y btop\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 180
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "btop\n"
+ },
+ {
+  "sleep": 4.5
+ },
+ {
+  "send": "q"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 15
+ },
+ {
+  "type": "podman run quay.io/podman/hello\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 180
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "# root, real packages, nested containers. a machine, not a process jail  \u220e"
+ },
+ {
+  "sleep": 2.5
+ }
+]

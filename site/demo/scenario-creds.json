@@ -1,0 +1,69 @@
+[
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "type": "isx shell experiment\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 60
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "# you're a malicious agent. steal the credentials:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "env | grep TOKEN\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 1.4
+ },
+ {
+  "type": "# \"placeholder\"?! yes \u2014 these are fakes. yet watch:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "gh api user --jq .login\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 1.4
+ },
+ {
+  "type": "sudo grep -rl 'sk-ant-ap[i]' /etc /home /root /var 2>/dev/null || echo 'nothing to steal'\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 120
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# the host proxy swaps them for real credentials \u2014 in transit, never in here.  \u220e"
+ },
+ {
+  "sleep": 2.5
+ }
+]

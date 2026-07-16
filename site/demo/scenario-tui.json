@@ -1,0 +1,51 @@
+[
+ {
+  "sleep": 3.2
+ },
+ {
+  "send": "\u001b[B"
+ },
+ {
+  "sleep": 0.4
+ },
+ {
+  "send": "\u001b[B"
+ },
+ {
+  "sleep": 0.4
+ },
+ {
+  "send": "\u001b[B"
+ },
+ {
+  "sleep": 0.9
+ },
+ {
+  "send": "\u001bOS"
+ },
+ {
+  "sleep": 2.4
+ },
+ {
+  "send": "\u007f\u007f\u007f\u007f\u007f\u007f"
+ },
+ {
+  "sleep": 0.4
+ },
+ {
+  "type": "review-pr-512"
+ },
+ {
+  "sleep": 1.1
+ },
+ {
+  "send": "\r"
+ },
+ {
+  "wait": "bypass",
+  "timeout": 120
+ },
+ {
+  "sleep": 8.0
+ }
+]

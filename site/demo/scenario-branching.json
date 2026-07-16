@@ -1,0 +1,93 @@
+[
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "type": "# 'workbench' has state you care about: postgres, 100k rows, warm build caches.\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "# fork it:\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "isx branch --from workbench exp-a\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 90
+ },
+ {
+  "sleep": 3.0
+ },
+ {
+  "type": "psql -c 'select count(*) from orders'\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# run the destructive experiment here:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "psql -c 'drop table orders'\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "type": "exit\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 30
+ },
+ {
+  "type": "isx branch --from workbench exp-b\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 90
+ },
+ {
+  "sleep": 3.0
+ },
+ {
+  "type": "psql -c 'select count(*) from orders'\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 1.2
+ },
+ {
+  "type": "# you forked a database in seconds. every experiment gets the full state, isolated.  \u220e"
+ },
+ {
+  "sleep": 2.5
+ }
+]

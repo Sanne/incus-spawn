@@ -1,0 +1,180 @@
+[
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# give the agent its own machine:\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "isx branch --from tpl-demo fix-bug\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 90
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# no secrets in this machine:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "env | grep TOKEN\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 15
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# placeholders \u2014 worthless anywhere else. yet everything authenticates:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "gh api user --jq .login\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 1.2
+ },
+ {
+  "type": "# and no permission prompts in here \u2014 the blast radius is the branch:\n"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "claude\n"
+ },
+ {
+  "settle": 6.0,
+  "timeout": 90
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "The test suite fails. Find the bug, fix it, run the tests, and commit the fix."
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "send": "\r"
+ },
+ {
+  "settle": 12.0,
+  "timeout": 420
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "send": "\u0004"
+ },
+ {
+  "sleep": 0.5
+ },
+ {
+  "send": "\u0004"
+ },
+ {
+  "wait": "\u276f \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "exit\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 30
+ },
+ {
+  "sleep": 0.6
+ },
+ {
+  "type": "# review its work from your machine \u2014 plain git, immutable commits:\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "type": "git fetch fix-bug\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 60
+ },
+ {
+  "type": "git diff main..fix-bug/main\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 20
+ },
+ {
+  "sleep": 3.0
+ },
+ {
+  "type": "git cherry-pick fix-bug/main\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 20
+ },
+ {
+  "sleep": 0.8
+ },
+ {
+  "type": "isx destroy fix-bug\n"
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 60
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "wait": "\u279c \\Z",
+  "timeout": 10
+ },
+ {
+  "sleep": 1.0
+ },
+ {
+  "type": "# every action traceable to the agent \u2014 nothing arrives uninvited. credentials never left the host.  \u220e"
+ },
+ {
+  "sleep": 2.5
+ }
+]
