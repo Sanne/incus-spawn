@@ -516,3 +516,23 @@ a:hover {
     --section-gap: 3rem;
   }
 }
+
+/* --- demo casts --- */
+@font-face {
+  font-family: "Powerline Subset";
+  src: url("vendor/powerline-subset.woff2") format("woff2");
+  font-display: swap;
+}
+.cast-frame { margin: 2rem auto 0; max-width: 860px; border-radius: 10px;
+  border: 1px solid #2a2f3a; background: #121317; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+.cast-title { font-family: ui-monospace, Menlo, monospace; font-size: .78rem; color: #8b949e;
+  background: #1a1d24; padding: .45rem .9rem; border-bottom: 1px solid #2a2f3a;
+  border-radius: 10px 10px 0 0; }
+.cast-title::before { content: "● ● ●  "; color: #3a4150; letter-spacing: 2px; }
+.castbox { position: relative; background: #121317; border-radius: 0 0 10px 10px; }
+.castbox .endcard { position: absolute; inset: 0; display: none; align-items: center;
+  justify-content: center; background: rgba(10,12,16,.55); cursor: pointer; z-index: 5; }
+.castbox .endcard span { background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 8px;
+  padding: .55rem 1.1rem; color: #e6edf3; font-size: .95rem; }
+.castbox.done .endcard { display: flex; }
+.feature .cast-frame { margin-top: 1.4rem; }

@@ -14,6 +14,7 @@
   <meta name="twitter:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
   <link rel="canonical" href="https://isx.run/">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/asciinema-player.css">
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -61,6 +62,8 @@ sudo dnf install incus-spawn</code></pre>
     </div>
   </div>
 
+  <div class="cast-frame"><div class="cast-title">isx:fix-bug — the full loop, 80 seconds</div><div class="castbox" data-cast="hero"></div></div>
+
   <div class="cta-links">
     <a class="primary" href="docs.html">Read the docs</a>
     <a class="secondary" href="https://github.com/Sanne/incus-spawn">View on GitHub &rarr;</a>
@@ -81,6 +84,7 @@ sudo dnf install incus-spawn</code></pre>
       The proxy also caches container image layers and build artifacts on the host &mdash;
       the same dependency is never downloaded twice.
     </p>
+    <div class="cast-frame"><div class="cast-title">isx:experiment — try to steal the credentials</div><div class="castbox" data-cast="creds"></div></div>
   </section>
 
   <section class="feature">
@@ -98,6 +102,7 @@ sudo dnf install incus-spawn</code></pre>
       build from source, or run Docker Compose just like on a workstation.
       For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
     </p>
+    <div class="cast-frame"><div class="cast-title">isx:experiment — root, packages, nested containers</div><div class="castbox" data-cast="realmachine"></div></div>
   </section>
 
   <section class="feature">
@@ -112,6 +117,7 @@ sudo dnf install incus-spawn</code></pre>
   &#9500;&#9472;&#9472; fix-nasty-bug    (running, uses ~50MB extra)
   &#9500;&#9472;&#9472; review-pr-423    (running, uses ~30MB extra)
   &#9492;&#9472;&#9472; experiment       (stopped, uses ~10MB extra)</code></pre>
+    <div class="cast-frame"><div class="cast-title">isx — fork a machine, database included</div><div class="castbox" data-cast="branching"></div></div>
   </section>
 
   <section class="feature">
@@ -128,8 +134,13 @@ git fetch fix-auth
 git cherry-pick fix-auth/main</code></pre>
   </section>
 
-  <section class="screenshot">
-    <img src="screenshot.png" alt="incus-spawn interactive TUI showing templates and instances">
+  <section class="feature">
+    <h2>Enter &rarr; a working agent</h2>
+    <p>
+      The built-in TUI: browse templates and running machines, hit <strong>F4</strong> to branch,
+      and land in Claude Code on the fresh machine &mdash; before you finish reading this sentence.
+    </p>
+    <div class="cast-frame"><div class="cast-title">isx — the TUI</div><div class="castbox" data-cast="tui"></div></div>
   </section>
 
 </main>
@@ -154,5 +165,48 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
 });
 </script>
 
+<script src="vendor/asciinema-player.min.js"></script>
+<script src="casts.js"></script>
+<script>
+(function () {
+  var OPTS = {
+    hero:        { poster: "npt:51" },
+    tui:         { poster: "npt:3", loop: true, autoPlay: true },
+    creds:       { poster: "npt:18.5" },
+    branching:   { poster: "npt:21.5" },
+    realmachine: { poster: "npt:15" }
+  };
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var mono = "ui-monospace, Menlo, Consolas, 'Powerline Subset', monospace";
+
+  function init(box) {
+    var name = box.dataset.cast;
+    var opts = OPTS[name] || {};
+    if (reduced) { opts.autoPlay = false; opts.loop = false; }
+    var player = AsciinemaPlayer.create(window.ISX_CASTS[name], box, {
+      fit: "width", theme: "monokai", controls: true,
+      terminalFontFamily: mono,
+      poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
+    });
+    if (!opts.loop) {
+      var card = document.createElement("div");
+      card.className = "endcard";
+      card.innerHTML = "<span>&#8718;&nbsp; demo finished &mdash; click to replay</span>";
+      box.appendChild(card);
+      player.addEventListener("ended", function () { box.classList.add("done"); });
+      card.addEventListener("click", function () { box.classList.remove("done"); player.play(); });
+    }
+  }
+
+  var boxes = document.querySelectorAll(".castbox[data-cast]");
+  if (!("IntersectionObserver" in window)) { boxes.forEach ? boxes.forEach(init) : Array.prototype.forEach.call(boxes, init); return; }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { io.unobserve(e.target); init(e.target); }
+    });
+  }, { rootMargin: "250px" });
+  Array.prototype.forEach.call(boxes, function (b) { io.observe(b); });
+})();
+</script>
 </body>
 </html>

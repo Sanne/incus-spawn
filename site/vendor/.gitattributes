@@ -1,0 +1,2 @@
+*.min.js -diff linguist-vendored=true
+asciinema-player.css -diff linguist-vendored=true

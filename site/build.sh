@@ -18,6 +18,22 @@ if [ -f "$SCRIPT_DIR/screenshot.png" ]; then
   cp "$SCRIPT_DIR/screenshot.png" "$OUT_DIR/"
 fi
 
+# Vendored player + font subset
+mkdir -p "$OUT_DIR/vendor"
+cp "$SCRIPT_DIR"/vendor/* "$OUT_DIR/vendor/"
+
+# Casts: copy with content-hash names so retakes bust caches; emit manifest
+mkdir -p "$OUT_DIR/casts"
+MANIFEST="$OUT_DIR/casts.js"
+printf 'window.ISX_CASTS={' > "$MANIFEST"
+for c in "$SCRIPT_DIR"/demo/*-web.cast; do
+  base=$(basename "$c" -web.cast)
+  hash=$(shasum -a 256 "$c" | cut -c1-8)
+  cp "$c" "$OUT_DIR/casts/$base-$hash.cast"
+  printf '%s:"casts/%s-%s.cast",' "$base" "$base" "$hash" >> "$MANIFEST"
+done
+printf '};\n' >> "$MANIFEST"
+
 TMPFILE=$(mktemp)
 trap "rm -f $TMPFILE" EXIT
 
