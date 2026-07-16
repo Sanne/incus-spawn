@@ -70,6 +70,15 @@ The proxy must be running for non-airgapped containers. `isx init` can install i
 
 The proxy also caches container image layers and build artifacts on the host — the same dependency is never downloaded twice (see [Caching](#caching)).
 
+### Git Configuration
+
+Containers need a git identity (`user.name` and `user.email`) for commits. When a GitHub PAT is configured, the `gh` tool automatically generates a functional `.gitconfig` -- it queries the GitHub API for `user.name` and `user.email` (preferring the account's `@users.noreply.github.com` noreply address) and sets sensible defaults (`push.default`, `pull.ff`, common aliases). This works out of the box with no extra configuration. You choose whose PAT to use:
+
+- **Dedicated agent account (recommended)** -- create a separate GitHub account for your agents and provide its PAT during `isx init`. This keeps agent commits clearly attributed, gives the agent its own identity for PR authorship and review workflows, and lets you scope repository permissions independently from your personal account.
+- **Your personal account** -- provide your own PAT. If you also want your aliases and other settings, mount `~/.gitconfig` as a [host resource](#host-resources) -- it takes precedence over the auto-generated config.
+
+**Commit signing.** Containers do not currently support signing commits. To produce signed commits, fetch the changes to your host via [git remotes](#git-remotes) and rebase there -- the host's signing configuration (GPG or SSH) applies automatically during the rebase. Native container-side signing is tracked in [#271](https://github.com/Sanne/incus-spawn/issues/271).
+
 ## Branching
 
 Like `git branch`, branching creates an instant copy-on-write clone of any template. Each branch has its own independent filesystem -- changes in one branch cannot affect the template or any other branch. The storage backend (btrfs/zfs/lvm) deduplicates unchanged data automatically, so branches are instant to create and only consume disk space for their own modifications. `isx init` automatically creates a btrfs storage pool if needed.
@@ -383,12 +392,8 @@ To find available skills, browse [skills.sh](https://skills.sh).
 Template images can declare host files and directories to make available inside containers. This is useful for sharing configuration files, pre-populating caches, or providing large datasets without copying them into every template.
 
 ```yaml
-name: tpl-java
-parent: tpl-dev
-packages:
-  - java-25-openjdk-devel
-tools:
-  - maven-3
+name: tpl-my-java
+parent: tpl-java
 host-resources:
   - source: ~/.m2/repository
     mode: overlay
@@ -397,7 +402,7 @@ host-resources:
 
 The `~/.m2/repository` entry shares your host Maven cache with the container. With `mode: overlay`, the container sees a normal read-write directory pre-populated with your cached artifacts, but writes go to a container-local layer -- your host cache is never modified. Maven builds that would normally download hundreds of megabytes of dependencies can instead resolve them instantly from the shared cache.
 
-The `~/.gitconfig` entry mounts your git configuration read-only (the default mode), so `git` inside the container picks up your name, email, aliases, and other settings.
+The `~/.gitconfig` entry mounts your git configuration read-only (the default mode), so `git` inside the container picks up your name, email, aliases, and other settings (see [Git Configuration](#git-configuration)).
 
 Three modes are available:
 
