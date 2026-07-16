@@ -42,7 +42,7 @@ public class BobSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Bob Shell");
         a.setType("shell");
-        a.setCommand("bob");
+        a.setCommand("bob --yolo");
         a.setAutoReturn(true);
         return List.of(a);
     }
