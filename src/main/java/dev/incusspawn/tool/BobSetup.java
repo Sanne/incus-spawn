@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
@@ -16,6 +17,7 @@ public class BobSetup implements ToolSetup {
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-version.txt";
     private static final String TARBALL_URL_PREFIX =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-";
+    private static final Pattern VERSION_PATTERN = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
 
     private final DownloadCache downloadCache;
 
@@ -64,6 +66,9 @@ public class BobSetup implements ToolSetup {
         try {
             var version = Files.readString(
                     downloadCache.download(VERSION_URL, null)).strip();
+            if (!VERSION_PATTERN.matcher(version).matches()) {
+                throw new IOException("Unexpected version format: " + version);
+            }
             System.out.println("  Latest version: " + version);
 
             var tarballUrl = TARBALL_URL_PREFIX + version + ".tgz";
@@ -71,9 +76,9 @@ public class BobSetup implements ToolSetup {
 
             var containerTarball = "/tmp/bobshell-" + version + ".tgz";
             c.filePush(cached.toString(), containerTarball);
-            c.sh("npm install -g " + containerTarball)
+            c.exec("npm", "install", "-g", containerTarball)
                     .assertSuccess("Failed to npm install Bob Shell");
-            c.sh("rm -f " + containerTarball);
+            c.exec("rm", "-f", containerTarball);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
         }

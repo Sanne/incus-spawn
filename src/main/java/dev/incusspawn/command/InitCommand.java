@@ -214,11 +214,11 @@ public class InitCommand extends BaseCommand {
         if (!requireLinux()) {
             return CommandResult.valueOf(1);
         }
-        totalSteps = 12;
+        totalSteps = 13;
         currentStep = 0;
         printBanner("incus-spawn — First-Time Setup",
                 "Configuring your isolated development environment",
-                totalSteps + " steps · ~3 minutes · some steps require sudo");
+                "~3 minutes · some steps require sudo");
 
         System.out.println();
         System.out.println("  Several steps need " + BOLD + "sudo" + RESET + " to install packages, configure");
@@ -274,11 +274,11 @@ public class InitCommand extends BaseCommand {
     }
 
     private CommandResult doMacOsInit() throws Exception {
-        totalSteps = 8;
+        totalSteps = 10;
         currentStep = 0;
         printBanner("incus-spawn — First-Time Setup (macOS)",
                 "Configuring your isolated development environment",
-                totalSteps + " steps · ~2 minutes");
+                "~2 minutes");
 
         startStep("MITM CA Certificate",
                 "Generates a custom Certificate Authority for the MITM",
@@ -1364,7 +1364,8 @@ public class InitCommand extends BaseCommand {
         System.out.println("    4. Copy the generated key");
         System.out.println();
         System.out.print("  Bob API key (or press Enter to skip): ");
-        var apiKey = new String(console.readPassword());
+        var passwordChars = console.readPassword();
+        var apiKey = passwordChars != null ? new String(passwordChars) : "";
         if (apiKey.isBlank()) {
             System.out.println("  Skipped Bob setup. You can configure it later by re-running 'isx init'.");
             return;
