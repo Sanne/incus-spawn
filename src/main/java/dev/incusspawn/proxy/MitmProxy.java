@@ -467,6 +467,13 @@ public class MitmProxy {
         for (int attempt = 1; ; attempt++) {
             mitmServer = vertx.createHttpServer(serverOptions);
             mitmServer.exceptionHandler(err -> {
+                if (isBenignConnectionError(err)) {
+                    // Clients (containers) drop connections abruptly all the time —
+                    // process exit, timeouts, TLS aborts. A full stack trace per RST
+                    // is pure noise, so log concisely without one.
+                    ProxyLog.info("MITM connection closed: " + err.getMessage());
+                    return;
+                }
                 System.err.println("MITM server error: " + err.getMessage());
                 err.printStackTrace(System.err);
             });
@@ -541,6 +548,33 @@ public class MitmProxy {
         Throwable cause = e;
         while (cause != null) {
             if (cause instanceof java.net.BindException) return true;
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * Whether a server-level exception is an expected connection teardown rather
+     * than a real fault. Containers close connections abruptly (RST, half-close,
+     * TLS abort) on process exit or timeout, which Netty surfaces here as
+     * {@link java.net.SocketException} ("Connection reset", "Broken pipe") or a
+     * closed-channel error. These carry no useful stack trace.
+     */
+    private static boolean isBenignConnectionError(Throwable err) {
+        Throwable cause = err;
+        while (cause != null) {
+            if (cause instanceof java.nio.channels.ClosedChannelException) return true;
+            if (cause instanceof java.net.SocketException) {
+                var msg = cause.getMessage();
+                if (msg != null) {
+                    var m = msg.toLowerCase(java.util.Locale.ROOT);
+                    if (m.contains("connection reset")
+                            || m.contains("broken pipe")
+                            || m.contains("connection or outbound has closed")) {
+                        return true;
+                    }
+                }
+            }
             cause = cause.getCause();
         }
         return false;
