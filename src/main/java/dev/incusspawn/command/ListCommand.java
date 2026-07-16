@@ -103,7 +103,7 @@ public class ListCommand extends BaseCommand {
     private static final long REFRESH_DEBOUNCE_MS = 1000;
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -128,6 +128,13 @@ public class ListCommand extends BaseCommand {
     // Rename modal state
     private TextInputState renameInput;
     private String renameSourceName;
+    // New template modal state
+    private TextInputState newTemplateNameInput;
+    private TextInputState newTemplateParentInput;
+    private record TemplateLocation(String label, java.nio.file.Path dir) {}
+    private java.util.List<TemplateLocation> newTemplateLocations;
+    private int newTemplateLocationIndex;
+    private int newTemplateFieldIndex;
     private String statusMessage;
     private String progressMessage;
     // Template detail modal state
@@ -149,7 +156,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean deferredBuildForBranch;
 
-    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, EXECUTE_ACTION }
+    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
     private String pendingShellCommand;
@@ -320,6 +327,18 @@ public class ListCommand extends BaseCommand {
                         pendingAction = PendingAction.BUILD_TEMPLATE;
                     }
                 }
+                case NEW_TEMPLATE -> {
+                    returnToTemplate = pendingActionTarget;
+                    try {
+                        var parent = newTemplateParentInput.text().strip();
+                        var dir = newTemplateLocations.get(newTemplateLocationIndex).dir();
+                        var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget, parent, dir);
+                        TemplatesCommand.editLoop(targetPath, pendingActionTarget, false);
+                        statusMessage = "Created template " + pendingActionTarget;
+                    } catch (Exception e) {
+                        statusMessage = "Failed to create template: " + e.getMessage();
+                    }
+                }
                 case EDIT_TEMPLATE -> {
                     returnToTemplate = pendingActionTarget;
                     try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget; editCmd.doExecute(); }
@@ -478,6 +497,7 @@ public class ListCommand extends BaseCommand {
             case CONFIRM_BUILD_FOR_BRANCH -> handleConfirmBuildForBranchEvent(key, tui);
             case BRANCH -> handleBranchEvent(key, tui, tableState);
             case RENAME -> handleRenameEvent(key, tui, tableState);
+            case NEW_TEMPLATE -> handleNewTemplateEvent(key, tui);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> handleInfoEvent(key);
@@ -602,6 +622,12 @@ public class ListCommand extends BaseCommand {
             }
             pendingDeleteName = template.name;
             mode = Mode.CONFIRM_DELETE;
+            return true;
+        }
+
+        // n: New child template
+        if (key.isChar('n')) {
+            openNewTemplateModal(template.name);
             return true;
         }
 
@@ -794,6 +820,25 @@ public class ListCommand extends BaseCommand {
         mode = Mode.BUILD_MENU;
     }
 
+    private void openNewTemplateModal(String parentName) {
+        newTemplateNameInput = new TextInputState("");
+        newTemplateParentInput = new TextInputState(parentName);
+        var locations = new ArrayList<TemplateLocation>();
+        for (var sp : SpawnConfig.load().getSearchPaths()) {
+            var expanded = dev.incusspawn.config.HostResourceSetup.expandHostTilde(sp);
+            var dir = java.nio.file.Path.of(expanded).resolve("images");
+            locations.add(new TemplateLocation(sp + "/images/", dir));
+        }
+        locations.add(new TemplateLocation("Project (.incus-spawn/images/)",
+                dev.incusspawn.config.ImageDef.projectImagesDir()));
+        locations.add(new TemplateLocation("User (~/.config/incus-spawn/images/)",
+                dev.incusspawn.config.ImageDef.userImagesDir()));
+        newTemplateLocations = locations;
+        newTemplateLocationIndex = 0;
+        newTemplateFieldIndex = 0;
+        mode = Mode.NEW_TEMPLATE;
+    }
+
     private void openBranchModal(String sourceName, String runtime) {
         branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestBranchName(sourceName));
@@ -922,6 +967,73 @@ public class ListCommand extends BaseCommand {
             case 3 -> vmDiskInput;
             default -> branchNameInput;
         };
+    }
+
+    private boolean handleNewTemplateEvent(KeyEvent key, TuiRunner tui) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            var rawName = newTemplateNameInput.text().strip();
+            if (rawName.isEmpty()) return false;
+            var name = TemplatesCommand.normalizeName(rawName);
+            if (imageDefs.containsKey(name)) {
+                statusMessage = "Template '" + name + "' already exists.";
+                mode = Mode.BROWSE;
+                return true;
+            }
+            var parent = newTemplateParentInput.text().strip();
+            if (!parent.isEmpty() && !imageDefs.containsKey(parent)) {
+                statusMessage = "Parent template '" + parent + "' not found.";
+                mode = Mode.BROWSE;
+                return true;
+            }
+            pendingAction = PendingAction.NEW_TEMPLATE;
+            pendingActionTarget = name;
+            mode = Mode.BROWSE;
+            tui.quit();
+            return true;
+        }
+        // Location field: Up/Down/j/k move between options
+        if (newTemplateFieldIndex == 2) {
+            int n = newTemplateLocations.size();
+            if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
+                if (newTemplateLocationIndex < n - 1) newTemplateLocationIndex++;
+                return true;
+            }
+            if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+                if (newTemplateLocationIndex > 0) newTemplateLocationIndex--;
+                return true;
+            }
+        }
+        // Tab: next field, Shift+Tab: previous field
+        if (key.isKey(KeyCode.TAB) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.DOWN))) {
+            newTemplateFieldIndex = (newTemplateFieldIndex + 1) % 3;
+            return true;
+        }
+        if (ShiftTabBindings.isShiftTab(key) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.UP))) {
+            newTemplateFieldIndex = (newTemplateFieldIndex + 2) % 3;
+            return true;
+        }
+        // Text input for name (field 0) and parent (field 1)
+        if (newTemplateFieldIndex < 2) {
+            var input = newTemplateFieldIndex == 0 ? newTemplateNameInput : newTemplateParentInput;
+            if (key.isKey(KeyCode.BACKSPACE)) { input.deleteBackward(); return true; }
+            if (key.isKey(KeyCode.DELETE))    { input.deleteForward();  return true; }
+            if (key.isKey(KeyCode.LEFT))      { input.moveCursorLeft(); return true; }
+            if (key.isKey(KeyCode.RIGHT))     { input.moveCursorRight(); return true; }
+            if (key.isKey(KeyCode.HOME))       { input.moveCursorToStart(); return true; }
+            if (key.isKey(KeyCode.END))        { input.moveCursorToEnd(); return true; }
+            if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+                char ch = key.character();
+                if (Character.isLetterOrDigit(ch) || ch == '-') {
+                    input.insert(ch);
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean handleRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -1673,6 +1785,7 @@ public class ListCommand extends BaseCommand {
             case BRANCH -> renderBranchModal(frame, screen);
             case RENAME -> modal.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
+            case NEW_TEMPLATE -> renderNewTemplateModal(frame, screen);
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
@@ -1796,6 +1909,85 @@ public class ListCommand extends BaseCommand {
         }
     }
 
+    // --- New template modal ---
+
+    private void renderLabeledTextField(dev.tamboui.terminal.Frame frame,
+            dev.tamboui.layout.Rect labelRow, dev.tamboui.layout.Rect inputRow,
+            String label, String placeholder, TextInputState inputState, boolean focused) {
+        frame.renderWidget(Paragraph.from(Line.styled(
+                label, Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), labelRow);
+        if (focused) {
+            TextInput.builder()
+                    .placeholder(placeholder)
+                    .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
+                    .build()
+                    .renderWithCursor(inputRow, frame.buffer(), inputState, frame);
+        } else {
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    inputState.text(), Style.EMPTY.fg(theme.textDim()).bg(modal.inputBg()))),
+                    inputRow);
+        }
+    }
+
+    private void renderNewTemplateModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        int locCount = newTemplateLocations.size();
+        int height = 8 + locCount;
+        var modalArea = ModalRenderer.centerRect(screen, 54, height);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(modal.styledTitle(" New Template ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
+                .build();
+        modal.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var constraints = new ArrayList<Constraint>();
+        constraints.add(Constraint.length(1)); // Name label
+        constraints.add(Constraint.length(1)); // Name input
+        constraints.add(Constraint.length(1)); // Parent label
+        constraints.add(Constraint.length(1)); // Parent input
+        constraints.add(Constraint.length(1)); // Location label
+        for (int i = 0; i < locCount; i++) constraints.add(Constraint.length(1));
+        constraints.add(Constraint.fill());    // hint bar
+
+        var rows = Layout.vertical()
+                .constraints(constraints.toArray(new Constraint[0]))
+                .split(inner);
+
+        renderLabeledTextField(frame, rows.get(0), rows.get(1), "Name:", "my-app",
+                newTemplateNameInput, newTemplateFieldIndex == 0);
+        renderLabeledTextField(frame, rows.get(2), rows.get(3), "Parent:", "tpl-dev",
+                newTemplateParentInput, newTemplateFieldIndex == 1);
+
+        // Location radio buttons
+        boolean locationFocused = newTemplateFieldIndex == 2;
+        frame.renderWidget(Paragraph.from(Line.styled(
+                "Save to:", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(4));
+        for (int i = 0; i < locCount; i++) {
+            boolean selected = (i == newTemplateLocationIndex);
+            var symbol = selected ? "◉" : "○";
+            var checkColor = selected ? theme.checkEnabled() : theme.checkDisabled();
+            var prefix = (locationFocused && selected) ? "▸" : " ";
+            var labelColor = (locationFocused && selected) ? theme.focusedLabel() : modal.fg();
+            frame.renderWidget(Paragraph.from(Line.from(List.of(
+                    Span.styled(" " + prefix + " ", Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
+                    Span.styled(symbol + " ", Style.EMPTY.fg(checkColor).bg(modal.bg())),
+                    Span.styled(newTemplateLocations.get(i).label(),
+                            Style.EMPTY.fg(labelColor).bg(modal.bg()))))),
+                    rows.get(5 + i));
+        }
+
+        // Hint bar
+        var hintSpans = new ArrayList<Span>();
+        modal.addKey(hintSpans, "Enter", "Confirm");
+        modal.addKey(hintSpans, "Esc", "Cancel");
+        modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
+        if (locationFocused) modal.addKey(hintSpans, "↑↓", "Select");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(5 + locCount));
+    }
+
     // --- Template detail modal ---
 
     private boolean handleTemplateDetailEvent(KeyEvent key, TuiRunner tui) {
@@ -1810,6 +2002,13 @@ public class ListCommand extends BaseCommand {
                 pendingActionTarget = template.name;
                 mode = Mode.BROWSE;
                 tui.quit();
+            }
+            return true;
+        }
+        if (key.isChar('n')) {
+            var template = selectedTemplate();
+            if (template != null) {
+                openNewTemplateModal(template.name);
             }
             return true;
         }
@@ -1974,7 +2173,8 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F7", "Stop instance", "⇧F7", "Restart"),
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F9", "Tool actions", null, null),
-                shortcutRow("F10", "Quit", null, null));
+                shortcutRow("F10", "Quit", null, null),
+                shortcutRow("n", "New template…", null, null));
 
         int width = 60;
         int maxHeight = screen.height() - 2;
@@ -2118,6 +2318,7 @@ public class ListCommand extends BaseCommand {
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
         modal.addKey(hintSpans, "F4", "Edit");
+        modal.addKey(hintSpans, "n", "New child…");
         modal.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }

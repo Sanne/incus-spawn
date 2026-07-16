@@ -150,34 +150,53 @@ public class TemplatesCommand extends BaseCommand {
                 return CommandResult.valueOf(1);
             }
 
-            var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
-            var filename = templateName != null
-                    ? ImageDef.filenameForName(templateName)
-                    : "new-template.yaml";
-            var targetPath = dir.resolve(filename);
-
-            if (Files.exists(targetPath)) {
-                System.err.println("File already exists: " + targetPath);
-                return CommandResult.valueOf(1);
+            if (templateName == null) {
+                var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
+                var targetPath = dir.resolve("new-template.yaml");
+                if (Files.exists(targetPath)) {
+                    System.err.println("File already exists: " + targetPath);
+                    return CommandResult.valueOf(1);
+                }
+                try {
+                    Files.createDirectories(dir);
+                    Files.writeString(targetPath, SKELETON);
+                } catch (IOException e) {
+                    System.err.println("Failed to create template file: " + e.getMessage());
+                    return CommandResult.valueOf(1);
+                }
+                System.out.println("Created " + targetPath);
+                editLoop(targetPath, null, false);
+                return CommandResult.SUCCESS;
             }
 
             try {
-                Files.createDirectories(dir);
-                var skeleton = SKELETON.replace("tpl-CHANGEME",
-                        templateName != null ? templateName : "tpl-CHANGEME");
-                Files.writeString(targetPath, skeleton);
+                var dir = project ? ImageDef.projectImagesDir() : ImageDef.userImagesDir();
+                var targetPath = createTemplateFile(templateName, null, dir);
+                System.out.println("Created " + targetPath);
+                editLoop(targetPath, templateName, false);
             } catch (IOException e) {
-                System.err.println("Failed to create template file: " + e.getMessage());
+                System.err.println("Failed to create template: " + e.getMessage());
                 return CommandResult.valueOf(1);
             }
-
-            System.out.println("Created " + targetPath);
-            editLoop(targetPath, templateName, false);
             return CommandResult.SUCCESS;
         }
     }
 
     // ── shared helpers ──────────────────────────────────────────────────────────
+
+    static Path createTemplateFile(String name, String parent, Path dir) throws IOException {
+        var targetPath = dir.resolve(ImageDef.filenameForName(name));
+        if (Files.exists(targetPath)) {
+            throw new IOException("File already exists: " + targetPath);
+        }
+        Files.createDirectories(dir);
+        var skeleton = SKELETON.replace("tpl-CHANGEME", name);
+        if (parent != null && !parent.isEmpty()) {
+            skeleton = skeleton.replace("# parent: tpl-dev", "parent: " + parent);
+        }
+        Files.writeString(targetPath, skeleton);
+        return targetPath;
+    }
 
     static String normalizeName(String input) {
         return input.startsWith("tpl-") ? input : "tpl-" + input;
@@ -216,7 +235,7 @@ public class TemplatesCommand extends BaseCommand {
         return !result.hasErrors();
     }
 
-    private static void editLoop(Path file, String originalName, boolean isBuiltinCopy) {
+    static void editLoop(Path file, String originalName, boolean isBuiltinCopy) {
         while (true) {
             try {
                 int exitCode = launchEditor(file);
