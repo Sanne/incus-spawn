@@ -9,6 +9,7 @@ import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -195,7 +196,14 @@ public class ListCommand extends BaseCommand {
         this.cdiTools = RuntimeServices.toolSetups();
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
-        reloadData();
+        try {
+            reloadData();
+        } catch (IncusException e) {
+            if (plain) {
+                System.err.println("Error: " + e.getMessage());
+                return CommandResult.FAILURE;
+            }
+        }
         if (plain) {
             if (entries.isEmpty() && templateEntries.stream().noneMatch(t -> !"not built".equals(t.buildStatus))) {
                 System.out.println("No incus-spawn environments found.");
@@ -213,9 +221,18 @@ public class ListCommand extends BaseCommand {
 
     private void runTuiLoop() {
         while (true) {
-            reloadData();
+            String reloadError = null;
+            try {
+                reloadData();
+            } catch (IncusException e) {
+                reloadError = e.getMessage();
+            }
             var previousAction = pendingAction;
             mode = Mode.BROWSE;
+            if (reloadError != null) {
+                errorMessage = reloadError;
+                mode = Mode.ERROR;
+            }
             pendingAction = PendingAction.NONE;
 
             templateTableState = new TableState();
@@ -3547,6 +3564,8 @@ public class ListCommand extends BaseCommand {
                         configVal(config, Metadata.DEFAULT_ACTION, "")));
             }
             return entryList;
+        } catch (IncusException e) {
+            throw e;
         } catch (Exception e) {
             return List.of();
         }
