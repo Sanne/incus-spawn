@@ -536,15 +536,7 @@ public class DoctorCommand extends BaseCommand {
     }
 
     static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort) {
-        for (var line : firewalldOutput.split("\n")) {
-            if (line.contains("nat") && line.contains("PREROUTING")
-                    && line.contains("incusbr0") && line.contains("--dport 443")
-                    && line.contains("REDIRECT")
-                    && line.contains("--to-port " + mitmPort)) {
-                return true;
-            }
-        }
-        return false;
+        return FirewalldCheck.isPreRoutingRulePresent(firewalldOutput, mitmPort);
     }
 
     // ---- Layer 6: Templates ----

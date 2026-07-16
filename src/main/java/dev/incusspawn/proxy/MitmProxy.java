@@ -314,6 +314,9 @@ public class MitmProxy {
                 .collect(java.util.stream.Collectors.joining("\n"));
         var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
 
+        if (dnsmasqConfig.equals(existing)) {
+            return;
+        }
         incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
     }
 

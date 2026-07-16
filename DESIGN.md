@@ -23,6 +23,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 - **Extensible without Java**: image definitions and tool installations defined in YAML; Java only needed for tools requiring programmatic logic
 - **Ephemeral and cheap**: copy-on-write clones mean spinning up a new environment costs seconds and minimal disk space
 - **Familiar**: CLI patterns inspired by git workflows (branch-name-style naming, auto-detection from cwd)
+- **Idempotent setup**: `isx init` can be re-run safely at any time — each step checks whether its work is already done and skips without making changes, never disrupting running containers or reloading services unnecessarily
 
 ## Tech Stack
 

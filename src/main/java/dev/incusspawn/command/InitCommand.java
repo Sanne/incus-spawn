@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.ssh.SshKeyManager;
@@ -499,61 +500,58 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        // Add incusbr0 to the trusted zone and enable masquerading so container
-        // traffic is NAT'd to the internet. Both are --permanent so they survive reboots.
-        System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
-        var addResult = runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
-        if (addResult != 0) {
-            System.err.println("  Warning: failed to add incusbr0 to trusted zone.");
-            System.err.println("  Containers may not have network/DNS access.");
-            System.err.println("  You can fix this manually:");
-            System.err.println("    sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent");
-            System.err.println("    sudo firewall-cmd --zone=trusted --add-masquerade --permanent");
-            System.err.println("    sudo firewall-cmd --reload");
+        // Check current firewall state to avoid unnecessary modifications
+        var trustedZoneOutput = captureOutput("sudo", "firewall-cmd", "--zone=trusted", "--list-all");
+        boolean hasInterface = trustedZoneOutput.contains("incusbr0");
+        boolean hasMasquerade = trustedZoneOutput.contains("masquerade: yes");
+
+        var directRulesOutput = captureOutput("sudo", "firewall-cmd", "--direct", "--get-all-rules");
+        boolean hasForwardIn = FirewalldCheck.isForwardRulePresent(directRulesOutput, "-i", "incusbr0");
+        boolean hasForwardOut = FirewalldCheck.isForwardRulePresent(directRulesOutput, "-o", "incusbr0");
+
+        if (hasInterface && hasMasquerade && hasForwardIn && hasForwardOut) {
+            System.out.println("  Firewall already configured.");
             return;
         }
 
-        System.out.println("  Enabling masquerading (NAT) for container internet access...");
-        runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+        if (!hasInterface) {
+            System.out.println("  Adding incusbr0 to the trusted firewall zone (sudo required)...");
+            var addResult = runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--change-interface=incusbr0", "--permanent");
+            if (addResult != 0) {
+                System.err.println("  Warning: failed to add incusbr0 to trusted zone.");
+                System.err.println("  Containers may not have network/DNS access.");
+                System.err.println("  You can fix this manually:");
+                System.err.println("    sudo firewall-cmd --zone=trusted --change-interface=incusbr0 --permanent");
+                System.err.println("    sudo firewall-cmd --zone=trusted --add-masquerade --permanent");
+                System.err.println("    sudo firewall-cmd --reload");
+                return;
+            }
+        }
+        if (!hasMasquerade) {
+            System.out.println("  Enabling masquerading (NAT) for container internet access...");
+            runHostQuiet("sudo", "firewall-cmd", "--zone=trusted", "--add-masquerade", "--permanent");
+        }
+        if (!hasForwardIn) {
+            System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
+            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                    "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                    "-i", "incusbr0", "-j", "ACCEPT");
+        }
+        if (!hasForwardOut) {
+            if (hasForwardIn) {
+                System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
+            }
+            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                    "--add-rule", "ipv4", "filter", "FORWARD", "0",
+                    "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
+        }
 
         var reloadResult = runHostQuiet("sudo", "firewall-cmd", "--reload");
         if (reloadResult != 0) {
             System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
             return;
         }
-
-        // Verify
-        try {
-            var pb = new ProcessBuilder("sudo", "firewall-cmd", "--zone=trusted", "--list-all");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            process.waitFor();
-            boolean hasInterface = output.contains("incusbr0");
-            boolean hasMasquerade = output.contains("masquerade: yes");
-            if (hasInterface && hasMasquerade) {
-                System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading.");
-            } else {
-                if (!hasInterface) System.err.println("  Warning: incusbr0 not in trusted zone.");
-                if (!hasMasquerade) System.err.println("  Warning: masquerading not enabled.");
-                System.err.println("  Containers may not have network/DNS access.");
-            }
-        } catch (Exception e) {
-            System.err.println("  Warning: could not verify firewall config: " + e.getMessage());
-        }
-
-        // Ensure FORWARD rules for the Incus bridge are in place. Docker (if installed)
-        // sets the FORWARD chain policy to DROP, which blocks Incus container traffic.
-        // These direct rules are harmless without Docker and ready if Docker starts later.
-        System.out.println("  Adding FORWARD rules for Incus bridge (Docker coexistence)...");
-        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
-                "--add-rule", "ipv4", "filter", "FORWARD", "0",
-                "-i", "incusbr0", "-j", "ACCEPT");
-        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
-                "--add-rule", "ipv4", "filter", "FORWARD", "0",
-                "-o", "incusbr0", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT");
-        runHostQuiet("sudo", "firewall-cmd", "--reload");
-        System.out.println("  Firewall rules applied (persistent via firewalld).");
+        System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading.");
     }
 
     private void configureMitmProxy() {
@@ -563,30 +561,38 @@ public class InitCommand extends BaseCommand {
                 "tokens directly. This step sets up iptables port redirection",
                 "and generates a custom CA certificate trusted by containers.");
 
-        // Add iptables PREROUTING redirect: traffic arriving on incusbr0 destined
-        // for the gateway IP on port 443 is redirected to the proxy's listen port.
-        // Only traffic to the gateway IP is redirected (intercepted domains resolve
-        // there via dnsmasq); traffic to other IPs (e.g. maven repos) passes through.
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
-        config.setIncusBridgeGateway(gatewayIp);
-        config.save();
-        System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
-                + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
-        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
-                "--add-rule", "ipv4", "nat", "PREROUTING", "0",
-                "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
-                String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
-                "-j", "REDIRECT", "--to-port",
-                String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
-        // Remove overly broad redirect rule from previous installs (missing -d gateway)
-        runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
-                "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
-                "-i", "incusbr0", "-p", "tcp", "--dport",
-                String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
-                "-j", "REDIRECT", "--to-port",
-                String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
-        runHostQuiet("sudo", "firewall-cmd", "--reload");
+        if (!gatewayIp.equals(config.getIncusBridgeGateway())) {
+            config.setIncusBridgeGateway(gatewayIp);
+            config.save();
+        }
+
+        // Check if the PREROUTING redirect rule already exists
+        var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
+        boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, MitmProxy.DEFAULT_MITM_PORT);
+
+        if (hasRedirect) {
+            System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+                    + MitmProxy.DEFAULT_MITM_PORT + ").");
+        } else {
+            System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
+                    + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
+            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                    "--add-rule", "ipv4", "nat", "PREROUTING", "0",
+                    "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
+                    String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                    "-j", "REDIRECT", "--to-port",
+                    String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+            // Remove overly broad redirect rule from previous installs (missing -d gateway)
+            runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                    "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
+                    "-i", "incusbr0", "-p", "tcp", "--dport",
+                    String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                    "-j", "REDIRECT", "--to-port",
+                    String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+            runHostQuiet("sudo", "firewall-cmd", "--reload");
+        }
 
         // Clean up old sysctl config from previous installs (no longer needed)
         runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
@@ -738,14 +744,14 @@ public class InitCommand extends BaseCommand {
             // Unknown error — continue anyway (daemon may start during init)
         }
 
-        // Use sudo for admin init since it may need elevated privileges
-        var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
-        if (exitCode == 0) {
-            System.out.println("  Incus initialized with default storage pool and network.");
+        // Skip admin init if Incus is already initialized (has storage pools)
+        var cowProbe = incus.probeCowPool();
+        if (cowProbe.listed()) {
+            System.out.println("  Incus already initialized.");
         } else {
-            // May already be initialized
-            if (incus.probeCowPool().listed()) {
-                System.out.println("  Incus already initialized.");
+            var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
+            if (exitCode == 0) {
+                System.out.println("  Incus initialized with default storage pool and network.");
             } else {
                 System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");
             }
@@ -1563,6 +1569,19 @@ public class InitCommand extends BaseCommand {
         } catch (IOException | InterruptedException e) {
             System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
             return 1;
+        }
+    }
+
+    private String captureOutput(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            process.waitFor();
+            return output;
+        } catch (IOException | InterruptedException e) {
+            return "";
         }
     }
 

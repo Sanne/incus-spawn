@@ -50,6 +50,30 @@ public final class FirewalldCheck {
         }
     }
 
+    public static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort) {
+        for (var line : firewalldOutput.split("\n")) {
+            if (line.contains("nat") && line.contains("PREROUTING")
+                    && line.contains("incusbr0") && line.contains("-d ")
+                    && line.contains("--dport 443")
+                    && line.contains("REDIRECT")
+                    && line.contains("--to-port " + mitmPort)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean isForwardRulePresent(String firewalldOutput, String interfaceFlag, String interfaceName) {
+        for (var line : firewalldOutput.split("\n")) {
+            if (line.contains("FORWARD")
+                    && line.contains(interfaceFlag + " " + interfaceName)
+                    && line.contains("ACCEPT")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean warnIfNotRunning() {
         try {
             var diagnostic = detectDiagnostic();
