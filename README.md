@@ -343,7 +343,7 @@ tools:
 default-action: bob
 ```
 
-Bob Shell requires an IBM API key. Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it transparently. Containers only hold a placeholder value. The IBM license agreement and API key auth method are pre-configured during template build so no interactive prompts appear on first use.
+Bob Shell requires an IBM API key. Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it transparently. Containers only hold a placeholder value. During `isx init` you'll be asked to accept the IBM license agreement; accepting pre-configures it in all containers so Bob Shell won't prompt again. The default action launches Bob with `--yolo` (auto-approve all tool calls); running `bob` manually in a shell uses normal approval mode.
 
 ### Claude Code Skills
 
