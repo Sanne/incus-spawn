@@ -1340,8 +1340,7 @@ public class InitCommand extends BaseCommand {
                 "Sets up an IBM Bob API key so containers can use Bob Shell",
                 "for AI-assisted coding. The real key stays on the host —",
                 "containers only hold a placeholder value, and the MITM",
-                "proxy injects the real credential transparently.",
-                "Create an API key at: https://bob.ibm.com (Admin > API keys, scope: Inference)");
+                "proxy injects the real credential transparently.");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -1358,6 +1357,12 @@ public class InitCommand extends BaseCommand {
             }
         }
 
+        System.out.println("  To create an API key:");
+        System.out.println("    1. Go to https://bob.ibm.com/admin/apikeys");
+        System.out.println("    2. Click 'Create API key'");
+        System.out.println("    3. Set the scope to " + BOLD + "Inference" + RESET);
+        System.out.println("    4. Copy the generated key");
+        System.out.println();
         System.out.print("  Bob API key (or press Enter to skip): ");
         var apiKey = new String(console.readPassword());
         if (apiKey.isBlank()) {
@@ -1369,7 +1374,8 @@ public class InitCommand extends BaseCommand {
 
         System.out.println();
         System.out.println("  IBM Bob Shell requires acceptance of the IBM license agreement.");
-        System.out.println("  Review the terms at: https://bob.ibm.com/terms");
+        System.out.println("  The license is presented on first launch of Bob Shell.");
+        System.out.println("  Pre-accepting here skips that prompt inside containers.");
         System.out.print("  Do you accept the IBM license agreement? (y/N): ");
         var consent = console.readLine();
         config.getBob().setLicenseConsent(consent != null && consent.strip().equalsIgnoreCase("y"));
