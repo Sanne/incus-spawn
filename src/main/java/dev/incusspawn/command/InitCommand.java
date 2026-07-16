@@ -1366,6 +1366,17 @@ public class InitCommand extends BaseCommand {
         }
 
         config.getBob().setApiKey(apiKey);
+
+        System.out.println();
+        System.out.println("  IBM Bob Shell requires acceptance of the IBM license agreement.");
+        System.out.println("  Review the terms at: https://bob.ibm.com/terms");
+        System.out.print("  Do you accept the IBM license agreement? (y/N): ");
+        var consent = console.readLine();
+        config.getBob().setLicenseConsent(consent != null && consent.strip().equalsIgnoreCase("y"));
+        if (!config.getBob().isLicenseConsent()) {
+            System.out.println("  License not accepted. Bob Shell will prompt for consent on first use.");
+        }
+
         config.save();
         System.out.println("  Bob configuration saved.");
     }

@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 
 import java.io.IOException;
@@ -79,9 +80,24 @@ public class BobSetup implements ToolSetup {
     }
 
     private void configureSettings(Container c) {
-        var settingsJson = "{\"ibm\":{\"licenseConsent\":true},\"security\":{\"auth\":{\"selectedType\":\"api-key\"}}}";
+        var bobConfig = SpawnConfig.load().getBob();
+
+        var userSettings = new StringBuilder();
+        userSettings.append("{\"security\":{\"auth\":{\"selectedType\":\"api-key\"}}");
+        if (bobConfig.isLicenseConsent()) {
+            userSettings.append(",\"ibm\":{\"licenseConsent\":true}");
+        }
+        userSettings.append("}");
+
         c.sh("mkdir -p /home/agentuser/.bob");
-        c.writeFile("/home/agentuser/.bob/settings.json", settingsJson);
+        c.writeFile("/home/agentuser/.bob/settings.json", userSettings.toString());
+        c.writeFile("/home/agentuser/.bob/trustedFolders.json",
+                "{\"/home/agentuser\":\"TRUST_FOLDER\"}");
         c.chown("/home/agentuser/.bob", "agentuser:agentuser");
+
+        var systemSettings = """
+                {"general":{"disableAutoUpdate":true,"disableUpdateNag":true}}""";
+        c.sh("mkdir -p /etc/bobshell");
+        c.writeFile("/etc/bobshell/settings.json", systemSettings);
     }
 }

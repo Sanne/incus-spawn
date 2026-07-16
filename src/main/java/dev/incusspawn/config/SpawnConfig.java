@@ -81,10 +81,13 @@ public class SpawnConfig {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class BobConfig {
         private String apiKey = "";
+        private boolean licenseConsent;
 
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
         public boolean hasAuth() { return !apiKey.isBlank(); }
+        public boolean isLicenseConsent() { return licenseConsent; }
+        public void setLicenseConsent(boolean licenseConsent) { this.licenseConsent = licenseConsent; }
     }
 
     public ClaudeConfig getClaude() { return claude; }
