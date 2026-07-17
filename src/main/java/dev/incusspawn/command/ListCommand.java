@@ -138,6 +138,11 @@ public class ListCommand extends BaseCommand {
     private int newTemplateFieldIndex;
     private String statusMessage;
     private String progressMessage;
+    // Search/filter state
+    private boolean searchActive = false;
+    private TextInputState searchInput;
+    private List<TemplateInfo> allTemplateEntries;
+    private List<InstanceInfo> allEntries;
     // Template detail modal state
     private boolean detailViewCompact = true;
     private int detailScrollOffset;
@@ -471,8 +476,6 @@ public class ListCommand extends BaseCommand {
         }
         storedSourceTemplates = storedNames;
 
-        buildTemplateRowData();
-
         // Instance panel: exclude template instances (they're shown in the template panel)
         entries = new ArrayList<>();
         actionsCache = new java.util.HashMap<>();
@@ -487,7 +490,10 @@ public class ListCommand extends BaseCommand {
                 }
             }
         }
-        buildRowData();
+
+        allTemplateEntries = new ArrayList<>(templateEntries);
+        allEntries = new ArrayList<>(entries);
+        rebuildRowData();
     }
 
     // --- Event handling ---
@@ -509,6 +515,7 @@ public class ListCommand extends BaseCommand {
                     || !backgroundTasks.getActiveTasks().isEmpty();
         }
         if (!(event instanceof KeyEvent key)) return false;
+        if (searchActive) return handleSearchEvent(key, tableState);
         return switch (mode) {
             case BROWSE -> handleBrowseEvent(key, tui, tableState);
             case CONFIRM_DELETE -> handleConfirmDeleteEvent(key, tui, tableState);
@@ -547,6 +554,10 @@ public class ListCommand extends BaseCommand {
         }
         if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
             refreshData(tableState);
+            return true;
+        }
+        if (key.isChar('/')) {
+            activateSearch();
             return true;
         }
 
@@ -1612,13 +1623,36 @@ public class ListCommand extends BaseCommand {
                                     Style.EMPTY.bold().fg(msgFg))))
                             .style(Style.EMPTY.bg(statusBg))
                             .build(), rows.get(0));
-            renderContextLine(frame, rows.get(1), contextLine);
+            if (searchActive) {
+                renderSearchBar(frame, rows.get(1));
+            } else {
+                renderContextLine(frame, rows.get(1), contextLine);
+            }
             renderKeyItems(frame, rows.get(2), items);
         } else {
             var rows = splitVertical(area, 1, 1);
-            renderContextLine(frame, rows.get(0), contextLine);
+            if (searchActive) {
+                renderSearchBar(frame, rows.get(0));
+            } else {
+                renderContextLine(frame, rows.get(0), contextLine);
+            }
             renderKeyItems(frame, rows.get(1), items);
         }
+    }
+
+    private void renderSearchBar(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        fillBackground(frame, area, theme.contextBg());
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(3), Constraint.fill())
+                .split(area);
+        frame.renderWidget(Paragraph.from(Line.styled(" / ",
+                Style.EMPTY.bold().fg(theme.contextAccentFg()).bg(theme.contextBg()))), cols.get(0));
+        TextInput.builder()
+                .placeholder("type to filter…")
+                .style(Style.EMPTY.fg(theme.contextPrimaryFg()).bg(theme.contextBg()))
+                .placeholderStyle(Style.EMPTY.fg(theme.textDim()).bg(theme.contextBg()))
+                .build()
+                .renderWithCursor(cols.get(1), frame.buffer(), searchInput, frame);
     }
 
 
@@ -2195,7 +2229,8 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
-                shortcutRow("n", "New template…", null, null));
+                shortcutRow("n", "New template…", null, null),
+                shortcutRow("/", "Search / filter", null, null));
 
         int width = 60;
         int maxHeight = screen.height() - 2;
@@ -3290,6 +3325,122 @@ public class ListCommand extends BaseCommand {
         if (!name.matches("[a-zA-Z][a-zA-Z0-9-]*"))
             return "Invalid name: must start with a letter, only alphanumeric and hyphens allowed";
         return null;
+    }
+
+    // --- Search / filter ---
+
+    private void activateSearch() {
+        searchActive = true;
+        searchInput = new TextInputState();
+    }
+
+    private void deactivateSearch() {
+        var selectedTpl = selectedTemplate();
+        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
+        var selectedInst = selectedEntry(instanceTableState);
+        var selectedInstName = selectedInst != null ? selectedInst.name : null;
+
+        searchActive = false;
+        searchInput = null;
+        templateEntries = allTemplateEntries;
+        entries = allEntries;
+        buildTemplateRowData();
+        buildRowData();
+
+        if (selectedTplName != null) {
+            for (int i = 0; i < templateEntries.size(); i++) {
+                if (templateEntries.get(i).name.equals(selectedTplName)) {
+                    templateTableState.select(i);
+                    break;
+                }
+            }
+        }
+        if (selectedInstName != null) {
+            for (int i = 0; i < rowToEntry.size(); i++) {
+                if (rowToEntry.get(i) != null && rowToEntry.get(i).name.equals(selectedInstName)) {
+                    instanceTableState.select(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    private boolean handleSearchEvent(KeyEvent key, TableState tableState) {
+        if (key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            deactivateSearch();
+            return true;
+        }
+        if (key.isKey(KeyCode.BACKSPACE)) { searchInput.deleteBackward(); applySearchFilter(); return true; }
+        if (key.isKey(KeyCode.DELETE))    { searchInput.deleteForward(); applySearchFilter(); return true; }
+        if (key.isKey(KeyCode.LEFT))      { searchInput.moveCursorLeft(); return true; }
+        if (key.isKey(KeyCode.RIGHT))     { searchInput.moveCursorRight(); return true; }
+        if (key.isKey(KeyCode.HOME))      { searchInput.moveCursorToStart(); return true; }
+        if (key.isKey(KeyCode.END))       { searchInput.moveCursorToEnd(); return true; }
+        if (key.isKey(KeyCode.DOWN)) {
+            if (focusedPanel == Panel.TEMPLATES) {
+                var idx = templateTableState.selected();
+                if (idx != null && idx < templateEntries.size() - 1) templateTableState.select(idx + 1);
+            } else {
+                selectNextDataRow(tableState, 1);
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.UP)) {
+            if (focusedPanel == Panel.TEMPLATES) {
+                var idx = templateTableState.selected();
+                if (idx != null && idx > 0) templateTableState.select(idx - 1);
+            } else {
+                selectNextDataRow(tableState, -1);
+            }
+            return true;
+        }
+        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
+            focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
+            return true;
+        }
+        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+            searchInput.insert(key.character());
+            applySearchFilter();
+            return true;
+        }
+        return true;
+    }
+
+    static boolean matchesSearch(String query, String... fields) {
+        if (query == null || query.isEmpty()) return true;
+        if (fields == null) return false;
+        var lower = query.toLowerCase(java.util.Locale.ROOT);
+        for (var field : fields) {
+            if (field != null && field.toLowerCase(java.util.Locale.ROOT).contains(lower)) return true;
+        }
+        return false;
+    }
+
+    private void applySearchFilter() {
+        var query = searchInput != null ? searchInput.text() : "";
+        templateEntries = allTemplateEntries.stream()
+                .filter(t -> matchesSearch(query, t.name, t.description))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        entries = allEntries.stream()
+                .filter(e -> matchesSearch(query, e.name, e.parent, e.ipv4))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        buildTemplateRowData();
+        buildRowData();
+        if (templateTableState.selected() == null || templateTableState.selected() >= templateEntries.size()) {
+            if (!templateEntries.isEmpty()) templateTableState.select(0);
+        }
+        if (instanceTableState.selected() == null || instanceTableState.selected() >= rowToEntry.size()) {
+            selectFirstDataRow(instanceTableState);
+        }
+    }
+
+    private void rebuildRowData() {
+        if (searchActive && allTemplateEntries != null) {
+            applySearchFilter();
+        } else {
+            buildTemplateRowData();
+            buildRowData();
+        }
     }
 
     // --- Navigation ---
