@@ -12,7 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.KeyFactory;
 import java.security.KeyPairGenerator;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -89,6 +91,11 @@ public class CertificateAuthority {
             var expiry = new Date(notBefore.getTime() + 366L * 24 * 60 * 60 * 1000);
             var serial = new BigInteger(128, new SecureRandom());
 
+            var caKeyId = computeKeyIdentifier(caCert.getPublicKey());
+            // AKI value: SEQUENCE { [0] IMPLICIT KeyIdentifier }
+            var akiValue = derSequence(concat(
+                    new byte[]{(byte) 0x80}, derLength(caKeyId.length), caKeyId));
+
             var algId = sha256WithRsaAid();
             var tbsCert = derSequence(concat(
                     derExplicit(0, derInteger(BigInteger.valueOf(2))),   // v3
@@ -102,7 +109,10 @@ public class CertificateAuthority {
                             derExtension(oidBasicConstraints(), true,
                                     derSequence(new byte[]{0x01, 0x01, 0x00})),
                             derExtension(oidSubjectAltName(), false,
-                                    derSequence(derDnsName(domain)))
+                                    derSequence(derDnsName(domain))),
+                            derExtension(oidSubjectKeyIdentifier(), false,
+                                    derOctetString(computeKeyIdentifier(keyPair.getPublic()))),
+                            derExtension(oidAuthorityKeyIdentifier(), false, akiValue)
                     )))
             ));
 
@@ -182,6 +192,51 @@ public class CertificateAuthority {
 
     // --- Private helpers ---
 
+    /**
+     * Compute the key identifier per RFC 5280 §4.2.1.2 method 1:
+     * SHA-1 hash of the BIT STRING subjectPublicKey value (excluding
+     * tag, length, and unused-bits octet) from SubjectPublicKeyInfo.
+     */
+    static byte[] computeKeyIdentifier(PublicKey key) throws Exception {
+        var spki = key.getEncoded();
+        // SubjectPublicKeyInfo = SEQUENCE { AlgorithmIdentifier, BIT STRING }
+        // Skip outer SEQUENCE tag+length, then skip AlgorithmIdentifier TLV
+        int pos = 1 + derLengthSize(spki, 1);
+        pos += tlvLength(spki, pos);
+        // Now at BIT STRING: skip tag, length, unused-bits byte
+        pos += 1 + derLengthSize(spki, pos + 1) + 1;
+        var keyBytes = new byte[spki.length - pos];
+        System.arraycopy(spki, pos, keyBytes, 0, keyBytes.length);
+        return MessageDigest.getInstance("SHA-1").digest(keyBytes);
+    }
+
+    /** Return the number of bytes in a DER length field starting at {@code offset}. */
+    private static int derLengthSize(byte[] data, int offset) {
+        int first = data[offset] & 0xff;
+        if (first < 128) return 1;
+        return 1 + (first & 0x7f);
+    }
+
+    /** Return the total TLV (tag + length + value) byte count of the element at {@code offset}. */
+    private static int tlvLength(byte[] data, int offset) {
+        int start = offset;
+        offset++; // skip tag
+        int first = data[offset] & 0xff;
+        int len;
+        if (first < 128) {
+            len = first;
+            offset++;
+        } else {
+            int numBytes = first & 0x7f;
+            len = 0;
+            offset++;
+            for (int i = 0; i < numBytes; i++) {
+                len = (len << 8) | (data[offset++] & 0xff);
+            }
+        }
+        return (offset - start) + len;
+    }
+
     private static CertificateAuthority load() throws Exception {
         var key = loadPrivateKey(caKeyFile());
         var cert = loadCertificate(caCertFile());
@@ -216,7 +271,9 @@ public class CertificateAuthority {
                 derExplicit(3, derSequence(concat(
                         derExtension(oidBasicConstraints(), true,
                                 derSequence(new byte[]{0x01, 0x01, (byte) 0xff})),
-                        derExtension(oidKeyUsage(), true, keyUsageBits)
+                        derExtension(oidKeyUsage(), true, keyUsageBits),
+                        derExtension(oidSubjectKeyIdentifier(), false,
+                                derOctetString(computeKeyIdentifier(keyPair.getPublic())))
                 )))
         ));
 
