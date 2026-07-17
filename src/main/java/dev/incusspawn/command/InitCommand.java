@@ -815,7 +815,7 @@ public class InitCommand extends BaseCommand {
         System.err.println("  incus-spawn expects: " + entry);
         var console = System.console();
         if (console != null) {
-            System.err.print("  [1;33mReplace it? (y/N): [0m");
+            System.err.print("  \u001B[1;33mReplace it? (y/N): \u001B[0m");
             var answer = console.readLine().strip();
             if (answer.equalsIgnoreCase("y")) {
                 runHost("sudo", "sed", "-i", "s/^" + Pattern.quote(existing.get()) + "$/" + entry + "/", path);
@@ -1432,9 +1432,10 @@ public class InitCommand extends BaseCommand {
                 "code, and manage issues on your behalf. For best security,",
                 "create a dedicated bot account (e.g. yourname-ai-bot) with",
                 "collaborator access, or use a fine-grained PAT scoped to",
-                "specific repos and permissions. For example, grant Contents,",
-                "Issues, and Pull requests (read/write) — avoid admin, org,",
-                "and delete permissions unless needed.",
+                "specific repos and permissions. Grant Contents, Issues, and",
+                "Pull requests (read/write), plus Email addresses (read) under",
+                "Account permissions (needed for git commit identity).",
+                "Avoid admin, org, and delete permissions unless needed.",
                 "Create one at: https://github.com/settings/personal-access-tokens");
         var config = SpawnConfig.load();
         var console = System.console();
@@ -1461,47 +1462,141 @@ public class InitCommand extends BaseCommand {
                 break;
             }
 
-            // Test the token using the GitHub API directly, isolated from host credentials
-            System.out.println("  Testing GitHub token...");
-            boolean verified = false;
-            try {
-                var client = getHttpClient();
-                var request = HttpRequest.newBuilder()
-                        .uri(URI.create("https://api.github.com/user"))
-                        .header("Authorization", "token " + token)
-                        .header("Accept", "application/vnd.github+json")
-                        .GET().build();
-                var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) {
-                    var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
-                            .matcher(response.body());
-                    if (loginMatch.find()) {
-                        System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + loginMatch.group(1) + "\u001B[0m");
-                    } else {
-                        System.out.println("  Token verified (could not determine username).");
-                    }
-                    verified = true;
-                } else {
-                    System.out.println("  Authentication failed (HTTP " + response.statusCode() + ").");
-                }
-            } catch (Exception e) {
-                System.out.println("  Could not test token: " + e.getMessage());
-            }
-
-            if (verified) {
-                config.getGithub().setToken(token);
-                config.save();
-                System.out.println("  GitHub configuration saved.");
-                break;
-            } else {
+            var result = verifyGitHubToken(token);
+            if (result == null) {
                 System.out.print("  Try again? (Y/n): ");
                 var retry = console.readLine().strip();
                 if (retry.equalsIgnoreCase("n")) {
                     System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                     break;
                 }
+                continue;
             }
+
+            if (result.email != null) {
+                config.getGithub().setToken(token);
+                config.save();
+                System.out.println("  GitHub configuration saved.");
+                break;
+            }
+
+            System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
+            System.out.println("  To fix this, either:");
+            System.out.println("    • Add 'Email addresses' (read) under Account permissions on your PAT");
+            System.out.println("      " + patSettingsUrl(token));
+            System.out.println("    • Or make your email public at https://github.com/settings/profile");
+            System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
+            var newToken = new String(console.readPassword());
+            if (newToken.isBlank()) {
+                config.getGithub().setToken(token);
+                config.save();
+                System.out.println("  GitHub configuration saved (without email).");
+                break;
+            }
+
+            var newResult = verifyGitHubToken(newToken);
+            if (newResult == null) {
+                System.out.println("  New token failed verification — keeping the original token.");
+                config.getGithub().setToken(token);
+                config.save();
+                System.out.println("  GitHub configuration saved (without email).");
+                break;
+            }
+            config.getGithub().setToken(newToken);
+            config.save();
+            if (newResult.email != null) {
+                System.out.println("  GitHub configuration saved.");
+            } else {
+                System.out.println("  GitHub configuration saved (still without email).");
+            }
+            break;
         }
+    }
+
+    private record GitHubVerifyResult(String login, String email) {}
+
+    private GitHubVerifyResult verifyGitHubToken(String token) {
+        System.out.println("  Testing GitHub token...");
+        try {
+            var client = getHttpClient();
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.github.com/user"))
+                    .header("Authorization", "token " + token)
+                    .header("Accept", "application/vnd.github+json")
+                    .GET().build();
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                System.out.println("  Authentication failed (HTTP " + response.statusCode() + ").");
+                return null;
+            }
+
+            var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
+                    .matcher(response.body());
+            var login = loginMatch.find() ? loginMatch.group(1) : null;
+
+            var email = extractJsonString(response.body(), "email");
+            if (email == null) {
+                email = checkGitHubEmail(client, token);
+            }
+
+            if (login != null) {
+                if (email != null) {
+                    System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + login + " <" + email + ">\u001B[0m");
+                } else {
+                    System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + login + "\u001B[0m");
+                }
+            } else {
+                System.out.println("  Token verified (could not determine username).");
+            }
+
+            return new GitHubVerifyResult(login, email);
+        } catch (Exception e) {
+            System.out.println("  Could not test token: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String checkGitHubEmail(java.net.http.HttpClient client, String token) {
+        try {
+            var request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.github.com/user/emails"))
+                    .header("Authorization", "token " + token)
+                    .header("Accept", "application/vnd.github+json")
+                    .GET().build();
+            var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                return null;
+            }
+            var body = response.body();
+            var noreplyPattern = java.util.regex.Pattern.compile(
+                    "\"email\"\\s*:\\s*\"([^\"]+@users\\.noreply\\.github\\.com)\"");
+            var noreplyMatch = noreplyPattern.matcher(body);
+            if (noreplyMatch.find()) {
+                return noreplyMatch.group(1);
+            }
+            var primaryPattern = java.util.regex.Pattern.compile(
+                    "\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\"primary\"\\s*:\\s*true[^}]*\"verified\"\\s*:\\s*true");
+            var primaryMatch = primaryPattern.matcher(body);
+            if (primaryMatch.find()) {
+                return primaryMatch.group(1);
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String extractJsonString(String json, String key) {
+        var pattern = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"");
+        var match = pattern.matcher(json);
+        return match.find() ? match.group(1) : null;
+    }
+
+    private static String patSettingsUrl(String token) {
+        if (token.startsWith("github_pat_")) {
+            return "https://github.com/settings/personal-access-tokens";
+        }
+        return "https://github.com/settings/tokens";
     }
 
     private void printNumberedPaths(java.util.List<String> paths) {
