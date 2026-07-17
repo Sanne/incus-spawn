@@ -772,6 +772,34 @@ class ToolDefTest {
         assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
     }
 
+    @Test
+    void builtinHeadroomToolLoads() throws Exception {
+        try (var is = getClass().getClassLoader().getResourceAsStream("tools/headroom.yaml")) {
+            assertNotNull(is, "headroom.yaml must be on the classpath");
+            var def = ToolDef.loadFromStream(is);
+
+            assertEquals("headroom", def.getName());
+            assertEquals(List.of("claude"),
+                    def.getRequires().stream().map(ToolDef.ToolRef::getName).toList());
+            assertEquals(List.of("python3-pip"), def.getPackages());
+            assertNotNull(def.getRun());
+            assertFalse(def.getRun().isEmpty());
+            assertNotNull(def.getRunAsUser());
+            assertFalse(def.getRunAsUser().isEmpty());
+            assertNotNull(def.getVerify());
+            assertNotNull(def.getReady());
+
+            var envNames = def.getEnv().stream()
+                    .filter(e -> !e.isRaw())
+                    .map(e -> e.getName())
+                    .toList();
+            assertTrue(envNames.contains("ANTHROPIC_BASE_URL"),
+                    "headroom must set ANTHROPIC_BASE_URL");
+            assertFalse(envNames.contains("HEADROOM_TLS_STRICT"),
+                    "headroom should not set HEADROOM_TLS_STRICT (root cause is fixed in cert generation)");
+        }
+    }
+
     private static ByteArrayInputStream toStream(String yaml) {
         return new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8));
     }

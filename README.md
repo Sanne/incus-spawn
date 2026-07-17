@@ -580,6 +580,19 @@ zmx run isx-my-branch git status      # run a command in the container's session
 
 All zmx commands work natively, including interactive `zmx attach`. On macOS, where Incus runs inside a VM, host-side socket sharing is not available. zmx sessions still work inside containers — `isx shell` (or Enter in the TUI) auto-attaches, and sessions persist across disconnections.
 
+### Context Optimization (headroom)
+
+The built-in `headroom` tool installs [Headroom](https://github.com/nicobrenner/headroom), a context optimization proxy for Claude Code. It runs as a local proxy on port 8787 that compresses conversation context, reducing token usage and improving response quality on long sessions. An MCP server is also registered with Claude Code for direct integration.
+
+```yaml
+name: tpl-agent
+parent: tpl-java
+tools:
+  - headroom    # auto-installs claude via requires
+```
+
+The tool sets `ANTHROPIC_BASE_URL=http://localhost:8787` so Claude Code routes through the optimization proxy. The proxy runs as a systemd user service and starts automatically on container boot.
+
 ### Tool Parameters
 
 Tools can define parameters for build-time configuration. Parameter types: `string` (with optional `pattern`), `integer` (with `min`/`max`), `boolean`, and `enum` (with `options`). Use `${param_name}` to reference values in scripts, env, and file content:
