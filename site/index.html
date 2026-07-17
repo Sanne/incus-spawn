@@ -43,6 +43,7 @@
     <div class="tab-buttons">
       <button class="tab-btn active" data-tab="macos">macOS</button>
       <button class="tab-btn" data-tab="fedora">Fedora</button>
+      <button class="tab-btn" data-tab="ubuntu">Ubuntu / Debian</button>
       <button class="tab-btn" data-tab="linux">Linux</button>
       <button class="tab-btn" data-tab="jbang">JBang</button>
     </div>
@@ -53,6 +54,11 @@
       <pre><code>sudo dnf copr enable sanne/incus-spawn
 sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
 sudo dnf install incus-spawn</code></pre>
+    </div>
+    <div class="tab-panel" id="tab-ubuntu">
+      <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
     </div>
     <div class="tab-panel" id="tab-linux">
       <code>curl -fsSL https://isx.run | sh</code>
