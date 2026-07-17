@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -67,14 +68,18 @@ public class GhSetup implements ToolSetup {
         }
 
         if (!hasEmail) {
-            var email = findEmailFromApi(c);
+            var configEmail = SpawnConfig.load().getGithub().getEmail();
+            var email = configEmail.isBlank() ? null : configEmail;
+            if (email == null) {
+                email = findEmailFromApi(c);
+            }
             if (email == null && parts.length >= 3 && !parts[2].isEmpty()) {
                 email = parts[2];
             }
             if (email != null) {
                 gitConfig(c, "user.email", email);
             } else {
-                System.out.println("  No email found — grant the 'user:email' scope on your GitHub token to enable noreply email detection.");
+                System.out.println("  No email found — re-run 'isx init' to configure GitHub with email access.");
             }
         }
     }
@@ -82,8 +87,9 @@ public class GhSetup implements ToolSetup {
     private String findEmailFromApi(Container c) {
         var result = c.sh("GH_TOKEN=" + PLACEHOLDER_TOKEN
                 + " gh api user/emails --jq '"
-                + "([.[] | select(.email | endswith(\"@users.noreply.github.com\")) | .email] | first)"
-                + " // ([.[] | select(.primary and .verified) | .email] | first)'");
+                + "([.[] | select(.primary and .verified) | .email] | first)"
+                + " // ([.[] | select(.verified and (.email | endswith(\"@users.noreply.github.com\") | not)) | .email] | first)"
+                + " // ([.[] | select(.email | endswith(\"@users.noreply.github.com\")) | .email] | first)'");
         if (!result.success() || result.stdout().isBlank() || result.stdout().strip().equals("null")) {
             return null;
         }
