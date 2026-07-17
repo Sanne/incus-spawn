@@ -7,7 +7,7 @@
   "sleep": 0.8
  },
  {
-  "type": "# 'workbench' has state you care about: postgres, 100k rows, warm build caches.\n"
+  "type": "# 'workbench' has expensive state: postgres, 100k rows, warm caches.\n"
  },
  {
   "wait": "\u279c \\Z",
@@ -85,7 +85,7 @@
   "sleep": 1.2
  },
  {
-  "type": "# you forked a database in seconds. every experiment gets the full state, isolated.  \u220e"
+  "type": "# forked a live database in seconds \u2014 each experiment fully isolated.  \u220e"
  },
  {
   "sleep": 2.5

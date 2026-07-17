@@ -51,7 +51,7 @@
   "sleep": 1.4
  },
  {
-  "type": "sudo grep -rl 'sk-ant-ap[i]' /etc /home /root /var 2>/dev/null || echo 'nothing to steal'\n"
+  "type": "sudo grep -rl 'sk-ant-ap[i]' /etc /home /root 2>/dev/null || echo 'none here'\n"
  },
  {
   "wait": "\u276f \\Z",
@@ -61,7 +61,7 @@
   "sleep": 1.0
  },
  {
-  "type": "# the host proxy swaps them for real credentials \u2014 in transit, never in here.  \u220e"
+  "type": "# the host proxy swaps in the real ones \u2014 in transit, never in here.  \u220e"
  },
  {
   "sleep": 2.5
