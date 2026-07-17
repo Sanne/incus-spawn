@@ -29,7 +29,15 @@ On macOS:
 brew install Sanne/tap/incus-spawn
 ```
 
-On Linux (x86_64):
+On Ubuntu / Debian:
+
+```shell
+curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo apt update && sudo apt install incus-spawn
+```
+
+On other Linux distros (x86_64):
 
 ```shell
 curl -fsSL https://isx.run | sh
@@ -52,7 +60,7 @@ isx build tpl-java
 isx
 ```
 
-Fedora users can also install via `dnf`, and JBang users via `jbang` — see [Installation](#installation) for all options. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
+Fedora users can also install via `dnf`, Ubuntu/Debian via `apt`, and JBang users via `jbang` — see [Installation](#installation) for all options. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
 
 ## Credential Isolation
 
@@ -687,6 +695,16 @@ sudo dnf install incus-spawn
 ```
 
 Updates automatically with `sudo dnf upgrade`.
+
+### Ubuntu / Debian (APT)
+
+```shell
+curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo apt update && sudo apt install incus-spawn
+```
+
+Updates automatically with `sudo apt upgrade`. See [docs/APT.md](docs/APT.md) for details.
 
 ### Any Linux distro (native binary)
 
