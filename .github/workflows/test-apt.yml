@@ -1,0 +1,127 @@
+name: Test APT publish
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-apt:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download latest release binaries
+        run: |
+          VERSION=$(gh release view --json tagName -q .tagName | sed 's/^v//')
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p artifacts/native-linux-amd64 artifacts/native-linux-aarch64
+          gh release download "v${VERSION}" \
+            -p 'incus-spawn-linux-amd64' -D artifacts/native-linux-amd64 \
+            -p 'incus-spawn-linux-aarch64' -D artifacts/native-linux-aarch64 \
+            -p 'git-remote-isx' -D artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to APT repository
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ] || [ -z "$APT_REPO_TOKEN" ]; then
+            echo "::error::APT_GPG_PRIVATE_KEY or APT_REPO_TOKEN secret is not set"
+            exit 1
+          fi
+
+          sudo apt-get update -qq > /dev/null
+          sudo apt-get install -y -qq dpkg-dev apt-utils > /dev/null
+
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          GPG_KEY_ID=$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^sec:/{print $5; exit}')
+          if [ -z "$GPG_KEY_ID" ]; then
+            echo "::error::Failed to extract GPG key ID after import — check APT_GPG_PRIVATE_KEY secret"
+            exit 1
+          fi
+          echo "Using GPG key: $GPG_KEY_ID"
+
+          # Generate shell completions (arch-independent) from the amd64 binary
+          chmod +x artifacts/native-linux-amd64/incus-spawn-linux-amd64
+          COMPLETIONS_DIR=$(mktemp -d)
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion bash > "$COMPLETIONS_DIR/isx.bash"
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion zsh  > "$COMPLETIONS_DIR/_isx"
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion fish > "$COMPLETIONS_DIR/isx.fish"
+          for f in "$COMPLETIONS_DIR"/*; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Shell completion file $f is empty — binary may have failed"
+              exit 1
+            fi
+          done
+
+          # Build .deb for each architecture
+          for arch_pair in "amd64:amd64" "aarch64:arm64"; do
+            BUILD_ARCH=${arch_pair%%:*}
+            DEB_ARCH=${arch_pair##*:}
+            PKG_DIR="/tmp/incus-spawn_${VERSION}_${DEB_ARCH}"
+
+            mkdir -p "$PKG_DIR/DEBIAN"
+            mkdir -p "$PKG_DIR/usr/bin"
+            mkdir -p "$PKG_DIR/usr/share/bash-completion/completions"
+            mkdir -p "$PKG_DIR/usr/share/zsh/vendor-completions"
+            mkdir -p "$PKG_DIR/usr/share/fish/vendor_completions.d"
+
+            sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$DEB_ARCH/" \
+              packaging/debian/control > "$PKG_DIR/DEBIAN/control"
+
+            install -m 755 "artifacts/native-linux-${BUILD_ARCH}/incus-spawn-linux-${BUILD_ARCH}" "$PKG_DIR/usr/bin/isx"
+            install -m 755 src/main/resources/git-remote-isx "$PKG_DIR/usr/bin/git-remote-isx"
+            install -m 644 "$COMPLETIONS_DIR/isx.bash" "$PKG_DIR/usr/share/bash-completion/completions/isx"
+            install -m 644 "$COMPLETIONS_DIR/_isx" "$PKG_DIR/usr/share/zsh/vendor-completions/_isx"
+            install -m 644 "$COMPLETIONS_DIR/isx.fish" "$PKG_DIR/usr/share/fish/vendor_completions.d/isx.fish"
+
+            dpkg-deb --root-owner-group --build "$PKG_DIR"
+            echo "Built: $(basename "$PKG_DIR").deb ($(du -h "$PKG_DIR.deb" | cut -f1))"
+          done
+
+          # Clone the APT repository
+          APT_REPO="Sanne/isx-apt-releases"
+          APT_REPO_URL="https://x-access-token:${APT_REPO_TOKEN}@github.com/${APT_REPO}.git"
+          APT_DIR="/tmp/apt-repo"
+          git clone --depth 1 "$APT_REPO_URL" "$APT_DIR"
+
+          gpg --export --armor "$GPG_KEY_ID" > "$APT_DIR/public.gpg"
+
+          # Copy debs into pool, removing old versions
+          mkdir -p "$APT_DIR/pool"
+          rm -f "$APT_DIR"/pool/incus-spawn_*.deb
+          cp /tmp/incus-spawn_${VERSION}_*.deb "$APT_DIR/pool/"
+
+          # Generate Packages indices
+          cd "$APT_DIR"
+          for deb_arch in amd64 arm64; do
+            mkdir -p "dists/stable/main/binary-${deb_arch}"
+            dpkg-scanpackages --arch "$deb_arch" pool 2>/dev/null > "dists/stable/main/binary-${deb_arch}/Packages"
+            gzip -9c "dists/stable/main/binary-${deb_arch}/Packages" > "dists/stable/main/binary-${deb_arch}/Packages.gz"
+          done
+
+          # Generate and sign Release file
+          cd "$APT_DIR/dists/stable"
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="incus-spawn" \
+            -o APT::FTPArchive::Release::Label="incus-spawn" \
+            -o APT::FTPArchive::Release::Suite="stable" \
+            -o APT::FTPArchive::Release::Codename="stable" \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            -o APT::FTPArchive::Release::Components="main" \
+            release . > Release
+          gpg --batch --yes --default-key "$GPG_KEY_ID" -abs -o Release.gpg Release
+          gpg --batch --yes --default-key "$GPG_KEY_ID" --clearsign -o InRelease Release
+
+          # Commit and push
+          cd "$APT_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update APT repository for v${VERSION}"
+          git push
+          echo "APT repository published to https://sanne.github.io/isx-apt-releases/"
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
