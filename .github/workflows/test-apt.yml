@@ -17,10 +17,9 @@ jobs:
           VERSION=$(gh release view --json tagName -q .tagName | sed 's/^v//')
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p artifacts/native-linux-amd64 artifacts/native-linux-aarch64
-          gh release download "v${VERSION}" \
-            -p 'incus-spawn-linux-amd64' -D artifacts/native-linux-amd64 \
-            -p 'incus-spawn-linux-aarch64' -D artifacts/native-linux-aarch64 \
-            -p 'git-remote-isx' -D artifacts
+          gh release download "v${VERSION}" -p 'incus-spawn-linux-amd64' -D artifacts/native-linux-amd64
+          gh release download "v${VERSION}" -p 'incus-spawn-linux-aarch64' -D artifacts/native-linux-aarch64
+          gh release download "v${VERSION}" -p 'git-remote-isx' -D artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
