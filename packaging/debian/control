@@ -1,0 +1,13 @@
+Package: incus-spawn
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: Sanne Grinovero <sanne@commonhaus.dev>
+Homepage: https://github.com/Sanne/incus-spawn
+Description: CLI tool for managing isolated Incus development environments
+ incus-spawn (isx) creates isolated Linux development environments using
+ Incus system containers with copy-on-write branching, a MITM TLS proxy
+ for credential isolation, and an interactive TUI.
+Section: devel
+Priority: optional
+Depends: openssl
+Recommends: incus, btrfs-progs

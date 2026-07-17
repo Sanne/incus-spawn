@@ -46,6 +46,8 @@ Pushing the tag triggers a workflow that will:
 4. Create a GitHub Release with auto-generated release notes and all artifacts attached
 5. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap) with new checksums
 6. Publish the native binary as an RPM to [Fedora COPR](https://copr.fedorainfracloud.org/coprs/sanne/incus-spawn/)
-7. Bump the POM version to the next snapshot
+7. Publish `.deb` packages to the [APT repository](https://sanne.github.io/isx-apt-releases) on GitHub Pages
+8. Submit a [Nixpkgs](https://github.com/NixOS/nixpkgs) PR with updated hashes
+9. Bump the POM version to the next snapshot
 
-Users can then install or update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
+Users can then install or update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `apt upgrade` (Ubuntu/Debian), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
