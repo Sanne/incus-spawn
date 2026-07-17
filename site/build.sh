@@ -22,17 +22,15 @@ fi
 mkdir -p "$OUT_DIR/vendor"
 cp "$SCRIPT_DIR"/vendor/* "$OUT_DIR/vendor/"
 
-# Casts: copy with content-hash names so retakes bust caches; emit manifest
+# Casts: copy at stable names, referenced directly from index.html. No content
+# hashing and no separate manifest: those introduced a cache-desync bug where a
+# long-cached casts.js pointed at hashed files that a redeploy had deleted,
+# 404ing the player. Stable names never 404; ETag revalidation (short max-age)
+# propagates retakes on its own.
 mkdir -p "$OUT_DIR/casts"
-MANIFEST="$OUT_DIR/casts.js"
-printf 'window.ISX_CASTS={' > "$MANIFEST"
 for c in "$SCRIPT_DIR"/demo/*-web.cast; do
-  base=$(basename "$c" -web.cast)
-  hash=$(shasum -a 256 "$c" | cut -c1-8)
-  cp "$c" "$OUT_DIR/casts/$base-$hash.cast"
-  printf '%s:"casts/%s-%s.cast",' "$base" "$base" "$hash" >> "$MANIFEST"
+  cp "$c" "$OUT_DIR/casts/$(basename "$c" -web.cast).cast"
 done
-printf '};\n' >> "$MANIFEST"
 
 TMPFILE=$(mktemp)
 trap "rm -f $TMPFILE" EXIT

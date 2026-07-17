@@ -166,7 +166,6 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
 </script>
 
 <script src="vendor/asciinema-player.min.js"></script>
-<script src="casts.js"></script>
 <script>
 (function () {
   var OPTS = {
@@ -183,7 +182,7 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
     var name = box.dataset.cast;
     var opts = OPTS[name] || {};
     if (reduced) { opts.autoPlay = false; opts.loop = false; }
-    var player = AsciinemaPlayer.create(window.ISX_CASTS[name], box, {
+    var player = AsciinemaPlayer.create("casts/" + name + ".cast", box, {
       fit: "width", theme: "monokai", controls: true,
       terminalFontFamily: mono,
       poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
