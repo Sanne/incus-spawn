@@ -24,15 +24,19 @@ public final class DerEncoder {
 
     // --- Extension OIDs ---
 
-    private static final byte[] OID_BASIC_CONSTRAINTS = {0x06, 0x03, 0x55, 0x1d, 0x13}; // 2.5.29.19
-    private static final byte[] OID_SUBJECT_ALT_NAME  = {0x06, 0x03, 0x55, 0x1d, 0x11}; // 2.5.29.17
-    private static final byte[] OID_KEY_USAGE          = {0x06, 0x03, 0x55, 0x1d, 0x0f}; // 2.5.29.15
+    private static final byte[] OID_BASIC_CONSTRAINTS        = {0x06, 0x03, 0x55, 0x1d, 0x13}; // 2.5.29.19
+    private static final byte[] OID_SUBJECT_ALT_NAME         = {0x06, 0x03, 0x55, 0x1d, 0x11}; // 2.5.29.17
+    private static final byte[] OID_KEY_USAGE                 = {0x06, 0x03, 0x55, 0x1d, 0x0f}; // 2.5.29.15
+    private static final byte[] OID_SUBJECT_KEY_IDENTIFIER   = {0x06, 0x03, 0x55, 0x1d, 0x0e}; // 2.5.29.14
+    private static final byte[] OID_AUTHORITY_KEY_IDENTIFIER = {0x06, 0x03, 0x55, 0x1d, 0x23}; // 2.5.29.35
 
     public static byte[] sha256WithRsaAid()    { return SHA256_WITH_RSA_AID.clone(); }
     public static byte[] sha384WithEcdsaAid()  { return SHA384_WITH_ECDSA_AID.clone(); }
     public static byte[] oidBasicConstraints() { return OID_BASIC_CONSTRAINTS.clone(); }
     public static byte[] oidSubjectAltName()   { return OID_SUBJECT_ALT_NAME.clone(); }
-    public static byte[] oidKeyUsage()         { return OID_KEY_USAGE.clone(); }
+    public static byte[] oidKeyUsage()                { return OID_KEY_USAGE.clone(); }
+    public static byte[] oidSubjectKeyIdentifier()   { return OID_SUBJECT_KEY_IDENTIFIER.clone(); }
+    public static byte[] oidAuthorityKeyIdentifier() { return OID_AUTHORITY_KEY_IDENTIFIER.clone(); }
 
     // --- Core DER primitives ---
 
