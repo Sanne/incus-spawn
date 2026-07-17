@@ -73,9 +73,12 @@ public class SpawnConfig {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class GitHubConfig {
         private String token = "";
+        private String email = "";
 
         public String getToken() { return token; }
         public void setToken(String token) { this.token = token == null ? "" : token; }
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email == null ? "" : email; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -1475,6 +1475,7 @@ public class InitCommand extends BaseCommand {
 
             if (result.email != null) {
                 config.getGithub().setToken(token);
+                config.getGithub().setEmail(result.email);
                 config.save();
                 System.out.println("  GitHub configuration saved.");
                 break;
@@ -1503,6 +1504,9 @@ public class InitCommand extends BaseCommand {
                 break;
             }
             config.getGithub().setToken(newToken);
+            if (newResult.email != null) {
+                config.getGithub().setEmail(newResult.email);
+            }
             config.save();
             if (newResult.email != null) {
                 System.out.println("  GitHub configuration saved.");
@@ -1568,19 +1572,63 @@ public class InitCommand extends BaseCommand {
                 return null;
             }
             var body = response.body();
-            var noreplyPattern = java.util.regex.Pattern.compile(
-                    "\"email\"\\s*:\\s*\"([^\"]+@users\\.noreply\\.github\\.com)\"");
-            var noreplyMatch = noreplyPattern.matcher(body);
-            if (noreplyMatch.find()) {
-                return noreplyMatch.group(1);
+
+            var verifiedEmails = new ArrayList<String>();
+            String primaryEmail = null;
+            var emailPattern = java.util.regex.Pattern.compile(
+                    "\\{[^}]*\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\"verified\"\\s*:\\s*true[^}]*\\}");
+            var emailMatcher = emailPattern.matcher(body);
+            while (emailMatcher.find()) {
+                var email = emailMatcher.group(1);
+                if (email.endsWith("@users.noreply.github.com")) continue;
+                verifiedEmails.add(email);
+                var obj = body.substring(emailMatcher.start(), emailMatcher.end());
+                if (obj.contains("\"primary\"") && obj.contains("true")) {
+                    primaryEmail = email;
+                }
             }
-            var primaryPattern = java.util.regex.Pattern.compile(
-                    "\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\"primary\"\\s*:\\s*true[^}]*\"verified\"\\s*:\\s*true");
-            var primaryMatch = primaryPattern.matcher(body);
-            if (primaryMatch.find()) {
-                return primaryMatch.group(1);
+            // Also match when "verified" appears before "email"
+            var altPattern = java.util.regex.Pattern.compile(
+                    "\\{[^}]*\"verified\"\\s*:\\s*true[^}]*\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\\}");
+            var altMatcher = altPattern.matcher(body);
+            while (altMatcher.find()) {
+                var email = altMatcher.group(1);
+                if (email.endsWith("@users.noreply.github.com")) continue;
+                if (!verifiedEmails.contains(email)) {
+                    verifiedEmails.add(email);
+                    var obj = body.substring(altMatcher.start(), altMatcher.end());
+                    if (obj.contains("\"primary\"") && obj.contains("true")) {
+                        primaryEmail = email;
+                    }
+                }
             }
-            return null;
+
+            if (verifiedEmails.isEmpty()) {
+                return null;
+            }
+            if (verifiedEmails.size() == 1) {
+                return verifiedEmails.get(0);
+            }
+
+            var console = System.console();
+            if (console == null) {
+                return primaryEmail != null ? primaryEmail : verifiedEmails.get(0);
+            }
+            System.out.println("  Multiple verified emails found:");
+            for (int i = 0; i < verifiedEmails.size(); i++) {
+                var label = verifiedEmails.get(i);
+                if (label.equals(primaryEmail)) label += " (primary)";
+                System.out.println("    " + (i + 1) + ". " + label);
+            }
+            System.out.print("  Select email for git commits (1-" + verifiedEmails.size() + "): ");
+            var choice = console.readLine().strip();
+            try {
+                int idx = Integer.parseInt(choice) - 1;
+                if (idx >= 0 && idx < verifiedEmails.size()) {
+                    return verifiedEmails.get(idx);
+                }
+            } catch (NumberFormatException ignored) {}
+            return primaryEmail != null ? primaryEmail : verifiedEmails.get(0);
         } catch (Exception e) {
             return null;
         }
