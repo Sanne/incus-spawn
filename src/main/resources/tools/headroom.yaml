@@ -1,0 +1,44 @@
+name: headroom
+description: Headroom context optimization for Claude Code
+requires:
+  - claude
+
+packages:
+  - python3-pip
+
+run:
+  - loginctl enable-linger agentuser
+  - |
+    mkdir -p /etc/systemd/system/user@.service.d
+    cat > /etc/systemd/system/user@.service.d/xdg-runtime.conf << 'EOF'
+    [Service]
+    Environment=XDG_RUNTIME_DIR=/run/user/%i
+    EOF
+
+run_as_user:
+  - pip install --user --quiet 'headroom-ai[proxy,mcp]'
+  - claude mcp add headroom -s user -- headroom mcp serve
+  - |
+    mkdir -p ~/.config/systemd/user/default.target.wants
+    cat > ~/.config/systemd/user/headroom-proxy.service << 'EOF'
+    [Unit]
+    Description=Headroom optimization proxy
+    After=network.target
+
+    [Service]
+    ExecStart=%h/.local/bin/headroom proxy
+    Restart=on-failure
+    RestartSec=3
+
+    [Install]
+    WantedBy=default.target
+    EOF
+    ln -sf ../headroom-proxy.service ~/.config/systemd/user/default.target.wants/headroom-proxy.service
+
+env:
+  - name: ANTHROPIC_BASE_URL
+    value: "http://localhost:8787"
+
+verify: /home/agentuser/.local/bin/headroom --version
+
+ready: curl -sf http://localhost:8787/livez
