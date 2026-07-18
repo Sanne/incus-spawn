@@ -449,6 +449,18 @@ public class IncusClient {
     public record CowPoolProbe(boolean listed, String poolName) {
     }
 
+    /**
+     * @return {@code true} if the daemon has at least one storage pool configured.
+     *         Used to decide whether {@code incus admin init} still needs to run — unlike
+     *         {@link CowPoolProbe#listed()}, which only reports that the list call succeeded,
+     *         this reflects whether a pool actually exists.
+     */
+    public boolean hasStoragePool() {
+        var resp = http().get("/1.0/storage-pools");
+        if (!resp.isSuccess()) return false;
+        return resp.body().path("metadata").size() > 0;
+    }
+
     public CowPoolProbe probeCowPool() {
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return new CowPoolProbe(false, null);
@@ -778,12 +790,17 @@ public class IncusClient {
     }
 
     /**
-     * Ensure a bridge network exists with the given gateway IP.
-     * No-op if the network already exists.
+     * Create a bridge network with the given gateway IP if it doesn't already exist.
+     *
+     * @return {@code true} if the network was created, {@code false} if it already existed.
      */
-    public void ensureBridgeNetwork(String networkName, String gatewayIp) {
+    public boolean createBridgeIfMissing(String networkName, String gatewayIp) {
         var resp = http().get("/1.0/networks/" + networkName);
-        if (resp.isSuccess()) return;
+        if (resp.isSuccess()) return false;
+        if (resp.statusCode() != 404) {
+            throw new IncusException("Failed to check network " + networkName
+                    + " (HTTP " + resp.statusCode() + ")");
+        }
         var config = Map.of(
                 "ipv4.address", gatewayIp + "/24",
                 "ipv4.nat", "true",
@@ -793,6 +810,15 @@ public class IncusClient {
         if (!createResp.isSuccess()) {
             throw new IncusException("Failed to create network " + networkName
                     + ": " + createResp.body().path("error").asText("unknown error"));
+        }
+        return true;
+    }
+
+    public void deleteNetwork(String networkName) {
+        var resp = http().requestAndWait("DELETE", "/1.0/networks/" + networkName, null);
+        if (!resp.isSuccess() && resp.statusCode() != 404) {
+            throw new IncusException("Failed to delete network " + networkName
+                    + " (HTTP " + resp.statusCode() + ")");
         }
     }
 

@@ -410,6 +410,28 @@ class IncusApiTest {
         assertNull(found);
     }
 
+    // --- hasStoragePool REST response format ---
+    // Regression guard: a reachable daemon returns a successful (empty) list on a fresh
+    // install. "has pools" must key off list size, not merely a successful response —
+    // otherwise 'incus admin init' is skipped on every clean box (no default profile,
+    // no incusbr0). See InitCommand.initializeIncus.
+
+    @Test
+    void hasStoragePoolTrueWhenPoolsPresent() throws Exception {
+        var json = JSON.readTree("""
+                {"type": "sync", "metadata": ["/1.0/storage-pools/default"]}
+                """);
+        assertTrue(json.path("metadata").size() > 0);
+    }
+
+    @Test
+    void hasStoragePoolFalseWhenListEmpty() throws Exception {
+        var json = JSON.readTree("""
+                {"type": "sync", "metadata": []}
+                """);
+        assertFalse(json.path("metadata").size() > 0);
+    }
+
     // --- deviceAdd PATCH body format ---
 
     @Test

@@ -285,7 +285,7 @@ public class InitCommand extends BaseCommand {
                 "Generates a custom Certificate Authority for the MITM",
                 "proxy. Containers trust this CA so the proxy can intercept",
                 "HTTPS and inject credentials transparently.");
-        incus.ensureBridgeNetwork("incusbr0", VmManager.gatewayIp());
+        incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
         var gatewayIp = MitmProxy.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
         config.setIncusBridgeGateway(gatewayIp);
@@ -744,9 +744,10 @@ public class InitCommand extends BaseCommand {
             // Unknown error — continue anyway (daemon may start during init)
         }
 
-        // Skip admin init if Incus is already initialized (has storage pools)
-        var cowProbe = incus.probeCowPool();
-        if (cowProbe.listed()) {
+        // Skip admin init only if Incus genuinely already has a storage pool. Note: probeCowPool()
+        // .listed() means "the list call succeeded", NOT "a pool exists" — using it here skipped
+        // admin init on every fresh daemon, leaving no default profile / no incusbr0 bridge.
+        if (incus.hasStoragePool()) {
             System.out.println("  Incus already initialized.");
         } else {
             var exitCode = runHost("sudo", "incus", "admin", "init", "--minimal");
@@ -755,6 +756,16 @@ public class InitCommand extends BaseCommand {
             } else {
                 System.err.println("  Warning: Incus initialization may have failed. Check 'incus storage list'.");
             }
+        }
+
+        // 'incus admin init --minimal' normally creates the incusbr0 bridge, but on some
+        // distros/versions it doesn't — and when a storage pool already exists we skip the
+        // admin init entirely, so the bridge may never be created. Later steps (bridge subnet
+        // check, MITM proxy) hard-fail without it. Ensure it exists here; this is a no-op when
+        // the bridge is already present, and checkBridgeSubnet() fixes any VPN subnet conflict.
+        if (incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp())) {
+            System.out.println("  Bridge 'incusbr0' was missing — created it ("
+                    + VmManager.gatewayIp() + "/24).");
         }
 
         checkStorageDriver();
