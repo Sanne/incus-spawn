@@ -14,7 +14,7 @@
   <meta name="twitter:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
   <link rel="canonical" href="https://isx.run/">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="vendor/asciinema-player.css">
+  <link rel="stylesheet" href="vendor/asciinema-player-3.13.5.css">
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -113,10 +113,10 @@ sudo dnf install incus-spawn</code></pre>
       complete, disposable environments in seconds &mdash; each with its own filesystem,
       networking, and process tree.
     </p>
-    <pre><code>tpl-java  (stopped template, ~2GB)
+    <div class="cast-frame"><div class="cast-title">isx — copy-on-write branches</div><div class="term-static"><pre><code>tpl-java  (stopped template, ~2GB)
   &#9500;&#9472;&#9472; fix-nasty-bug    (running, uses ~50MB extra)
   &#9500;&#9472;&#9472; review-pr-423    (running, uses ~30MB extra)
-  &#9492;&#9472;&#9472; experiment       (stopped, uses ~10MB extra)</code></pre>
+  &#9492;&#9472;&#9472; experiment       (stopped, uses ~10MB extra)</code></pre></div></div>
     <div class="cast-frame"><div class="cast-title">isx — fork a machine, database included</div><div class="castbox" data-cast="branching"></div></div>
   </section>
 
@@ -128,10 +128,10 @@ sudo dnf install incus-spawn</code></pre>
       <code>git fetch fix-auth</code> from your host pulls commits straight out of the container.
       JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
     </p>
-    <pre><code># Inside the container, you make some commits...
+    <div class="cast-frame"><div class="cast-title">host — git fetch from a running instance</div><div class="term-static"><pre><code># Inside the container, you make some commits...
 # Back on the host:
 git fetch fix-auth
-git cherry-pick fix-auth/main</code></pre>
+git cherry-pick fix-auth/main</code></pre></div></div>
   </section>
 
   <section class="feature">
@@ -165,7 +165,7 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
 });
 </script>
 
-<script src="vendor/asciinema-player.min.js"></script>
+<script src="vendor/asciinema-player-3.13.5.min.js"></script>
 <script>
 (function () {
   var OPTS = {
@@ -176,7 +176,6 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
     realmachine: { poster: "npt:15.3" }
   };
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  var mono = "ui-monospace, Menlo, Consolas, 'Powerline Subset', monospace";
 
   function init(box) {
     var name = box.dataset.cast;
@@ -184,7 +183,6 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
     if (reduced) { opts.autoPlay = false; opts.loop = false; }
     var player = AsciinemaPlayer.create("casts/" + name + ".cast", box, {
       fit: "width", theme: "monokai", controls: true,
-      terminalFontFamily: mono,
       poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
     });
     if (!opts.loop) {
@@ -198,7 +196,7 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
   }
 
   var boxes = document.querySelectorAll(".castbox[data-cast]");
-  if (!("IntersectionObserver" in window)) { boxes.forEach ? boxes.forEach(init) : Array.prototype.forEach.call(boxes, init); return; }
+  if (!("IntersectionObserver" in window)) { Array.prototype.forEach.call(boxes, init); return; }
   var io = new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       if (e.isIntersecting) { io.unobserve(e.target); init(e.target); }

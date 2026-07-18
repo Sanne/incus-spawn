@@ -538,3 +538,13 @@ a:hover {
   padding: .55rem 1.1rem; color: #e6edf3; font-size: .95rem; }
 .castbox.done .endcard { display: flex; }
 .feature .cast-frame { margin-top: 1.4rem; }
+/* Static terminal snippets (branch tree, git commands): same frame chrome and
+   dark terminal look as the animated casts, contained so they scroll within the
+   frame on small screens instead of breaking the page layout. */
+.term-static { background: #121317; border-radius: 0 0 10px 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.feature .term-static pre { background: none; color: #d4d4d4; margin: 0;
+  padding: 1rem 1.25rem; border-radius: 0; overflow: visible;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem; line-height: 1.5; }
+.feature .term-static code { background: none; color: inherit; padding: 0; font-size: inherit; }
