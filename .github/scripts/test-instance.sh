@@ -122,6 +122,26 @@ assert "ISX_CONTAINER is set (matches hostname)" \
     su -l agentuser -c 'bash -c "source ~/.bashrc 2>/dev/null; test -n \"\$ISX_CONTAINER\""'
 echo ""
 
+# --- 7. TLS certificate quality (AKI/SKI extensions) ---
+# Python 3.14+ (OpenSSL 3.5+) rejects MITM leaf certs missing Authority
+# Key Identifier or Subject Key Identifier extensions.
+echo "[7] TLS Certificate Quality (AKI/SKI)"
+dnf install -y -q python3 openssl 2>/dev/null
+assert "Python accepts MITM proxy cert chain" \
+    python3 -c "
+import urllib.request
+urllib.request.urlopen(
+    'https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom',
+    timeout=30)
+"
+assert "leaf cert has Authority Key Identifier" \
+    bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
+        | openssl x509 -noout -text | grep -q 'Authority Key Identifier'"
+assert "leaf cert has Subject Key Identifier" \
+    bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
+        | openssl x509 -noout -text | grep -q 'Subject Key Identifier'"
+echo ""
+
 echo "========================================"
 printf " Results: \033[1m%d/%d passed\033[0m" "$PASS" "$TESTS"
 if [ "$FAIL" -gt 0 ]; then
