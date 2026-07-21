@@ -616,7 +616,7 @@ public class ListCommand extends BaseCommand {
 
         // F5: Open build menu
         if (key.isKey(KeyCode.F5)) {
-            if (checkBuildPreconditions(template.name)) return true;
+            if (showProxyError()) return true;
             openBuildMenu(template);
             return true;
         }
@@ -906,7 +906,18 @@ public class ListCommand extends BaseCommand {
                 mode = Mode.BROWSE;
                 return true;
             }
-            if (branchNetworkMode != NetworkMode.AIRGAP && showProxyError()) return true;
+            if (branchNetworkMode != NetworkMode.AIRGAP) {
+                if (showProxyError()) return true;
+                var def = imageDefs.get(branchSourceName);
+                if (def != null) {
+                    var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, n -> false);
+                    if (!credError.isEmpty()) {
+                        statusMessage = credError;
+                        mode = Mode.BROWSE;
+                        return true;
+                    }
+                }
+            }
             pendingAction = PendingAction.BRANCH;
             pendingActionTarget = name;
             tui.quit();
@@ -1305,7 +1316,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean handleConfirmBuildForBranchEvent(KeyEvent key, TuiRunner tui) {
         if (key.isChar('y') || key.isChar('Y') || key.isKey(KeyCode.ENTER)) {
-            if (checkBuildPreconditions(branchSourceName)) {
+            if (showProxyError()) {
                 if (mode == Mode.ERROR) {
                     return true;
                 }
@@ -1324,19 +1335,6 @@ public class ListCommand extends BaseCommand {
             mode = Mode.BROWSE;
         }
         return true;
-    }
-
-    private boolean checkBuildPreconditions(String templateName) {
-        if (showProxyError()) return true;
-        var def = imageDefs.get(templateName);
-        if (def != null) {
-            var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, incus::exists);
-            if (!credError.isEmpty()) {
-                statusMessage = credError;
-                return true;
-            }
-        }
-        return false;
     }
 
     // --- Rendering ---

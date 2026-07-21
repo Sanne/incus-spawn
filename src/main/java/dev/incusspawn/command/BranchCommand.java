@@ -4,6 +4,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
@@ -79,12 +80,21 @@ public class BranchCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
+        var defs = ImageDef.loadAll();
         var networkMode = resolveNetworkMode();
         if (networkMode != NetworkMode.AIRGAP) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return CommandResult.valueOf(1);
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewalldCheck.warnIfNotRunning();
             if (checkCaMismatch(resolvedSource)) return CommandResult.valueOf(1);
+            var def = defs.get(resolvedSource);
+            if (def != null) {
+                var credError = SpawnConfig.checkCredentials(def, defs, n -> false);
+                if (!credError.isEmpty()) {
+                    System.err.println("Error: " + credError);
+                    return CommandResult.valueOf(1);
+                }
+            }
         }
 
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
@@ -112,7 +122,7 @@ public class BranchCommand extends BaseCommand {
         } else {
             // Clean up inherited GUI devices/env from incus copy
             GuiPassthrough.removeGui(incus, name);
-            warnIfTemplateWantsGui(resolvedSource);
+            warnIfTemplateWantsGui(resolvedSource, defs);
         }
 
         var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
@@ -188,12 +198,11 @@ public class BranchCommand extends BaseCommand {
         return GuiPassthrough.configureGui(incus, name);
     }
 
-    private void warnIfTemplateWantsGui(String source) {
+    private void warnIfTemplateWantsGui(String source, java.util.Map<String, ImageDef> defs) {
         if ("true".equals(incus.configGet(source, Metadata.GUI_ENABLED))) {
             System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
             return;
         }
-        var defs = ImageDef.loadAll();
         var def = defs.get(source);
         if (def != null && def.isGui()) {
             System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");

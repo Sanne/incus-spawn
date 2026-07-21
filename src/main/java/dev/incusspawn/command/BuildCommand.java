@@ -415,18 +415,6 @@ public class BuildCommand extends BaseCommand {
      * is built first (recursively).
      */
     private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
-        // Check credentials once before the recursive parent chain.
-        // Treat outdated parents as needing a build so their tools are included in the check.
-        var credentialError = SpawnConfig.checkCredentials(imageDef, defs, name -> {
-            if (!incus.exists(name)) return false;
-            var def = defs.get(name);
-            return def == null || !isImageOutdated(name, def, incus, toolDefLoader, defs);
-        });
-        if (!credentialError.isEmpty()) {
-            System.err.println("Error: " + credentialError);
-            System.exit(1);
-        }
-
         var dnsOverrides = MitmProxy.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
