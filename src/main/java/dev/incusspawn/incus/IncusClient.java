@@ -306,43 +306,46 @@ public class IncusClient {
         }
 
         try {
-            var uidGid = getUserUidGid(container, user);
             var homeDir = "/home/" + user;
             var targetCwd = prep.workdir() != null ? prep.workdir() : homeDir;
 
-            List<String> shellArgs;
+            String innerScript;
             if (prep.shellCommand() != null && prep.autoAttachZmx()) {
                 var zmxCmd = zmxCommand(prep.shellCommand());
-                shellArgs = List.of("bash", "--login", "-c",
+                innerScript =
                         "if command -v zmx >/dev/null 2>&1; then "
                         + "exec zmx attach isx " + zmxCmd
-                        + "; fi; " + prep.shellCommand() + " || exec bash --login");
+                        + "; fi; " + prep.shellCommand() + " || exec bash --login";
             } else if (prep.shellCommand() != null) {
-                shellArgs = List.of("bash", "--login", "-c", prep.shellCommand() + " || exec bash --login");
-            } else if (inTmux) {
-                shellArgs = List.of("bash", "--login");
-            } else if (prep.autoAttachTmux()) {
-                shellArgs = List.of("bash", "--login", "-c",
+                innerScript = prep.shellCommand() + " || exec bash --login";
+            } else if (prep.autoAttachTmux() && !inTmux) {
+                innerScript =
                         "if command -v tmux >/dev/null 2>&1; then "
                         + "infocmp \"$TERM\" >/dev/null 2>&1 || export TERM=xterm-256color; "
-                        + "exec tmux new-session -A -s isx; fi; exec bash --login");
-            } else if (prep.autoAttachZmx()) {
-                shellArgs = List.of("bash", "--login", "-c",
+                        + "exec tmux new-session -A -s isx; fi; exec bash --login";
+            } else if (prep.autoAttachZmx() && !inTmux) {
+                innerScript =
                         "if command -v zmx >/dev/null 2>&1; then "
-                        + "exec zmx attach isx bash --login; fi; exec bash --login");
+                        + "exec zmx attach isx bash --login; fi; exec bash --login";
             } else {
-                shellArgs = List.of("bash", "--login");
+                innerScript = "exec bash --login";
             }
 
-            int uid = Integer.parseInt(uidGid.uid());
-            int gid = Integer.parseInt(uidGid.gid());
+            // Wrap in su -l so the session goes through PAM, which calls
+            // initgroups() (activating supplementary groups like incus-admin)
+            // and starts the systemd user instance (needed by rootless podman).
+            // su -l does cd $HOME, so we prepend cd to restore targetCwd.
+            var script = "cd " + Container.shellQuote(targetCwd) + " && "
+                    + LOGIN_PATH_PREFIX + innerScript;
+            var shellArgs = List.of("su", "-l", user, "-c", script);
+
             var env = Map.of("HOME", homeDir);
 
             for (int reconnectAttempt = 0; ; reconnectAttempt++) {
                 try {
                     var size = IncusApi.terminalSize();
-                    boolean connectionLost = http().execPty(container, shellArgs, uid, gid,
-                            targetCwd, env, size[0], size[1]);
+                    boolean connectionLost = http().execPty(container, shellArgs, 0, 0,
+                            null, env, size[0], size[1]);
                     if (!connectionLost) return;
                 } catch (IncusException e) {
                     if (!hasIOExceptionCause(e) || reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) throw e;
@@ -376,32 +379,6 @@ public class IncusClient {
             t = t.getCause();
         }
         return false;
-    }
-
-    private record UidGid(String uid, String gid) {}
-
-    private UidGid getUserUidGid(String container, String username) {
-        ExecResult result = null;
-        for (int i = 0; i < 5; i++) {
-            result = shellExec(container, "id", "-u", username);
-            if (result.success()) break;
-            try { Thread.sleep(1000); } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        if (result == null || !result.success()) {
-            throw new IncusException("Failed to get UID for user " + username);
-        }
-        var uid = result.stdout().strip();
-
-        result = shellExec(container, "id", "-g", username);
-        if (!result.success()) {
-            throw new IncusException("Failed to get GID for user " + username);
-        }
-        var gid = result.stdout().strip();
-
-        return new UidGid(uid, gid);
     }
 
     private static String hostExecCapture(String... command) {
