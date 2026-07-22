@@ -781,9 +781,10 @@ public class InitCommand extends BaseCommand {
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
             runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
-            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs");
+            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs", "size=100GiB");
             if (createResult == 0) {
-                System.out.println("  Created btrfs storage pool 'cow'.");
+                System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
+                System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
                 System.out.println("  All new instances will use it automatically.");
             } else {
                 System.out.println();
@@ -799,7 +800,7 @@ public class InitCommand extends BaseCommand {
                 System.err.println("  using significantly more disk space and taking longer to create.\u001B[0m");
                 System.err.println();
                 System.err.println("  You can create one manually later:");
-                System.err.println("    \u001B[1msudo incus storage create cow btrfs\u001B[0m");
+                System.err.println("    \u001B[1msudo incus storage create cow btrfs size=100GiB\u001B[0m");
                 System.err.println("  incus-spawn will automatically use it for all new instances.");
                 System.err.println();
 
