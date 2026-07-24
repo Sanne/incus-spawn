@@ -18,6 +18,12 @@ run:
     printf '[Socket]\nSocketMode=0666\n' \
       > /etc/systemd/system/podman.socket.d/override.conf
 
+files:
+  - path: /etc/containers/containers.conf
+    content: |
+      [engine]
+      cgroup_manager = "cgroupfs"
+
 env:
   - name: DOCKER_HOST
     value: unix:///var/run/docker.sock
