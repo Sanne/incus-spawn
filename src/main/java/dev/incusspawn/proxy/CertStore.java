@@ -87,8 +87,8 @@ public class CertStore {
             return false;
         }
         // Re-mint if the cert lacks AKI or SKI (pre-fix certs without RFC 5280 extensions).
-        if (cert.getExtensionValue("2.5.29.35") == null
-                || cert.getExtensionValue("2.5.29.14") == null) return false;
+        if (cert.getExtensionValue(CertificateAuthority.OID_AKI) == null
+                || cert.getExtensionValue(CertificateAuthority.OID_SKI) == null) return false;
         // Re-mint if expired or close to expiry.
         return cert.getNotAfter().after(new Date(System.currentTimeMillis() + RENEW_BEFORE_EXPIRY_MS));
     }
