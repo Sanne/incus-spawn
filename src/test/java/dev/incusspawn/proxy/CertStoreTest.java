@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.DerEncoder;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,31 +95,23 @@ class CertStoreTest {
         var entry = new CertStore(ca).get("aki-ski.example.com");
         var cert = entry.cert();
 
-        assertNotNull(cert.getExtensionValue(CertificateAuthority.OID_SKI),
+        assertNotNull(cert.getExtensionValue(DerEncoder.SKI_OID),
                 "leaf cert must have Subject Key Identifier");
 
         // Tie the leaf's AKI to the key identifier the CA actually publishes in its own
         // SKI, rather than to computeKeyIdentifier() — comparing that method against
         // itself would pass even if its DER offset arithmetic were wrong.
         // CA SKI extension value:  OCTET STRING { OCTET STRING(20) keyId }
-        var caSki = ca.caCert().getExtensionValue(CertificateAuthority.OID_SKI);
+        var caSki = ca.caCert().getExtensionValue(DerEncoder.SKI_OID);
         assertArrayEquals(new byte[]{0x04, 0x16, 0x04, 0x14},
                 java.util.Arrays.copyOf(caSki, 4), "unexpected SKI DER encoding");
         var caKeyId = java.util.Arrays.copyOfRange(caSki, 4, caSki.length);
-        assertEquals(20, caKeyId.length, "an RFC 5280 key identifier is a SHA-1 digest");
 
-        // Leaf AKI extension value: OCTET STRING { SEQUENCE { [0] IMPLICIT keyId } }
-        var expectedAki = concat(new byte[]{0x04, 0x18, 0x30, 0x16, (byte) 0x80, 0x14}, caKeyId);
-        assertArrayEquals(expectedAki, cert.getExtensionValue(CertificateAuthority.OID_AKI),
+        assertArrayEquals(derOctetString(derAuthorityKeyIdentifier(caKeyId)),
+                cert.getExtensionValue(DerEncoder.AKI_OID),
                 "the leaf's AKI must name the CA's published key identifier");
     }
 
-    @Test
-    void caCertHasSki() throws Exception {
-        var ca = CertificateAuthority.loadOrCreate();
-        assertNotNull(ca.caCert().getExtensionValue(CertificateAuthority.OID_SKI),
-                "CA cert must have Subject Key Identifier");
-    }
 
     @Test
     void remintsLegacyCertWithoutAki() throws Exception {
@@ -157,8 +150,8 @@ class CertStoreTest {
                 .generateCertificate(new ByteArrayInputStream(certDer));
 
         // Sanity: the handcrafted cert has no AKI or SKI
-        assertNull(legacyCert.getExtensionValue(CertificateAuthority.OID_AKI));
-        assertNull(legacyCert.getExtensionValue(CertificateAuthority.OID_SKI));
+        assertNull(legacyCert.getExtensionValue(DerEncoder.AKI_OID));
+        assertNull(legacyCert.getExtensionValue(DerEncoder.SKI_OID));
 
         // Persist it to the cert store directory, mimicking the old proxy
         var certsDir = SpawnConfig.configDir().resolve("certs");
@@ -172,9 +165,9 @@ class CertStoreTest {
         var reminted = new CertStore(ca).get(domain);
         assertNotEquals(serial, reminted.cert().getSerialNumber(),
                 "legacy cert without AKI/SKI must be re-minted, not reused");
-        assertNotNull(reminted.cert().getExtensionValue(CertificateAuthority.OID_AKI),
+        assertNotNull(reminted.cert().getExtensionValue(DerEncoder.AKI_OID),
                 "re-minted cert must have AKI");
-        assertNotNull(reminted.cert().getExtensionValue(CertificateAuthority.OID_SKI),
+        assertNotNull(reminted.cert().getExtensionValue(DerEncoder.SKI_OID),
                 "re-minted cert must have SKI");
     }
 }

@@ -80,15 +80,17 @@ public class CertStore {
 
     private boolean isUsable(CertEntry entry) {
         var cert = entry.cert();
+        // Re-mint if the cert lacks AKI or SKI (pre-fix certs without RFC 5280 extensions).
+        // Checked before the signature verify: a map lookup rules out the whole upgrade
+        // cohort without paying for an RSA verify per cert.
+        if (cert.getExtensionValue(DerEncoder.AKI_OID) == null
+                || cert.getExtensionValue(DerEncoder.SKI_OID) == null) return false;
         try {
             // Re-mint if the stored cert was signed by a different (rotated) CA.
             cert.verify(ca.caCert().getPublicKey());
         } catch (Exception e) {
             return false;
         }
-        // Re-mint if the cert lacks AKI or SKI (pre-fix certs without RFC 5280 extensions).
-        if (cert.getExtensionValue(CertificateAuthority.OID_AKI) == null
-                || cert.getExtensionValue(CertificateAuthority.OID_SKI) == null) return false;
         // Re-mint if expired or close to expiry.
         return cert.getNotAfter().after(new Date(System.currentTimeMillis() + RENEW_BEFORE_EXPIRY_MS));
     }
@@ -124,7 +126,8 @@ public class CertStore {
         }
     }
 
-    private static void trySetPerms(Path path, String perms) {
+    /** Shared with {@link CertificateAuthority}, which writes into the same config dir. */
+    static void trySetPerms(Path path, String perms) {
         try {
             Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(perms));
         } catch (Exception ignored) {

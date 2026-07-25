@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.DerEncoder;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,7 +11,6 @@ import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -49,7 +49,7 @@ class CertificateAuthorityTest {
     @Test
     void freshCaHasSki() {
         var ca = CertificateAuthority.loadOrCreate();
-        assertNotNull(ca.caCert().getExtensionValue(CertificateAuthority.OID_SKI),
+        assertNotNull(ca.caCert().getExtensionValue(DerEncoder.SKI_OID),
                 "a newly generated CA cert must carry a Subject Key Identifier");
         assertEquals("", CertificateAuthority.supersededCaFingerprint(),
                 "a CA that was never re-issued has no superseded fingerprint");
@@ -57,13 +57,12 @@ class CertificateAuthorityTest {
 
     @Test
     void legacyCaIsReissuedOverTheSameKey() throws Exception {
-        var legacy = writeLegacyCa();
-        var legacyCert = legacy.cert();
+        var legacyCert = writeLegacyCa();
 
         var ca = CertificateAuthority.loadOrCreate();
         var upgraded = ca.caCert();
 
-        assertNotNull(upgraded.getExtensionValue(CertificateAuthority.OID_SKI),
+        assertNotNull(upgraded.getExtensionValue(DerEncoder.SKI_OID),
                 "the re-issued CA cert must carry a Subject Key Identifier");
         assertArrayEquals(legacyCert.getPublicKey().getEncoded(), upgraded.getPublicKey().getEncoded(),
                 "the CA key pair must be reused, so existing leaf certs stay valid");
@@ -73,13 +72,13 @@ class CertificateAuthorityTest {
         assertEquals(legacyCert.getNotAfter(), upgraded.getNotAfter());
         // Self-signed roots are exempt from AKI (RFC 5280 §4.2.1.1) and OpenSSL's
         // strict mode only demands SKI of them.
-        assertNull(upgraded.getExtensionValue(CertificateAuthority.OID_AKI));
+        assertNull(upgraded.getExtensionValue(DerEncoder.AKI_OID));
         upgraded.verify(upgraded.getPublicKey());
     }
 
     @Test
     void reissuedCaIsPersistedAndSupersedesTheOldOne() throws Exception {
-        var legacyCert = writeLegacyCa().cert();
+        var legacyCert = writeLegacyCa();
         var legacyFp = fingerprint(legacyCert);
 
         var ca = CertificateAuthority.loadOrCreate();
@@ -107,15 +106,17 @@ class CertificateAuthorityTest {
     }
 
     @Test
-    void certsSignedBeforeTheReissueStillVerifyAfterIt() throws Exception {
-        var legacy = writeLegacyCa();
-        // A leaf issued by the CA as it stood before the upgrade.
-        var preUpgradeLeaf = signLeaf(legacy, "example.com");
+    void trustSnapshotClassifiesStoredFingerprints() throws Exception {
+        var legacyFp = fingerprint(writeLegacyCa());
+        var current = CertificateAuthority.loadOrCreate().caFingerprint();
 
-        var upgraded = CertificateAuthority.loadOrCreate().caCert();
-
-        assertDoesNotThrow(() -> preUpgradeLeaf.verify(upgraded.getPublicKey()),
-                "the key pair is reused, so leaf certs survive the upgrade and are not re-minted");
+        var trust = CertificateAuthority.CaTrust.snapshot();
+        assertEquals(CertificateAuthority.CaStatus.CURRENT, trust.classify(current));
+        assertEquals(CertificateAuthority.CaStatus.REPAIRABLE, trust.classify(legacyFp),
+                "an image built against the cert we re-issued is repairable, not foreign");
+        assertEquals(CertificateAuthority.CaStatus.FOREIGN, trust.classify("deadbeef"));
+        assertEquals(CertificateAuthority.CaStatus.UNKNOWN, trust.classify(""));
+        assertEquals(CertificateAuthority.CaStatus.UNKNOWN, trust.classify(null));
     }
 
     @Test
@@ -148,38 +149,8 @@ class CertificateAuthorityTest {
 
     // --- Helpers ---
 
-    /** Sign a minimal leaf with the legacy CA's key, as the CA would have before the upgrade. */
-    private X509Certificate signLeaf(LegacyCa ca, String domain) throws Exception {
-        var keyGen = KeyPairGenerator.getInstance("RSA");
-        keyGen.initialize(2048);
-        var leafKey = keyGen.generateKeyPair();
-        var notBefore = new Date(System.currentTimeMillis() - 86400_000L);
-        var algId = sha256WithRsaAid();
-        var tbs = derSequence(concat(
-                derExplicit(0, derInteger(BigInteger.valueOf(2))),
-                derInteger(new BigInteger(128, new SecureRandom())),
-                algId,
-                ca.cert().getSubjectX500Principal().getEncoded(),
-                derSequence(concat(derUtcTime(notBefore),
-                        derUtcTime(new Date(notBefore.getTime() + 366L * 24 * 60 * 60 * 1000)))),
-                derDistinguishedName(domain),
-                leafKey.getPublic().getEncoded(),
-                derExplicit(3, derSequence(concat(
-                        derExtension(oidBasicConstraints(), true,
-                                derSequence(new byte[]{0x01, 0x01, 0x00})),
-                        derExtension(oidSubjectAltName(), false, derSequence(derDnsName(domain)))
-                )))
-        ));
-        var sig = Signature.getInstance("SHA256withRSA");
-        sig.initSign(ca.keyPair().getPrivate());
-        sig.update(tbs);
-        var der = derSequence(concat(tbs, algId, derBitString(sig.sign())));
-        return (X509Certificate) CertificateFactory.getInstance("X.509")
-                .generateCertificate(new ByteArrayInputStream(der));
-    }
-
     /** Write a CA key + cert in the pre-SKI shape: basicConstraints + keyUsage only. */
-    private LegacyCa writeLegacyCa() throws Exception {
+    private X509Certificate writeLegacyCa() throws Exception {
         var keyGen = KeyPairGenerator.getInstance("RSA");
         keyGen.initialize(2048);
         var keyPair = keyGen.generateKeyPair();
@@ -216,15 +187,13 @@ class CertificateAuthorityTest {
 
         var cert = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(certDer));
-        assertNull(cert.getExtensionValue(CertificateAuthority.OID_SKI),
+        assertNull(cert.getExtensionValue(DerEncoder.SKI_OID),
                 "sanity: the handcrafted legacy CA must have no SKI");
-        return new LegacyCa(keyPair, cert);
+        return cert;
     }
 
     private static String fingerprint(X509Certificate cert) throws Exception {
         return HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
     }
-
-    private record LegacyCa(KeyPair keyPair, X509Certificate cert) {}
 }
