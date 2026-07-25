@@ -9,6 +9,7 @@ import dev.incusspawn.incus.IncusException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
@@ -23,8 +24,10 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.JksOptions;
+import io.vertx.core.net.SocketAddress;
 
 import java.io.ByteArrayOutputStream;
+import java.net.InetAddress;
 import java.net.URI;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -197,6 +200,16 @@ public class MitmProxy {
     // CA fingerprint computed at startup for the health endpoint
     private String caFingerprint = "";
     private volatile boolean dnsConfigured;
+    private static final long DNS_CACHE_TTL_MS = 60_000;
+    private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
+        static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
+        static DnsEntry resolved(String ip) {
+            return new DnsEntry(ip, System.currentTimeMillis() + DNS_CACHE_TTL_MS, null);
+        }
+        boolean isValid() { return ip != null && System.currentTimeMillis() < expiresAt; }
+        boolean isResolving() { return inflight != null; }
+    }
+    private final ConcurrentHashMap<String, DnsEntry> dns = new ConcurrentHashMap<>();
 
     private final String healthBindAddress;
 
@@ -693,12 +706,42 @@ public class MitmProxy {
                 originalDump, originalBody);
     }
 
+    private Future<HttpClientRequest> requestWithAsyncDns(RequestOptions options) {
+        return resolveHost(options.getHost()).compose(ip -> {
+            options.setServer(SocketAddress.inetSocketAddress(options.getPort(), ip));
+            return upstreamClient.request(options);
+        });
+    }
+
+    // JVM resolver is blocking (Quarkus use-async-dns=false); resolve on a worker thread.
+    // Single map with compute() for atomic state transitions — no window between
+    // removing an inflight entry and inserting the cached result.
+    private Future<String> resolveHost(String host) {
+        var entry = dns.compute(host, (h, existing) -> {
+            if (existing != null && (existing.isValid() || existing.isResolving()))
+                return existing;
+            var future = vertx.<String>executeBlocking(() ->
+                    InetAddress.getByName(h).getHostAddress(), false
+            ).andThen(ar -> {
+                if (ar.succeeded()) {
+                    dns.put(h, DnsEntry.resolved(ar.result()));
+                } else {
+                    dns.remove(h);
+                }
+            });
+            return DnsEntry.resolving(future);
+        });
+        return entry.isValid()
+                ? Future.succeededFuture(entry.ip())
+                : entry.inflight();
+    }
+
     private void sendApiRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
                                 String upstreamHost, String domain,
                                 byte[] bodyBytes, boolean isVertexRequest,
                                 boolean bodyRewritten, boolean isRetry,
                                 String originalDump, byte[] originalBody) {
-        upstreamClient.request(requestOptions).onSuccess(upReq -> {
+        requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
             if (!injectHeaders(upReq, domain, upstreamHost, isVertexRequest)) {
                 sendError(clientReq.response(), 502, "Failed to obtain upstream credentials");
@@ -838,7 +881,7 @@ public class MitmProxy {
                 .setPort(443)
                 .setURI(clientReq.uri());
 
-        upstreamClient.request(options).onSuccess(upReq -> {
+        requestWithAsyncDns(options).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Connection", "close");
             // Don't let upstream gzip the response — we cache raw bytes
@@ -922,7 +965,7 @@ public class MitmProxy {
                 .setPort(redirectPort)
                 .setURI(redirectPath);
 
-        upstreamClient.request(redirectOptions).onSuccess(redReq -> {
+        requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.putHeader("Host", redirectHost);
             redReq.putHeader("Connection", "close");
 
@@ -1227,7 +1270,7 @@ public class MitmProxy {
                 .setPort(443)
                 .setURI(clientReq.uri());
 
-        upstreamClient.request(options).onSuccess(upReq -> {
+        requestWithAsyncDns(options).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
 
             sendWithBody(clientReq, upReq).onSuccess(upResp -> {
