@@ -39,6 +39,12 @@ public final class CidrUtils {
         return new Cidr(network, prefix);
     }
 
+    public static String deriveSubnet(String gatewayIp) {
+        long ip = ipToLong(gatewayIp);
+        long network = ip & networkMask(24);
+        return longToIp(network) + "/24";
+    }
+
     public static boolean overlaps(Cidr a, Cidr b) {
         int shorter = Math.min(a.prefixLen(), b.prefixLen());
         long mask = networkMask(shorter);

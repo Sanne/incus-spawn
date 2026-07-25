@@ -91,6 +91,13 @@ class CidrUtilsTest {
     }
 
     @Test
+    void deriveSubnetFromGateway() {
+        assertEquals("10.166.11.0/24", CidrUtils.deriveSubnet("10.166.11.1"));
+        assertEquals("172.20.0.0/24", CidrUtils.deriveSubnet("172.20.0.1"));
+        assertEquals("192.168.1.0/24", CidrUtils.deriveSubnet("192.168.1.254"));
+    }
+
+    @Test
     void overlapsReturnsFalseForAdjacentSubnets() {
         var a = CidrUtils.parseCidr("10.0.0.0/24");
         var b = CidrUtils.parseCidr("10.0.1.0/24");

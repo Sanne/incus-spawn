@@ -3,7 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
-import dev.incusspawn.incus.FirewalldCheck;
+import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -48,7 +48,7 @@ public class InstancePrep {
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return null;
             BridgeSubnetCheck.warnIfConflict(incus);
-            FirewalldCheck.warnIfNotRunning();
+            FirewallDetector.warnIfNotRunning();
             fixCaMismatch(incus, name);
         }
 
