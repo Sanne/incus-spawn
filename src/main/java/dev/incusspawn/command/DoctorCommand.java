@@ -546,6 +546,7 @@ public class DoctorCommand extends BaseCommand {
         try {
             var incus = RuntimeServices.incus();
             var currentCaFp = CertificateAuthority.exists() ? CertificateAuthority.currentCaFingerprint() : "";
+            var supersededCaFp = CertificateAuthority.supersededCaFingerprint();
             var currentVersion = BuildInfo.instance().version();
             var allDefs = ImageDef.loadAll();
 
@@ -556,8 +557,13 @@ public class DoctorCommand extends BaseCommand {
 
                 var storedCaFp = incus.configGet(name, Metadata.CA_FINGERPRINT);
                 if (!storedCaFp.isEmpty() && !currentCaFp.isEmpty() && !storedCaFp.equals(currentCaFp)) {
-                    findings.add(Finding.warn("Template " + name + " CA mismatch",
-                            "template CA differs from current",
+                    // Same key, re-issued cert (SKI upgrade): instances self-repair on first
+                    // use, so a rebuild only refreshes the template's own baked copy.
+                    var superseded = storedCaFp.equals(supersededCaFp);
+                    findings.add(Finding.warn("Template " + name
+                                    + (superseded ? " has the pre-upgrade CA cert" : " CA mismatch"),
+                            superseded ? "instances are fixed automatically on first use"
+                                    : "template CA differs from current",
                             new Remediation("Rebuild: isx build " + name, false, null)));
                 }
 

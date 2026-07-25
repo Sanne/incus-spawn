@@ -225,6 +225,18 @@ public class BranchCommand extends BaseCommand {
         var localCaFp = CertificateAuthority.currentCaFingerprint();
         if (localCaFp.isEmpty() || imageCaFp.equals(localCaFp)) return false;
         var profile = incus.configGet(source, Metadata.PROFILE);
+
+        // A superseded CA is not a rotated one: the certificate was re-issued over the
+        // same key to add the Subject Key Identifier, so the template's leaf certs and
+        // trust chain are still sound — only its baked copy of the CA cert is stale, and
+        // that is pushed into the instance on first use. Branching stays allowed.
+        if (imageCaFp.equals(CertificateAuthority.supersededCaFingerprint())) {
+            System.err.println("Note: '" + source + "' still carries the pre-upgrade MITM CA "
+                    + "certificate. The new one is installed into the instance on first use."
+                    + (profile.isEmpty() ? "" : " Rebuild when convenient: isx build " + profile));
+            return false;
+        }
+
         var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
         System.err.println(sep);
         System.err.println("\033[1;33mCA certificate mismatch\033[0m");
