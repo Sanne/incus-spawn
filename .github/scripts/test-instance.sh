@@ -126,13 +126,21 @@ echo ""
 # Python 3.14+ (OpenSSL 3.5+) rejects MITM leaf certs missing Authority
 # Key Identifier or Subject Key Identifier extensions.
 echo "[7] TLS Certificate Quality (AKI/SKI)"
-dnf install -y -q python3 openssl 2>/dev/null
-assert "Python accepts MITM proxy cert chain" \
+# Installed rather than assumed: tpl-minimal ships neither. Asserted so a failure
+# here is reported as a missing tool, not as three confusing cert failures.
+assert "python3 and openssl installable through the proxy" \
+    dnf install -y -q python3 openssl
+
+# VERIFY_X509_STRICT is forced rather than relying on the container Python's
+# default, so this pins the regression on any Python (3.13+ enables it itself).
+assert "strict TLS validation accepts the MITM proxy chain" \
     python3 -c "
-import urllib.request
+import ssl, urllib.request
+ctx = ssl.create_default_context()
+ctx.verify_flags |= ssl.VERIFY_X509_STRICT
 urllib.request.urlopen(
     'https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom',
-    timeout=30)
+    context=ctx, timeout=30)
 "
 assert "leaf cert has Authority Key Identifier" \
     bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
@@ -140,6 +148,12 @@ assert "leaf cert has Authority Key Identifier" \
 assert "leaf cert has Subject Key Identifier" \
     bash -c "echo | openssl s_client -connect repo1.maven.org:443 2>/dev/null \
         | openssl x509 -noout -text | grep -q 'Subject Key Identifier'"
+# The trust anchor is checked too: strict validation rejects a CA cert without an
+# SKI, so a leaf-only fix leaves every pre-existing install broken.
+assert "trusted MITM CA cert has Subject Key Identifier" \
+    bash -c "openssl x509 -noout -text \
+        -in /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt \
+        | grep -q 'Subject Key Identifier'"
 echo ""
 
 echo "========================================"
