@@ -4,8 +4,12 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.FirewalldCheck;
+import dev.incusspawn.incus.FirewallDetector;
+import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.MitmProxy;
@@ -37,6 +41,7 @@ import java.util.regex.Pattern;
 public class InitCommand extends BaseCommand {
 
     private IncusClient incus;
+    private boolean useUfw;
 
     private static final String CYAN = "\u001B[36m";
     private static final String BOLD = "\u001B[1m";
@@ -359,7 +364,6 @@ public class InitCommand extends BaseCommand {
         if (!commandExists("openssl"))      missing.add("openssl");
         if (!commandExists("ssh-keygen"))  missing.add("openssh-clients");
         if (!commandExists("btrfs"))       missing.add("btrfs-progs");
-        if (!commandExists("firewall-cmd")) missing.add("firewalld");
         if (missing.isEmpty()) return;
 
         System.out.println("Installing dependencies: " + String.join(", ", missing) + "...");
@@ -468,39 +472,62 @@ public class InitCommand extends BaseCommand {
 
     private void configureFirewall() {
         startStep("Firewall Configuration",
-                "Configures firewalld so containers can reach the internet",
-                "and resolve DNS. Adds the Incus bridge to the trusted zone,",
-                "enables NAT masquerading, and sets up FORWARD rules for",
-                "Docker coexistence.");
+                "Configures the host firewall so containers can reach the",
+                "internet and resolve DNS. Detects whether firewalld or UFW",
+                "is active, adds the Incus bridge to a trusted zone, enables",
+                "NAT masquerading, and sets up FORWARD rules.");
 
-        // Check if firewalld is available
-        var fwCheck = runHost("which", "firewall-cmd");
-        if (fwCheck != 0) {
-            System.err.println("  Warning: firewall-cmd not found. Skipping firewall configuration.");
-            System.err.println("  Containers may not have network/DNS access.");
-            return;
-        }
-
-        // Ensure firewalld is actually running — permanent rules are written to disk
-        // but not loaded into the kernel unless the daemon is active.
-        var activeCheck = runHostQuiet("systemctl", "is-active", "--quiet", "firewalld");
-        if (activeCheck != 0) {
-            System.out.println("  firewalld is installed but not running. Starting and enabling it...");
-            var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
-            if (startResult != 0) {
-                System.err.println("  Error: failed to start firewalld.");
-                System.err.println("  Run manually: sudo systemctl enable --now firewalld");
-                System.err.println("  Then re-run: isx init");
-                return;
+        var detection = FirewallDetector.detect();
+        switch (detection) {
+            case DetectionResult.UseFirewalld fwd -> {
+                if (fwd.needsStart()) {
+                    System.out.println("  firewalld is installed but not running. Starting and enabling it...");
+                    var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
+                    if (startResult != 0) {
+                        System.err.println("  Error: failed to start firewalld.");
+                        System.err.println("  Run manually: sudo systemctl enable --now firewalld");
+                        System.err.println("  Then re-run: isx init");
+                        return;
+                    }
+                    System.out.println("  firewalld started and enabled.");
+                    if (ProxyService.isActive()) {
+                        System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
+                        ProxyService.restart();
+                    }
+                }
+                configureFirewalld();
             }
-            System.out.println("  firewalld started and enabled.");
-            if (ProxyService.isActive()) {
-                System.out.println("  Restarting proxy service so it picks up the restored firewall rules...");
-                ProxyService.restart();
+            case DetectionResult.UseUfw u -> {
+                useUfw = true;
+                configureUfw();
+            }
+            case DetectionResult.NeitherInstalled n -> {
+                System.out.println("  No firewall detected. Installing firewalld...");
+                var installCmd = detectInstallCommand();
+                if (installCmd == null) {
+                    System.err.println("  Error: could not detect package manager.");
+                    return;
+                }
+                var cmd = new java.util.ArrayList<String>();
+                cmd.add("sudo");
+                cmd.addAll(java.util.List.of(installCmd));
+                cmd.add("firewalld");
+                var installResult = runHost(cmd.toArray(String[]::new));
+                if (installResult != 0) {
+                    System.err.println("  Error: failed to install firewalld.");
+                    return;
+                }
+                var startResult = runHost("sudo", "systemctl", "enable", "--now", "firewalld");
+                if (startResult != 0) {
+                    System.err.println("  Error: failed to start firewalld.");
+                    return;
+                }
+                configureFirewalld();
             }
         }
+    }
 
-        // Check current firewall state to avoid unnecessary modifications
+    private void configureFirewalld() {
         var trustedZoneOutput = captureOutput("sudo", "firewall-cmd", "--zone=trusted", "--list-all");
         boolean hasInterface = trustedZoneOutput.contains("incusbr0");
         boolean hasMasquerade = trustedZoneOutput.contains("masquerade: yes");
@@ -510,7 +537,7 @@ public class InitCommand extends BaseCommand {
         boolean hasForwardOut = FirewalldCheck.isForwardRulePresent(directRulesOutput, "-o", "incusbr0");
 
         if (hasInterface && hasMasquerade && hasForwardIn && hasForwardOut) {
-            System.out.println("  Firewall already configured.");
+            System.out.println("  Firewall already configured (firewalld).");
             return;
         }
 
@@ -551,7 +578,62 @@ public class InitCommand extends BaseCommand {
             System.err.println("  Warning: firewall reload failed. Run: sudo firewall-cmd --reload");
             return;
         }
-        System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading.");
+        System.out.println("  Firewall configured: incusbr0 in trusted zone with masquerading (firewalld).");
+    }
+
+    private void configureUfw() {
+        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var subnet = CidrUtils.deriveSubnet(gatewayIp);
+
+        var beforeRules = UfwCheck.readBeforeRules();
+        if (beforeRules.isEmpty()) {
+            System.err.println("  Error: could not read /etc/ufw/before.rules.");
+            System.err.println("  Skipping UFW configuration to avoid overwriting existing rules.");
+            return;
+        }
+        boolean hasForward = UfwCheck.hasForwardRules(beforeRules);
+        boolean hasMasquerade = UfwCheck.hasMasquerade(beforeRules, subnet);
+
+        if (hasForward && hasMasquerade) {
+            System.out.println("  Firewall already configured (UFW).");
+            return;
+        }
+
+        System.out.println("  Allowing traffic on incusbr0...");
+        runHostQuiet("sudo", "ufw", "allow", "in", "on", "incusbr0");
+
+        var content = beforeRules;
+        if (!hasMasquerade) {
+            System.out.println("  Adding NAT masquerading for container internet access...");
+            var natBlock = UfwCheck.generateNatBlockWithoutRedirect(subnet);
+            content = UfwCheck.insertNatBlock(content, natBlock);
+        }
+        if (!hasForward) {
+            System.out.println("  Adding FORWARD rules for Incus bridge...");
+            var filterInsert = UfwCheck.generateFilterInsert();
+            content = UfwCheck.insertFilterRules(content, filterInsert);
+        }
+
+        if (!content.equals(beforeRules)) {
+            writeBeforeRules(content);
+            var reloadResult = runHostQuiet("sudo", "ufw", "reload");
+            if (reloadResult != 0) {
+                System.err.println("  Warning: UFW reload failed. Run: sudo ufw reload");
+                return;
+            }
+        }
+        System.out.println("  Firewall configured: incusbr0 trusted with masquerading (UFW).");
+    }
+
+    private void writeBeforeRules(String content) {
+        try {
+            var tempFile = java.nio.file.Files.createTempFile("isx-before-rules-", ".tmp");
+            java.nio.file.Files.writeString(tempFile, content);
+            runHostQuiet("sudo", "cp", tempFile.toString(), UfwCheck.BEFORE_RULES.toString());
+            java.nio.file.Files.deleteIfExists(tempFile);
+        } catch (java.io.IOException e) {
+            System.err.println("  Error writing before.rules: " + e.getMessage());
+        }
     }
 
     private void configureMitmProxy() {
@@ -568,7 +650,25 @@ public class InitCommand extends BaseCommand {
             config.save();
         }
 
-        // Check if the PREROUTING redirect rule already exists
+        if (useUfw) {
+            configureMitmProxyUfw(gatewayIp);
+        } else {
+            configureMitmProxyFirewalld(gatewayIp);
+        }
+
+        // Clean up old sysctl config from previous installs (no longer needed)
+        runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
+
+        // Generate CA certificate if it doesn't exist
+        if (CertificateAuthority.exists()) {
+            System.out.println("  MITM CA certificate already exists.");
+        } else {
+            CertificateAuthority.loadOrCreate();
+        }
+        System.out.println("  MITM proxy configured.");
+    }
+
+    private void configureMitmProxyFirewalld(String gatewayIp) {
         var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
         boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, MitmProxy.DEFAULT_MITM_PORT);
 
@@ -584,7 +684,6 @@ public class InitCommand extends BaseCommand {
                     String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
                     String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
-            // Remove overly broad redirect rule from previous installs (missing -d gateway)
             runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-p", "tcp", "--dport",
@@ -593,17 +692,29 @@ public class InitCommand extends BaseCommand {
                     String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
             runHostQuiet("sudo", "firewall-cmd", "--reload");
         }
+    }
 
-        // Clean up old sysctl config from previous installs (no longer needed)
-        runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
-
-        // Generate CA certificate if it doesn't exist
-        if (CertificateAuthority.exists()) {
-            System.out.println("  MITM CA certificate already exists.");
-        } else {
-            CertificateAuthority.loadOrCreate();
+    private void configureMitmProxyUfw(String gatewayIp) {
+        var beforeRules = UfwCheck.readBeforeRules();
+        if (beforeRules.isEmpty()) {
+            System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
+            return;
         }
-        System.out.println("  MITM proxy configured.");
+        boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+
+        if (hasRedirect) {
+            System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
+                    + MitmProxy.DEFAULT_MITM_PORT + ").");
+        } else {
+            System.out.println("  Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
+                    + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
+            var subnet = CidrUtils.deriveSubnet(gatewayIp);
+            var natBlock = UfwCheck.generateNatBlock(gatewayIp, subnet,
+                    MitmProxy.CONTAINER_FACING_PORT, MitmProxy.DEFAULT_MITM_PORT);
+            var content = UfwCheck.insertNatBlock(beforeRules, natBlock);
+            writeBeforeRules(content);
+            runHostQuiet("sudo", "ufw", "reload");
+        }
     }
 
     private void setupSshKeyPair() {

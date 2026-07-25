@@ -14,7 +14,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
-import dev.incusspawn.incus.FirewalldCheck;
+import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
@@ -1379,7 +1379,7 @@ public class BuildCommand extends BaseCommand {
             }
             if (attempt == 9) {
                 var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-                var fwDiagnostic = FirewalldCheck.detectDiagnostic();
+                var fwDiagnostic = FirewallDetector.detectDiagnostic();
                 var message = "DNS resolution is not working. Check your network setup.";
                 if (diagnostic != null) {
                     message += "\n\n" + diagnostic;

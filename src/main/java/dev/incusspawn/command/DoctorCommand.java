@@ -8,6 +8,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FirewalldCheck;
+import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -509,13 +510,24 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkIptablesRedirect() {
-        if (!FirewalldCheck.isInstalled()) {
-            return Finding.warn("Firewall redirect", "(firewalld not installed, cannot verify)", null);
+        if (FirewalldCheck.isActive()) {
+            return checkFirewalldRedirect();
         }
-        if (!FirewalldCheck.isActive()) {
-            return Finding.fail("Firewall not running", "(iptables redirect requires firewalld)",
+        if (UfwCheck.isActive()) {
+            return checkUfwRedirect();
+        }
+        if (FirewalldCheck.isInstalled()) {
+            return Finding.fail("Firewall not running", "(firewalld installed but inactive)",
                     new Remediation("Enable firewalld and re-run 'isx init'", false, null));
         }
+        if (UfwCheck.isInstalled()) {
+            return Finding.fail("Firewall not running", "(UFW installed but inactive)",
+                    new Remediation("Enable UFW and re-run 'isx init'", false, null));
+        }
+        return Finding.warn("Firewall redirect", "(no firewall installed, cannot verify)", null);
+    }
+
+    private Finding checkFirewalldRedirect() {
         try {
             var pb = new ProcessBuilder("firewall-cmd", "--direct", "--get-all-rules");
             pb.redirectErrorStream(true);
@@ -526,10 +538,26 @@ public class DoctorCommand extends BaseCommand {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not query firewalld rules)", null);
             }
             if (isPreRoutingRulePresent(output, MitmProxy.DEFAULT_MITM_PORT)) {
-                return Finding.ok("Firewall PREROUTING redirect", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+                return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
             }
             return Finding.fail("Firewall PREROUTING redirect", "rule not found",
                     new Remediation("Re-run 'isx init' to configure iptables rules", false, null));
+        } catch (Exception e) {
+            return Finding.warn("Firewall PREROUTING redirect", "(check failed: " + e.getMessage() + ")", null);
+        }
+    }
+
+    private Finding checkUfwRedirect() {
+        try {
+            var beforeRules = UfwCheck.readBeforeRules();
+            if (beforeRules.isEmpty()) {
+                return Finding.warn("Firewall PREROUTING redirect", "(could not read /etc/ufw/before.rules)", null);
+            }
+            if (UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT)) {
+                return Finding.ok("Firewall PREROUTING redirect (UFW)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+            }
+            return Finding.fail("Firewall PREROUTING redirect", "rule not found in /etc/ufw/before.rules",
+                    new Remediation("Re-run 'isx init' to configure firewall rules", false, null));
         } catch (Exception e) {
             return Finding.warn("Firewall PREROUTING redirect", "(check failed: " + e.getMessage() + ")", null);
         }
