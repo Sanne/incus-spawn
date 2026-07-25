@@ -650,6 +650,13 @@ public class BuildCommand extends BaseCommand {
                 "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to fix DNS after copy");
 
+        // The copy carries the parent's trust store, which may predate a CA re-issue
+        // (only buildFromScratch installs the anchor). Refresh it before the first
+        // proxied request, or every TLS fetch in this build talks to a stale anchor.
+        if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
+            System.out.println("Refreshed MITM proxy CA certificate from parent image...");
+        }
+
         waitForNetwork(buildName);
 
         mountDnfCache(buildName, effectiveVm);
