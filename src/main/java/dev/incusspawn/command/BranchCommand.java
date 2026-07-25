@@ -15,6 +15,7 @@ import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -220,17 +221,16 @@ public class BranchCommand extends BaseCommand {
     }
 
     private boolean checkCaMismatch(String source) {
-        var imageCaFp = incus.configGet(source, Metadata.CA_FINGERPRINT);
-        if (imageCaFp.isEmpty()) return false;
-        var localCaFp = CertificateAuthority.currentCaFingerprint();
-        if (localCaFp.isEmpty() || imageCaFp.equals(localCaFp)) return false;
+        var status = CertificateAuthority.CaTrust.snapshot()
+                .classify(incus.configGet(source, Metadata.CA_FINGERPRINT));
+        if (status != CaStatus.FOREIGN && status != CaStatus.REPAIRABLE) return false;
         var profile = incus.configGet(source, Metadata.PROFILE);
 
-        // A superseded CA is not a rotated one: the certificate was re-issued over the
-        // same key to add the Subject Key Identifier, so the template's leaf certs and
-        // trust chain are still sound — only its baked copy of the CA cert is stale, and
-        // that is pushed into the instance on first use. Branching stays allowed.
-        if (imageCaFp.equals(CertificateAuthority.supersededCaFingerprint())) {
+        // REPAIRABLE is let through, FOREIGN is not — and the difference is provenance, not
+        // repairability: InstancePrep pushes the current CA into the instance on first use
+        // either way. But a CA this host never issued usually means a deleted config dir or
+        // a ~/.config copied from another machine, which is worth stopping for.
+        if (status == CaStatus.REPAIRABLE) {
             System.err.println("Note: '" + source + "' still carries the pre-upgrade MITM CA "
                     + "certificate. The new one is installed into the instance on first use."
                     + (profile.isEmpty() ? "" : " Rebuild when convenient: isx build " + profile));

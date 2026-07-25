@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
@@ -18,6 +19,7 @@ import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.interfaces.RSAPublicKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
@@ -46,11 +48,6 @@ public class CertificateAuthority {
      */
     private static final long BACKDATE_MS = 2L * 24 * 60 * 60 * 1000;
 
-    /** Subject Key Identifier (2.5.29.14) — required on CA certs by strict validators. */
-    static final String OID_SKI = "2.5.29.14";
-    /** Authority Key Identifier (2.5.29.35) — required on leaf certs by strict validators. */
-    static final String OID_AKI = "2.5.29.35";
-
     private static Path caKeyFile() { return SpawnConfig.configDir().resolve("ca.key"); }
     private static Path caCertFile() { return SpawnConfig.configDir().resolve("ca.crt"); }
 
@@ -61,6 +58,9 @@ public class CertificateAuthority {
     private static Path caSupersededCertFile() {
         return SpawnConfig.configDir().resolve("ca-superseded.crt");
     }
+
+    /** Set once the SKI upgrade has failed, so it is attempted at most once per process. */
+    private static volatile boolean reissueFailed;
 
     private final PrivateKey caKey;
     private final X509Certificate caCert;
@@ -106,11 +106,6 @@ public class CertificateAuthority {
             var expiry = new Date(notBefore.getTime() + 366L * 24 * 60 * 60 * 1000);
             var serial = new BigInteger(128, new SecureRandom());
 
-            var caKeyId = computeKeyIdentifier(caCert.getPublicKey());
-            // AKI value: SEQUENCE { [0] IMPLICIT KeyIdentifier }
-            var akiValue = derSequence(concat(
-                    new byte[]{(byte) 0x80}, derLength(caKeyId.length), caKeyId));
-
             var algId = sha256WithRsaAid();
             var tbsCert = derSequence(concat(
                     derExplicit(0, derInteger(BigInteger.valueOf(2))),   // v3
@@ -127,22 +122,13 @@ public class CertificateAuthority {
                                     derSequence(derDnsName(domain))),
                             derExtension(oidSubjectKeyIdentifier(), false,
                                     derOctetString(computeKeyIdentifier(keyPair.getPublic()))),
-                            derExtension(oidAuthorityKeyIdentifier(), false, akiValue)
+                            derExtension(oidAuthorityKeyIdentifier(), false,
+                                    derAuthorityKeyIdentifier(computeKeyIdentifier(caCert.getPublicKey())))
                     )))
             ));
 
-            var sig = java.security.Signature.getInstance("SHA256withRSA");
-            sig.initSign(caKey);
-            sig.update(tbsCert);
-
-            var certDer = derSequence(concat(
-                    tbsCert,
-                    algId,
-                    derBitString(sig.sign())
-            ));
-
             var cert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(certDer));
+                    .generateCertificate(new ByteArrayInputStream(signAndWrap(tbsCert, caKey)));
             return new CertEntry(keyPair.getPrivate(), cert);
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate cert for " + domain + ": " + e.getMessage(), e);
@@ -174,15 +160,48 @@ public class CertificateAuthority {
         return loadOrCreate().caFingerprint();
     }
 
+    /** How an image's stored CA fingerprint relates to the CA on this host. */
+    public enum CaStatus {
+        /** Built against the current CA cert. */
+        CURRENT,
+        /** Built against a cert this host re-issued over the same key: stale, but repairable. */
+        REPAIRABLE,
+        /** Built against a CA this host has no record of — a different key, or another machine. */
+        FOREIGN,
+        /** No fingerprint stored, or no CA on this host, so nothing can be concluded. */
+        UNKNOWN
+    }
+
+    /**
+     * The fingerprints an image can be compared against, read once so callers that
+     * classify many images do not re-read and re-hash the CA per image.
+     */
+    public record CaTrust(String current, String superseded) {
+
+        public static CaTrust snapshot() {
+            return new CaTrust(currentCaFingerprint(), supersededCaFingerprint());
+        }
+
+        public CaStatus classify(String storedFingerprint) {
+            if (storedFingerprint == null || storedFingerprint.isEmpty() || current.isEmpty()) {
+                return CaStatus.UNKNOWN;
+            }
+            if (storedFingerprint.equals(current)) return CaStatus.CURRENT;
+            if (storedFingerprint.equals(superseded)) return CaStatus.REPAIRABLE;
+            return CaStatus.FOREIGN;
+        }
+    }
+
     /**
      * Fingerprint of the CA certificate replaced by {@link #reissueWithSki}, or {@code ""}
      * if this CA was never re-issued.
      * <p>
-     * An image stamped with this fingerprint carries the same CA key as the current one —
-     * only the certificate changed — so its trust anchor is stale but not foreign, and can
-     * be repaired by pushing the new certificate rather than rebuilding the image.
+     * Single-slot on purpose: it bridges images built before key identifiers existed, and a
+     * second key-preserving re-issue would overwrite it. That is acceptable only because
+     * there is exactly one such upgrade; a recurring need would call for stamping the CA's
+     * key identifier onto images instead of comparing certificate fingerprints.
      */
-    public static String supersededCaFingerprint() {
+    static String supersededCaFingerprint() {
         try {
             if (!Files.exists(caSupersededCertFile())) return "";
             return fingerprintOf(loadCertificate(caSupersededCertFile()));
@@ -192,8 +211,8 @@ public class CertificateAuthority {
     }
 
     private static String fingerprintOf(X509Certificate cert) throws Exception {
-        var md = java.security.MessageDigest.getInstance("SHA-256");
-        return java.util.HexFormat.of().formatHex(md.digest(cert.getEncoded()));
+        return java.util.HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
     }
 
     /**
@@ -228,54 +247,24 @@ public class CertificateAuthority {
     // --- Private helpers ---
 
     /**
-     * Compute the key identifier per RFC 5280 §4.2.1.2 method 1:
-     * SHA-1 hash of the BIT STRING subjectPublicKey value (excluding
-     * tag, length, and unused-bits octet) from SubjectPublicKeyInfo.
+     * Compute the key identifier per RFC 5280 §4.2.1.2 method 1: the SHA-1 of the
+     * subjectPublicKey BIT STRING contents from SubjectPublicKeyInfo.
+     * <p>
+     * For RSA those contents are the PKCS#1 {@code RSAPublicKey} sequence, which is
+     * cheaper to re-encode from the key than to locate by parsing the DER. This class
+     * mints RSA keys throughout, so the cast holds — and fails loudly if that changes.
      */
     static byte[] computeKeyIdentifier(PublicKey key) throws Exception {
-        var spki = key.getEncoded();
-        // SubjectPublicKeyInfo = SEQUENCE { AlgorithmIdentifier, BIT STRING }
-        // Skip outer SEQUENCE tag+length, then skip AlgorithmIdentifier TLV
-        int pos = 1 + derLengthSize(spki, 1);
-        pos += tlvLength(spki, pos);
-        // Now at BIT STRING: skip tag, length, unused-bits byte
-        pos += 1 + derLengthSize(spki, pos + 1) + 1;
-        var keyBytes = new byte[spki.length - pos];
-        System.arraycopy(spki, pos, keyBytes, 0, keyBytes.length);
-        return MessageDigest.getInstance("SHA-1").digest(keyBytes);
-    }
-
-    /** Return the number of bytes in a DER length field starting at {@code offset}. */
-    private static int derLengthSize(byte[] data, int offset) {
-        int first = data[offset] & 0xff;
-        if (first < 128) return 1;
-        return 1 + (first & 0x7f);
-    }
-
-    /** Return the total TLV (tag + length + value) byte count of the element at {@code offset}. */
-    private static int tlvLength(byte[] data, int offset) {
-        int start = offset;
-        offset++; // skip tag
-        int first = data[offset] & 0xff;
-        int len;
-        if (first < 128) {
-            len = first;
-            offset++;
-        } else {
-            int numBytes = first & 0x7f;
-            len = 0;
-            offset++;
-            for (int i = 0; i < numBytes; i++) {
-                len = (len << 8) | (data[offset++] & 0xff);
-            }
-        }
-        return (offset - start) + len;
+        var rsa = (RSAPublicKey) key;
+        var subjectPublicKey = derSequence(concat(
+                derInteger(rsa.getModulus()), derInteger(rsa.getPublicExponent())));
+        return MessageDigest.getInstance("SHA-1").digest(subjectPublicKey);
     }
 
     private static CertificateAuthority load() throws Exception {
         var key = loadPrivateKey(caKeyFile());
         var cert = loadCertificate(caCertFile());
-        if (cert.getExtensionValue(OID_SKI) == null) {
+        if (cert.getExtensionValue(SKI_OID) == null && !reissueFailed) {
             cert = reissueWithSki(key, cert);
         }
         return new CertificateAuthority(key, cert);
@@ -302,7 +291,8 @@ public class CertificateAuthority {
      * <p>
      * Best-effort: if the new certificate cannot be persisted, the old one is kept, so
      * the in-memory CA never disagrees with what containers are handed by
-     * {@link #caCertPem()}.
+     * {@link #caCertPem()}. A failure is not retried — {@code loadOrCreate()} runs several
+     * times per command, and re-signing and re-warning on each would only add noise.
      */
     private static X509Certificate reissueWithSki(PrivateKey key, X509Certificate old) {
         try {
@@ -310,38 +300,35 @@ public class CertificateAuthority {
                     old.getSubjectX500Principal().getEncoded(),
                     old.getNotBefore(), old.getNotAfter(), old.getSerialNumber());
 
-            Files.writeString(caSupersededCertFile(), toPem("CERTIFICATE", old.getEncoded()));
+            writeAtomically(caSupersededCertFile(), toPem("CERTIFICATE", old.getEncoded()));
             writeAtomically(caCertFile(), toPem("CERTIFICATE", der));
 
-            System.err.println("Upgraded the MITM CA certificate to include a Subject Key "
-                    + "Identifier (required by strict TLS validators). The CA key is unchanged; "
-                    + "the new certificate is installed into instances automatically.");
+            // File-only: this runs under the TUI too, where stderr lands mid-render.
+            ClientLog.warn("Upgraded the MITM CA certificate to include a Subject Key Identifier "
+                    + "(required by strict TLS validators). The CA key is unchanged.");
             return (X509Certificate) CertificateFactory.getInstance("X.509")
                     .generateCertificate(new ByteArrayInputStream(der));
         } catch (Exception e) {
-            System.err.println("Warning: could not upgrade the MITM CA certificate: "
-                    + e.getMessage());
+            reissueFailed = true;
+            ClientLog.warn("Could not upgrade the MITM CA certificate: " + e.getMessage());
             return old;
         }
     }
 
     /** Write {@code content} to {@code path} via a temp file, so readers never see a partial cert. */
     private static void writeAtomically(Path path, String content) throws IOException {
-        var tmp = path.resolveSibling(path.getFileName() + ".tmp");
-        Files.writeString(tmp, content);
-        trySetPerms(tmp);
+        var tmp = Files.createTempFile(path.getParent(), ".isx-ca-", ".tmp");
         try {
-            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private static void trySetPerms(Path path) {
-        try {
-            Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rw-------"));
-        } catch (Exception ignored) {
-            // Non-POSIX filesystem: skip.
+            Files.writeString(tmp, content);
+            CertStore.trySetPerms(tmp, "rw-------");
+            try {
+                Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (Exception e) {
+            Files.deleteIfExists(tmp);
+            throw e;
         }
     }
 
@@ -375,11 +362,15 @@ public class CertificateAuthority {
                 )))
         ));
 
+        return signAndWrap(tbsCert, signingKey);
+    }
+
+    /** Sign a TBSCertificate and wrap it into the outer Certificate SEQUENCE. */
+    private static byte[] signAndWrap(byte[] tbsCert, PrivateKey signingKey) throws Exception {
         var sig = java.security.Signature.getInstance("SHA256withRSA");
         sig.initSign(signingKey);
         sig.update(tbsCert);
-
-        return derSequence(concat(tbsCert, algId, derBitString(sig.sign())));
+        return derSequence(concat(tbsCert, sha256WithRsaAid(), derBitString(sig.sign())));
     }
 
     private static CertificateAuthority generate() throws Exception {

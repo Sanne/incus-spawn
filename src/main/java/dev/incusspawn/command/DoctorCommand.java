@@ -545,8 +545,7 @@ public class DoctorCommand extends BaseCommand {
         var findings = new ArrayList<Finding>();
         try {
             var incus = RuntimeServices.incus();
-            var currentCaFp = CertificateAuthority.exists() ? CertificateAuthority.currentCaFingerprint() : "";
-            var supersededCaFp = CertificateAuthority.supersededCaFingerprint();
+            var caTrust = CertificateAuthority.CaTrust.snapshot();
             var currentVersion = BuildInfo.instance().version();
             var allDefs = ImageDef.loadAll();
 
@@ -555,16 +554,16 @@ public class DoctorCommand extends BaseCommand {
                 if (!incus.exists(name)) continue;
                 builtCount++;
 
-                var storedCaFp = incus.configGet(name, Metadata.CA_FINGERPRINT);
-                if (!storedCaFp.isEmpty() && !currentCaFp.isEmpty() && !storedCaFp.equals(currentCaFp)) {
-                    // Same key, re-issued cert (SKI upgrade): instances self-repair on first
-                    // use, so a rebuild only refreshes the template's own baked copy.
-                    var superseded = storedCaFp.equals(supersededCaFp);
-                    findings.add(Finding.warn("Template " + name
-                                    + (superseded ? " has the pre-upgrade CA cert" : " CA mismatch"),
-                            superseded ? "instances are fixed automatically on first use"
-                                    : "template CA differs from current",
+                switch (caTrust.classify(incus.configGet(name, Metadata.CA_FINGERPRINT))) {
+                    // Instances self-repair on first use, so a rebuild only refreshes the
+                    // template's own baked copy — informational, not something to act on.
+                    case REPAIRABLE -> findings.add(Finding.warn(
+                            "Template " + name + " has the pre-upgrade CA cert",
+                            "instances are fixed automatically on first use", null));
+                    case FOREIGN -> findings.add(Finding.warn(
+                            "Template " + name + " CA mismatch", "template CA differs from current",
                             new Remediation("Rebuild: isx build " + name, false, null)));
+                    default -> { }
                 }
 
                 var buildVersion = incus.configGet(name, Metadata.BUILD_VERSION);
