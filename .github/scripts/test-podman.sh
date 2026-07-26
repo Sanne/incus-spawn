@@ -76,25 +76,26 @@ elif ! su -l agentuser -c '
     FAIL=$((FAIL + 1))
     ERRORS="${ERRORS}  - podman run failed\n"
 else
-    echo "  Waiting for PostgreSQL to be ready..."
-    pg_ready=false
-    for i in $(seq 1 30); do
-        if su -l agentuser -c "podman exec test-pg pg_isready -U postgres" >/dev/null 2>&1; then
-            echo "  PostgreSQL ready after ${i}s"
-            pg_ready=true
+    # Poll the query rather than pg_isready: during initdb the postgres
+    # entrypoint runs a temporary bootstrap server on the same unix socket,
+    # so pg_isready reports ready before the real server has restarted, and a
+    # query issued in that gap comes back empty.
+    echo "  Waiting for PostgreSQL to accept queries..."
+    query_out=""
+    for i in $(seq 1 60); do
+        query_out=$(su -l agentuser -c \
+            "podman exec test-pg psql -U postgres -tAc 'SELECT 1'" 2>/dev/null | tr -d '[:space:]')
+        if [ "$query_out" = "1" ]; then
+            echo "  PostgreSQL accepting queries after ${i}s"
             break
         fi
         sleep 1
     done
-    if ! $pg_ready; then
-        echo "  PostgreSQL did not become ready within 30s"
+    if [ "$query_out" != "1" ]; then
+        echo "  PostgreSQL did not accept queries within 60s"
         su -l agentuser -c "podman logs test-pg" 2>&1 | tail -20
-        FAIL=$((FAIL + 1))
-        ERRORS="${ERRORS}  - PostgreSQL did not start\n"
-    else
-        assert_eq "SELECT 1 returns 1" "1" \
-            su -l agentuser -c "podman exec test-pg psql -U postgres -tAc 'SELECT 1'"
     fi
+    assert_eq "SELECT 1 returns 1" "1" echo "$query_out"
 fi
 
 echo ""
