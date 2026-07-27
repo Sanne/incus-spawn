@@ -791,6 +791,93 @@ public class IncusClient {
         return true;
     }
 
+    /**
+     * Ensure the default profile has a root disk and a NIC.
+     *
+     * {@code incus admin init --minimal} normally populates these, but it is skipped whenever a
+     * storage pool already exists — and when it fails, {@link #createBridgeIfMissing} and the
+     * fallback CoW pool creation still leave a profile with no root device. Instances then fail
+     * to create with "Failed getting root disk: No root device could be found".
+     *
+     * Only missing devices are added; existing ones are never rewritten.
+     *
+     * @return names of the devices that were added (empty if the profile was already complete).
+     */
+    public List<String> ensureDefaultProfileDevices(String pool, String networkName) {
+        return ensureProfileDevices("default", pool, networkName);
+    }
+
+    /**
+     * As {@link #ensureDefaultProfileDevices}, for an arbitrary profile. Separate so tests can
+     * exercise the repair path against a scratch profile instead of breaking the real default one.
+     */
+    public List<String> ensureProfileDevices(String profile, String pool, String networkName) {
+        var resp = http().get("/1.0/profiles/" + profile);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read profile '" + profile + "' "
+                    + "(HTTP " + resp.statusCode() + ")");
+        }
+        var existing = resp.body().path("metadata").path("devices");
+        // PATCH merges the devices map key-by-key, so sending only the additions leaves any
+        // devices the user configured themselves untouched.
+        var devices = new LinkedHashMap<String, Object>();
+        if (!hasDeviceOfType(existing, "disk", "/")) {
+            devices.put("root", Map.of("type", "disk", "path", "/", "pool", pool));
+        }
+        if (!hasDeviceOfType(existing, "nic", null)) {
+            devices.put("eth0", Map.of("type", "nic", "name", "eth0", "network", networkName));
+        }
+        if (devices.isEmpty()) return List.of();
+
+        var added = List.copyOf(devices.keySet());
+        var patchResp = http().requestAndWait("PATCH", "/1.0/profiles/" + profile,
+                Map.of("devices", devices));
+        if (!patchResp.isSuccess()) {
+            throw new IncusException("Failed to add " + added + " to profile '" + profile + "': "
+                    + patchResp.body().path("error").asText("unknown error"));
+        }
+        return added;
+    }
+
+    /** The devices map of a profile, as configured (not expanded). */
+    public JsonNode profileDevices(String name) {
+        var resp = http().get("/1.0/profiles/" + name);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read profile " + name
+                    + " (HTTP " + resp.statusCode() + ")");
+        }
+        return resp.body().path("metadata").path("devices");
+    }
+
+    /** Create an empty profile. No-op if it already exists. */
+    public void createProfile(String name) {
+        var resp = http().requestAndWait("POST", "/1.0/profiles", Map.of("name", name));
+        if (!resp.isSuccess() && resp.statusCode() != 409) {
+            throw new IncusException("Failed to create profile " + name
+                    + " (HTTP " + resp.statusCode() + ")");
+        }
+    }
+
+    public void deleteProfile(String name) {
+        var resp = http().requestAndWait("DELETE", "/1.0/profiles/" + name, null);
+        if (!resp.isSuccess() && resp.statusCode() != 404) {
+            throw new IncusException("Failed to delete profile " + name
+                    + " (HTTP " + resp.statusCode() + ")");
+        }
+    }
+
+    /**
+     * Checks for a device of the given type, optionally requiring a specific {@code path}.
+     * Device names are conventional, not guaranteed, so match on type rather than on "root"/"eth0".
+     */
+    private static boolean hasDeviceOfType(JsonNode devices, String type, String path) {
+        for (var device : devices) {
+            if (!type.equals(device.path("type").asText())) continue;
+            if (path == null || path.equals(device.path("path").asText())) return true;
+        }
+        return false;
+    }
+
     public void deleteNetwork(String networkName) {
         var resp = http().requestAndWait("DELETE", "/1.0/networks/" + networkName, null);
         if (!resp.isSuccess() && resp.statusCode() != 404) {

@@ -769,6 +769,30 @@ public class InitCommand extends BaseCommand {
         }
 
         checkStorageDriver();
+        ensureDefaultProfile();
+    }
+
+    /**
+     * The default profile gets its root disk and NIC from 'incus admin init --minimal', which is
+     * skipped whenever a storage pool already exists — and if it failed, checkStorageDriver() and
+     * createBridgeIfMissing() still produce a pool and a bridge, so init looked like it succeeded
+     * while every instance creation failed with "No root device could be found". Repair it here,
+     * after the pool and bridge are known to exist.
+     */
+    private void ensureDefaultProfile() {
+        var pool = incus.findCowPool();
+        if (pool == null) pool = "default";
+        try {
+            var added = incus.ensureDefaultProfileDevices(pool, "incusbr0");
+            if (!added.isEmpty()) {
+                System.out.println("  Default profile was incomplete — added " + added
+                        + " (root disk on pool '" + pool + "').");
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not verify the default profile: " + e.getMessage());
+            System.err.println("  If instance creation fails with 'No root device could be found', run:");
+            System.err.println("    incus profile device add default root disk path=/ pool=" + pool);
+        }
     }
 
     private void checkStorageDriver() {

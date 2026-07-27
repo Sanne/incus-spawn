@@ -41,13 +41,34 @@ echo "  PASS: storage pool 'cow' exists"
 incus network show incusbr0 > /dev/null 2>&1 || fail "bridge 'incusbr0' not found"
 echo "  PASS: bridge 'incusbr0' exists"
 
-if incus image list --format csv 2>/dev/null | grep -q alpine; then
-    echo "  SKIP: container creation (image already present)"
+# Container creation is the check that actually exercises the default profile — a profile
+# without a root disk fails here with "No root device could be found". Fetching an image needs
+# working network and is genuinely environmental, so the two failure modes are kept apart:
+# only an unavailable *image* may SKIP; a *rejected creation* must FAIL. Previously both
+# collapsed into "SKIP: no network to fetch image", so a broken profile still reported PASSED.
+# Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
+image_fingerprint() {
+    incus image list --format csv --columns ft 2>/dev/null \
+        | grep -i ',container' | head -n1 | cut -d, -f1
+}
+
+IMAGE=$(image_fingerprint)
+if [ -z "$IMAGE" ]; then
+    # Reuse a cached image when present so this still runs with no network.
+    incus image copy images:alpine/edge local: > /dev/null 2>&1 || true
+    IMAGE=$(image_fingerprint)
+fi
+
+if [ -z "$IMAGE" ]; then
+    echo "  SKIP: container creation (no local image and none could be fetched)"
 else
-    incus init images:alpine/edge smoke --no-start 2>/dev/null && \
-        incus delete smoke 2>/dev/null && \
-        echo "  PASS: container creation works" || \
-        echo "  SKIP: container creation (no network to fetch image)"
+    if ! incus init "$IMAGE" smoke --no-start > /tmp/smoke-init.log 2>&1; then
+        echo "  --- incus init output ---"
+        cat /tmp/smoke-init.log
+        fail "container creation rejected (default profile may lack a root disk)"
+    fi
+    incus delete smoke > /dev/null 2>&1 || true
+    echo "  PASS: container creation works"
 fi
 
 echo "=== SMOKE TEST PASSED ==="

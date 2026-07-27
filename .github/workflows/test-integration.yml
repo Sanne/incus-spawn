@@ -293,3 +293,93 @@ jobs:
           sg incus-admin -c "isx destroy test-container" || true
           sg incus-admin -c "isx destroy test-podman" || true
           sg incus-admin -c "isx destroy test-vm" || true
+
+  # Regression: isx init must produce a working setup on a machine where Incus has never been
+  # initialized. The isx-integration-tests job above runs 'incus admin init --minimal' first,
+  # which populates the default profile — so it cannot catch init leaving that profile empty.
+  # A pool without a default profile made every instance creation fail with
+  # "Failed getting root disk: No root device could be found", and was self-latching: once a
+  # pool existed, init reported "Incus already initialized" and skipped the repair forever.
+  fresh-daemon-init:
+    needs: [unit-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Incus (deliberately WITHOUT 'incus admin init')
+        run: |
+          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
+            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
+            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus btrfs-progs
+          sudo usermod -aG incus-admin "$USER"
+
+          # Create ONLY the storage pool — no admin init. This reproduces the reported broken
+          # state exactly (pool present, default profile empty) and, as a side effect, avoids
+          # isx init building an unbounded btrfs loop file (timed out at 19min on CI).
+          sg incus-admin -c "incus storage create cow btrfs size=5GiB"
+
+          echo "Default profile before isx init:"
+          sg incus-admin -c "incus profile show default"
+
+      - name: Install JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'oracle'
+
+      - name: Download isx
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-quarkus-app
+          path: quarkus-app/
+
+      - name: Install isx wrapper
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec java -jar %s/quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
+            > "$HOME/.local/bin/isx"
+          chmod +x "$HOME/.local/bin/isx"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run isx init
+        run: sg incus-admin -c "yes '' | isx init"
+
+      - name: Assert the default profile is usable
+        run: |
+          sg incus-admin -c "incus profile show default"
+
+          # Match on device *type*, not the conventional names — a profile can be valid with
+          # differently-named devices, and Incus only cares that a root disk exists.
+          root_type=$(sg incus-admin -c \
+            "incus query /1.0/profiles/default" | jq -r '[.devices[] | select(.type=="disk" and .path=="/")] | length')
+          nic_count=$(sg incus-admin -c \
+            "incus query /1.0/profiles/default" | jq -r '[.devices[] | select(.type=="nic")] | length')
+
+          if [ "$root_type" -lt 1 ]; then
+            echo "::error::isx init left the default profile without a root disk"
+            exit 1
+          fi
+          if [ "$nic_count" -lt 1 ]; then
+            echo "::error::isx init left the default profile without a NIC"
+            exit 1
+          fi
+          echo "Default profile has a root disk and a NIC."
+
+      - name: Assert an instance can actually be created
+        run: |
+          # The real assertion: a profile that merely looks right can still name a bad pool.
+          # This is the exact operation that failed with "No root device could be found".
+          # Rolling alias on purpose: a pinned version silently EOLs off the image server and
+          # the job then fails on image resolution rather than on what it means to test.
+          sg incus-admin -c "incus launch images:alpine/edge fresh-daemon-smoketest"
+          sg incus-admin -c "incus list fresh-daemon-smoketest"
+
+      - name: Cleanup
+        if: always()
+        run: sg incus-admin -c "incus delete -f fresh-daemon-smoketest" || true
