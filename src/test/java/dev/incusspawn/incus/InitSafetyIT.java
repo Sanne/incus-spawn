@@ -114,6 +114,10 @@ class InitSafetyIT {
         var pool = client.findCowPool();
         Assumptions.assumeTrue(pool != null, "No CoW pool — skipping");
         var before = client.profileDevices(TEST_PROFILE).path("root").deepCopy();
+        // Without this the test passes vacuously if the profile was never repaired: a missing
+        // node compares equal to a missing node, and nothing would have been preserved.
+        assertFalse(before.isMissingNode(),
+                "Precondition: the profile must already have a root disk to preserve");
 
         client.ensureProfileDevices(TEST_PROFILE, "some-other-pool", "some-other-bridge");
 
