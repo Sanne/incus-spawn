@@ -110,11 +110,29 @@ Resolution order for both images and tools (later overrides earlier): built-in -
 
 ## CI Integration Tests
 
-`.github/workflows/test-integration.yml` runs on every push/PR to `main`. Three test jobs:
+`.github/workflows/test-integration.yml` runs on every push/PR to `main`. Four test jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required)
 - **`integration-tests`**: boots the appliance VM image under QEMU, checks it reaches `ISX READY` and passes an Incus smoke test
 - **`isx-integration-tests`**: installs Incus on Ubuntu 24.04, builds isx from the unit-tests artifact, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
+- **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
+
+Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
+
+`fresh-daemon-init` exists because `isx-integration-tests` runs `incus admin init --minimal` *before*
+`isx init`, which populates the default profile — so it cannot catch `isx init` failing to populate it
+itself. It installs Incus and creates only the storage pool, with no `admin init`, reproducing the
+state where a pool exists but the default profile is empty (every instance creation then fails with
+"Failed getting root disk: No root device could be found"). It asserts the profile has a root disk and
+a NIC, then launches a real instance — a profile that merely looks right can still name a bad pool.
+
+Note that `isx init` cannot be tested against the QEMU appliance VM on Linux: isx connects to the
+*natively installed* Incus over `/run/incus/unix.socket` and the QEMU boot path exposes no vsock
+socket, so it would hit the runner's own daemon and report a misleading success (see the guard in
+`appliance/test-with-isx.sh`). The appliance also provisions Incus with its own shell script and never
+calls `isx init` — the "ensure default profile has a root disk and NIC" invariant is implemented twice,
+in `incus-spawn-vm-init` (shell, in-VM) and `IncusClient.ensureDefaultProfileDevices` (Java, host).
+Keep the two in sync.
 
 The `isx-integration-tests` job exercises three environments: a container (from `tpl-minimal`), a rootless-podman container (from `tpl-test-podman`), and a VM (from `tpl-test-vm`). Test scripts live in `.github/scripts/`:
 
