@@ -41,26 +41,34 @@ echo "  PASS: storage pool 'cow' exists"
 incus network show incusbr0 > /dev/null 2>&1 || fail "bridge 'incusbr0' not found"
 echo "  PASS: bridge 'incusbr0' exists"
 
-# Container creation is the check that actually exercises the default profile — a profile
-# without a root disk fails here with "No root device could be found". Fetching an image needs
-# working network and is genuinely environmental, so the two failure modes are kept apart:
-# only an unavailable *image* may SKIP; a *rejected creation* must FAIL. Previously both
-# collapsed into "SKIP: no network to fetch image", so a broken profile still reported PASSED.
+# A default profile with no root disk is what makes every instance creation fail with
+# "No root device could be found", and the old version of this check could not see that: a
+# rejected creation and an unfetchable image both collapsed into "SKIP: no network to fetch
+# image", so a broken profile still reported PASSED.
+#
+# Two constraints shape the replacement. rcS runs this script synchronously *before* it echoes
+# "ISX READY", so nothing here may block on the network — an earlier attempt to fetch an image
+# on demand hung the boot past the CI timeout. And the profile invariant is worth asserting even
+# when no image is available. So check the profile directly, offline, which is the part that
+# actually catches the regression, and attempt a real creation only opportunistically.
+#
+# These mirror the device names incus-spawn-vm-init writes; here that is the point, since what
+# is being verified is that vm-init populated the profile.
+incus profile device get default root pool > /dev/null 2>&1 \
+    || fail "default profile has no root disk (incus-spawn-vm-init did not populate it)"
+echo "  PASS: default profile has a root disk"
+
+incus profile device get default eth0 network > /dev/null 2>&1 \
+    || fail "default profile has no NIC (incus-spawn-vm-init did not populate it)"
+echo "  PASS: default profile has a NIC"
+
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
-image_fingerprint() {
-    incus image list --format csv --columns ft 2>/dev/null \
-        | grep -i ',container' | head -n1 | cut -d, -f1
-}
-
-IMAGE=$(image_fingerprint)
-if [ -z "$IMAGE" ]; then
-    # Reuse a cached image when present so this still runs with no network.
-    incus image copy images:alpine/edge local: > /dev/null 2>&1 || true
-    IMAGE=$(image_fingerprint)
-fi
+IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
+    | grep -i ',container' | head -n1 | cut -d, -f1)
 
 if [ -z "$IMAGE" ]; then
-    echo "  SKIP: container creation (no local image and none could be fetched)"
+    # Deliberately does not fetch one: see above. The profile is already covered.
+    echo "  SKIP: container creation (no image cached locally; not fetching during boot)"
 else
     if ! incus init "$IMAGE" smoke --no-start > /tmp/smoke-init.log 2>&1; then
         echo "  --- incus init output ---"

@@ -780,8 +780,13 @@ public class InitCommand extends BaseCommand {
      * after the pool and bridge are known to exist.
      */
     private void ensureDefaultProfile() {
-        var pool = incus.findCowPool();
-        if (pool == null) pool = "default";
+        // Never guess a pool name here. A root disk pointing at a pool that does not exist leaves
+        // the profile worse than an empty one, and "default" is not guaranteed to be present.
+        var pool = incus.findUsablePool();
+        if (pool == null) {
+            System.err.println("  Warning: no storage pool found — skipping the default profile check.");
+            return;
+        }
         try {
             var added = incus.ensureDefaultProfileDevices(pool, "incusbr0");
             if (!added.isEmpty()) {
@@ -789,9 +794,11 @@ public class InitCommand extends BaseCommand {
                         + " (root disk on pool '" + pool + "').");
             }
         } catch (Exception e) {
-            System.err.println("  Warning: could not verify the default profile: " + e.getMessage());
+            System.err.println("  Warning: could not repair the default profile: " + e.getMessage());
             System.err.println("  If instance creation fails with 'No root device could be found', run:");
             System.err.println("    incus profile device add default root disk path=/ pool=" + pool);
+            System.err.println("  If containers come up without networking, also run:");
+            System.err.println("    incus profile device add default eth0 nic network=incusbr0");
         }
     }
 

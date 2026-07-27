@@ -459,6 +459,27 @@ public class IncusClient {
     }
 
     /**
+     * Name of a storage pool that can back a root disk, preferring a CoW pool but falling back to
+     * any pool the daemon has. Returns null if there are none.
+     *
+     * {@link #findCowPool} returning null only means no <em>btrfs/zfs/lvm</em> pool exists — a
+     * perfectly usable {@code dir} pool under some other name may still be there. Callers that
+     * need a pool name to write into a profile must not assume "default" exists; pointing a root
+     * disk at a nonexistent pool leaves the profile worse than it was found.
+     */
+    public String findUsablePool() {
+        var cow = findCowPool();
+        if (cow != null) return cow;
+        var resp = http().get("/1.0/storage-pools?recursion=1");
+        if (!resp.isSuccess()) return null;
+        for (var pool : resp.body().path("metadata")) {
+            var name = pool.path("name").asText("");
+            if (!name.isEmpty()) return name;
+        }
+        return null;
+    }
+
+    /**
      * Return storage pool resource usage as a human-readable string.
      * Queries the pool's /resources endpoint for disk space details.
      */
