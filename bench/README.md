@@ -5,7 +5,7 @@ Performance benchmarks for the native image build of the MITM proxy. Use these t
 ## Prerequisites
 
 - **Linux x86_64** (benchmarks read `/proc/<pid>/status` for RSS)
-- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Download from https://www.oracle.com/java/technologies/downloads/ or use sdkman: `sdk install java 25.0.3-oracle`
+- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Download from https://www.oracle.com/java/technologies/downloads/ or use sdkman: `sdk install java 25.0.4-oracle`
 - **Running Incus daemon** with the default `incusbr0` bridge
 - **Working isx setup** — run `isx init` first so `~/.config/incus-spawn/config.yaml` and the CA cert exist. The proxy needs an API key configured (it doesn't make real API calls during benchmarks, but validates the config)
 - **Podman** — [Hyperfoil](https://hyperfoil.io/) runs inside a Podman container to work around a [CpuWatchdog bug](https://github.com/Hyperfoil/Hyperfoil/issues/833) on machines with non-contiguous CPU numbering in `/proc/stat`. The container virtualizes `/proc/stat` with contiguous numbering.
