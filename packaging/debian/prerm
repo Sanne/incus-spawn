@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|purge)
+        ;;
+    upgrade|deconfigure|failed-upgrade)
+        exit 0
+        ;;
+esac
+
+shopt -s nullglob
+for home in /home/*; do
+    user=$(basename "$home")
+    service_file="$home/.config/systemd/user/incus-spawn-proxy.service"
+    start_script="$home/.config/incus-spawn/proxy-start.sh"
+
+    [ -f "$service_file" ] || continue
+
+    uid=$(id -u "$user" 2>/dev/null) || continue
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user stop incus-spawn-proxy 2>/dev/null || true
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user disable incus-spawn-proxy 2>/dev/null || true
+
+    rm -f "$service_file" "$start_script"
+
+    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user daemon-reload 2>/dev/null || true
+done

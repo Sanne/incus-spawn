@@ -68,6 +68,7 @@ jobs:
 
             sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$DEB_ARCH/" \
               packaging/debian/control > "$PKG_DIR/DEBIAN/control"
+            install -m 755 packaging/debian/prerm "$PKG_DIR/DEBIAN/prerm"
 
             install -m 755 "artifacts/native-linux-${BUILD_ARCH}/incus-spawn-linux-${BUILD_ARCH}" "$PKG_DIR/usr/bin/isx"
             install -m 755 src/main/resources/git-remote-isx "$PKG_DIR/usr/bin/git-remote-isx"
