@@ -89,7 +89,7 @@ class DoctorCommandTest {
                 ipv4 filter FORWARD 0 -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
                 ipv4 nat PREROUTING 0 -i incusbr0 -d 10.166.11.1 -p tcp --dport 443 -j REDIRECT --to-port 18443
                 """;
-        assertTrue(DoctorCommand.isPreRoutingRulePresent(output, 18443));
+        assertTrue(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
     }
 
     @Test
@@ -97,7 +97,7 @@ class DoctorCommandTest {
         var output = """
                 ipv4 filter FORWARD 0 -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
                 """;
-        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443));
+        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
     }
 
     @Test
@@ -105,7 +105,7 @@ class DoctorCommandTest {
         var output = """
                 ipv4 nat PREROUTING 0 -i incusbr0 -d 10.166.11.1 -p tcp --dport 443 -j REDIRECT --to-port 9999
                 """;
-        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443));
+        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
     }
 
     @Test
@@ -113,7 +113,7 @@ class DoctorCommandTest {
         var output = """
                 ipv4 nat PREROUTING 0 -i docker0 -d 10.166.11.1 -p tcp --dport 443 -j REDIRECT --to-port 18443
                 """;
-        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443));
+        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
     }
 
     @Test
@@ -121,12 +121,20 @@ class DoctorCommandTest {
         var output = """
                 ipv4 nat PREROUTING 0 -i incusbr0 -d 10.166.11.1 -p tcp --dport 8080 -j REDIRECT --to-port 18443
                 """;
-        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443));
+        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
+    }
+
+    @Test
+    void iptablesRuleNotMatchedWithStaleGateway() {
+        var output = """
+                ipv4 nat PREROUTING 0 -i incusbr0 -d 10.73.232.1 -p tcp --dport 443 -j REDIRECT --to-port 18443
+                """;
+        assertFalse(DoctorCommand.isPreRoutingRulePresent(output, 18443, "10.166.11.1"));
     }
 
     @Test
     void iptablesEmptyOutputReturnsFalse() {
-        assertFalse(DoctorCommand.isPreRoutingRulePresent("", 18443));
+        assertFalse(DoctorCommand.isPreRoutingRulePresent("", 18443, "10.166.11.1"));
     }
 
     // ---- Config permissions evaluation ----

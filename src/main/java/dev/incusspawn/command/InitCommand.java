@@ -670,12 +670,23 @@ public class InitCommand extends BaseCommand {
 
     private void configureMitmProxyFirewalld(String gatewayIp) {
         var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
-        boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, MitmProxy.DEFAULT_MITM_PORT);
+        boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, MitmProxy.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
             System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
                     + MitmProxy.DEFAULT_MITM_PORT + ").");
         } else {
+            // Remove stale redirect rule pointing to a previous gateway IP
+            var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, MitmProxy.DEFAULT_MITM_PORT);
+            if (staleIp != null) {
+                System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
+                runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                        "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
+                        "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
+                        String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                        "-j", "REDIRECT", "--to-port",
+                        String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+            }
             System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
                     + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
             runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",

@@ -537,8 +537,15 @@ public class DoctorCommand extends BaseCommand {
             if (exitCode != 0) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not query firewalld rules)", null);
             }
-            if (isPreRoutingRulePresent(output, MitmProxy.DEFAULT_MITM_PORT)) {
+            var gatewayIp = MitmProxy.resolveGatewayIp(RuntimeServices.incus());
+            if (isPreRoutingRulePresent(output, MitmProxy.DEFAULT_MITM_PORT, gatewayIp)) {
                 return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+            }
+            var staleIp = FirewalldCheck.extractRedirectGatewayIp(output, MitmProxy.DEFAULT_MITM_PORT);
+            if (staleIp != null) {
+                return Finding.fail("Firewall PREROUTING redirect",
+                        "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
+                        new Remediation("Re-run 'isx init' to update iptables rules", false, null));
             }
             return Finding.fail("Firewall PREROUTING redirect", "rule not found",
                     new Remediation("Re-run 'isx init' to configure iptables rules", false, null));
@@ -563,8 +570,8 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort) {
-        return FirewalldCheck.isPreRoutingRulePresent(firewalldOutput, mitmPort);
+    static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort, String gatewayIp) {
+        return FirewalldCheck.isPreRoutingRulePresent(firewalldOutput, mitmPort, gatewayIp);
     }
 
     // ---- Layer 6: Templates ----
