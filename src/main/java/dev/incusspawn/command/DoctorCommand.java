@@ -556,12 +556,19 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkUfwRedirect() {
         try {
+            var gatewayIp = MitmProxy.resolveGatewayIp(RuntimeServices.incus());
             var beforeRules = UfwCheck.readBeforeRules();
             if (beforeRules.isEmpty()) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not read /etc/ufw/before.rules)", null);
             }
-            if (UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT)) {
+            if (UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT, gatewayIp)) {
                 return Finding.ok("Firewall PREROUTING redirect (UFW)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+            }
+            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+            if (staleIp != null) {
+                return Finding.fail("Firewall PREROUTING redirect",
+                        "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
+                        new Remediation("Re-run 'isx init' to update firewall rules", false, null));
             }
             return Finding.fail("Firewall PREROUTING redirect", "rule not found in /etc/ufw/before.rules",
                     new Remediation("Re-run 'isx init' to configure firewall rules", false, null));
