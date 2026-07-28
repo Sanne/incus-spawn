@@ -1352,6 +1352,8 @@ public class InitCommand extends BaseCommand {
 
     private record GitHubVerifyResult(String login, String email) {}
 
+    record EmailParseResult(java.util.List<String> verified, String primary) {}
+
     private GitHubVerifyResult verifyGitHubToken(String token) {
         System.out.println("  Testing GitHub token...");
         try {
@@ -1403,7 +1405,41 @@ public class InitCommand extends BaseCommand {
                 return null;
             }
 
-            var emails = new ObjectMapper().readTree(response.body());
+            var parsed = parseGitHubEmails(response.body());
+            if (parsed == null) {
+                return null;
+            }
+            if (parsed.verified.size() == 1) {
+                return parsed.verified.get(0);
+            }
+
+            var console = System.console();
+            if (console == null) {
+                return parsed.primary != null ? parsed.primary : parsed.verified.get(0);
+            }
+            System.out.println("  Multiple verified emails found:");
+            for (int i = 0; i < parsed.verified.size(); i++) {
+                var label = parsed.verified.get(i);
+                if (label.equals(parsed.primary)) label += " (primary)";
+                System.out.println("    " + (i + 1) + ". " + label);
+            }
+            System.out.print("  Select email for git commits (1-" + parsed.verified.size() + "): ");
+            var choice = console.readLine().strip();
+            try {
+                int idx = Integer.parseInt(choice) - 1;
+                if (idx >= 0 && idx < parsed.verified.size()) {
+                    return parsed.verified.get(idx);
+                }
+            } catch (NumberFormatException ignored) {}
+            return parsed.primary != null ? parsed.primary : parsed.verified.get(0);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    static EmailParseResult parseGitHubEmails(String json) {
+        try {
+            var emails = new ObjectMapper().readTree(json);
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
             for (var entry : emails) {
@@ -1415,33 +1451,10 @@ public class InitCommand extends BaseCommand {
                     primaryEmail = email;
                 }
             }
-
             if (verifiedEmails.isEmpty()) {
                 return null;
             }
-            if (verifiedEmails.size() == 1) {
-                return verifiedEmails.get(0);
-            }
-
-            var console = System.console();
-            if (console == null) {
-                return primaryEmail != null ? primaryEmail : verifiedEmails.get(0);
-            }
-            System.out.println("  Multiple verified emails found:");
-            for (int i = 0; i < verifiedEmails.size(); i++) {
-                var label = verifiedEmails.get(i);
-                if (label.equals(primaryEmail)) label += " (primary)";
-                System.out.println("    " + (i + 1) + ". " + label);
-            }
-            System.out.print("  Select email for git commits (1-" + verifiedEmails.size() + "): ");
-            var choice = console.readLine().strip();
-            try {
-                int idx = Integer.parseInt(choice) - 1;
-                if (idx >= 0 && idx < verifiedEmails.size()) {
-                    return verifiedEmails.get(idx);
-                }
-            } catch (NumberFormatException ignored) {}
-            return primaryEmail != null ? primaryEmail : verifiedEmails.get(0);
+            return new EmailParseResult(java.util.List.copyOf(verifiedEmails), primaryEmail);
         } catch (Exception e) {
             return null;
         }
