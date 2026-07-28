@@ -23,7 +23,6 @@ run_as_user:
     cat > ~/.config/systemd/user/headroom-proxy.service << 'EOF'
     [Unit]
     Description=Headroom optimization proxy
-    After=network.target
 
     [Service]
     ExecStart=%h/.local/bin/headroom proxy
