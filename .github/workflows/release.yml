@@ -38,9 +38,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Oracle GraalVM JDK 25
+      - name: Install Oracle GraalVM 25.2
         uses: graalvm/setup-graalvm@v1
         with:
+          version: '25.2'
           java-version: '25'
           distribution: 'graalvm'
 

@@ -39,9 +39,10 @@ if $NATIVE; then
             exit 1
         fi
         GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:latest"
-        BUILDER_TAG="incus-spawn-graalvm-builder:25.1"
+        BUILDER_TAG="incus-spawn-graalvm-builder:25.2"
         if ! $CTR image inspect "$BUILDER_TAG" >/dev/null 2>&1; then
             echo "Preparing GraalVM builder image (one-time)..."
+            $CTR rmi "$GRAALVM_BASE" >/dev/null 2>&1 || true
             printf 'FROM %s\nWORKDIR /project\n' "$GRAALVM_BASE" | $CTR build -t "$BUILDER_TAG" -
         fi
         NATIVE_ARGS="$NATIVE_ARGS -Dquarkus.native.container-build=true -Dquarkus.native.container-runtime=$CTR -Dquarkus.native.builder-image=$BUILDER_TAG -Dquarkus.native.builder-image.pull=never"
