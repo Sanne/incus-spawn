@@ -168,6 +168,50 @@ class UfwCheckTest {
         assertFalse(UfwCheck.hasPreRoutingRedirect("", 18443));
     }
 
+    // ---- hasPreRoutingRedirect (gateway-aware) ----
+
+    @Test
+    void hasPreRoutingRedirectMatchesCorrectGateway() {
+        var natBlock = UfwCheck.generateNatBlock("10.166.11.1", "10.166.11.0/24", 443, 18443);
+        var content = UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, natBlock);
+        assertTrue(UfwCheck.hasPreRoutingRedirect(content, 18443, "10.166.11.1"));
+    }
+
+    @Test
+    void hasPreRoutingRedirectFalseForStaleGateway() {
+        var natBlock = UfwCheck.generateNatBlock("10.166.11.1", "10.166.11.0/24", 443, 18443);
+        var content = UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, natBlock);
+        assertFalse(UfwCheck.hasPreRoutingRedirect(content, 18443, "10.73.232.1"));
+    }
+
+    // ---- extractRedirectGatewayIp ----
+
+    @Test
+    void extractRedirectGatewayIpFindsIp() {
+        var natBlock = UfwCheck.generateNatBlock("10.166.11.1", "10.166.11.0/24", 443, 18443);
+        var content = UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, natBlock);
+        assertEquals("10.166.11.1", UfwCheck.extractRedirectGatewayIp(content, 18443));
+    }
+
+    @Test
+    void extractRedirectGatewayIpReturnsNullWhenNoRedirect() {
+        var natBlock = UfwCheck.generateNatBlockWithoutRedirect("10.166.11.0/24");
+        var content = UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, natBlock);
+        assertNull(UfwCheck.extractRedirectGatewayIp(content, 18443));
+    }
+
+    @Test
+    void extractRedirectGatewayIpReturnsNullWhenNoNatBlock() {
+        assertNull(UfwCheck.extractRedirectGatewayIp(TYPICAL_BEFORE_RULES, 18443));
+    }
+
+    @Test
+    void extractRedirectGatewayIpReturnsNullForWrongPort() {
+        var natBlock = UfwCheck.generateNatBlock("10.166.11.1", "10.166.11.0/24", 443, 18443);
+        var content = UfwCheck.insertNatBlock(TYPICAL_BEFORE_RULES, natBlock);
+        assertNull(UfwCheck.extractRedirectGatewayIp(content, 9999));
+    }
+
     // ---- hasMasquerade ----
 
     @Test

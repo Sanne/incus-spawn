@@ -96,6 +96,35 @@ public final class UfwCheck {
                 && block.contains("--to-port " + mitmPort);
     }
 
+    public static boolean hasPreRoutingRedirect(String beforeRulesContent, int mitmPort, String gatewayIp) {
+        if (!hasNatBlock(beforeRulesContent)) return false;
+        var block = extractBlock(beforeRulesContent, MARKER_NAT_BEGIN, MARKER_NAT_END);
+        return block.contains("PREROUTING")
+                && block.contains("incusbr0")
+                && block.contains("-d " + gatewayIp)
+                && block.contains("--dport 443")
+                && block.contains("REDIRECT")
+                && block.contains("--to-port " + mitmPort);
+    }
+
+    public static String extractRedirectGatewayIp(String beforeRulesContent, int mitmPort) {
+        if (!hasNatBlock(beforeRulesContent)) return null;
+        var block = extractBlock(beforeRulesContent, MARKER_NAT_BEGIN, MARKER_NAT_END);
+        for (var line : block.split("\n")) {
+            if (line.contains("PREROUTING") && line.contains("incusbr0")
+                    && line.contains("-d ") && line.contains("--dport 443")
+                    && line.contains("REDIRECT") && line.contains("--to-port " + mitmPort)) {
+                int idx = line.indexOf("-d ");
+                if (idx >= 0) {
+                    var rest = line.substring(idx + 3).strip();
+                    int end = rest.indexOf(' ');
+                    return end > 0 ? rest.substring(0, end) : rest;
+                }
+            }
+        }
+        return null;
+    }
+
     public static boolean hasMasquerade(String beforeRulesContent, String subnet) {
         if (!hasNatBlock(beforeRulesContent)) return false;
         var block = extractBlock(beforeRulesContent, MARKER_NAT_BEGIN, MARKER_NAT_END);

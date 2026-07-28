@@ -711,12 +711,16 @@ public class InitCommand extends BaseCommand {
             System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
             return;
         }
-        boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+        boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
             System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
                     + MitmProxy.DEFAULT_MITM_PORT + ").");
         } else {
+            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+            if (staleIp != null) {
+                System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
+            }
             System.out.println("  Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
                     + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
             var subnet = CidrUtils.deriveSubnet(gatewayIp);
