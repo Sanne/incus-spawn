@@ -50,10 +50,10 @@ public final class FirewalldCheck {
         }
     }
 
-    public static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort) {
+    public static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort, String gatewayIp) {
         for (var line : firewalldOutput.split("\n")) {
             if (line.contains("nat") && line.contains("PREROUTING")
-                    && line.contains("incusbr0") && line.contains("-d ")
+                    && line.contains("incusbr0") && line.contains("-d " + gatewayIp)
                     && line.contains("--dport 443")
                     && line.contains("REDIRECT")
                     && line.contains("--to-port " + mitmPort)) {
@@ -61,6 +61,25 @@ public final class FirewalldCheck {
             }
         }
         return false;
+    }
+
+    /** Extract the gateway IP from an existing PREROUTING redirect rule, or null if none found. */
+    public static String extractRedirectGatewayIp(String firewalldOutput, int mitmPort) {
+        for (var line : firewalldOutput.split("\n")) {
+            if (line.contains("nat") && line.contains("PREROUTING")
+                    && line.contains("incusbr0") && line.contains("-d ")
+                    && line.contains("--dport 443")
+                    && line.contains("REDIRECT")
+                    && line.contains("--to-port " + mitmPort)) {
+                int idx = line.indexOf("-d ");
+                if (idx >= 0) {
+                    var rest = line.substring(idx + 3).strip();
+                    int end = rest.indexOf(' ');
+                    return end > 0 ? rest.substring(0, end) : rest;
+                }
+            }
+        }
+        return null;
     }
 
     public static boolean isForwardRulePresent(String firewalldOutput, String interfaceFlag, String interfaceName) {
