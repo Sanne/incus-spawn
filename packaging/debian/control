@@ -9,5 +9,5 @@ Description: CLI tool for managing isolated Incus development environments
  for credential isolation, and an interactive TUI.
 Section: devel
 Priority: optional
-Depends: openssl
-Recommends: incus, btrfs-progs
+Depends: openssl, openssh-client
+Recommends: incus, btrfs-progs, psmisc
