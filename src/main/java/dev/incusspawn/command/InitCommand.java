@@ -29,6 +29,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 @CommandDefinition(
         name = "init",
         description = "One-time host setup: install Incus, configure auth, test connectivity",
@@ -1365,20 +1367,18 @@ public class InitCommand extends BaseCommand {
                 return null;
             }
 
-            var loginMatch = java.util.regex.Pattern.compile("\"login\"\\s*:\\s*\"([^\"]+)\"")
-                    .matcher(response.body());
-            var login = loginMatch.find() ? loginMatch.group(1) : null;
-
-            var email = extractJsonString(response.body(), "email");
+            var json = new ObjectMapper().readTree(response.body());
+            var login = json.has("login") ? json.get("login").asText(null) : null;
+            var email = json.has("email") && !json.get("email").isNull() ? json.get("email").asText(null) : null;
             if (email == null) {
                 email = checkGitHubEmail(client, token);
             }
 
             if (login != null) {
                 if (email != null) {
-                    System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + login + " <" + email + ">\u001B[0m");
+                    System.out.println("  \u001B[1;32m\u2713 Token verified. Authenticated as: " + login + " <" + email + ">\u001B[0m");
                 } else {
-                    System.out.println("  \u001B[1;32m✓ Token verified. Authenticated as: " + login + "\u001B[0m");
+                    System.out.println("  \u001B[1;32m\u2713 Token verified. Authenticated as: " + login + "\u001B[0m");
                 }
             } else {
                 System.out.println("  Token verified (could not determine username).");
@@ -1402,35 +1402,17 @@ public class InitCommand extends BaseCommand {
             if (response.statusCode() != 200) {
                 return null;
             }
-            var body = response.body();
 
+            var emails = new ObjectMapper().readTree(response.body());
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
-            var emailPattern = java.util.regex.Pattern.compile(
-                    "\\{[^}]*\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\"verified\"\\s*:\\s*true[^}]*\\}");
-            var emailMatcher = emailPattern.matcher(body);
-            while (emailMatcher.find()) {
-                var email = emailMatcher.group(1);
-                if (email.endsWith("@users.noreply.github.com")) continue;
+            for (var entry : emails) {
+                if (!entry.path("verified").asBoolean(false)) continue;
+                var email = entry.path("email").asText(null);
+                if (email == null || email.endsWith("@users.noreply.github.com")) continue;
                 verifiedEmails.add(email);
-                var obj = body.substring(emailMatcher.start(), emailMatcher.end());
-                if (obj.contains("\"primary\"") && obj.contains("true")) {
+                if (entry.path("primary").asBoolean(false)) {
                     primaryEmail = email;
-                }
-            }
-            // Also match when "verified" appears before "email"
-            var altPattern = java.util.regex.Pattern.compile(
-                    "\\{[^}]*\"verified\"\\s*:\\s*true[^}]*\"email\"\\s*:\\s*\"([^\"]+)\"[^}]*\\}");
-            var altMatcher = altPattern.matcher(body);
-            while (altMatcher.find()) {
-                var email = altMatcher.group(1);
-                if (email.endsWith("@users.noreply.github.com")) continue;
-                if (!verifiedEmails.contains(email)) {
-                    verifiedEmails.add(email);
-                    var obj = body.substring(altMatcher.start(), altMatcher.end());
-                    if (obj.contains("\"primary\"") && obj.contains("true")) {
-                        primaryEmail = email;
-                    }
                 }
             }
 
@@ -1463,12 +1445,6 @@ public class InitCommand extends BaseCommand {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private static String extractJsonString(String json, String key) {
-        var pattern = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"");
-        var match = pattern.matcher(json);
-        return match.find() ? match.group(1) : null;
     }
 
     private static String patSettingsUrl(String token) {
