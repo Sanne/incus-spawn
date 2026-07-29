@@ -20,15 +20,19 @@ jobs:
           - runner: ubuntu-latest
             os: linux
             arch: amd64
+            graalvm-version: '25.2'
           - runner: ubuntu-24.04-arm
             os: linux
             arch: aarch64
+            graalvm-version: '25.2'
           - runner: macos-14
             os: macos
             arch: aarch64
+            graalvm-version: '25.2'
           - runner: macos-15-intel
             os: macos
             arch: x86_64
+            graalvm-version: '25.0'
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -38,10 +42,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Oracle GraalVM 25.2
+      - name: Install Oracle GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.2'
+          version: ${{ matrix.graalvm-version }}
           java-version: '25'
           distribution: 'graalvm'
 
