@@ -145,7 +145,22 @@ class GhSetupTest {
         new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
-                contains("octocat"));
+                and(contains("user.name"), contains("octocat")));
+    }
+
+    @Test
+    void fallsBackToNoreplyWhenNoEmailFound() {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        ghApiUserReturns(incus, "octocat\t\t\n");
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user/emails")))
+                .thenReturn(FAIL);
+
+        new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("octocat@users.noreply.github.com"));
     }
 
     // --- Test helpers ---

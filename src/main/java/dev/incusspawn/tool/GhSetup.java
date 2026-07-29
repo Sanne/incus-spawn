@@ -76,11 +76,10 @@ public class GhSetup implements ToolSetup {
             if (email == null && parts.length >= 3 && !parts[2].isEmpty()) {
                 email = parts[2];
             }
-            if (email != null) {
-                gitConfig(c, "user.email", email);
-            } else {
-                System.out.println("  No email found — re-run 'isx init' to configure GitHub with email access.");
+            if (email == null) {
+                email = login + "@users.noreply.github.com";
             }
+            gitConfig(c, "user.email", email);
         }
     }
 
