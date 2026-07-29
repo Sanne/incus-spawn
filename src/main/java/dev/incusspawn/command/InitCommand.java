@@ -165,23 +165,21 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private static final Path INIT_COMPLETE_MARKER = SpawnConfig.configDir().resolve(".init-complete");
-
     /**
      * Bump this when init gains a new infrastructure step that existing
      * installations need (new dependency, firewall rule, service, etc.).
      * A version mismatch triggers a re-run of init on the next command.
      */
     static final int INIT_VERSION = 1;
-    private static final String INIT_VERSION_STR = String.valueOf(INIT_VERSION);
 
     /**
      * Check whether init has run to completion at the current version.
      */
     public static boolean hasBeenInitialized() {
-        if (!Files.exists(INIT_COMPLETE_MARKER)) return false;
+        var marker = Environment.initCompleteMarker();
+        if (!Files.exists(marker)) return false;
         try {
-            return Files.readString(INIT_COMPLETE_MARKER).strip().equals(INIT_VERSION_STR);
+            return Files.readString(marker).strip().equals(String.valueOf(INIT_VERSION));
         } catch (IOException e) {
             return false;
         }
@@ -189,7 +187,7 @@ public class InitCommand extends BaseCommand {
 
     private static void markInitComplete() {
         try {
-            Files.writeString(INIT_COMPLETE_MARKER, INIT_VERSION_STR);
+            Files.writeString(Environment.initCompleteMarker(), String.valueOf(INIT_VERSION));
         } catch (IOException e) {
             System.err.println("Warning: could not write init marker: " + e.getMessage());
         }
