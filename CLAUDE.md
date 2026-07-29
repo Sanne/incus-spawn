@@ -35,6 +35,12 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 
 `IncusSpawn.java` is the picocli `@TopCommand`. With no subcommand, it launches the TUI (`ListCommand`). Each subcommand in `command/` is a picocli `@Command` with Quarkus DI.
 
+### Init and Versioned Completion
+
+`InitCommand` runs first-time setup (dependencies, Incus, firewall, CA, proxy service, etc.). Commands that need a working environment call `InitCommand.requireInit()`, which auto-launches init if it hasn't completed. Completion is tracked by a sentinel file `~/.config/incus-spawn/.init-complete` containing `INIT_VERSION` — a version integer defined in `InitCommand`. Every init step is idempotent, so re-running is safe.
+
+**When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field). A version mismatch causes `hasBeenInitialized()` to return false, triggering a re-run on the next command. Do NOT bump it for changes that don't affect host configuration (new template features, TUI changes, proxy logic changes).
+
 ### Image Hierarchy and Build System
 
 Templates are YAML definitions (`src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents. Each definition can set `type` (`container`, `vm`, or `kvm`) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time. VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.

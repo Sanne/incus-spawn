@@ -26,6 +26,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -164,12 +165,34 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    private static final Path INIT_COMPLETE_MARKER = SpawnConfig.configDir().resolve(".init-complete");
+
     /**
-     * Check whether init has been run by looking for the config file and CA cert.
+     * Bump this when init gains a new infrastructure step that existing
+     * installations need (new dependency, firewall rule, service, etc.).
+     * A version mismatch triggers a re-run of init on the next command.
+     */
+    static final int INIT_VERSION = 1;
+    private static final String INIT_VERSION_STR = String.valueOf(INIT_VERSION);
+
+    /**
+     * Check whether init has run to completion at the current version.
      */
     public static boolean hasBeenInitialized() {
-        return Files.exists(SpawnConfig.configDir().resolve("config.yaml"))
-                && CertificateAuthority.exists();
+        if (!Files.exists(INIT_COMPLETE_MARKER)) return false;
+        try {
+            return Files.readString(INIT_COMPLETE_MARKER).strip().equals(INIT_VERSION_STR);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static void markInitComplete() {
+        try {
+            Files.writeString(INIT_COMPLETE_MARKER, INIT_VERSION_STR);
+        } catch (IOException e) {
+            System.err.println("Warning: could not write init marker: " + e.getMessage());
+        }
     }
 
     /**
@@ -271,6 +294,7 @@ public class InitCommand extends BaseCommand {
         var proxyStep = proxyServiceInstalled
                 ? "   2. Proxy is running as a systemd service"
                 : "   2. Start the auth proxy:  isx proxy start";
+        markInitComplete();
         printCompletionBox(
                 "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
                 "",
@@ -327,6 +351,7 @@ public class InitCommand extends BaseCommand {
                 "containers.");
         offerMacOsServices();
 
+        markInitComplete();
         printCompletionBox(
                 "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
                 "",
