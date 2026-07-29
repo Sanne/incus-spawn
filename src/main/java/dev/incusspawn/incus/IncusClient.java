@@ -334,10 +334,14 @@ public class IncusClient {
             // Wrap in su -l so the session goes through PAM, which calls
             // initgroups() (activating supplementary groups like incus-admin)
             // and starts the systemd user instance (needed by rootless podman).
+            // -P (--pty) makes su allocate its own PTY with a proper setsid +
+            // TIOCSCTTY, giving the inner bash a controlling terminal — without
+            // it, tcgetpgrp() returns -1 and bash prints "cannot set terminal
+            // process group / no job control in this shell".
             // su -l does cd $HOME, so we prepend cd to restore targetCwd.
             var script = "cd " + Container.shellQuote(targetCwd) + " && "
                     + LOGIN_PATH_PREFIX + innerScript;
-            var shellArgs = List.of("su", "-l", user, "-c", script);
+            var shellArgs = List.of("su", "-l", "-P", user, "-c", script);
 
             var env = Map.of("HOME", homeDir);
 
