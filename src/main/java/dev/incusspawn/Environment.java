@@ -23,6 +23,10 @@ public final class Environment {
         return home().resolve(".config/incus-spawn");
     }
 
+    public static Path initCompleteMarker() {
+        return configDir().resolve(".init-complete");
+    }
+
     public static Path sshDir() {
         return configDir().resolve("ssh");
     }
