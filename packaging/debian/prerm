@@ -18,10 +18,12 @@ for home in /home/*; do
     [ -f "$service_file" ] || continue
 
     uid=$(id -u "$user" 2>/dev/null) || continue
-    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user stop incus-spawn-proxy 2>/dev/null || true
-    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user disable incus-spawn-proxy 2>/dev/null || true
+    run_as_user() { sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" "$@" 2>/dev/null || true; }
+
+    run_as_user systemctl --user stop incus-spawn-proxy
+    run_as_user systemctl --user disable incus-spawn-proxy
 
     rm -f "$service_file" "$start_script"
 
-    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user daemon-reload 2>/dev/null || true
+    run_as_user systemctl --user daemon-reload
 done
