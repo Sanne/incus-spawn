@@ -133,6 +133,15 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Remove host-side integration for a destroyed or renamed instance.
+     */
+    public static void removeHostIntegration(String name) {
+        AutoRemoteService.removeRemotes(name, msg -> {});
+        SshKeyManager.cleanupInstance(name);
+        ZmxSocketForward.cleanup(name);
+    }
+
+    /**
      * Apply host resource devices and (for instances) add git remotes.
      */
     public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType) {

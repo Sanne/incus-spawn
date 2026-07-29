@@ -1098,6 +1098,13 @@ public class ListCommand extends BaseCommand {
             }
             try {
                 incus.rename(renameSourceName, newName);
+                try {
+                    InstanceLifecycle.removeHostIntegration(renameSourceName);
+                    AutoRemoteService.addRemotes(incus, newName, msg -> {});
+                    SshKeyManager.addHostEntry(newName);
+                } catch (Exception ignore) {
+                    // best-effort: instance is renamed, host integration may partially fail
+                }
                 statusMessage = "Renamed " + renameSourceName + " to " + newName;
             } catch (Exception e) {
                 statusMessage = "Failed to rename: " + e.getMessage();
@@ -1157,9 +1164,7 @@ public class ListCommand extends BaseCommand {
                                 refreshDataAfterBackground();
                                 try {
                                     incus.delete(name, true);
-                                    AutoRemoteService.removeRemotes(name, msg -> {});
-                                    SshKeyManager.cleanupInstance(name);
-                                    ZmxSocketForward.cleanup(name);
+                                    InstanceLifecycle.removeHostIntegration(name);
                                     destroyed++;
                                 } catch (Exception e) {
                                     setStatusMessage("Failed to destroy " + name + ": " + e.getMessage());
@@ -1207,8 +1212,7 @@ public class ListCommand extends BaseCommand {
                             refreshDataAfterBackground();
                             try {
                                 incus.delete(entry.name(), true);
-                                AutoRemoteService.removeRemotes(entry.name(), msg -> {});
-                                SshKeyManager.cleanupInstance(entry.name());
+                                InstanceLifecycle.removeHostIntegration(entry.name());
                                 destroyed++;
                             } catch (Exception e) {
                                 setStatusMessage("Failed to destroy " + entry.name() + ": " + e.getMessage());
@@ -1233,9 +1237,7 @@ public class ListCommand extends BaseCommand {
                         Metadata.OP_DELETING,
                         () -> {
                             incus.delete(pendingDeleteName, true);
-                            AutoRemoteService.removeRemotes(pendingDeleteName, msg -> {});
-                            SshKeyManager.cleanupInstance(pendingDeleteName);
-                            ZmxSocketForward.cleanup(pendingDeleteName);
+                            InstanceLifecycle.removeHostIntegration(pendingDeleteName);
                         });
             }
         }

@@ -1,10 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
-import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.lifecycle.ZmxSocketForward;
-import dev.incusspawn.ssh.SshKeyManager;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -39,9 +37,7 @@ public class DestroyCommand extends BaseCommand {
 
         System.out.println("Destroying " + name + "...");
         incus.delete(name, true);
-        AutoRemoteService.removeRemotes(name);
-        SshKeyManager.cleanupInstance(name);
-        ZmxSocketForward.cleanup(name);
+        InstanceLifecycle.removeHostIntegration(name);
         System.out.println("Destroyed " + name + ".");
         return CommandResult.SUCCESS;
     }
