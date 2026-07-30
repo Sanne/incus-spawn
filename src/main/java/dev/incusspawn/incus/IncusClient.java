@@ -500,6 +500,20 @@ public class IncusClient {
                 used * 100 / total);
     }
 
+    public record PoolUsage(long usedBytes, long totalBytes) {
+        public int percent() {
+            return totalBytes == 0 ? 0 : (int) (usedBytes * 100 / totalBytes);
+        }
+    }
+
+    public PoolUsage getPoolUsageBytes(String poolName) {
+        if (poolName == null) return null;
+        var resp = http().get("/1.0/storage-pools/" + poolName + "/resources");
+        if (!resp.isSuccess()) return null;
+        var space = resp.body().path("metadata").path("space");
+        return new PoolUsage(space.path("used").asLong(0), space.path("total").asLong(0));
+    }
+
     /**
      * Read memory stats from /proc/meminfo via container exec.
      * Returns [MemTotal, MemAvailable, SwapTotal, SwapFree] in kB, or null on failure.
@@ -1265,14 +1279,17 @@ public class IncusClient {
      * Does nothing if the volume already exists.
      */
     public void ensureStorageVolume(String pool, String volumeName) {
-        var resp = http().get("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName);
-        if (resp.isSuccess()) return;
+        if (storageVolumeExists(pool, volumeName)) return;
         var createResp = http().requestAndWait("POST",
                 "/1.0/storage-pools/" + pool + "/volumes",
                 Map.of("name", volumeName, "type", "custom"));
         if (!createResp.isSuccess()) {
             throw new IncusException("Failed to create storage volume " + volumeName + " in pool " + pool);
         }
+    }
+
+    public boolean storageVolumeExists(String pool, String volumeName) {
+        return http().get("/1.0/storage-pools/" + pool + "/volumes/custom/" + volumeName).isSuccess();
     }
 
     public boolean deleteStorageVolume(String pool, String volumeName) {
@@ -1532,5 +1549,47 @@ public class IncusClient {
         var resp = http().get("/1.0/images/" + fingerprint);
         if (!resp.isSuccess()) return null;
         return resp.body().path("metadata").path("type").asText(null);
+    }
+
+    public record ImageInfo(String fingerprint, long size, List<String> aliases) {
+        public String label() {
+            var nonBlank = aliases.stream().filter(a -> !a.isBlank()).toList();
+            return nonBlank.isEmpty()
+                    ? fingerprint.substring(0, Math.min(12, fingerprint.length()))
+                    : String.join(", ", nonBlank);
+        }
+    }
+
+    public List<ImageInfo> listImages() {
+        var resp = http().get("/1.0/images?recursion=1");
+        if (!resp.isSuccess()) return List.of();
+        var result = new ArrayList<ImageInfo>();
+        for (var image : resp.body().path("metadata")) {
+            var fingerprint = image.path("fingerprint").asText("");
+            long size = image.path("size").asLong(0);
+            var aliases = new ArrayList<String>();
+            for (var alias : image.path("aliases")) {
+                var name = alias.path("name").asText("");
+                if (!name.isBlank()) aliases.add(name);
+            }
+            result.add(new ImageInfo(fingerprint, size, aliases));
+        }
+        return result;
+    }
+
+    public String getPoolSource(String poolName) {
+        var resp = http().get("/1.0/storage-pools/" + poolName);
+        if (!resp.isSuccess()) return null;
+        var source = resp.body().path("metadata").path("config").path("source").asText("");
+        return source.isEmpty() ? null : source;
+    }
+
+    public void resizePool(String poolName, String newSize) {
+        var resp = http().requestAndWait("PATCH", "/1.0/storage-pools/" + poolName,
+                Map.of("config", Map.of("size", newSize)));
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to resize pool " + poolName + ": "
+                    + resp.body().path("error").asText(""));
+        }
     }
 }

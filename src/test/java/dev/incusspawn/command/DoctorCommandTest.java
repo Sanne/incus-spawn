@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
 
@@ -61,6 +62,8 @@ class DoctorCommandTest {
         var f = DoctorCommand.evaluateStorageUsage("default", "default pool: 46000MiB used / 50000MiB total (92% full)");
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.label().contains("nearly full"));
+        assertNull(f.remediation(), "overall finding should not have an action — specific findings do");
+        assertTrue(f.detail().contains("isx clean pool"), "detail should suggest isx clean pool");
     }
 
     @Test
@@ -79,6 +82,41 @@ class DoctorCommandTest {
     void storagePoolHandlesEmptyUsage() {
         var f = DoctorCommand.evaluateStorageUsage("default", "");
         assertEquals(DoctorCommand.Status.OK, f.status());
+    }
+
+    // ---- Pool size evaluation ----
+
+    @Test
+    void undersizedPoolWarnsWithResizeRemediation() {
+        long thirtyGiB = 30L * 1024 * 1024 * 1024;
+        var usage = new IncusClient.PoolUsage(thirtyGiB * 96 / 100, thirtyGiB);
+        var f = DoctorCommand.evaluatePoolSize("cow", usage, null);
+        assertNotNull(f);
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.label().contains("undersized"), "label: " + f.label());
+        assertTrue(f.detail().contains("thin-provisioned"), "should explain thin provisioning");
+        assertNotNull(f.remediation());
+        assertTrue(f.remediation().description().contains("100GiB"));
+    }
+
+    @Test
+    void adequatePoolSuggestsDoublingWhenFull() {
+        long hundredGiB = 100L * 1024 * 1024 * 1024;
+        var usage = new IncusClient.PoolUsage(hundredGiB * 95 / 100, hundredGiB);
+        var f = DoctorCommand.evaluatePoolSize("cow", usage, null);
+        assertNotNull(f);
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.label().contains("enlarged"), "label: " + f.label());
+        assertTrue(f.detail().contains("thin-provisioned"), "should explain thin provisioning");
+        assertNotNull(f.remediation());
+        assertTrue(f.remediation().description().contains("200GiB"));
+    }
+
+    @Test
+    void adequatePoolNotFullReturnsNull() {
+        long hundredGiB = 100L * 1024 * 1024 * 1024;
+        var usage = new IncusClient.PoolUsage(hundredGiB * 50 / 100, hundredGiB);
+        assertNull(DoctorCommand.evaluatePoolSize("cow", usage, null));
     }
 
     // ---- iptables PREROUTING rule detection ----
