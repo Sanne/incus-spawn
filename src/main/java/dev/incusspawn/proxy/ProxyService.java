@@ -8,17 +8,93 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
-import java.util.regex.Matcher;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class ProxyService {
 
     private static final String SERVICE_NAME = Environment.PROXY_SERVICE_NAME;
 
+    /**
+     * Exit code for a fatal misconfiguration — a condition no amount of retrying can fix,
+     * because it needs a human to change something (run init, fill in a config field).
+     * {@code isx proxy start} returns it; the systemd unit below names it in
+     * {@code RestartPreventExitStatus} so such a failure stops immediately instead of
+     * crash-looping with the reason buried in the journal. Transient failures — Incus or the VM
+     * not up yet — must keep returning 1 so the restart loop can do its job.
+     * <p>
+     * Value is {@code EX_CONFIG} from sysexits.h; it does not collide with the 1 and 2 returned
+     * by other {@code isx proxy} subcommands.
+     */
+    public static final int EXIT_CONFIG = 78;
+
+    /** The unit directive that makes {@link #EXIT_CONFIG} non-restartable. */
+    static final String RESTART_PREVENT_LINE = "RestartPreventExitStatus=" + EXIT_CONFIG;
+
     private ProxyService() {}
+
+    /** The systemd unit written by {@link #install()}. Package-private so tests can assert on it. */
+    static String serviceUnitContent() {
+        return """
+                [Unit]
+                Description=incus-spawn MITM authentication proxy
+                After=incus.service
+
+                [Service]
+                Type=simple
+                %s
+                Restart=on-failure
+                %s
+                RestartSec=5
+
+                [Install]
+                WantedBy=default.target
+                """.formatted(execStartLine(), RESTART_PREVENT_LINE);
+    }
 
     public static boolean isInstalled() {
         if (Environment.isMacOS()) return isMacOsServiceInstalled();
         return Files.exists(Environment.proxyServiceFile());
+    }
+
+    /**
+     * True when the service gave up because of a misconfiguration rather than a transient
+     * failure — it exited {@link #EXIT_CONFIG} and systemd declined to restart it. Callers use
+     * this to report the actual cause instead of a generic "did not become healthy", which
+     * points at the network and hides the real problem.
+     * <p>
+     * Always false on macOS: launchd's {@code KeepAlive} cannot express a per-exit-code restart
+     * policy, so the condition this detects does not arise there.
+     */
+    public static boolean failedWithConfigError() {
+        if (Environment.isMacOS()) return false;
+        // Both properties in one invocation. Without --value the output is self-describing
+        // ("ActiveState=failed\nExecMainStatus=78"), so neither value is read positionally.
+        var shown = showProperties("ActiveState", "ExecMainStatus");
+        return shown != null
+                && shown.contains("ActiveState=failed")
+                && shown.contains("ExecMainStatus=" + EXIT_CONFIG);
+    }
+
+    /** Read systemd unit properties as {@code key=value} lines, or null if unavailable. */
+    private static String showProperties(String... properties) {
+        var command = new ArrayList<>(List.of("systemctl", "--user", "show", SERVICE_NAME));
+        for (var property : properties) {
+            command.add("-p");
+            command.add(property);
+        }
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            return process.waitFor() == 0 ? output : null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public static boolean isActive() {
@@ -54,20 +130,7 @@ public final class ProxyService {
             return false;
         }
 
-        var serviceContent = """
-                [Unit]
-                Description=incus-spawn MITM authentication proxy
-                After=incus.service
-
-                [Service]
-                Type=simple
-                %s
-                Restart=on-failure
-                RestartSec=5
-
-                [Install]
-                WantedBy=default.target
-                """.formatted(execStartLine());
+        var serviceContent = serviceUnitContent();
 
         try {
             writeProxyStartScript(proxyStartScript(), isxPath);
@@ -136,6 +199,13 @@ public final class ProxyService {
             waitForProxyExit();
             runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
         } else {
+            // Clear any prior failure before starting. A unit halted by RestartPreventExitStatus
+            // sits in 'failed' state, and repeated restart attempts can trip systemd's start rate
+            // limit (StartLimitBurst), after which even a valid start is refused until the state
+            // is reset. 'restart' alone recovers from plain 'failed', but not from a tripped rate
+            // limit — this makes recovery unconditional once the user has fixed the config.
+            // No-op when the unit is healthy.
+            runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         }
         if (isActive()) {
@@ -179,7 +249,7 @@ public final class ProxyService {
         if (Environment.isMacOS()) {
             needsReinstall = needsMacOsPlistUpdate();
         } else {
-            needsReinstall = updateSystemdServiceFile();
+            needsReinstall = regenerateServiceFile();
         }
 
         if (!needsReinstall) {
@@ -197,20 +267,30 @@ public final class ProxyService {
         return false;
     }
 
-    private static boolean updateSystemdServiceFile() {
+    /**
+     * Bring the on-disk unit into line with {@link #serviceUnitContent()}, rewriting it whenever
+     * it differs. Returns true if the file was rewritten.
+     * <p>
+     * The generated unit is fully deterministic — the only substitution is {@link #execStartLine()},
+     * a fixed path — so regenerating is equivalent to migrating, and it picks up every future
+     * change to the template for free. Patching individual directives instead meant a new helper
+     * per directive, in each of the places that knew the unit's shape, which is how
+     * {@code RestartPreventExitStatus} came to be missing from this path.
+     * <p>
+     * Safe to overwrite: {@link #install()} already writes this file wholesale, and systemd's
+     * supported customization mechanism is a drop-in ({@code <unit>.d/override.conf}), a separate
+     * file this never touches.
+     */
+    private static boolean regenerateServiceFile() {
         if (Environment.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
         var isxPath = resolveIsxPath();
         if (isxPath == null) return false;
         try {
             var content = Files.readString(Environment.proxyServiceFile());
-            var expected = execStartLine();
-            if (content.contains(expected)) return false;
-            var updated = content.replaceFirst(
-                    "(?m)^ExecStart=.*",
-                    Matcher.quoteReplacement(expected));
-            if (updated.equals(content)) return false;
+            var expected = serviceUnitContent();
+            if (expected.equals(content)) return false;
             writeProxyStartScript(proxyStartScript(), isxPath);
-            Files.writeString(Environment.proxyServiceFile(), updated);
+            Files.writeString(Environment.proxyServiceFile(), expected);
             runQuiet("systemctl", "--user", "daemon-reload");
             return true;
         } catch (IOException e) {
@@ -227,23 +307,9 @@ public final class ProxyService {
             }
             return;
         }
-        if (!Files.exists(Environment.proxyServiceFile())) return;
-        var isxPath = resolveIsxPath();
-        if (isxPath == null) return;
-        try {
-            var content = Files.readString(Environment.proxyServiceFile());
-            if (!content.contains("ExecStart=")) return;
-            var expected = execStartLine();
-            if (content.contains(expected)) return;
-            var updated = content.replaceFirst("(?m)^ExecStart=.*", Matcher.quoteReplacement(expected));
-            if (updated.equals(content)) return;
-            writeProxyStartScript(proxyStartScript(), isxPath);
-            Files.writeString(Environment.proxyServiceFile(), updated);
-            System.out.println("Updated proxy service ExecStart.");
-            runQuiet("systemctl", "--user", "daemon-reload");
+        if (regenerateServiceFile()) {
+            System.out.println("Updated proxy service unit.");
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
-        } catch (IOException e) {
-            System.err.println("Warning: could not check proxy service file: " + e.getMessage());
         }
     }
 
