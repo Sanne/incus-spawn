@@ -170,7 +170,7 @@ public class InitCommand extends BaseCommand {
      * installations need (new dependency, firewall rule, service, etc.).
      * A version mismatch triggers a re-run of init on the next command.
      */
-    static final int INIT_VERSION = 1;
+    static final int INIT_VERSION = 2;
 
     /**
      * Check whether init has run to completion at the current version.
@@ -550,6 +550,7 @@ public class InitCommand extends BaseCommand {
                 configureFirewalld();
             }
         }
+        configureNetworkManager();
     }
 
     private void configureFirewalld() {
@@ -658,6 +659,28 @@ public class InitCommand extends BaseCommand {
             java.nio.file.Files.deleteIfExists(tempFile);
         } catch (java.io.IOException e) {
             System.err.println("  Error writing before.rules: " + e.getMessage());
+        }
+    }
+
+    private void configureNetworkManager() {
+        var confDir = Path.of("/etc/NetworkManager/conf.d");
+        if (!Files.isDirectory(confDir)) return;
+        var confFile = confDir.resolve("99-unmanaged-veth.conf");
+        if (Files.exists(confFile)) return;
+        Path tempFile = null;
+        try {
+            tempFile = Files.createTempFile("isx-nm-veth-", ".conf");
+            Files.writeString(tempFile,
+                    "[keyfile]\nunmanaged-devices=interface-name:veth*\n");
+            runHostQuiet("sudo", "cp", tempFile.toString(), confFile.toString());
+            runHostQuiet("sudo", "nmcli", "general", "reload");
+            System.out.println("  Configured NetworkManager to ignore veth devices.");
+        } catch (IOException e) {
+            System.err.println("  Warning: could not configure NetworkManager: " + e.getMessage());
+        } finally {
+            if (tempFile != null) {
+                try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
+            }
         }
     }
 
