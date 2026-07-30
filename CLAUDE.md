@@ -39,7 +39,9 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 
 `InitCommand` runs first-time setup (dependencies, Incus, firewall, CA, proxy service, etc.). Commands that need a working environment call `InitCommand.requireInit()`, which auto-launches init if it hasn't completed. Completion is tracked by a sentinel file `~/.config/incus-spawn/.init-complete` containing `INIT_VERSION` — a version integer defined in `InitCommand`. Every init step is idempotent, so re-running is safe.
 
-**When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field). A version mismatch causes `hasBeenInitialized()` to return false, triggering a re-run on the next command. Do NOT bump it for changes that don't affect host configuration (new template features, TUI changes, proxy logic changes).
+**When to bump `INIT_VERSION`**: increment it when adding a new infrastructure step to init that existing installations need (new dependency, firewall rule, systemd service, config field). A sentinel *older* than `INIT_VERSION` causes `hasBeenInitialized()` to return false, triggering a re-run on the next command. Do NOT bump it for changes that don't affect host configuration (new template features, TUI changes, proxy logic changes).
+
+The comparison is `>=`, not equality: the sentinel is a monotonic floor, so a binary that finds a *newer* sentinel treats itself as initialized rather than concluding init never ran. This matters when two isx builds are installed at once (e.g. `/usr/bin/isx` and `~/.local/bin/isx`) — under equality the older one both hard-failed the proxy service and re-ran init to write the sentinel back down, ping-ponging with the newer binary. Never renumber `INIT_VERSION` downward.
 
 ### Image Hierarchy and Build System
 

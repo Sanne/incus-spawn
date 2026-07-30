@@ -174,13 +174,22 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Check whether init has run to completion at the current version.
+     * <p>
+     * The comparison is deliberately {@code >=}, not equality. A sentinel newer than this
+     * binary's {@link #INIT_VERSION} means some other (newer) install already ran a superset
+     * of the steps we need — init steps are idempotent and additive, so that install satisfies
+     * us. Requiring equality made an older binary treat a newer install as uninitialized, which
+     * hard-failed the proxy service and made two co-installed binaries re-run init in a loop,
+     * each rewriting the sentinel to its own version.
+     * <p>
+     * An absent or unparseable sentinel counts as not initialized, so init re-runs and rewrites it.
      */
     public static boolean hasBeenInitialized() {
         var marker = Environment.initCompleteMarker();
         if (!Files.exists(marker)) return false;
         try {
-            return Files.readString(marker).strip().equals(String.valueOf(INIT_VERSION));
-        } catch (IOException e) {
+            return Integer.parseInt(Files.readString(marker).strip()) >= INIT_VERSION;
+        } catch (IOException | NumberFormatException e) {
             return false;
         }
     }

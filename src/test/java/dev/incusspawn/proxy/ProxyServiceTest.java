@@ -80,4 +80,34 @@ class ProxyServiceTest {
         assertTrue(content.contains("s here"));
         assertFalse(content.contains("it's"), "unescaped single quote would break the shell script");
     }
+
+    // --- systemd restart policy -------------------------------------------------
+    //
+    // A misconfiguration the user must fix by hand (init not run, Vertex fields blank) exits
+    // EXIT_CONFIG. RestartPreventExitStatus stops systemd retrying it forever and burying the
+    // reason in the journal. Transient failures still exit 1 and are still retried.
+
+    @Test
+    void generatedUnitPreventsRestartOnConfigError() {
+        var unit = ProxyService.serviceUnitContent();
+        assertTrue(unit.contains("Restart=on-failure"),
+                "transient failures must still be retried");
+        assertTrue(unit.contains(ProxyService.RESTART_PREVENT_LINE),
+                "config errors must not crash-loop");
+        // The directive is derived from EXIT_CONFIG, so this also pins the unit text to the
+        // exit code the proxy actually returns — the two cannot drift apart.
+        assertEquals("RestartPreventExitStatus=78", ProxyService.RESTART_PREVENT_LINE);
+    }
+
+    @Test
+    void generatedUnitIsStructurallyWellFormed() {
+        var unit = ProxyService.serviceUnitContent();
+        assertTrue(unit.contains("[Unit]"));
+        assertTrue(unit.contains("[Service]"));
+        assertTrue(unit.contains("[Install]"));
+        assertTrue(unit.contains("ExecStart="));
+        assertFalse(unit.contains("%s"), "format placeholder left unsubstituted");
+        // The restart policy lines belong together.
+        assertTrue(unit.contains("Restart=on-failure\nRestartPreventExitStatus=78\nRestartSec=5"));
+    }
 }

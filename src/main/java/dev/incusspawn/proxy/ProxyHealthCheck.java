@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 
 import java.net.HttpURLConnection;
@@ -243,7 +244,13 @@ public final class ProxyHealthCheck {
                 return true;
             }
         }
-        log.accept("Proxy service did not become healthy after restart.");
+        if (ProxyService.failedWithConfigError()) {
+            log.accept("Proxy service failed to start due to a configuration problem "
+                    + "(exit " + ProxyService.EXIT_CONFIG + ").");
+            log.accept("  systemctl --user status " + Environment.PROXY_SERVICE_NAME);
+        } else {
+            log.accept("Proxy service did not become healthy after restart.");
+        }
         return false;
     }
 

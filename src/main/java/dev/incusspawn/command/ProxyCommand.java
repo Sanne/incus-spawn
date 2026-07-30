@@ -74,7 +74,7 @@ public class ProxyCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             if (!InitCommand.hasBeenInitialized()) {
                 System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
-                return CommandResult.valueOf(1);
+                return CommandResult.valueOf(ProxyService.EXIT_CONFIG);
             }
             var config = dev.incusspawn.config.SpawnConfig.load();
             var claude = config.getClaude();
@@ -86,7 +86,7 @@ public class ProxyCommand extends BaseCommand {
             if (claude.isUseVertex()) {
                 if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
                     System.err.println("Error: Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
-                    return CommandResult.valueOf(1);
+                    return CommandResult.valueOf(ProxyService.EXIT_CONFIG);
                 }
             }
 

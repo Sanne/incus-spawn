@@ -1,6 +1,13 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Environment;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -147,5 +154,76 @@ class InitCommandTest {
         assertNotNull(result);
         assertEquals(java.util.List.of("any-order@example.com"), result.verified());
         assertEquals("any-order@example.com", result.primary());
+    }
+
+    /**
+     * Runs {@code body} with {@code user.home} pointed at {@code home}, so the tests below
+     * exercise the real {@link Environment#initCompleteMarker()} path.
+     */
+    private static void withHome(Path home, Runnable body) {
+        var original = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            body.run();
+        } finally {
+            if (original == null) {
+                System.clearProperty("user.home");
+            } else {
+                System.setProperty("user.home", original);
+            }
+        }
+    }
+
+    /** Writes the sentinel at whatever path the production code reads it from. */
+    private static void writeSentinel(Path home, String contents) {
+        withHome(home, () -> {
+            try {
+                var marker = Environment.initCompleteMarker();
+                Files.createDirectories(marker.getParent());
+                Files.writeString(marker, contents);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+    }
+
+    @Test
+    void notInitializedWhenSentinelAbsent(@TempDir Path home) {
+        withHome(home, () -> assertFalse(InitCommand.hasBeenInitialized()));
+    }
+
+    @Test
+    void initializedAtCurrentVersion(@TempDir Path home) {
+        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION));
+        withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
+    }
+
+    @Test
+    void notInitializedWhenSentinelIsOlder(@TempDir Path home) {
+        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION - 1));
+        withHome(home, () -> assertFalse(InitCommand.hasBeenInitialized()));
+    }
+
+    /**
+     * The regression: an older binary reading a sentinel written by a newer install must not
+     * conclude it was never initialized. Equality here crash-looped the proxy service and made
+     * two co-installed binaries re-run init in a loop.
+     */
+    @Test
+    void initializedWhenSentinelIsNewer(@TempDir Path home) {
+        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION + 1));
+        withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
+    }
+
+    @Test
+    void notInitializedWhenSentinelIsUnparseable(@TempDir Path home) {
+        writeSentinel(home, "garbage");
+        withHome(home, () -> assertFalse(InitCommand.hasBeenInitialized()));
+    }
+
+    @Test
+    void sentinelToleratesSurroundingWhitespace(@TempDir Path home) {
+        writeSentinel(home, "  " + InitCommand.INIT_VERSION + "\n");
+        withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
     }
 }
