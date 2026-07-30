@@ -5,8 +5,11 @@ packages:
   - podman
   - podman-docker
   - fuse-overlayfs
+  - systemd-pam
+  - dbus-broker
 
 run:
+  - mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/agentuser
   - |
     systemctl enable --no-reload podman.socket &&
     mkdir -p /run/podman &&

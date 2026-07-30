@@ -225,9 +225,8 @@ jobs:
           cat > ~/.config/incus-spawn/images/test-podman.yaml << 'EOF'
           name: tpl-test-podman
           parent: tpl-minimal
-          packages:
+          tools:
             - podman
-            - fuse-overlayfs
           EOF
           cat > ~/.config/incus-spawn/images/test-vm.yaml << 'EOF'
           name: tpl-test-vm
