@@ -672,7 +672,7 @@ public class InitCommand extends BaseCommand {
             tempFile = Files.createTempFile("isx-nm-veth-", ".conf");
             Files.writeString(tempFile,
                     "[keyfile]\nunmanaged-devices=interface-name:veth*\n");
-            runHostQuiet("sudo", "cp", tempFile.toString(), confFile.toString());
+            if (runHostQuiet("sudo", "cp", tempFile.toString(), confFile.toString()) != 0) return;
             runHostQuiet("sudo", "nmcli", "general", "reload");
             System.out.println("  Configured NetworkManager to ignore veth devices.");
         } catch (IOException e) {
