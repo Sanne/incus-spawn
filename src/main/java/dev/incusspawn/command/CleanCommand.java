@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -14,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 
 @CommandDefinition(
@@ -24,6 +27,7 @@ import java.util.List;
                 CleanCommand.Cache.class,
                 CleanCommand.State.class,
                 CleanCommand.Config.class,
+                CleanCommand.Pool.class,
                 CleanCommand.All.class
         }
 )
@@ -346,6 +350,158 @@ public class CleanCommand extends BaseCommand {
             System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
             cleanDnfCacheVolume(dryRun);
             return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(
+            name = "pool",
+            description = "Reclaim space from the storage pool (failed builds, unused images, build caches)",
+            generateHelp = true
+    )
+    public static class Pool extends BaseCommand {
+
+        @Option(name = "dry-run", hasValue = false, description = "Show what would be deleted without deleting")
+        boolean dryRun;
+
+        @Option(name = "skip-confirmation", hasValue = false, description = "Skip the confirmation prompt")
+        boolean skipConfirmation;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
+            var pool = incus.findCowPool();
+            if (pool == null) {
+                System.out.println("No CoW storage pool found.");
+                return CommandResult.SUCCESS;
+            }
+
+            var usage = incus.getStoragePoolUsage(pool);
+            System.out.println(usage);
+            System.out.println();
+
+            boolean found = false;
+
+            found |= cleanFailedBuilds(incus, dryRun, skipConfirmation);
+            found |= cleanUnusedImages(incus, dryRun, skipConfirmation);
+            found |= cleanDnfCacheFromPool(incus, pool, dryRun);
+
+            if (!found) {
+                System.out.println("Nothing to clean — no reclaimable artifacts found on the pool.");
+            }
+
+            var newUsage = incus.getStoragePoolUsage(pool);
+            if (found && !dryRun) {
+                System.out.println();
+                System.out.println(newUsage);
+            }
+
+            return CommandResult.SUCCESS;
+        }
+
+        private boolean cleanFailedBuilds(IncusClient incus, boolean dryRun, boolean skip) {
+            var failed = new ArrayList<String>();
+            for (var inst : incus.list()) {
+                var name = inst.get("name");
+                if (name.endsWith("-failed-build")) {
+                    failed.add(name);
+                }
+            }
+            if (failed.isEmpty()) return false;
+
+            System.out.println("Failed build instances (" + failed.size() + "):");
+            for (var name : failed) {
+                System.out.println("  " + name);
+            }
+
+            if (dryRun) {
+                System.out.println("Would delete " + failed.size() + " failed build instance(s).");
+                System.out.println();
+                return true;
+            }
+
+            if (!confirm("Delete " + failed.size() + " failed build instance(s)?", skip)) {
+                System.out.println();
+                return true;
+            }
+
+            for (var name : failed) {
+                try {
+                    incus.delete(name, true);
+                    System.out.println("  Deleted " + name);
+                } catch (Exception e) {
+                    System.err.println("  Warning: could not delete " + name + ": " + e.getMessage());
+                }
+            }
+            System.out.println();
+            return true;
+        }
+
+        private boolean cleanUnusedImages(IncusClient incus, boolean dryRun, boolean skip) {
+            var knownAliases = new HashSet<String>();
+            for (var def : ImageDef.loadAll().values()) {
+                var img = def.getImage();
+                if (img != null && !img.contains(":")) {
+                    knownAliases.add(img);
+                }
+            }
+
+            var unused = new ArrayList<IncusClient.ImageInfo>();
+            for (var image : incus.listImages()) {
+                boolean inUse = image.aliases().stream().anyMatch(knownAliases::contains);
+                if (!inUse) {
+                    unused.add(image);
+                }
+            }
+            if (unused.isEmpty()) return false;
+
+            long totalSize = unused.stream().mapToLong(IncusClient.ImageInfo::size).sum();
+            System.out.println("Unused base images (" + unused.size() + ", ~" + formatSize(totalSize) + "):");
+            for (var image : unused) {
+                System.out.println("  " + image.label() + " (" + formatSize(image.size()) + ")");
+            }
+
+            if (dryRun) {
+                System.out.println("Would delete " + unused.size() + " unused image(s).");
+                System.out.println();
+                return true;
+            }
+
+            if (!confirm("Delete " + unused.size() + " unused image(s)?", skip)) {
+                System.out.println();
+                return true;
+            }
+
+            for (var image : unused) {
+                try {
+                    for (var alias : image.aliases()) {
+                        incus.deleteImageAlias(alias);
+                    }
+                    incus.deleteImage(image.fingerprint());
+                    System.out.println("  Deleted " + image.label());
+                } catch (Exception e) {
+                    System.err.println("  Warning: could not delete image: " + e.getMessage());
+                }
+            }
+            System.out.println();
+            return true;
+        }
+
+        private boolean cleanDnfCacheFromPool(IncusClient incus, String pool, boolean dryRun) {
+            try {
+                if (!incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                    return false;
+                }
+            } catch (Exception e) {
+                return false;
+            }
+
+            if (dryRun) {
+                System.out.println("Would delete DNF cache volume (" + BuildCommand.DNF_CACHE_VOLUME + ") from pool " + pool);
+                return true;
+            }
+
+            cleanDnfCacheVolume(false);
+            return true;
         }
     }
 }

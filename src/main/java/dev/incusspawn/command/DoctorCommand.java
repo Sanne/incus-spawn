@@ -33,7 +33,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -185,7 +187,7 @@ public class DoctorCommand extends BaseCommand {
 
     /** Layers 2 (storage) through 7 — shared between Linux and macOS once Incus is reachable. */
     private void runSharedChecks(List<Finding> findings) {
-        findings.add(checkStoragePool());
+        findings.addAll(checkStoragePool());
         findings.addAll(checkProxy());
         findings.addAll(checkDnsAndBridge());
         findings.addAll(checkTemplates());
@@ -284,18 +286,38 @@ public class DoctorCommand extends BaseCommand {
 
     // ---- Layer 2: Incus daemon ----
 
-    private Finding checkStoragePool() {
+    static final long GIB = 1024L * 1024 * 1024;
+    static final long MIN_POOL_SIZE = 100 * GIB;
+
+    private List<Finding> checkStoragePool() {
         try {
             var incus = RuntimeServices.incus();
             var pool = incus.findCowPool();
             if (pool == null) {
-                return Finding.warn("No CoW storage pool", "(btrfs/zfs/lvm recommended)", null);
+                return List.of(Finding.warn("No CoW storage pool", "(btrfs/zfs/lvm recommended)", null));
             }
-            var usage = incus.getStoragePoolUsage(pool);
-            return evaluateStorageUsage(pool, usage);
+            var usage = incus.getPoolUsageBytes(pool);
+            if (usage == null) {
+                return List.of(Finding.ok("Storage pool " + pool, "(no usage info)"));
+            }
+            var usageString = formatPoolUsage(pool, usage);
+            var findings = new ArrayList<Finding>();
+            findings.add(evaluateStorageUsage(pool, usageString));
+            if (usage.percent() > 90) {
+                findings.addAll(analyzePoolUsage(incus, pool, usage));
+            }
+            return findings;
         } catch (Exception e) {
-            return Finding.warn("Storage pool", "(could not check: " + e.getMessage() + ")", null);
+            return List.of(Finding.warn("Storage pool", "(could not check: " + e.getMessage() + ")", null));
         }
+    }
+
+    static String formatPoolUsage(String poolName, IncusClient.PoolUsage usage) {
+        return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
+                poolName,
+                usage.usedBytes() / (1024 * 1024),
+                usage.totalBytes() / (1024 * 1024),
+                usage.percent());
     }
 
     private static final Pattern STORAGE_PCT = Pattern.compile("(\\d+)% full");
@@ -308,10 +330,168 @@ public class DoctorCommand extends BaseCommand {
         if (matcher.find()) {
             int pct = Integer.parseInt(matcher.group(1));
             if (pct > 90) {
-                return Finding.warn("Storage pool " + poolName + " nearly full", usageString, null);
+                return Finding.warn("Storage pool " + poolName + " nearly full",
+                        usageString + " — run 'isx clean pool' to reclaim space", null);
             }
         }
         return Finding.ok("Storage pool " + poolName, usageString);
+    }
+
+    private List<Finding> analyzePoolUsage(IncusClient incus, String pool,
+                                            IncusClient.PoolUsage usage) {
+        var findings = new ArrayList<Finding>();
+
+        // 1. Pool too small — suggest resize
+        var resizeFinding = evaluatePoolSize(pool, usage, incus);
+        if (resizeFinding != null) {
+            findings.add(resizeFinding);
+        }
+
+        var instances = incus.list();
+
+        // 2. Failed-build instances
+        findings.addAll(findFailedBuilds(incus, instances));
+
+        // 3. Unused base images
+        findings.addAll(findUnusedImages(incus));
+
+        // 4. DNF cache volume
+        var dnfFinding = findDnfCache(incus, pool);
+        if (dnfFinding != null) {
+            findings.add(dnfFinding);
+        }
+
+        // 5. Stopped non-template instances (informational)
+        var stoppedFinding = findStoppedInstances(instances);
+        if (stoppedFinding != null) {
+            findings.add(stoppedFinding);
+        }
+
+        return findings;
+    }
+
+    static Finding evaluatePoolSize(String pool, IncusClient.PoolUsage usage,
+                                     IncusClient incus) {
+        long total = usage.totalBytes();
+        long maxSize = maxResizeBytes(incus, pool, total);
+
+        if (total >= MIN_POOL_SIZE) {
+            if (usage.percent() > 90) {
+                long newSize = total * 2;
+                if (maxSize > 0 && newSize > maxSize) newSize = maxSize;
+                if (newSize <= total) {
+                    return Finding.warn("Pool " + pool + " is full",
+                            "currently " + (total / GIB) + "GiB — cannot enlarge further,"
+                                    + " host filesystem has insufficient free space", null);
+                }
+                String newSizeStr = (newSize / GIB) + "GiB";
+                return Finding.warn("Pool " + pool + " could be enlarged",
+                        "currently " + (total / GIB) + "GiB — the pool is thin-provisioned"
+                                + " (a sparse file that only uses real disk space as data is written,"
+                                + " so enlarging is free)",
+                        new Remediation("Resize to " + newSizeStr, false,
+                                () -> incus.resizePool(pool, newSizeStr)));
+            }
+            return null;
+        }
+        long target = MIN_POOL_SIZE;
+        if (maxSize > 0 && target > maxSize) target = maxSize;
+        if (target <= total) {
+            return Finding.warn("Pool " + pool + " is undersized",
+                    (total / GIB) + "GiB — default is " + (MIN_POOL_SIZE / GIB) + "GiB,"
+                            + " but host filesystem has insufficient free space to enlarge", null);
+        }
+        String targetStr = (target / GIB) + "GiB";
+        return Finding.warn("Pool " + pool + " is undersized",
+                (total / GIB) + "GiB — default is " + (MIN_POOL_SIZE / GIB) + "GiB."
+                        + " The pool is thin-provisioned (a sparse file that only uses real disk space"
+                        + " as data is written), so resizing does not consume additional host disk",
+                new Remediation("Resize pool to " + targetStr, false,
+                        () -> incus.resizePool(pool, targetStr)));
+    }
+
+    static long maxResizeBytes(IncusClient incus, String pool, long currentPoolSize) {
+        try {
+            if (incus == null) return 0;
+            var source = incus.getPoolSource(pool);
+            if (source == null) return 0;
+            var path = Path.of(source);
+            long freeSpace = Files.getFileStore(path).getUsableSpace();
+            return currentPoolSize + freeSpace;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private List<Finding> findFailedBuilds(IncusClient incus,
+                                            List<Map<String, String>> instances) {
+        var findings = new ArrayList<Finding>();
+        for (var inst : instances) {
+            var name = inst.get("name");
+            if (!name.endsWith("-failed-build")) continue;
+            findings.add(Finding.warn("Failed build: " + name, "can be deleted to reclaim space",
+                    new Remediation("Delete " + name, true,
+                            () -> incus.delete(name, true))));
+        }
+        return findings;
+    }
+
+    private List<Finding> findUnusedImages(IncusClient incus) {
+        var findings = new ArrayList<Finding>();
+        try {
+            var knownAliases = new HashSet<String>();
+            for (var def : ImageDef.loadAll().values()) {
+                var img = def.getImage();
+                if (img != null && !img.contains(":")) {
+                    knownAliases.add(img);
+                }
+            }
+
+            for (var image : incus.listImages()) {
+                boolean inUse = image.aliases().stream().anyMatch(knownAliases::contains);
+                if (!inUse) {
+                    findings.add(Finding.warn("Unused image: " + image.label(),
+                            CleanCommand.formatSize(image.size()),
+                            new Remediation("Delete image " + image.label(), true, () -> {
+                                for (var alias : image.aliases()) {
+                                    incus.deleteImageAlias(alias);
+                                }
+                                incus.deleteImage(image.fingerprint());
+                            })));
+                }
+            }
+        } catch (Exception ignored) {}
+        return findings;
+    }
+
+    private Finding findDnfCache(IncusClient incus, String pool) {
+        try {
+            if (incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                return Finding.warn("DNF build cache volume exists",
+                        "can be deleted to reclaim space (will be recreated on next build)",
+                        new Remediation("Delete DNF cache volume", false,
+                                () -> incus.deleteStorageVolume(pool, BuildCommand.DNF_CACHE_VOLUME)));
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private Finding findStoppedInstances(List<Map<String, String>> instances) {
+        var stopped = new ArrayList<String>();
+        for (var inst : instances) {
+            var name = inst.get("name");
+            if (name.startsWith("tpl-")) continue;
+            if (name.endsWith("-failed-build")) continue;
+            if ("Stopped".equals(inst.get("status"))) {
+                stopped.add(name);
+            }
+        }
+        if (!stopped.isEmpty()) {
+            return Finding.warn("Stopped instances",
+                    stopped.size() + " stopped: " + String.join(", ", stopped)
+                            + " — delete with 'isx destroy <name>'", null);
+        }
+        return null;
     }
 
     // ---- Layer 3: VM/tunnel (macOS) ----
@@ -462,7 +642,8 @@ public class DoctorCommand extends BaseCommand {
             if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
             if (ProxyService.isActive()) {
                 return Finding.warn("Proxy version drift", drift,
-                        new Remediation("Restart proxy service to update", false, () -> ProxyService.restart()));
+                        new Remediation("Restart proxy service to update", false,
+                                () -> ProxyService.reinstallIfChanged(incus)));
             }
             return Finding.warn("Proxy version drift", drift,
                     new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
