@@ -12,6 +12,18 @@ PASS=0
 FAIL=0
 ERRORS=""
 
+assert() {
+    local desc="$1"; shift
+    if "$@" >/dev/null 2>&1; then
+        printf '  \033[32mPASS\033[0m  %s\n' "$desc"
+        PASS=$((PASS + 1))
+    else
+        printf '  \033[31mFAIL\033[0m  %s\n' "$desc"
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  - ${desc}\n"
+    fi
+}
+
 assert_eq() {
     local desc="$1" expected="$2"; shift 2
     local actual
@@ -31,7 +43,59 @@ echo " Rootless podman integration test"
 echo "========================================"
 echo ""
 
-echo "[1] Rootless PostgreSQL via podman"
+echo "[1] Cgroup manager"
+assert_eq "podman uses systemd cgroup manager" "systemd" \
+    su -l agentuser -c "podman info --format '{{.Host.CgroupManager}}'"
+
+echo ""
+echo "[2] /dev/net/tun permissions"
+assert_eq "/dev/net/tun is world-accessible" "crw-rw-rw-" \
+    sh -c "ls -la /dev/net/tun | cut -d' ' -f1"
+
+echo ""
+echo "[3] Pasta networking"
+echo "  Pulling alpine image (with retries)..."
+alpine_pulled=false
+for attempt in 1 2 3; do
+    if su -l agentuser -c 'podman pull docker.io/library/alpine' 2>&1; then
+        alpine_pulled=true
+        break
+    fi
+    echo "  Pull attempt $attempt failed, retrying..."
+    sleep 2
+done
+if $alpine_pulled; then
+    assert_eq "rootless podman run with default networking" "hello" \
+        su -l agentuser -c "podman run --rm docker.io/library/alpine echo hello"
+else
+    echo "  FAIL: podman pull alpine failed after 3 attempts"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  - podman pull alpine failed\n"
+fi
+
+echo ""
+echo "[4] Port mapping"
+su -l agentuser -c 'podman run -d --name port-test -p 8080:80 docker.io/library/alpine sh -c "while true; do echo -e \"HTTP/1.1 200 OK\n\nworks\" | nc -l -p 80; done"' >/dev/null 2>&1
+sleep 2
+assert_eq "port forwarding through pasta" "works" \
+    su -l agentuser -c "curl -sf http://localhost:8080"
+su -l agentuser -c "podman rm -f port-test" >/dev/null 2>&1
+
+echo ""
+echo "[5] Podman build"
+assert "podman build succeeds" \
+    su -l agentuser -c "echo 'FROM docker.io/library/alpine' | podman build -q -t test-build -"
+assert_eq "run built image" "build works" \
+    su -l agentuser -c "podman run --rm test-build echo 'build works'"
+su -l agentuser -c "podman rmi -f test-build" >/dev/null 2>&1
+
+echo ""
+echo "[6] Resource limits (systemd cgroup manager)"
+assert_eq "memory limit applied" "67108864" \
+    su -l agentuser -c "podman run --rm --memory=64m docker.io/library/alpine cat /sys/fs/cgroup/memory.max"
+
+echo ""
+echo "[7] Rootless PostgreSQL via podman"
 
 # Diagnostics — helps debug user namespace issues
 echo "  subuid: $(cat /etc/subuid)"

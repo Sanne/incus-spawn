@@ -628,6 +628,8 @@ public class BuildCommand extends BaseCommand {
                 incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
             }
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
+            incus.deviceAdd(buildName, "tun", "unix-char",
+                    "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
         }
         incus.start(buildName);
         incus.waitForReady(buildName);
@@ -802,7 +804,10 @@ public class BuildCommand extends BaseCommand {
             prepareContainerForPackageInstall(container);
 
             System.out.println("Restarting container with updated security config...");
-            incus.restart(buildName);
+            incus.stop(buildName);
+            incus.deviceAdd(buildName, "tun", "unix-char",
+                    "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
+            incus.start(buildName);
             incus.waitForSystemd(buildName);
             waitForIpv4(container);
         }
