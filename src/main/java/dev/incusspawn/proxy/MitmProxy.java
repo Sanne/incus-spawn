@@ -823,12 +823,7 @@ public class MitmProxy {
                 var imageRef = domain + "/" + imageName;
                 var cacheFile = registryCacheDir().resolve(digest.replace(":", "-"));
 
-                vertx.executeBlocking(() -> {
-                    if (Files.exists(cacheFile)) {
-                        return Files.size(cacheFile);
-                    }
-                    return -1L;
-                }).onSuccess(size -> {
+                cachedFileSize(cacheFile).onSuccess(size -> {
                     if (size >= 0) {
                         System.out.println("Registry cache hit: " + imageRef +
                                 " " + digest.substring(0, 19) +
@@ -847,6 +842,10 @@ public class MitmProxy {
 
         // Non-cacheable (auth tokens, manifests, HEAD, tag lookups) — relay
         relayRequest(clientReq, domain);
+    }
+
+    private Future<Long> cachedFileSize(Path cacheFile) {
+        return vertx.executeBlocking(() -> Files.isRegularFile(cacheFile) ? Files.size(cacheFile) : -1L);
     }
 
     /**
@@ -1128,12 +1127,7 @@ public class MitmProxy {
                 var cacheFile = gradleCacheDir().resolve(filename);
                 var ref = domain + path;
 
-                vertx.executeBlocking(() -> {
-                    if (Files.exists(cacheFile)) {
-                        return Files.size(cacheFile);
-                    }
-                    return -1L;
-                }).onSuccess(size -> {
+                cachedFileSize(cacheFile).onSuccess(size -> {
                     if (size >= 0) {
                         System.out.println("Gradle cache hit: " + filename +
                                 " (" + formatSize(size) + ")");
@@ -1191,12 +1185,7 @@ public class MitmProxy {
         if (clientReq.method() == HttpMethod.GET && path != null && isMavenCacheable(path)) {
             var cacheFile = mavenCacheDir().resolve(domain).resolve(path.substring(1));
 
-            vertx.executeBlocking(() -> {
-                if (Files.exists(cacheFile)) {
-                    return Files.size(cacheFile);
-                }
-                return -1L;
-            }).onSuccess(size -> {
+            cachedFileSize(cacheFile).onSuccess(size -> {
                 if (size >= 0) {
                     System.out.println("Maven cache hit: " + domain + path +
                             " (" + formatSize(size) + ")");
@@ -1475,6 +1464,7 @@ public class MitmProxy {
      */
     private static boolean isMavenCacheable(String path) {
         if (path.contains("..")) return false;
+        if (path.endsWith("/")) return false;
         if (path.contains("maven-metadata.xml")) return false;
         if (path.contains("-SNAPSHOT")) return false;
         return true;
@@ -1678,7 +1668,11 @@ public class MitmProxy {
     private void sendError(HttpServerResponse resp, int statusCode, String message) {
         try {
             if (!resp.ended() && !resp.closed()) {
-                resp.setStatusCode(statusCode).end(message);
+                if (resp.headWritten()) {
+                    resp.end();
+                } else {
+                    resp.setStatusCode(statusCode).end(message);
+                }
             }
         } catch (Exception e) {
             System.err.println("Failed to send error response: " + e.getMessage());
