@@ -463,30 +463,32 @@ class GitRemoteUtilsTest {
         assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
     }
 
-    // ── remoteUrlsFromGitConfig ────────────────────────────────────────────
+    // ── parseGitRemotes ─────────────────────────────────────────────────────
 
     @Test
-    void remoteUrlsFromGitConfigReadsAllRemotes() throws IOException, InterruptedException {
+    void parseGitRemotesReadsNamesAndUrls() throws IOException, InterruptedException {
         var repo = tempDir.resolve("multi-remote");
         Files.createDirectories(repo);
         runGit(repo, "init");
         runGit(repo, "remote", "add", "origin", "git@github.com:user/repo.git");
         runGit(repo, "remote", "add", "upstream", "https://github.com/org/repo.git");
 
-        var urls = GitRemoteUtils.remoteUrlsFromGitConfig(repo).toList();
-        assertEquals(2, urls.size());
-        assertTrue(urls.contains("git@github.com:user/repo.git"));
-        assertTrue(urls.contains("https://github.com/org/repo.git"));
+        var remotes = GitRemoteUtils.parseGitRemotes(repo);
+        assertEquals(2, remotes.size());
+        assertEquals("origin", remotes.get(0).name());
+        assertEquals("git@github.com:user/repo.git", remotes.get(0).url());
+        assertEquals("upstream", remotes.get(1).name());
+        assertEquals("https://github.com/org/repo.git", remotes.get(1).url());
     }
 
     @Test
-    void remoteUrlsFromGitConfigReturnsEmptyForNonRepo() {
-        var urls = GitRemoteUtils.remoteUrlsFromGitConfig(tempDir.resolve("nonexistent")).toList();
-        assertTrue(urls.isEmpty());
+    void parseGitRemotesReturnsEmptyForNonRepo() {
+        var remotes = GitRemoteUtils.parseGitRemotes(tempDir.resolve("nonexistent"));
+        assertTrue(remotes.isEmpty());
     }
 
     @Test
-    void remoteUrlsFromGitConfigFollowsWorktreeGitdir() throws IOException, InterruptedException {
+    void parseGitRemotesFollowsWorktreeGitdir() throws IOException, InterruptedException {
         var mainRepo = tempDir.resolve("main-repo");
         Files.createDirectories(mainRepo);
         runGit(mainRepo, "init");
@@ -496,9 +498,10 @@ class GitRemoteUtilsTest {
         runGit(mainRepo, "remote", "add", "origin", "https://github.com/org/repo.git");
         runGit(mainRepo, "worktree", "add", tempDir.resolve("wt").toString(), "-b", "wt-branch");
 
-        var wtUrls = GitRemoteUtils.remoteUrlsFromGitConfig(tempDir.resolve("wt")).toList();
-        assertEquals(1, wtUrls.size());
-        assertEquals("https://github.com/org/repo.git", wtUrls.get(0));
+        var remotes = GitRemoteUtils.parseGitRemotes(tempDir.resolve("wt"));
+        assertEquals(1, remotes.size());
+        assertEquals("origin", remotes.get(0).name());
+        assertEquals("https://github.com/org/repo.git", remotes.get(0).url());
     }
 
     // ── findHostReposByUrl ──────────────────────────────────────────────

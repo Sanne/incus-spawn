@@ -21,8 +21,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public final class GitRemoteUtils {
 
@@ -37,6 +37,16 @@ public final class GitRemoteUtils {
     );
 
     public record IsxUrl(String instance, String path) {}
+
+    public record RemoteEntry(String name, String url) {}
+
+    static final class ConfigCache {
+        private final ConcurrentHashMap<Path, List<RemoteEntry>> map = new ConcurrentHashMap<>();
+
+        List<RemoteEntry> remotes(Path repoDir) {
+            return map.computeIfAbsent(repoDir, GitRemoteUtils::parseGitRemotes);
+        }
+    }
 
     private GitRemoteUtils() {}
 
@@ -200,18 +210,16 @@ public final class GitRemoteUtils {
     }
 
     public static String getHostRepoRemoteUrl(Path repoDir, String remoteName) {
-        return hostGitExec(repoDir, "remote", "get-url", remoteName);
+        return parseGitRemotes(repoDir).stream()
+                .filter(r -> r.name().equals(remoteName))
+                .map(RemoteEntry::url)
+                .findFirst().orElse(null);
     }
 
     public static boolean anyRemoteMatches(Path repoDir, String cloneUrl) {
-        var output = hostGitExec(repoDir, "remote", "-v");
-        if (output == null) return false;
-        return output.lines()
-                .filter(line -> line.endsWith("(fetch)"))
-                .map(line -> line.split("\t", 2))
-                .filter(parts -> parts.length == 2)
-                .map(parts -> parts[1].replace(" (fetch)", "").strip())
-                .anyMatch(url -> urlsMatch(url, cloneUrl));
+        var normalizedTarget = normalizeGitUrl(cloneUrl);
+        return parseGitRemotes(repoDir).stream()
+                .anyMatch(r -> normalizeGitUrl(r.url()).equals(normalizedTarget));
     }
 
     static String hostGitExec(Path repoDir, String... gitArgs) {
@@ -295,25 +303,28 @@ public final class GitRemoteUtils {
         return results;
     }
 
-    static Stream<String> remoteUrlsFromGitConfig(Path repoDir) {
+    static List<RemoteEntry> parseGitRemotes(Path repoDir) {
         var configFile = resolveGitConfig(repoDir);
-        if (configFile == null || !Files.isRegularFile(configFile)) return Stream.empty();
-        var urls = new ArrayList<String>();
+        if (configFile == null || !Files.isRegularFile(configFile)) return List.of();
+        var remotes = new ArrayList<RemoteEntry>();
         try (BufferedReader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
-            boolean inRemote = false;
+            String currentRemote = null;
             String line;
             while ((line = reader.readLine()) != null) {
                 var trimmed = line.strip();
                 if (trimmed.startsWith("[")) {
-                    inRemote = trimmed.startsWith("[remote ");
-                } else if (inRemote && trimmed.startsWith("url = ")) {
-                    urls.add(trimmed.substring("url = ".length()).strip());
+                    currentRemote = null;
+                    if (trimmed.startsWith("[remote \"") && trimmed.endsWith("\"]")) {
+                        currentRemote = trimmed.substring("[remote \"".length(), trimmed.length() - "\"]".length());
+                    }
+                } else if (currentRemote != null && trimmed.startsWith("url = ")) {
+                    remotes.add(new RemoteEntry(currentRemote, trimmed.substring("url = ".length()).strip()));
                 }
             }
         } catch (IOException e) {
-            return Stream.empty();
+            return List.of();
         }
-        return urls.stream();
+        return remotes;
     }
 
     private static Path resolveGitConfig(Path repoDir) {
@@ -344,15 +355,15 @@ public final class GitRemoteUtils {
         var hostRepoDirs = findAllCandidateRepoDirs(config);
         var normalizedTarget = normalizeGitUrl(repoUrl);
         return hostRepoDirs.parallelStream()
-                .filter(dir -> remoteUrlsFromGitConfig(dir)
-                        .anyMatch(url -> normalizeGitUrl(url).equals(normalizedTarget)))
+                .filter(dir -> parseGitRemotes(dir).stream()
+                        .anyMatch(r -> normalizeGitUrl(r.url()).equals(normalizedTarget)))
                 .toList();
     }
 
-    static Map<String, List<Path>> buildUrlIndex(List<Path> repoDirs) {
+    static Map<String, List<Path>> buildUrlIndex(List<Path> repoDirs, ConfigCache cache) {
         return repoDirs.parallelStream()
-                .flatMap(dir -> remoteUrlsFromGitConfig(dir)
-                        .map(url -> Map.entry(normalizeGitUrl(url), dir)))
+                .flatMap(dir -> cache.remotes(dir).stream()
+                        .map(r -> Map.entry(normalizeGitUrl(r.url()), dir)))
                 .distinct()
                 .collect(Collectors.groupingBy(
                         Map.Entry::getKey,
