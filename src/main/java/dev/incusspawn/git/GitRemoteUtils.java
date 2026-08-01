@@ -6,6 +6,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -16,8 +17,12 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class GitRemoteUtils {
 
@@ -288,6 +293,91 @@ public final class GitRemoteUtils {
                     });
         } catch (IOException ignored) {}
         return results;
+    }
+
+    static Stream<String> remoteUrlsFromGitConfig(Path repoDir) {
+        var configFile = resolveGitConfig(repoDir);
+        if (configFile == null || !Files.isRegularFile(configFile)) return Stream.empty();
+        var urls = new ArrayList<String>();
+        try (BufferedReader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
+            boolean inRemote = false;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                var trimmed = line.strip();
+                if (trimmed.startsWith("[")) {
+                    inRemote = trimmed.startsWith("[remote ");
+                } else if (inRemote && trimmed.startsWith("url = ")) {
+                    urls.add(trimmed.substring("url = ".length()).strip());
+                }
+            }
+        } catch (IOException e) {
+            return Stream.empty();
+        }
+        return urls.stream();
+    }
+
+    private static Path resolveGitConfig(Path repoDir) {
+        var dotGit = repoDir.resolve(".git");
+        if (Files.isDirectory(dotGit)) {
+            return dotGit.resolve("config");
+        }
+        if (!Files.isRegularFile(dotGit)) return null;
+        try {
+            var content = Files.readString(dotGit, StandardCharsets.UTF_8).strip();
+            if (!content.startsWith("gitdir: ")) return null;
+            var gitDir = Path.of(content.substring("gitdir: ".length()).strip());
+            if (!gitDir.isAbsolute()) {
+                gitDir = repoDir.resolve(gitDir).normalize();
+            }
+            var commonDirFile = gitDir.resolve("commondir");
+            if (Files.isRegularFile(commonDirFile)) {
+                var commonDirRef = Files.readString(commonDirFile, StandardCharsets.UTF_8).strip();
+                return gitDir.resolve(commonDirRef).normalize().resolve("config");
+            }
+            return gitDir.resolve("config");
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    static List<Path> findHostReposByUrl(SpawnConfig config, String repoUrl) {
+        var hostRepoDirs = findAllCandidateRepoDirs(config);
+        var normalizedTarget = normalizeGitUrl(repoUrl);
+        return hostRepoDirs.parallelStream()
+                .filter(dir -> remoteUrlsFromGitConfig(dir)
+                        .anyMatch(url -> normalizeGitUrl(url).equals(normalizedTarget)))
+                .toList();
+    }
+
+    static Map<String, List<Path>> buildUrlIndex(List<Path> repoDirs) {
+        return repoDirs.parallelStream()
+                .flatMap(dir -> remoteUrlsFromGitConfig(dir)
+                        .map(url -> Map.entry(normalizeGitUrl(url), dir)))
+                .distinct()
+                .collect(Collectors.groupingBy(
+                        Map.Entry::getKey,
+                        Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
+    }
+
+    static List<Path> findAllCandidateRepoDirs(SpawnConfig config) {
+        var dirs = new ArrayList<Path>();
+        var seen = new HashSet<Path>();
+
+        for (var entry : config.getRepoPaths().entrySet()) {
+            var path = Path.of(HostResourceSetup.expandHostTilde(entry.getValue()));
+            if (Files.isDirectory(path) && isGitRepo(path) && seen.add(path)) {
+                dirs.add(path);
+            }
+        }
+
+        for (var hostPath : config.getHostPaths()) {
+            var basePath = Path.of(HostResourceSetup.expandHostTilde(hostPath));
+            findAllGitRepos(basePath).stream()
+                    .filter(seen::add)
+                    .forEach(dirs::add);
+        }
+
+        return dirs;
     }
 
     private static final String REPO_REF_BASE = "/var/lib/incus-spawn/repo-ref";
