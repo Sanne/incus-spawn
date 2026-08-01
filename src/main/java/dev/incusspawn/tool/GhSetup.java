@@ -70,10 +70,11 @@ public class GhSetup implements ToolSetup {
         if (!hasEmail) {
             var configEmail = SpawnConfig.load().getGithub().getEmail();
             var email = configEmail.isBlank() ? null : configEmail;
+            boolean publicEmailHidden = parts.length < 3 || parts[2].isEmpty();
             if (email == null) {
-                email = findEmailFromApi(c);
+                email = findEmailFromApi(c, publicEmailHidden);
             }
-            if (email == null && parts.length >= 3 && !parts[2].isEmpty()) {
+            if (email == null && !publicEmailHidden) {
                 email = parts[2];
             }
             if (email == null) {
@@ -83,12 +84,16 @@ public class GhSetup implements ToolSetup {
         }
     }
 
-    private String findEmailFromApi(Container c) {
+    private static final String JQ_NOREPLY = "([.[] | select(.verified and (.email | endswith(\"@users.noreply.github.com\"))) | .email] | first)";
+    private static final String JQ_PRIMARY = "([.[] | select(.primary and .verified) | .email] | first)";
+    private static final String JQ_ANY_VERIFIED = "([.[] | select(.verified) | .email] | first)";
+
+    private String findEmailFromApi(Container c, boolean preferNoreply) {
+        String jq = preferNoreply
+                ? JQ_NOREPLY + " // " + JQ_PRIMARY + " // " + JQ_ANY_VERIFIED
+                : JQ_PRIMARY + " // " + JQ_ANY_VERIFIED;
         var result = c.sh("GH_TOKEN=" + PLACEHOLDER_TOKEN
-                + " gh api user/emails --jq '"
-                + "([.[] | select(.primary and .verified) | .email] | first)"
-                + " // ([.[] | select(.verified and (.email | endswith(\"@users.noreply.github.com\") | not)) | .email] | first)"
-                + " // ([.[] | select(.email | endswith(\"@users.noreply.github.com\")) | .email] | first)'");
+                + " gh api user/emails --jq '" + jq + "'");
         if (!result.success() || result.stdout().isBlank() || result.stdout().strip().equals("null")) {
             return null;
         }

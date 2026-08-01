@@ -103,23 +103,37 @@ class GhSetupTest {
     }
 
     @Test
-    void prefersNoreplyOverPublicEmail() {
+    void prefersNoreplyWhenPrivacyEnabled() {
         var incus = stubIncus();
         noExistingConfig(incus);
         noExistingIdentity(incus);
-        ghApiUserReturns(incus, "octocat\tThe Octocat\tpublic@example.com\n");
+        ghApiUserReturns(incus, "octocat\tThe Octocat\t\n");
         ghApiEmailsReturns(incus, "12345+testuser@users.noreply.github.com\n");
 
         new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
                 contains("12345+testuser@users.noreply.github.com"));
-        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"),
-                contains("public@example.com"));
     }
 
     @Test
-    void fallsBackToPublicEmailWhenNoreplyUnavailable() {
+    void prefersRealEmailWhenPrivacyDisabled() {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        ghApiUserReturns(incus, "octocat\tThe Octocat\tpublic@example.com\n");
+        ghApiEmailsReturns(incus, "primary@example.com\n");
+
+        new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("primary@example.com"));
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("noreply"));
+    }
+
+    @Test
+    void fallsBackToPublicEmailWhenEmailsApiUnavailable() {
         var incus = stubIncus();
         noExistingConfig(incus);
         noExistingIdentity(incus);

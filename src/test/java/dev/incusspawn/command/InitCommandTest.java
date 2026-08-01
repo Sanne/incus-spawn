@@ -106,7 +106,7 @@ class InitCommandTest {
     }
 
     @Test
-    void parseEmailsFiltersNoreply() {
+    void parseEmailsIncludesNoreplyFirst() {
         var json = """
                 [
                   {"email":"12345+user@users.noreply.github.com","primary":false,"verified":true},
@@ -114,14 +114,16 @@ class InitCommandTest {
                 ]""";
         var result = InitCommand.parseGitHubEmails(json);
         assertNotNull(result);
-        assertEquals(java.util.List.of("real@example.com"), result.verified());
+        assertEquals(java.util.List.of("12345+user@users.noreply.github.com", "real@example.com"), result.verified());
     }
 
     @Test
-    void parseEmailsReturnsNullWhenAllNoreply() {
+    void parseEmailsReturnsNoreplyWhenOnly() {
         var json = """
                 [{"email":"12345+user@users.noreply.github.com","primary":true,"verified":true}]""";
-        assertNull(InitCommand.parseGitHubEmails(json));
+        var result = InitCommand.parseGitHubEmails(json);
+        assertNotNull(result);
+        assertEquals(java.util.List.of("12345+user@users.noreply.github.com"), result.verified());
     }
 
     @Test
