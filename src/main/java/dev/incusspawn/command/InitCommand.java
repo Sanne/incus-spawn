@@ -1639,23 +1639,27 @@ public class InitCommand extends BaseCommand {
 
             var console = System.console();
             if (console == null) {
-                return parsed.primary != null ? parsed.primary : parsed.verified.get(0);
+                return parsed.verified.get(0);
             }
             System.out.println("  Multiple verified emails found:");
             for (int i = 0; i < parsed.verified.size(); i++) {
                 var label = parsed.verified.get(i);
-                if (label.equals(parsed.primary)) label += " (primary)";
+                if (label.endsWith("@users.noreply.github.com")) label += " (private, recommended)";
+                else if (label.equals(parsed.primary)) label += " (primary)";
                 System.out.println("    " + (i + 1) + ". " + label);
             }
-            System.out.print("  Select email for git commits (1-" + parsed.verified.size() + "): ");
+            System.out.print("  Select email for git commits [1]: ");
             var choice = console.readLine().strip();
+            if (choice.isEmpty()) {
+                return parsed.verified.get(0);
+            }
             try {
                 int idx = Integer.parseInt(choice) - 1;
                 if (idx >= 0 && idx < parsed.verified.size()) {
                     return parsed.verified.get(idx);
                 }
             } catch (NumberFormatException ignored) {}
-            return parsed.primary != null ? parsed.primary : parsed.verified.get(0);
+            return parsed.verified.get(0);
         } catch (Exception e) {
             return null;
         }
@@ -1666,14 +1670,22 @@ public class InitCommand extends BaseCommand {
             var emails = new ObjectMapper().readTree(json);
             var verifiedEmails = new ArrayList<String>();
             String primaryEmail = null;
+            String noreplyEmail = null;
             for (var entry : emails) {
                 if (!entry.path("verified").asBoolean(false)) continue;
                 var email = entry.path("email").asText(null);
-                if (email == null || email.endsWith("@users.noreply.github.com")) continue;
+                if (email == null) continue;
+                if (email.endsWith("@users.noreply.github.com")) {
+                    noreplyEmail = email;
+                    continue;
+                }
                 verifiedEmails.add(email);
                 if (entry.path("primary").asBoolean(false)) {
                     primaryEmail = email;
                 }
+            }
+            if (noreplyEmail != null) {
+                verifiedEmails.add(0, noreplyEmail);
             }
             if (verifiedEmails.isEmpty()) {
                 return null;
