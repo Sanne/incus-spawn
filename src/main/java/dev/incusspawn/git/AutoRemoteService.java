@@ -3,11 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
 import java.util.function.Consumer;
 
 public final class AutoRemoteService {
@@ -25,32 +21,28 @@ public final class AutoRemoteService {
         var repos = GitRemoteUtils.collectReposForInstance(instanceName, incus);
         if (repos.isEmpty()) return;
 
+        var candidateDirs = GitRemoteUtils.findAllCandidateRepoDirs(config);
+        var urlIndex = GitRemoteUtils.buildUrlIndex(candidateDirs);
+
         for (var repo : repos) {
             try {
-                addRemoteForRepo(config, instanceName, repo.getUrl(), repo.getPath(), output);
+                var normalizedUrl = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
+                var matchingDirs = urlIndex.getOrDefault(normalizedUrl, java.util.List.of());
+                for (var hostPath : matchingDirs) {
+                    addRemoteInHostRepo(hostPath, instanceName, repo.getPath(), output);
+                }
             } catch (Exception e) {
                 System.err.println("Warning: could not set up git remote for " + repo.getUrl() + ": " + e.getMessage());
             }
         }
     }
 
-    private static void addRemoteForRepo(SpawnConfig config, String instanceName,
-                                          String repoUrl, String containerPath,
-                                          Consumer<String> output) {
-        var repoName = GitRemoteUtils.repoNameFromUrl(repoUrl);
-        if (repoName.isEmpty()) return;
-
-        var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
-        if (hostPath == null || !Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)) return;
-
-        // Verify at least one of the host repo's remotes matches the container repo's URL
-        if (!GitRemoteUtils.anyRemoteMatches(hostPath, repoUrl)) return;
-
+    private static void addRemoteInHostRepo(Path hostPath, String instanceName,
+                                             String containerPath, Consumer<String> output) {
         var isxUrl = containerPath.startsWith("/")
                 ? "isx://" + instanceName + containerPath
                 : "isx://" + instanceName + "/" + containerPath;
 
-        // Check for name collision
         var existingUrl = GitRemoteUtils.getHostRepoRemoteUrl(hostPath, instanceName);
         if (existingUrl != null) {
             System.err.println("Warning: remote '" + instanceName + "' already exists in " + hostPath);
@@ -71,7 +63,7 @@ public final class AutoRemoteService {
         var config = SpawnConfig.load();
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
-        var candidates = collectCandidateRepoDirs(config);
+        var candidates = GitRemoteUtils.findAllCandidateRepoDirs(config);
         var isxPrefix = "isx://" + instanceName + "/";
 
         for (var dir : candidates) {
@@ -81,29 +73,6 @@ public final class AutoRemoteService {
                 System.err.println("Warning: remote cleanup failed for " + dir + ": " + e.getMessage());
             }
         }
-    }
-
-    private static List<Path> collectCandidateRepoDirs(SpawnConfig config) {
-        var dirs = new ArrayList<Path>();
-        var seen = new HashSet<Path>();
-
-        // Add all explicit repo-paths
-        for (var entry : config.getRepoPaths().entrySet()) {
-            var path = Path.of(dev.incusspawn.config.HostResourceSetup.expandHostTilde(entry.getValue()));
-            if (Files.isDirectory(path) && GitRemoteUtils.isGitRepo(path) && seen.add(path)) {
-                dirs.add(path);
-            }
-        }
-
-        // Scan all host-paths base directories (recursively, up to MAX_SCAN_DEPTH levels)
-        for (var hostPath : config.getHostPaths()) {
-            var basePath = Path.of(dev.incusspawn.config.HostResourceSetup.expandHostTilde(hostPath));
-            GitRemoteUtils.findAllGitRepos(basePath).stream()
-                    .filter(seen::add)
-                    .forEach(dirs::add);
-        }
-
-        return dirs;
     }
 
     private static void removeMatchingRemotes(Path repoDir, String isxUrlPrefix, Consumer<String> output) {

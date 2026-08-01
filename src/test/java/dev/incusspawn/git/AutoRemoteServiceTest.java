@@ -10,6 +10,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static dev.incusspawn.git.GitTestUtils.runGit;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -82,5 +84,93 @@ class AutoRemoteServiceTest {
                 .as("Remote 'test-instance' should have been added")
                 .contains("test-instance")
                 .contains("isx://test-instance/home/agentuser/incus-spawn");
+    }
+
+    @Test
+    void addRemotesFindsMultipleClonesOfSameRepo() throws IOException, InterruptedException {
+        // Setup: create three host repos that all have a remote matching the same URL
+        var upstream = tempDir.resolve("upstream/cxf");
+        var upstreamAlt = tempDir.resolve("upstream/cxf-4.1");
+        var downstream = tempDir.resolve("downstream/cxf");
+        for (var dir : List.of(upstream, upstreamAlt, downstream)) {
+            dir.toFile().mkdirs();
+            runGit(dir, "init");
+            runGit(dir, "config", "user.name", "Test User");
+            runGit(dir, "config", "user.email", "test@example.com");
+            runGit(dir, "commit", "--allow-empty", "-m", "Initial commit");
+            runGit(dir, "remote", "add", "origin", "https://github.com/apache/cxf.git");
+        }
+
+        // Create config pointing at both base directories
+        var configDir = tempDir.resolve(".config/incus-spawn");
+        configDir.toFile().mkdirs();
+        Files.writeString(configDir.resolve("config.yaml"),
+                "host-paths:\n  - \"" + tempDir.resolve("upstream") + "\"\n  - \"" + tempDir.resolve("downstream") + "\"");
+
+        // Create image definition with the repo
+        var imagesDir = configDir.resolve("images");
+        imagesDir.toFile().mkdirs();
+        Files.writeString(imagesDir.resolve("cxf.yaml"), """
+                name: tpl-cxf
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/apache/cxf.git
+                    path: /home/agentuser/cxf
+                """);
+
+        var incus = mock(IncusClient.class);
+        when(incus.configGet(eq("my-fix"), eq(Metadata.PARENT))).thenReturn("tpl-cxf");
+
+        var messages = new ArrayList<String>();
+        AutoRemoteService.addRemotes(incus, "my-fix", messages::add);
+
+        // All three host repos should have gotten the remote
+        assertThat(messages).hasSize(3);
+        for (var dir : List.of(upstream, upstreamAlt, downstream)) {
+            var remotes = runGit(dir, "remote", "-v");
+            assertThat(remotes)
+                    .as("Remote 'my-fix' should have been added in " + dir)
+                    .contains("my-fix")
+                    .contains("isx://my-fix/home/agentuser/cxf");
+        }
+    }
+
+    @Test
+    void addRemotesFindsRenamedDirectory() throws IOException, InterruptedException {
+        // Setup: host repo in ~/work/cq but the container repo URL is for camel-quarkus
+        var repoDir = tempDir.resolve("work/cq");
+        repoDir.toFile().mkdirs();
+        runGit(repoDir, "init");
+        runGit(repoDir, "config", "user.name", "Test User");
+        runGit(repoDir, "config", "user.email", "test@example.com");
+        runGit(repoDir, "commit", "--allow-empty", "-m", "Initial commit");
+        runGit(repoDir, "remote", "add", "origin", "https://github.com/apache/camel-quarkus.git");
+
+        var configDir = tempDir.resolve(".config/incus-spawn");
+        configDir.toFile().mkdirs();
+        Files.writeString(configDir.resolve("config.yaml"),
+                "host-path: \"" + tempDir.resolve("work") + "\"");
+
+        var imagesDir = configDir.resolve("images");
+        imagesDir.toFile().mkdirs();
+        Files.writeString(imagesDir.resolve("cq.yaml"), """
+                name: tpl-cq
+                parent: tpl-minimal
+                repos:
+                  - url: https://github.com/apache/camel-quarkus.git
+                    path: /home/agentuser/camel-quarkus
+                """);
+
+        var incus = mock(IncusClient.class);
+        when(incus.configGet(eq("my-branch"), eq(Metadata.PARENT))).thenReturn("tpl-cq");
+
+        var messages = new ArrayList<String>();
+        AutoRemoteService.addRemotes(incus, "my-branch", messages::add);
+
+        assertThat(messages).hasSize(1);
+        var remotes = runGit(repoDir, "remote", "-v");
+        assertThat(remotes)
+                .contains("my-branch")
+                .contains("isx://my-branch/home/agentuser/camel-quarkus");
     }
 }

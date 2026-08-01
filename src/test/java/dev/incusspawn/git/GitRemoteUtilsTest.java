@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static dev.incusspawn.git.GitTestUtils.runGit;
@@ -460,6 +461,166 @@ class GitRemoteUtilsTest {
     void anyRemoteMatchesHandlesSshVsHttps() throws IOException, InterruptedException {
         initGitRepoWithRemote(tempDir, "origin", "git@github.com:quarkusio/quarkus.git");
         assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
+    }
+
+    // ── remoteUrlsFromGitConfig ────────────────────────────────────────────
+
+    @Test
+    void remoteUrlsFromGitConfigReadsAllRemotes() throws IOException, InterruptedException {
+        var repo = tempDir.resolve("multi-remote");
+        Files.createDirectories(repo);
+        runGit(repo, "init");
+        runGit(repo, "remote", "add", "origin", "git@github.com:user/repo.git");
+        runGit(repo, "remote", "add", "upstream", "https://github.com/org/repo.git");
+
+        var urls = GitRemoteUtils.remoteUrlsFromGitConfig(repo).toList();
+        assertEquals(2, urls.size());
+        assertTrue(urls.contains("git@github.com:user/repo.git"));
+        assertTrue(urls.contains("https://github.com/org/repo.git"));
+    }
+
+    @Test
+    void remoteUrlsFromGitConfigReturnsEmptyForNonRepo() {
+        var urls = GitRemoteUtils.remoteUrlsFromGitConfig(tempDir.resolve("nonexistent")).toList();
+        assertTrue(urls.isEmpty());
+    }
+
+    @Test
+    void remoteUrlsFromGitConfigFollowsWorktreeGitdir() throws IOException, InterruptedException {
+        var mainRepo = tempDir.resolve("main-repo");
+        Files.createDirectories(mainRepo);
+        runGit(mainRepo, "init");
+        runGit(mainRepo, "config", "user.name", "Test");
+        runGit(mainRepo, "config", "user.email", "test@test.com");
+        runGit(mainRepo, "commit", "--allow-empty", "-m", "init");
+        runGit(mainRepo, "remote", "add", "origin", "https://github.com/org/repo.git");
+        runGit(mainRepo, "worktree", "add", tempDir.resolve("wt").toString(), "-b", "wt-branch");
+
+        var wtUrls = GitRemoteUtils.remoteUrlsFromGitConfig(tempDir.resolve("wt")).toList();
+        assertEquals(1, wtUrls.size());
+        assertEquals("https://github.com/org/repo.git", wtUrls.get(0));
+    }
+
+    // ── findHostReposByUrl ──────────────────────────────────────────────
+
+    @Test
+    void findHostReposByUrlFindsMultipleClones() throws IOException, InterruptedException {
+        var base = tempDir.resolve("projects");
+
+        var clone1 = base.resolve("upstream/cxf");
+        var clone2 = base.resolve("upstream/cxf-4.1");
+        var clone3 = base.resolve("downstream/cxf");
+        for (var clone : List.of(clone1, clone2, clone3)) {
+            Files.createDirectories(clone);
+            runGit(clone, "init");
+            runGit(clone, "remote", "add", "origin", "https://github.com/apache/cxf.git");
+        }
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/apache/cxf.git");
+        assertEquals(3, result.size());
+        assertTrue(result.containsAll(List.of(clone1, clone2, clone3)));
+    }
+
+    @Test
+    void findHostReposByUrlMatchesDifferentlyNamedDir() throws IOException, InterruptedException {
+        var base = tempDir.resolve("work");
+        var repo = base.resolve("cq");
+        Files.createDirectories(repo);
+        runGit(repo, "init");
+        runGit(repo, "remote", "add", "origin", "https://github.com/apache/camel-quarkus.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/apache/camel-quarkus.git");
+        assertEquals(1, result.size());
+        assertEquals(repo, result.get(0));
+    }
+
+    @Test
+    void findHostReposByUrlMatchesSshVsHttps() throws IOException, InterruptedException {
+        var base = tempDir.resolve("code");
+        var repo = base.resolve("myrepo");
+        Files.createDirectories(repo);
+        runGit(repo, "init");
+        runGit(repo, "remote", "add", "origin", "git@github.com:org/project.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/org/project.git");
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void findHostReposByUrlMatchesUpstreamRemote() throws IOException, InterruptedException {
+        var base = tempDir.resolve("forks");
+        var repo = base.resolve("my-fork");
+        Files.createDirectories(repo);
+        runGit(repo, "init");
+        runGit(repo, "remote", "add", "origin", "git@github.com:user/quarkus.git");
+        runGit(repo, "remote", "add", "upstream", "https://github.com/quarkusio/quarkus.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/quarkusio/quarkus.git");
+        assertEquals(1, result.size());
+        assertEquals(repo, result.get(0));
+    }
+
+    @Test
+    void findHostReposByUrlExcludesNonMatchingRepos() throws IOException, InterruptedException {
+        var base = tempDir.resolve("all");
+        var match = base.resolve("cxf");
+        var noMatch = base.resolve("other");
+        for (var dir : List.of(match, noMatch)) {
+            Files.createDirectories(dir);
+            runGit(dir, "init");
+        }
+        runGit(match, "remote", "add", "origin", "https://github.com/apache/cxf.git");
+        runGit(noMatch, "remote", "add", "origin", "https://github.com/apache/camel.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/apache/cxf.git");
+        assertEquals(1, result.size());
+        assertEquals(match, result.get(0));
+    }
+
+    @Test
+    void findHostReposByUrlDeduplicatesWhenMultipleRemotesMatchSameUrl() throws IOException, InterruptedException {
+        var base = tempDir.resolve("dedup");
+        var repo = base.resolve("myrepo");
+        Files.createDirectories(repo);
+        runGit(repo, "init");
+        runGit(repo, "remote", "add", "origin", "https://github.com/org/repo.git");
+        runGit(repo, "remote", "add", "upstream", "https://github.com/org/repo.git");
+
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(base.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/org/repo.git");
+        assertEquals(1, result.size(), "Repo should appear only once even with multiple matching remotes");
+    }
+
+    @Test
+    void findHostReposByUrlIncludesRepoPaths() throws IOException, InterruptedException {
+        var external = tempDir.resolve("elsewhere/myrepo");
+        Files.createDirectories(external);
+        runGit(external, "init");
+        runGit(external, "remote", "add", "origin", "https://github.com/org/myrepo.git");
+
+        var config = new SpawnConfig();
+        config.setRepoPaths(Map.of("myrepo", external.toString()));
+
+        var result = GitRemoteUtils.findHostReposByUrl(config, "https://github.com/org/myrepo.git");
+        assertEquals(1, result.size());
+        assertEquals(external, result.get(0));
     }
 
     private void initGitRepoWithRemote(Path dir, String remoteName, String remoteUrl)
