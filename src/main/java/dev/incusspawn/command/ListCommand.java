@@ -300,6 +300,7 @@ public class ListCommand extends BaseCommand {
                     .bindings(ShiftTabBindings.createWithBacktab())
                     .tickRate(Duration.ofMillis(100))
                     .build())) {
+                patchResizeSignalHandler(runner);
                 runner.run(
                         (event, tui) -> handleEvent(event, tui, instanceTableState),
                         frame -> render(frame, instanceTableState));
@@ -3970,6 +3971,52 @@ public class ListCommand extends BaseCommand {
             System.out.printf(fmt, entry.name, entry.status, ip, parent, entry.runtime, age);
         }
         System.out.println();
+    }
+
+    @SuppressWarnings("removal")
+    private static void patchResizeSignalHandler(TuiRunner runner) {
+        if (System.getProperty("org.graalvm.version") == null) return;
+        try {
+            var backendField = runner.getClass().getDeclaredField("backend");
+            backendField.setAccessible(true);
+            var backend = backendField.get(runner);
+
+            var terminalField = backend.getClass().getDeclaredField("terminal");
+            terminalField.setAccessible(true);
+            var terminal = terminalField.get(backend);
+
+            // Pre-set signalArena so onResize() skips installing the Panama upcall handler.
+            // Without this, runner.run() → onResize() → sigaction() overwrites any signal
+            // disposition we set here.
+            var signalArenaField = terminal.getClass().getDeclaredField("signalArena");
+            signalArenaField.setAccessible(true);
+            signalArenaField.set(terminal, java.lang.foreign.Arena.ofShared());
+
+            var signalMethod = Class.forName("dev.tamboui.backend.panama.unix.LibC")
+                    .getDeclaredMethod("signal", int.class, java.lang.foreign.MemorySegment.class);
+            signalMethod.setAccessible(true);
+            signalMethod.invoke(null, 28, java.lang.foreign.MemorySegment.ofAddress(1)); // SIG_IGN
+
+            var resizePendingField = terminal.getClass().getDeclaredField("resizePending");
+            var unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            var unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            long offset = unsafe.objectFieldOffset(resizePendingField);
+
+            var runningField = runner.getClass().getDeclaredField("running");
+            runningField.setAccessible(true);
+            var running = (java.util.concurrent.atomic.AtomicBoolean) runningField.get(runner);
+
+            var poller = new Thread(() -> {
+                while (running.get()) {
+                    try { Thread.sleep(250); } catch (InterruptedException e) { break; }
+                    unsafe.putBooleanVolatile(terminal, offset, true);
+                }
+            });
+            poller.setDaemon(true);
+            poller.start();
+        } catch (Exception ignored) {
+        }
     }
 
     private record TemplateInfo(String name, String description,

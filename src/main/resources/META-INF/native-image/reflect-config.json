@@ -8,5 +8,21 @@
     "name": "dev.tamboui.capability.core.CoreCapabilityProvider",
     "allDeclaredConstructors": true,
     "allPublicMethods": true
+  },
+  {
+    "name": "dev.tamboui.tui.TuiRunner",
+    "fields": [{"name": "backend"}, {"name": "running"}]
+  },
+  {
+    "name": "dev.tamboui.backend.panama.PanamaBackend",
+    "fields": [{"name": "terminal"}]
+  },
+  {
+    "name": "dev.tamboui.backend.panama.unix.UnixTerminal",
+    "fields": [{"name": "resizePending", "allowWrite": true}, {"name": "signalArena", "allowWrite": true}]
+  },
+  {
+    "name": "dev.tamboui.backend.panama.unix.LibC",
+    "methods": [{"name": "signal", "parameterTypes": ["int", "java.lang.foreign.MemorySegment"]}]
   }
 ]
