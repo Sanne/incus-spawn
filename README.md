@@ -31,7 +31,7 @@ Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus
 brew install Sanne/tap/incus-spawn
 ```
 
-#### Fedora
+#### Fedora / RHEL
 
 ```shell
 sudo dnf copr enable sanne/incus-spawn
@@ -700,7 +700,7 @@ brew install Sanne/tap/incus-spawn
 
 Updates with `brew upgrade incus-spawn`. See [docs/HOMEBREW.md](docs/HOMEBREW.md) for details.
 
-### Fedora (DNF)
+### Fedora / RHEL (DNF)
 
 ```shell
 sudo dnf copr enable sanne/incus-spawn
@@ -708,7 +708,7 @@ sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus
 sudo dnf install incus-spawn
 ```
 
-Updates automatically with `sudo dnf upgrade`.
+Available for Fedora 43+, RHEL 9–10, CentOS Stream 9, AlmaLinux 9, and Rocky Linux 9 (via EPEL). Updates automatically with `sudo dnf upgrade`.
 
 ### Ubuntu / Debian (APT)
 
