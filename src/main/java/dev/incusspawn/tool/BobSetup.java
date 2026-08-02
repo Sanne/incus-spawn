@@ -15,7 +15,7 @@ public class BobSetup implements ToolSetup {
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
     private static final String VERSION_URL =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-version.txt";
-    private static final String TARBALL_URL_PREFIX =
+    private static final String BASE_URL =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-";
     private static final Pattern VERSION_PATTERN = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
 
@@ -71,8 +71,10 @@ public class BobSetup implements ToolSetup {
             }
             System.out.println("  Latest version: " + version);
 
-            var tarballUrl = TARBALL_URL_PREFIX + version + ".tgz";
-            var cached = downloadCache.download(tarballUrl, null);
+            var tarballUrl = BASE_URL + version + ".tgz";
+            var sha256 = Files.readString(
+                    downloadCache.download(tarballUrl + ".sha256", null)).strip();
+            var cached = downloadCache.download(tarballUrl, sha256);
 
             var containerTarball = "/tmp/bobshell-" + version + ".tgz";
             c.filePush(cached.toString(), containerTarball);
