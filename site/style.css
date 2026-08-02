@@ -522,6 +522,49 @@ a:hover {
   margin-bottom: 1rem;
 }
 
+/* --- Docs tabs (platform-specific sections) --- */
+
+.docs-tabs {
+  margin: 1.5rem 0;
+}
+
+.docs-tabs .tab-buttons {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+}
+
+.docs-tabs .tab-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.docs-tabs .tab-btn:hover {
+  color: var(--fg);
+}
+
+.docs-tabs .tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.docs-tabs .tab-panel {
+  display: none;
+  padding: 1rem 0 0;
+}
+
+.docs-tabs .tab-panel.active {
+  display: block;
+}
+
 /* --- Responsive --- */
 
 @media (max-width: 1024px) {
@@ -558,6 +601,16 @@ a:hover {
   }
 
   .hero .sub-tabs .tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .docs-tabs .tab-buttons {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .docs-tabs .tab-btn {
     white-space: nowrap;
     flex-shrink: 0;
   }

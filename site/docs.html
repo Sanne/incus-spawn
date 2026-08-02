@@ -34,6 +34,52 @@
 </div>
 
 <script>
+// Tabbed platform sections with OS auto-detection
+(function() {
+  function detectOS() {
+    var ud = navigator.userAgentData;
+    if (ud && ud.platform) {
+      if (ud.platform === 'macOS') return 'macos';
+      if (ud.platform === 'Linux') return 'linux';
+    }
+    var p = navigator.platform || '';
+    if (/Mac/.test(p)) return 'macos';
+    return 'linux';
+  }
+
+  function activateTab(tabs, btn) {
+    tabs.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    tabs.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+    btn.classList.add('active');
+    tabs.querySelector('.tab-panel[data-tab-panel="' + btn.dataset.tab + '"]').classList.add('active');
+  }
+
+  var os = detectOS();
+
+  document.querySelectorAll('.docs-tabs').forEach(function(tabs) {
+    tabs.querySelectorAll('.tab-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        activateTab(tabs, btn);
+        if (tabs.dataset.tabs === 'os') {
+          var clickedOS = btn.dataset.os;
+          document.querySelectorAll('.docs-tabs[data-tabs="os"]').forEach(function(other) {
+            if (other === tabs) return;
+            var match = other.querySelector('.tab-btn[data-os="' + clickedOS + '"]');
+            if (match) activateTab(other, match);
+          });
+        }
+      });
+    });
+
+    if (tabs.dataset.tabs === 'os') {
+      var match = tabs.querySelector('.tab-btn[data-os="' + os + '"]');
+      if (match) activateTab(tabs, match);
+    }
+  });
+})();
+</script>
+
+<script>
 // Highlight current section in TOC based on scroll position
 (function() {
   const tocLinks = document.querySelectorAll('.docs-toc a');

@@ -23,13 +23,23 @@ Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
-On macOS:
+<!-- tabs:os -->
+
+#### macOS
 
 ```shell
 brew install Sanne/tap/incus-spawn
 ```
 
-On Ubuntu / Debian:
+#### Fedora
+
+```shell
+sudo dnf copr enable sanne/incus-spawn
+sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
+sudo dnf install incus-spawn
+```
+
+#### Ubuntu / Debian
 
 ```shell
 curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
@@ -37,17 +47,19 @@ echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.i
 sudo apt update && sudo apt install incus-spawn
 ```
 
-On other Linux distros (x86_64):
+#### Other Linux (x86_64)
 
 ```shell
 curl -fsSL https://isx.run | sh
 ```
 
-On other Linux architectures:
+#### JBang
 
 ```shell
 jbang app install isx@Sanne/incus-spawn
 ```
+
+<!-- tabs:end -->
 
 ```shell
 # One-time host setup (Incus, firewall, auth)
@@ -60,7 +72,7 @@ isx build tpl-java
 isx
 ```
 
-Fedora users can also install via `dnf`, Ubuntu/Debian via `apt`, and JBang users via `jbang` — see [Installation](#installation) for all options. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
+See [Installation](#installation) for all options and update instructions. Shell completions are available for bash, zsh, and fish via `isx completion <shell>`.
 
 ## Credential Isolation
 
@@ -678,6 +690,8 @@ isx is evolving from a container manager into **mission control for parallel cod
 
 ## Installation
 
+<!-- tabs:os -->
+
 ### macOS (Homebrew)
 
 ```shell
@@ -719,6 +733,8 @@ Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. 
 ```shell
 jbang app install isx@Sanne/incus-spawn
 ```
+
+<!-- tabs:end -->
 
 ## Configuration
 
