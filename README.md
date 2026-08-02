@@ -47,7 +47,7 @@ echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.i
 sudo apt update && sudo apt install incus-spawn
 ```
 
-#### Other Linux (x86_64)
+#### Other Linux
 
 ```shell
 curl -fsSL https://isx.run | sh
