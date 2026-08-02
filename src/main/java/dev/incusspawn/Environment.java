@@ -219,4 +219,8 @@ public final class Environment {
         incusServer = cached;
         return cached;
     }
+
+    public static String kernelInfo() {
+        return dev.incusspawn.incus.IncusClient.daemonKernelInfo();
+    }
 }

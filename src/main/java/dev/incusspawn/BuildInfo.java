@@ -19,6 +19,7 @@ public record BuildInfo(String version, String gitSha, String runtime) {
 
     public String incusClient() { return Environment.incusClient(); }
     public String incusServer() { return Environment.incusServer(); }
+    public String kernelInfo() { return Environment.kernelInfo(); }
 
     private static String readProperty(String resource, String key, String fallback) {
         try (var is = BuildInfo.class.getClassLoader().getResourceAsStream(resource)) {
