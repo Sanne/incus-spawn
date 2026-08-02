@@ -88,6 +88,7 @@ public class VmCommand extends BaseCommand {
                 var pool = incus.findCowPool();
                 System.out.println();
                 System.out.println(incus.getSystemDiagnostics(pool));
+                System.out.println("  (full VM log at " + Environment.vmLogFile() + ")");
             }
             return CommandResult.SUCCESS;
         }

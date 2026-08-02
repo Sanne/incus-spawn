@@ -79,19 +79,51 @@ public class IncusClient {
      * Used for informational display (isx version, proxy status). Static so it can
      * be called at class-init time from Environment.java.
      */
-    public static String daemonVersion() {
+    private static volatile JsonNode cachedDaemonMetadata;
+
+    private static JsonNode daemonMetadata() {
+        var cached = cachedDaemonMetadata;
+        if (cached != null) return cached;
         var http = IncusApi.tryConnect();
-        if (http == null) return "unknown";
+        if (http == null) return null;
         try {
             var resp = http.get("/1.0");
             if (resp.isSuccess()) {
-                var ver = resp.body().path("metadata").path("environment")
-                        .path("server_version").asText("");
-                if (!ver.isEmpty()) return ver;
-                return resp.body().path("metadata").path("api_version").asText("unknown");
+                cached = resp.body().path("metadata");
+                cachedDaemonMetadata = cached;
+                return cached;
             }
         } catch (Exception ignored) {}
-        return "unknown";
+        return null;
+    }
+
+    public static String daemonVersion() {
+        var metadata = daemonMetadata();
+        if (metadata == null) return "unknown";
+        var ver = metadata.path("environment").path("server_version").asText("");
+        if (!ver.isEmpty()) return ver;
+        return metadata.path("api_version").asText("unknown");
+    }
+
+    public static String daemonKernelInfo() {
+        var metadata = daemonMetadata();
+        if (metadata == null) return "";
+        var env = metadata.path("environment");
+        var kernel = env.path("kernel").asText("");
+        var kernelVer = env.path("kernel_version").asText("");
+        var osName = env.path("os_name").asText("");
+        var osVer = env.path("os_version").asText("");
+        var sb = new StringBuilder();
+        if (!kernel.isEmpty() && !kernelVer.isEmpty()) {
+            sb.append(kernel).append(" ").append(kernelVer);
+        }
+        if (!osName.isEmpty()) {
+            if (!sb.isEmpty()) sb.append(" (");
+            sb.append(osName);
+            if (!osVer.isEmpty()) sb.append(" ").append(osVer);
+            if (!sb.isEmpty() && sb.charAt(sb.length() - 1) != '(') sb.append(")");
+        }
+        return sb.toString();
     }
 
     public record ExecResult(int exitCode, String stdout, String stderr) {
@@ -709,6 +741,27 @@ public class IncusClient {
      */
     public String getSystemDiagnostics(String poolName) {
         var sb = new StringBuilder();
+
+        var serverResp = http().get("/1.0");
+        if (serverResp.isSuccess()) {
+            var env = serverResp.body().path("metadata").path("environment");
+            var kernel = env.path("kernel").asText("");
+            var kernelVer = env.path("kernel_version").asText("");
+            if (!kernel.isEmpty() && !kernelVer.isEmpty()) {
+                sb.append("Kernel: ").append(kernel).append(" ").append(kernelVer).append("\n");
+            }
+            var osName = env.path("os_name").asText("");
+            var osVer = env.path("os_version").asText("");
+            if (!osName.isEmpty()) {
+                sb.append("OS: ").append(osName);
+                if (!osVer.isEmpty()) sb.append(" ").append(osVer);
+                sb.append("\n");
+            }
+            var serverVer = env.path("server_version").asText("");
+            if (!serverVer.isEmpty()) {
+                sb.append("Incus: ").append(serverVer).append("\n");
+            }
+        }
 
         // CPU from /1.0/resources (reliable)
         var resourcesResp = http().get("/1.0/resources");

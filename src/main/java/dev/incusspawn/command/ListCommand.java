@@ -2190,7 +2190,7 @@ public class ListCommand extends BaseCommand {
 
     private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var info = dev.incusspawn.BuildInfo.instance();
-        var lines = List.of(
+        var lines = new ArrayList<>(List.of(
                 Line.from(List.of(
                         Span.styled("incus-spawn", Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg())),
                         Span.styled(" (isx) ", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
@@ -2200,7 +2200,13 @@ public class ListCommand extends BaseCommand {
                 Line.styled("Incus  client " + info.incusClient() + ", server " + info.incusServer(),
                         Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
                 Line.styled(info.runtime(),
-                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg())),
+                        Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))));
+        var kernelInfo = info.kernelInfo();
+        if (!kernelInfo.isEmpty()) {
+            lines.add(Line.styled("VM     " + kernelInfo,
+                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
+        }
+        lines.addAll(List.of(
                 Line.styled("", Style.EMPTY),
                 Line.styled("Copyright 2026 Sanne Grinovero",
                         Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
@@ -2230,7 +2236,7 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
                 shortcutRow("n", "New template…", null, null),
-                shortcutRow("/", "Search / filter", null, null));
+                shortcutRow("/", "Search / filter", null, null)));
 
         int width = 60;
         int maxHeight = screen.height() - 2;
