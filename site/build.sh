@@ -58,11 +58,56 @@ node -e "
     return '<' + tag + ' id=\"' + id + '\">' + text + '</' + tag + '>';
   });
 
+  // Transform <!-- tabs:os --> ... <!-- tabs:end --> blocks into tabbed UI
+  function classifyOS(text) {
+    const l = text.toLowerCase();
+    if (/mac/.test(l)) return 'macos';
+    if (/fedora|ubuntu|debian|linux|arch|nix/.test(l)) return 'linux';
+    return 'any';
+  }
+
+  const consumedIds = [];
+  body = body.replace(/<!-- tabs:os -->[\\s\\S]*?<!-- tabs:end -->/g, function(match) {
+    const headingRe = /<(h[1-6]) id=\"([^\"]*)\">(.*?)<\\/h[1-6]>/g;
+    const tabs = [];
+    let m;
+    while ((m = headingRe.exec(match)) !== null) {
+      if (tabs.length > 0) {
+        tabs[tabs.length - 1].content = match.slice(tabs[tabs.length - 1].end, m.index);
+      }
+      const cleanText = m[3].replace(/<[^>]+>/g, '');
+      consumedIds.push(m[2]);
+      tabs.push({ id: m[2], text: cleanText, os: classifyOS(cleanText), end: m.index + m[0].length });
+    }
+    if (tabs.length === 0) return match;
+    tabs[tabs.length - 1].content = match.slice(tabs[tabs.length - 1].end).replace('<!-- tabs:end -->', '');
+
+    // Capture any content before the first heading (intro text)
+    const firstIdx = match.indexOf('<' + match.match(/<(h[1-6]) id/)[1]);
+    const preContent = match.slice(match.indexOf('-->') + 3, firstIdx).trim();
+
+    let html = preContent ? preContent : '';
+    html += '<div class=\"docs-tabs\" data-tabs=\"os\">';
+    html += '<div class=\"tab-buttons\">';
+    tabs.forEach(function(tab, i) {
+      html += '<button class=\"tab-btn' + (i === 0 ? ' active' : '') + '\" data-tab=\"' + i + '\" data-os=\"' + tab.os + '\">' + tab.text + '</button>';
+    });
+    html += '</div>';
+    tabs.forEach(function(tab, i) {
+      html += '<div class=\"tab-panel' + (i === 0 ? ' active' : '') + '\" data-tab-panel=\"' + i + '\" id=\"' + tab.id + '\">' + tab.content + '</div>';
+    });
+    html += '</div>';
+    return html;
+  });
+
+  // Filter consumed headings from TOC
+  const filteredTocItems = tocItems.filter(function(item) { return consumedIds.indexOf(item.id) === -1; });
+
   // Generate TOC HTML
   let tocHtml = '<nav class=\"docs-toc\" aria-label=\"Table of contents\"><ul>';
   // Add Overview link to the top (h1 title)
   tocHtml += '<li class=\"toc-item\"><a href=\"#isx\">Overview</a></li>';
-  tocItems.forEach(item => {
+  filteredTocItems.forEach(item => {
     const className = item.level === 3 ? 'toc-item toc-item-nested' : 'toc-item';
     tocHtml += '<li class=\"' + className + '\"><a href=\"#' + item.id + '\">' + item.text + '</a></li>';
   });
