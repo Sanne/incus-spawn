@@ -118,7 +118,7 @@ a:hover {
 .hero .install-tabs {
   max-width: 520px;
   margin: 0 auto;
-  text-align: left;
+  text-align: center;
 }
 
 .hero .tab-buttons {
@@ -142,6 +142,49 @@ a:hover {
 .hero .tab-btn.active {
   color: var(--hero-fg);
   border-bottom-color: var(--accent);
+}
+
+.hero .os-tabs {
+  display: inline-flex;
+  border-bottom: none;
+  background: rgba(255,255,255,0.07);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 0.5rem;
+}
+
+.hero .os-tabs .tab-btn {
+  border-radius: 6px;
+  border-bottom: none;
+  margin-bottom: 0;
+  padding: 0.4rem 1.1rem;
+}
+
+.hero .os-tabs .tab-btn:hover {
+  color: var(--hero-fg);
+}
+
+.hero .os-tabs .tab-btn.active {
+  background: rgba(255,255,255,0.12);
+  border-bottom-color: transparent;
+}
+
+.hero .os-group {
+  display: none;
+  text-align: left;
+}
+
+.hero .os-group.active {
+  display: block;
+}
+
+.hero .os-group > .tab-panel:first-child {
+  border-radius: 8px;
+}
+
+.hero .sub-tabs .tab-btn {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
 }
 
 .hero .tab-panel {
@@ -507,6 +550,16 @@ a:hover {
 
   .hero .install-tabs {
     max-width: 100%;
+  }
+
+  .hero .sub-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .hero .sub-tabs .tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .feature h2 {

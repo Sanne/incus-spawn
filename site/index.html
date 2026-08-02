@@ -40,31 +40,54 @@
   </p>
 
   <div class="install-tabs">
-    <div class="tab-buttons">
-      <button class="tab-btn active" data-tab="macos">macOS</button>
-      <button class="tab-btn" data-tab="fedora">Fedora</button>
-      <button class="tab-btn" data-tab="ubuntu">Ubuntu / Debian</button>
-      <button class="tab-btn" data-tab="linux">Linux</button>
-      <button class="tab-btn" data-tab="jbang">JBang</button>
+    <div class="tab-buttons os-tabs">
+      <button class="tab-btn active" data-os="linux">Linux</button>
+      <button class="tab-btn" data-os="macos">macOS</button>
+      <button class="tab-btn" data-os="jbang">JBang</button>
     </div>
-    <div class="tab-panel active" id="tab-macos">
-      <code>brew install Sanne/tap/incus-spawn</code>
-    </div>
-    <div class="tab-panel" id="tab-fedora">
-      <pre><code>sudo dnf copr enable sanne/incus-spawn
+
+    <div class="os-group active" data-os-group="linux">
+      <div class="tab-buttons sub-tabs">
+        <button class="tab-btn active" data-tab="fedora">Fedora</button>
+        <button class="tab-btn" data-tab="ubuntu">Ubuntu / Debian</button>
+        <!-- <button class="tab-btn" data-tab="arch">Arch</button> -->
+        <button class="tab-btn" data-tab="linux">Other</button>
+      </div>
+      <div class="tab-panel active" id="tab-fedora">
+        <pre><code>sudo dnf copr enable sanne/incus-spawn
 sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
 sudo dnf install incus-spawn</code></pre>
-    </div>
-    <div class="tab-panel" id="tab-ubuntu">
-      <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+      </div>
+      <div class="tab-panel" id="tab-ubuntu">
+        <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
 echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
 sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
+      </div>
+      <!-- <div class="tab-panel" id="tab-arch">
+        <code>yay -S incus-spawn</code>
+      </div> -->
+      <div class="tab-panel" id="tab-linux">
+        <code>curl -fsSL https://isx.run | sh</code>
+      </div>
     </div>
-    <div class="tab-panel" id="tab-linux">
-      <code>curl -fsSL https://isx.run | sh</code>
+
+    <div class="os-group" data-os-group="macos">
+      <!-- <div class="tab-buttons sub-tabs">
+        <button class="tab-btn active" data-tab="brew">Homebrew</button>
+        <button class="tab-btn" data-tab="nix">Nix</button>
+      </div> -->
+      <div class="tab-panel active" id="tab-brew">
+        <code>brew install Sanne/tap/incus-spawn</code>
+      </div>
+      <!-- <div class="tab-panel" id="tab-nix">
+        <code>nix profile install github:Sanne/incus-spawn</code>
+      </div> -->
     </div>
-    <div class="tab-panel" id="tab-jbang">
-      <code>jbang app install isx@Sanne/incus-spawn</code>
+
+    <div class="os-group" data-os-group="jbang">
+      <div class="tab-panel active" id="tab-jbang">
+        <code>jbang app install isx@Sanne/incus-spawn</code>
+      </div>
     </div>
   </div>
 
@@ -161,14 +184,43 @@ git cherry-pick fix-auth/main</code></pre></div></div>
 </footer>
 
 <script>
-document.querySelectorAll('.tab-btn').forEach(function(btn) {
-  btn.addEventListener('click', function() {
-    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-    document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+(function() {
+  function detectOS() {
+    var ud = navigator.userAgentData;
+    if (ud && ud.platform) {
+      if (ud.platform === 'macOS') return 'macos';
+      if (ud.platform === 'Linux') return 'linux';
+    }
+    var p = navigator.platform || '';
+    if (/Mac/.test(p)) return 'macos';
+    return 'linux';
+  }
+
+  function activateOS(os) {
+    document.querySelectorAll('.os-tabs .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.os-group').forEach(function(g) { g.classList.remove('active'); });
+    var btn = document.querySelector('.os-tabs .tab-btn[data-os="' + os + '"]');
+    if (btn) btn.classList.add('active');
+    var group = document.querySelector('.os-group[data-os-group="' + os + '"]');
+    if (group) group.classList.add('active');
+  }
+
+  document.querySelectorAll('.os-tabs .tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { activateOS(btn.dataset.os); });
   });
-});
+
+  document.querySelectorAll('.sub-tabs .tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var group = btn.closest('.os-group');
+      group.querySelectorAll('.sub-tabs .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      group.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      group.querySelector('#tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  activateOS(detectOS());
+})();
 </script>
 
 <script src="vendor/asciinema-player-3.13.5.min.js"></script>
