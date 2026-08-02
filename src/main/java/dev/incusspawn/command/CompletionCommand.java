@@ -110,6 +110,8 @@ public class CompletionCommand extends BaseCommand {
                 '(-h --help)'{-h,--help}'[Show help]' \\
                 '--from=[Source instance to branch from]:instance:_isx_instances' \\
                 '--gui[Enable GUI passthrough (Wayland + GPU + audio)]' \\
+                '--kvm[Expose /dev/kvm for nested virtualization]' \\
+                '--no-kvm[Disable KVM even if the template was built with type: kvm]' \\
                 '--airgap[Disable network access (complete isolation)]' \\
                 '--proxy-only[Restrict network to host proxy only]' \\
                 '--inbox=[Host directory to mount read-only at /home/agentuser/inbox]:directory:_files -/' \\
@@ -128,7 +130,7 @@ public class CompletionCommand extends BaseCommand {
                 '--with-parents[Rebuild the template and all its parents]' \\
                 '--with-descendants[Rebuild the template and all templates inheriting from it]' \\
                 '--missing[Build only templates that don'"'"'t exist yet]' \\
-                '--vm[Build as a VM instead of a container]' \\
+                '--type=[Instance type (overrides image definition)]:type:(container vm kvm)' \\
                 '--yes[Skip interactive confirmations]' \\
                 '1::template name:_isx_template_names'
             }
@@ -136,7 +138,6 @@ public class CompletionCommand extends BaseCommand {
             _isx_destroy() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '--force[Force destruction, even for templates]' \\
                 '1:environment name:_isx_instances'
             }
 
@@ -217,6 +218,7 @@ public class CompletionCommand extends BaseCommand {
                         '(-h --help)'{-h,--help}'[Show help]' \\
                         '--port=[MITM TLS proxy port]:port' \\
                         '--health-port=[Health check HTTP port]:port' \\
+                        '--gateway-ip=[Incus bridge gateway IP (skips Incus API lookup)]:ip' \\
                         '--debug[Log full API request/response details for traffic inspection]' ;;
                     dump)
                       _arguments \\
@@ -247,6 +249,7 @@ public class CompletionCommand extends BaseCommand {
                 'cache:remove cached downloads, registry blobs, and build caches'
                 'state:remove VM state, logs, and appliance artifacts'
                 'config:remove configuration, SSH keys, and CA certificate'
+                'pool:reclaim space from the storage pool'
                 'all:remove all incus-spawn data'
               )
 
@@ -290,6 +293,13 @@ public class CompletionCommand extends BaseCommand {
                 '1::release tag'
             }
 
+            _isx_doctor() {
+              _arguments \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '--bundle[Collect findings and logs into a support archive]' \\
+                '--deep[Run per-instance checks (DNS, TLS, resolv.conf)]'
+            }
+
             _isx() {
               local context state state_descr line
               typeset -A opt_args
@@ -322,6 +332,7 @@ public class CompletionCommand extends BaseCommand {
                     'ssh-proxy:SSH ProxyCommand that tunnels through Incus exec API'
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
+                    'doctor:run health checks and offer to fix problems'
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
@@ -333,6 +344,7 @@ public class CompletionCommand extends BaseCommand {
                     build)      _isx_build ;;
                     clean)      _isx_clean ;;
                     destroy)    _isx_destroy ;;
+                    doctor)     _isx_doctor ;;
                     list)       _isx_list ;;
                     shell)      _isx_shell ;;
                     run)        _isx_run ;;
@@ -369,14 +381,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy"
+              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy doctor"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)
+                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -406,23 +418,26 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                     --cpu|--memory|--disk) return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --from --gui --airgap --proxy-only --inbox --cpu --memory --disk --no-start" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --from --gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start" -- "$cur") )
                   ;;
                 build)
                   case "$prev" in
                     build)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --vm --yes" -- "$cur") )
+                      COMPREPLY=( $(compgen -W "$(_isx_list_templates) --help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
+                      return ;;
+                    --type)
+                      COMPREPLY=( $(compgen -W "container vm kvm" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --all --out-of-sync --with-parents --with-descendants --missing --vm --yes" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --all --out-of-sync --with-parents --with-descendants --missing --type --yes" -- "$cur") )
                   ;;
                 clean)
-                  local clean_subcmds="cache state config all"
+                  local clean_subcmds="cache state config pool all"
                   local clean_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      cache|state|config|all) clean_cmd="${words[j]}"; break ;;
+                      cache|state|config|pool|all) clean_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$clean_cmd" ]]; then
@@ -434,10 +449,10 @@ public class CompletionCommand extends BaseCommand {
                 destroy)
                   case "$prev" in
                     destroy)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --force" -- "$cur") )
+                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --force" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
                 list)
                   COMPREPLY=( $(compgen -W "--help --plain" -- "$cur") )
@@ -497,7 +512,7 @@ public class CompletionCommand extends BaseCommand {
                     COMPREPLY=( $(compgen -W "$proxy_subcmds --help" -- "$cur") )
                   else
                     case "$proxy_cmd" in
-                      start) COMPREPLY=( $(compgen -W "--help --port --health-port --debug" -- "$cur") ) ;;
+                      start) COMPREPLY=( $(compgen -W "--help --port --health-port --gateway-ip --debug" -- "$cur") ) ;;
                       dump) COMPREPLY=( $(compgen -W "--help --port" -- "$cur") ) ;;
                       *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
                     esac
@@ -563,6 +578,9 @@ public class CompletionCommand extends BaseCommand {
                 update-base)
                   COMPREPLY=( $(compgen -W "--help --list --latest" -- "$cur") )
                   ;;
+                doctor)
+                  COMPREPLY=( $(compgen -W "--help --bundle --deep" -- "$cur") )
+                  ;;
                 init|update-all|instances|git-remote-helper)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
@@ -589,7 +607,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -617,12 +635,15 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a ssh-proxy       -d 'SSH ProxyCommand that tunnels through Incus exec API'
             complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
             complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
+            complete -c isx -f -n __isx_no_subcommand -a doctor          -d 'Run health checks and offer to fix problems'
 
             # ── branch ───────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand branch' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_using_subcommand branch' -l from        -d 'Source instance to branch from' -a '(__isx_instances)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l gui         -d 'Enable GUI passthrough (Wayland + GPU + audio)'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l kvm         -d 'Expose /dev/kvm for nested virtualization'
+            complete -c isx -f -n '__isx_using_subcommand branch' -l no-kvm      -d 'Disable KVM even if the template was built with type: kvm'
             complete -c isx -f -n '__isx_using_subcommand branch' -l airgap      -d 'Disable network access (complete isolation)'
             complete -c isx -f -n '__isx_using_subcommand branch' -l proxy-only  -d 'Restrict network to host proxy only'
             complete -c isx -F -n '__isx_using_subcommand branch' -l inbox       -d 'Host directory to mount read-only at /home/agentuser/inbox'
@@ -639,23 +660,23 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand build' -l with-parents    -d 'Rebuild the template and all its parents'
             complete -c isx -f -n '__isx_using_subcommand build' -l with-descendants -d 'Rebuild the template and all templates inheriting from it'
             complete -c isx -f -n '__isx_using_subcommand build' -l missing          -d 'Build only templates that don'"'"'t exist yet'
-            complete -c isx -f -n '__isx_using_subcommand build' -l vm               -d 'Build as a VM instead of a container'
+            complete -c isx -f -n '__isx_using_subcommand build' -l type             -d 'Instance type: container, vm, or kvm' -a 'container vm kvm'
             complete -c isx -f -n '__isx_using_subcommand build' -l yes              -d 'Skip interactive confirmations'
 
             # ── clean ────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
-            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a cache  -d 'Remove cached downloads, registry blobs, and build caches'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a state  -d 'Remove VM state, logs, and appliance artifacts'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a config -d 'Remove configuration, SSH keys, and CA certificate'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a pool   -d 'Reclaim space from the storage pool'
+            complete -c isx -f -n '__isx_using_subcommand clean; and not string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -a all    -d 'Remove all incus-spawn data'
 
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
-            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -l dry-run           -d 'Show what would be deleted without deleting'
+            complete -c isx -f -n '__isx_using_subcommand clean; and string match -qr -- "\\b(cache|state|config|pool|all)\\b" (commandline -opc)' -l skip-confirmation -d 'Skip the confirmation prompt'
 
             # ── destroy ──────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand destroy' -a '(__isx_instances)' -d 'Environment name'
-            complete -c isx -f -n '__isx_using_subcommand destroy' -l force -d 'Force destruction, even for templates'
 
             # ── list ─────────────────────────────────────────────────────────────────────
 
@@ -702,6 +723,7 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l gateway-ip  -d 'Incus bridge gateway IP (skips Incus API lookup)'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l debug       -d 'Log full API request/response details'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand dump'  -l port        -d 'Local HTTP port'
 
@@ -725,5 +747,10 @@ public class CompletionCommand extends BaseCommand {
 
             complete -c isx -f -n '__isx_using_subcommand update-base' -l list   -d 'List available versions'
             complete -c isx -f -n '__isx_using_subcommand update-base' -l latest -d 'Track the latest version (remove any pin)'
+
+            # ── doctor ──────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand doctor' -l bundle -d 'Collect findings and logs into a support archive'
+            complete -c isx -f -n '__isx_using_subcommand doctor' -l deep   -d 'Run per-instance checks (DNS, TLS, resolv.conf)'
             """;
 }
