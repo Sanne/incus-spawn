@@ -1027,14 +1027,7 @@ public class BuildCommand extends BaseCommand {
                 "> /etc/systemd/network/10-eth0.network; " +
                 "systemctl enable systemd-networkd 2>/dev/null; " +
                 "systemctl restart systemd-networkd 2>/dev/null; " +
-                // Legacy: also configure dhcpcd if present (old base images)
-                "if [ -f /etc/dhcpcd.conf ]; then " +
-                "  for opt in 'nohook resolv.conf' noarp nodev; do " +
-                "    grep -q \"^${opt}$\" /etc/dhcpcd.conf 2>/dev/null || " +
-                "    echo \"${opt}\" >> /etc/dhcpcd.conf; " +
-                "  done; " +
-                "  sed -i 's/RestartSec=5/RestartSec=1/' /etc/systemd/system/dhcpcd-eth0.service 2>/dev/null; " +
-                "fi; true")
+                "true")
                 .assertSuccess("Failed to prepare container for package install");
     }
 
@@ -1350,7 +1343,6 @@ public class BuildCommand extends BaseCommand {
         System.out.println("Waiting for network...");
         var result = container.sh(
                 "systemctl start systemd-networkd 2>/dev/null; " +
-                "systemctl start dhcpcd-eth0.service 2>/dev/null; " +
                 "for i in $(seq 1 30); do " +
                 "  ip -4 -o addr show eth0 | grep -q 'inet ' && exit 0; " +
                 "  sleep 0.5; " +

@@ -339,11 +339,9 @@ public final class InstanceLifecycle {
         // The static .network config is pushed into the stopped container before start
         // (see assignStaticIp), so the interface comes up immediately at boot — no DHCP
         // wait. Here we only ensure the service is running and confirm the address is up.
-        // Old DHCP-based branches fall back to dhcpcd. Airgap branches have no NIC, so the
-        // wait would always time out — skip it.
+        // Airgap branches have no NIC, so the wait would always time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
             sb.append(" && { systemctl start systemd-networkd 2>/dev/null; ")
-              .append("systemctl start dhcpcd-eth0.service 2>/dev/null; ")
               .append("for i in $(seq 1 30); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.5; done; ")
               .append("ip -4 -o addr show eth0 | grep -q 'inet '; }");
         }
