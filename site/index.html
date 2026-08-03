@@ -220,6 +220,22 @@ git cherry-pick fix-auth/main</code></pre></div></div>
   });
 
   activateOS(detectOS());
+
+  document.querySelectorAll('.install-tabs .tab-panel').forEach(function(panel) {
+    var btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', function() {
+      var code = panel.querySelector('code');
+      if (!code) return;
+      navigator.clipboard.writeText(code.textContent).then(function() {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      });
+    });
+    panel.appendChild(btn);
+  });
 })();
 </script>
 
