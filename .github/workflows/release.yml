@@ -119,6 +119,21 @@ jobs:
             fi
           done
 
+      - name: Generate shell completions
+        run: |
+          chmod +x artifacts/native-linux-amd64/incus-spawn-linux-amd64
+          COMPLETIONS_DIR=$(mktemp -d)
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion bash > "$COMPLETIONS_DIR/isx.bash"
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion zsh  > "$COMPLETIONS_DIR/_isx"
+          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion fish > "$COMPLETIONS_DIR/isx.fish"
+          for f in "$COMPLETIONS_DIR"/*; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Shell completion file $f is empty"
+              exit 1
+            fi
+          done
+          tar -czf artifacts/completions.tar.gz -C "$COMPLETIONS_DIR" isx.bash _isx isx.fish
+
       - name: Create GitHub Release
         run: |
           gh release create $GITHUB_REF_NAME \
@@ -131,6 +146,7 @@ jobs:
             artifacts/vmlinuz-aarch64 \
             artifacts/disk-x86_64.img.gz \
             artifacts/disk-aarch64.img.gz \
+            artifacts/completions.tar.gz \
             src/main/resources/git-remote-isx \
             --generate-notes
         env:
@@ -144,6 +160,7 @@ jobs:
           SHA_ARM64=$(sha256sum artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 | cut -d' ' -f1)
           SHA_X86_64=$(sha256sum artifacts/native-macos-x86_64/incus-spawn-macos-x86_64 | cut -d' ' -f1)
           GIT_REMOTE_SHA=$(sha256sum src/main/resources/git-remote-isx | cut -d' ' -f1)
+          COMPLETIONS_SHA=$(sha256sum artifacts/completions.tar.gz | cut -d' ' -f1)
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/Sanne/homebrew-tap.git /tmp/homebrew-tap
           cd /tmp/homebrew-tap
@@ -154,6 +171,8 @@ jobs:
             -e "/macos-x86_64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_X86_64}\"/;}" \
             -e "/resource \"git-remote-isx\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/git-remote-isx\"|}" \
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
+            -e "/resource \"completions\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/completions.tar.gz\"|}" \
+            -e "/resource \"completions\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${COMPLETIONS_SHA}\"/}" \
             Formula/incus-spawn.rb
 
           git config user.name "github-actions[bot]"
@@ -208,18 +227,9 @@ jobs:
           fi
           echo "Using GPG key: $GPG_KEY_ID"
 
-          # Generate shell completions (arch-independent) from the amd64 binary
-          chmod +x artifacts/native-linux-amd64/incus-spawn-linux-amd64
+          # Extract pre-generated shell completions
           COMPLETIONS_DIR=$(mktemp -d)
-          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion bash > "$COMPLETIONS_DIR/isx.bash"
-          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion zsh  > "$COMPLETIONS_DIR/_isx"
-          artifacts/native-linux-amd64/incus-spawn-linux-amd64 completion fish > "$COMPLETIONS_DIR/isx.fish"
-          for f in "$COMPLETIONS_DIR"/*; do
-            if [ ! -s "$f" ]; then
-              echo "::error::Shell completion file $f is empty — binary may have failed"
-              exit 1
-            fi
-          done
+          tar -xzf artifacts/completions.tar.gz -C "$COMPLETIONS_DIR"
 
           # Build .deb for each architecture
           for arch_pair in "amd64:amd64" "aarch64:arm64"; do
