@@ -1,0 +1,29 @@
+name: Cleanup site preview
+
+on:
+  pull_request:
+    types: [closed]
+    paths:
+      - 'README.md'
+      - 'site/**'
+      - '.github/workflows/preview.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete preview deployments
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BRANCH: pr-${{ github.event.pull_request.number }}
+        run: |
+          ids=$(npx wrangler pages deployment list --project-name=isx --json \
+            | jq -r --arg b "$BRANCH" '.[] | select(.deployment_trigger.metadata.branch == $b) | .id')
+          for id in $ids; do
+            echo "Deleting deployment $id"
+            npx wrangler pages deployment delete "$id" --project-name=isx --force
+          done
