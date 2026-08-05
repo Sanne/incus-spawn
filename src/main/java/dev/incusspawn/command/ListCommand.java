@@ -592,11 +592,11 @@ public class ListCommand extends BaseCommand {
             if (idx != null) templateTableState.select(Math.max(idx - PAGE_SIZE, 0));
             return true;
         }
-        if (key.isKey(KeyCode.HOME)) {
+        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
             if (!templateEntries.isEmpty()) templateTableState.select(0);
             return true;
         }
-        if (key.isKey(KeyCode.END)) {
+        if (key.isKey(KeyCode.END) || key.isChar('G')) {
             if (!templateEntries.isEmpty()) templateTableState.select(templateEntries.size() - 1);
             return true;
         }
@@ -675,8 +675,8 @@ public class ListCommand extends BaseCommand {
         if (key.isKey(KeyCode.UP) || key.isChar('k'))   { selectNextDataRow(tableState, -1); return true; }
         if (key.isKey(KeyCode.PAGE_DOWN))                { for (int n = 0; n < PAGE_SIZE; n++) selectNextDataRow(tableState, 1); return true; }
         if (key.isKey(KeyCode.PAGE_UP))                  { for (int n = 0; n < PAGE_SIZE; n++) selectNextDataRow(tableState, -1); return true; }
-        if (key.isKey(KeyCode.HOME))                     { selectFirstDataRow(tableState); return true; }
-        if (key.isKey(KeyCode.END))                      { selectLastDataRow(tableState); return true; }
+        if (key.isKey(KeyCode.HOME) || key.isChar('g'))    { selectFirstDataRow(tableState); return true; }
+        if (key.isKey(KeyCode.END) || key.isChar('G'))   { selectLastDataRow(tableState); return true; }
 
         var selected = selectedEntry(tableState);
         if (selected == null) return false;
@@ -2085,11 +2085,11 @@ public class ListCommand extends BaseCommand {
             if (detailScrollOffset > 0) detailScrollOffset--;
             return true;
         }
-        if (key.isKey(KeyCode.HOME)) {
+        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
             detailScrollOffset = 0;
             return true;
         }
-        if (key.isKey(KeyCode.END)) {
+        if (key.isKey(KeyCode.END) || key.isChar('G')) {
             detailScrollOffset = Integer.MAX_VALUE; // capped during render
             return true;
         }
@@ -2131,11 +2131,11 @@ public class ListCommand extends BaseCommand {
             if (instanceDetailScrollOffset > 0) instanceDetailScrollOffset--;
             return true;
         }
-        if (key.isKey(KeyCode.HOME)) {
+        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
             instanceDetailScrollOffset = 0;
             return true;
         }
-        if (key.isKey(KeyCode.END)) {
+        if (key.isKey(KeyCode.END) || key.isChar('G')) {
             instanceDetailScrollOffset = Integer.MAX_VALUE; // capped during render
             return true;
         }
@@ -2155,11 +2155,11 @@ public class ListCommand extends BaseCommand {
             if (infoScrollOffset > 0) infoScrollOffset--;
             return true;
         }
-        if (key.isKey(KeyCode.HOME)) {
+        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
             infoScrollOffset = 0;
             return true;
         }
-        if (key.isKey(KeyCode.END)) {
+        if (key.isKey(KeyCode.END) || key.isChar('G')) {
             infoScrollOffset = Integer.MAX_VALUE;
             return true;
         }
@@ -2181,6 +2181,14 @@ public class ListCommand extends BaseCommand {
             if (actionsSelectedIndex > 0) {
                 actionsSelectedIndex--;
             }
+            return true;
+        }
+        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
+            actionsSelectedIndex = 0;
+            return true;
+        }
+        if (key.isKey(KeyCode.END) || key.isChar('G')) {
+            actionsSelectedIndex = actionsList.size() - 1;
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
@@ -2240,7 +2248,8 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
                 shortcutRow("n", "New template…", null, null),
-                shortcutRow("/", "Search / filter", null, null)));
+                shortcutRow("/", "Search / filter", null, null),
+                shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
 
         int width = 60;
         int maxHeight = screen.height() - 2;
