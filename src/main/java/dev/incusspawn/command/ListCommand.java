@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
@@ -2247,6 +2248,11 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("n", "New template…", null, null),
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
+        if (Environment.isMacOS()) {
+            lines.add(Line.styled("", Style.EMPTY));
+            lines.add(Line.styled("macOS shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+            lines.add(shortcutRow("Fn+←/→", "Home / End", "Fn+↑/↓", "PgUp / PgDn"));
+        }
 
         int width = 60;
         int maxHeight = screen.height() - 2;
