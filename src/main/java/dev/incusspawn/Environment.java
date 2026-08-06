@@ -109,16 +109,6 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
 
-    public static final String OS_NAME = System.getProperty("os.name").toLowerCase();
-
-    public static boolean isMacOS() {
-        return OS_NAME.contains("mac");
-    }
-
-    public static boolean isLinux() {
-        return OS_NAME.contains("linux");
-    }
-
     // --- VM state paths (under ~/.local/state/incus-spawn/) ---
 
     public static Path vmStateDir() {

@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.Platform;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -53,7 +54,7 @@ public final class ProxyService {
     }
 
     public static boolean isInstalled() {
-        if (Environment.isMacOS()) return isMacOsServiceInstalled();
+        if (Platform.isMacOS()) return isMacOsServiceInstalled();
         return Files.exists(Environment.proxyServiceFile());
     }
 
@@ -67,7 +68,7 @@ public final class ProxyService {
      * policy, so the condition this detects does not arise there.
      */
     public static boolean failedWithConfigError() {
-        if (Environment.isMacOS()) return false;
+        if (Platform.isMacOS()) return false;
         // Both properties in one invocation. Without --value the output is self-describing
         // ("ActiveState=failed\nExecMainStatus=78"), so neither value is read positionally.
         var shown = showProperties("ActiveState", "ExecMainStatus");
@@ -98,7 +99,7 @@ public final class ProxyService {
     }
 
     public static boolean isActive() {
-        if (Environment.isMacOS()) return isMacOsServiceActive();
+        if (Platform.isMacOS()) return isMacOsServiceActive();
         try {
             var pb = new ProcessBuilder("systemctl", "--user", "is-active", SERVICE_NAME);
             pb.redirectErrorStream(true);
@@ -113,7 +114,7 @@ public final class ProxyService {
     private static final int REQUIRED_JAVA_MAJOR = 25;
 
     public static boolean install() {
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             return installMacOs();
         }
 
@@ -160,7 +161,7 @@ public final class ProxyService {
     }
 
     public static boolean uninstall() {
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             uninstallMacOs();
             return true;
         }
@@ -193,7 +194,7 @@ public final class ProxyService {
     public static boolean restart(java.util.function.Consumer<String> log) {
         ProxyLog.info("Service restarting");
         log.accept("Restarting proxy service...");
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             var uid = getUid();
             runQuiet("launchctl", "bootout", "gui/" + uid + "/" + PROXY_LABEL);
             waitForProxyExit();
@@ -219,7 +220,7 @@ public final class ProxyService {
     public static void stop() {
         if (isActive()) {
             System.out.println("Stopping proxy service...");
-            if (Environment.isMacOS()) {
+            if (Platform.isMacOS()) {
                 runQuiet("launchctl", "bootout", "gui/" + getUid() + "/" + PROXY_LABEL);
                 System.out.println("Proxy service stopped (re-enable with: isx proxy install).");
             } else {
@@ -246,7 +247,7 @@ public final class ProxyService {
      */
     public static boolean reinstallIfChanged(IncusClient incus) {
         boolean needsReinstall;
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             needsReinstall = needsMacOsPlistUpdate();
         } else {
             needsReinstall = regenerateServiceFile();
@@ -259,7 +260,7 @@ public final class ProxyService {
         }
 
         if (needsReinstall) {
-            if (Environment.isMacOS()) {
+            if (Platform.isMacOS()) {
                 updateMacOsProxyPlist();
             }
             return restart();
@@ -282,7 +283,7 @@ public final class ProxyService {
      * file this never touches.
      */
     private static boolean regenerateServiceFile() {
-        if (Environment.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
+        if (Platform.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
         var isxPath = resolveIsxPath();
         if (isxPath == null) return false;
         try {
@@ -300,7 +301,7 @@ public final class ProxyService {
     }
 
     public static void upgradeIfNeeded() {
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             if (needsMacOsPlistUpdate()) {
                 updateMacOsProxyPlist();
                 restart();

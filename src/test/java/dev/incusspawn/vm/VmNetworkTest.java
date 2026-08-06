@@ -30,7 +30,7 @@ class VmNetworkTest {
     @Test
     void discoverVmIpReturnsNullOnLinux() {
         // /var/db/dhcpd_leases doesn't exist on Linux
-        if (dev.incusspawn.Environment.isLinux()) {
+        if (dev.incusspawn.Platform.isLinux()) {
             assertNull(VmNetwork.discoverVmIp());
         }
     }

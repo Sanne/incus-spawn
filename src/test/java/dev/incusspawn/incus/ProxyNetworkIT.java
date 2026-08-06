@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.vm.VmNetwork;
+import dev.incusspawn.Platform;
 import io.vertx.core.Vertx;
 import org.junit.jupiter.api.*;
 
@@ -47,7 +48,7 @@ class ProxyNetworkIT {
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
 
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             proxyAddress = VmNetwork.discoverHostBridgeIp();
         } else {
             proxyAddress = MitmProxy.resolveGatewayIp(client);

@@ -16,6 +16,7 @@ import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
+import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
@@ -229,10 +230,10 @@ public class InitCommand extends BaseCommand {
      * On macOS: auto-start the VM that hosts Incus.
      */
     public static boolean requireIncusHost() {
-        if (Environment.isLinux()) {
+        if (Platform.isLinux()) {
             return true;
         }
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             return VmManager.ensureRunning();
         }
         System.err.println();
@@ -246,7 +247,7 @@ public class InitCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         if (!requireIncusHost()) return CommandResult.valueOf(1);
         this.incus = RuntimeServices.incus();
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             return doMacOsInit();
         }
         if (!requireLinux()) {

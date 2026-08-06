@@ -5,6 +5,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.Platform;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -62,7 +63,7 @@ public final class VmManager {
                 System.err.println("Warning: ISX_VM_CPUS=" + env + " is not a number, ignoring");
             }
         }
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             int pcores = detectPerformanceCores();
             if (pcores > 0) return pcores;
         }
@@ -102,7 +103,7 @@ public final class VmManager {
         if (totalBytes <= 0) {
             return 4096;
         }
-        int pct = Environment.isMacOS() ? 40 : 60;
+        int pct = Platform.isMacOS() ? 40 : 60;
         long limitMiB = totalBytes * pct / 100 / (1024 * 1024);
         return (int) Math.max(2048, limitMiB);
     }
@@ -185,7 +186,7 @@ public final class VmManager {
     // --- Backend detection ---
 
     public static Backend detectBackend() {
-        if (Environment.isMacOS()) {
+        if (Platform.isMacOS()) {
             if (!commandExists("vfkit")) {
                 throw new VmException("vfkit not found. Install with: brew install vfkit");
             }
@@ -364,7 +365,7 @@ public final class VmManager {
      */
     public static int vsockForwarderConnectionCount() {
         var sock = Environment.vmVsockSocket();
-        if (!Environment.isMacOS() || !Files.exists(sock)) return -1;
+        if (!Platform.isMacOS() || !Files.exists(sock)) return -1;
         try {
             var pb = new ProcessBuilder("lsof", "-nP", "-U");
             pb.redirectErrorStream(true);
