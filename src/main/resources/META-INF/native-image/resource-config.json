@@ -1,8 +1,0 @@
-{
-  "resources": {
-    "includes": [
-      { "pattern": "META-INF/services/dev\\.tamboui\\.capability\\.CapabilityProvider" },
-      { "pattern": "META-INF/services/dev\\.tamboui\\.terminal\\.BackendProvider" }
-    ]
-  }
-}
