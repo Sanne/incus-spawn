@@ -31,7 +31,7 @@ public final class ProxyHealthCheck {
 
     /** The IP to query for health checks: localhost on macOS, bridge gateway on Linux. */
     public static String healthAddress(IncusClient incus) {
-        return dev.incusspawn.Environment.isMacOS()
+        return dev.incusspawn.Platform.isMacOS()
                 ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
     }
 
@@ -55,7 +55,7 @@ public final class ProxyHealthCheck {
     }
 
     private static ProxyStatus checkUncached(IncusClient incus) {
-        if (dev.incusspawn.Environment.isMacOS()) {
+        if (dev.incusspawn.Platform.isMacOS()) {
             var result = checkHealth("127.0.0.1");
             if (result.healthy()) {
                 return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;

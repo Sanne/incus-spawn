@@ -16,6 +16,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.Platform;
 import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
@@ -624,7 +625,7 @@ public class BuildCommand extends BaseCommand {
         if (!effectiveVm) {
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
             }
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
@@ -797,7 +798,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "raw.idmap", "both 1000 1000");
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 incus.configSet(buildName, "security.syscalls.intercept.setxattr", "true");
             }
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");

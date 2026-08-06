@@ -8,6 +8,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.Platform;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -45,11 +46,11 @@ public final class HostResourceSetup {
     }
 
     public static void addShiftIfSupported(java.util.List<String> args, boolean isVm) {
-        if (!isVm && !Environment.isMacOS()) args.add("shift=true");
+        if (!isVm && !Platform.isMacOS()) args.add("shift=true");
     }
 
     public static String translateForVm(String hostPath) {
-        if (!Environment.isMacOS()) return hostPath;
+        if (!Platform.isMacOS()) return hostPath;
         var home = System.getProperty("user.home");
         if (hostPath.startsWith(home + "/")) {
             return "/host" + hostPath.substring(home.length());
@@ -117,7 +118,7 @@ public final class HostResourceSetup {
                 case "copy" -> applyCopy(container, hr);
                 case "readonly" -> applyReadonly(incus, container.name(), hr, isVm);
                 case "overlay" -> {
-                    if (Environment.isMacOS()) {
+                    if (Platform.isMacOS()) {
                         throw new IllegalStateException(
                                 "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
                                 + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"
@@ -162,7 +163,7 @@ public final class HostResourceSetup {
                     applyReadonly(incus, container, hr, isVm);
                 }
                 case "overlay" -> {
-                    if (Environment.isMacOS()) {
+                    if (Platform.isMacOS()) {
                         throw new IllegalStateException(
                                 "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
                                 + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"

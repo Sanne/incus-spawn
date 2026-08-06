@@ -4,6 +4,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.Platform;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -59,7 +60,7 @@ public final class ZmxSocketForward {
      * that zmx may have cleaned up.</p>
      */
     public static void configure(IncusClient incus, String name) {
-        if (Environment.isMacOS()) return;
+        if (Platform.isMacOS()) return;
 
         var zmxDir = hostZmxDir();
         var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);

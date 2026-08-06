@@ -166,9 +166,9 @@ public class YamlToolAction implements ToolAction {
     private static boolean openInBrowser(String url) {
         try {
             Process process;
-            if (dev.incusspawn.Environment.OS_NAME.contains("linux")) {
+            if (dev.incusspawn.Platform.isLinux()) {
                 process = new ProcessBuilder("xdg-open", url).start();
-            } else if (dev.incusspawn.Environment.OS_NAME.contains("mac")) {
+            } else if (dev.incusspawn.Platform.isMacOS()) {
                 process = new ProcessBuilder("open", url).start();
             } else {
                 return false;
@@ -253,7 +253,7 @@ public class YamlToolAction implements ToolAction {
         if (isCommandAvailable("code")) {
             return "code";
         }
-        if (dev.incusspawn.Environment.isMacOS()) {
+        if (dev.incusspawn.Platform.isMacOS()) {
             var bundled = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
             if (new java.io.File(bundled).canExecute()) {
                 return bundled;
@@ -264,10 +264,10 @@ public class YamlToolAction implements ToolAction {
 
     private static boolean isVscodeInstalled() {
         if (findVscodeCli() != null) return true;
-        if (dev.incusspawn.Environment.isMacOS()) {
+        if (dev.incusspawn.Platform.isMacOS()) {
             return isMacAppInstalled("Visual Studio Code");
         }
-        if (dev.incusspawn.Environment.isLinux()) {
+        if (dev.incusspawn.Platform.isLinux()) {
             return isSchemeHandlerAvailable("vscode");
         }
         return false;
@@ -300,7 +300,7 @@ public class YamlToolAction implements ToolAction {
     }
 
     static boolean isSchemeHandlerAvailable(String scheme) {
-        if (dev.incusspawn.Environment.isLinux()) {
+        if (dev.incusspawn.Platform.isLinux()) {
             try {
                 var process = new ProcessBuilder("xdg-mime", "query", "default",
                         "x-scheme-handler/" + scheme)
@@ -315,7 +315,7 @@ public class YamlToolAction implements ToolAction {
                 return true;
             }
         }
-        if (dev.incusspawn.Environment.isMacOS()) {
+        if (dev.incusspawn.Platform.isMacOS()) {
             return isMacSchemeHandlerAvailable(scheme);
         }
         return true;

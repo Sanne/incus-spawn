@@ -1,6 +1,7 @@
 package dev.incusspawn.vm;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,14 +52,14 @@ class VmManagerTest {
 
     @Test
     void detectBackendReturnsValueOnCurrentOs() {
-        if (Environment.isLinux()) {
+        if (Platform.isLinux()) {
             try {
                 var backend = VmManager.detectBackend();
                 assertEquals(VmManager.Backend.QEMU, backend);
             } catch (VmException e) {
                 assertTrue(e.getMessage().contains("qemu-system"));
             }
-        } else if (Environment.isMacOS()) {
+        } else if (Platform.isMacOS()) {
             try {
                 var backend = VmManager.detectBackend();
                 assertEquals(VmManager.Backend.VFKIT, backend);

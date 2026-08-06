@@ -17,6 +17,7 @@ import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
+import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
@@ -81,7 +82,7 @@ public class DoctorCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         System.out.println("Running incus-spawn doctor...\n");
 
-        var findings = Environment.isLinux() ? runLinuxChecks() : runMacChecks();
+        var findings = Platform.isLinux() ? runLinuxChecks() : runMacChecks();
 
         System.out.print(formatFindings(findings).indent(2));
 
@@ -658,7 +659,7 @@ public class DoctorCommand extends BaseCommand {
         var findings = new ArrayList<Finding>();
         var incus = RuntimeServices.incus();
         findings.add(checkBridgeDns(incus));
-        if (Environment.isLinux()) {
+        if (Platform.isLinux()) {
             var iptablesFinding = checkIptablesRedirect();
             if (iptablesFinding != null) findings.add(iptablesFinding);
         }
@@ -913,7 +914,7 @@ public class DoctorCommand extends BaseCommand {
                 Files.writeString(bundleDir.resolve("versions.txt"), collectVersions());
                 copyLogTail(Environment.proxyLogFile(), bundleDir.resolve("proxy.log"), 1000);
                 copyLogTail(Environment.clientLogFile(), bundleDir.resolve("client.log"), 1000);
-                if (Environment.isMacOS()) {
+                if (Platform.isMacOS()) {
                     copyLogTail(Environment.vmLogFile(), bundleDir.resolve("vm.log"), 1000);
                     copyLogTail(Environment.vmStateDir().resolve("proxy-service.log"),
                             bundleDir.resolve("proxy-service.log"), 1000);
@@ -1038,7 +1039,7 @@ public class DoctorCommand extends BaseCommand {
 
     private String collectServiceStatus() {
         var sb = new StringBuilder();
-        sb.append("Platform: ").append(Environment.isMacOS() ? "macOS" : "Linux").append("\n");
+        sb.append("Platform: ").append(Platform.isMacOS() ? "macOS" : "Linux").append("\n");
         sb.append("Service installed: ").append(ProxyService.isInstalled()).append("\n");
         sb.append("Service active: ").append(ProxyService.isActive()).append("\n");
         return sb.toString();

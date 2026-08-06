@@ -10,6 +10,7 @@ import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.vm.VmNetwork;
+import dev.incusspawn.Platform;
 import io.quarkus.arc.Arc;
 import io.vertx.core.Vertx;
 import org.aesh.command.CommandDefinition;
@@ -93,7 +94,7 @@ public class ProxyCommand extends BaseCommand {
             String gatewayIp;
             if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
                 gatewayIp = gatewayIpOption;
-            } else if (Environment.isMacOS()) {
+            } else if (Platform.isMacOS()) {
                 gatewayIp = VmNetwork.discoverHostBridgeIp();
                 if (gatewayIp == null) {
                     System.err.println("Error: could not discover VM-facing bridge interface.");
@@ -117,7 +118,7 @@ public class ProxyCommand extends BaseCommand {
             System.out.println("Starting MITM authentication proxy...");
             System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
             System.out.println("  Runtime:       " + build.runtime());
-            if (!Environment.isMacOS()) {
+            if (!Platform.isMacOS()) {
                 System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
             }
             System.out.println("  Gateway IP:    " + gatewayIp);
@@ -170,7 +171,7 @@ public class ProxyCommand extends BaseCommand {
             }));
 
             Runnable dnsCallback;
-            if (Environment.isMacOS()) {
+            if (Platform.isMacOS()) {
                 // On macOS, DNS is configured at install time (from Terminal, where the
                 // native binary can reach the VM). Under launchd, macOS Sequoia blocks
                 // bridge access from ad-hoc-signed binaries, so don't retry on failure.
@@ -252,7 +253,7 @@ public class ProxyCommand extends BaseCommand {
                     System.out.println("  Health endpoint: http://" + healthIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + MitmProxy.DEFAULT_MITM_PORT);
                     if (serviceActive) {
-                        var manager = Environment.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
+                        var manager = Platform.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
                         System.out.println("  Managed by:      " + manager);
                     } else {
                         System.out.println("  Managed by:      manual (foreground process)");

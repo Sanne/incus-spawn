@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
+import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
@@ -24,7 +25,7 @@ public class VmCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        if (Environment.isLinux()) {
+        if (Platform.isLinux()) {
             printLinuxMessage();
             return CommandResult.SUCCESS;
         }
@@ -40,7 +41,7 @@ public class VmCommand extends BaseCommand {
     public static class Start extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 printLinuxMessage();
                 return CommandResult.SUCCESS;
             }
@@ -56,7 +57,7 @@ public class VmCommand extends BaseCommand {
     public static class Stop extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 printLinuxMessage();
                 return CommandResult.SUCCESS;
             }
@@ -73,7 +74,7 @@ public class VmCommand extends BaseCommand {
     public static class Status extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 var incus = RuntimeServices.incus();
                 var pool = incus.findCowPool();
                 System.out.println(incus.getSystemDiagnostics(pool));
@@ -102,7 +103,7 @@ public class VmCommand extends BaseCommand {
     public static class Console extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
-            if (Environment.isLinux()) {
+            if (Platform.isLinux()) {
                 printLinuxMessage();
                 return CommandResult.SUCCESS;
             }
