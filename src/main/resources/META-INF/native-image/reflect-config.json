@@ -1,15 +1,5 @@
 [
   {
-    "name": "dev.tamboui.backend.panama.PanamaBackendProvider",
-    "allDeclaredConstructors": true,
-    "allPublicMethods": true
-  },
-  {
-    "name": "dev.tamboui.capability.core.CoreCapabilityProvider",
-    "allDeclaredConstructors": true,
-    "allPublicMethods": true
-  },
-  {
     "name": "dev.tamboui.tui.TuiRunner",
     "fields": [{"name": "backend"}, {"name": "running"}]
   },
