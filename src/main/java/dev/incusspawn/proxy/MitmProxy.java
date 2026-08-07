@@ -2,9 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
-import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.IncusException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -36,7 +34,6 @@ import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,9 +58,9 @@ import java.util.zip.GZIPInputStream;
  */
 public class MitmProxy {
 
-    public static final int CONTAINER_FACING_PORT = 443;
-    public static final int DEFAULT_MITM_PORT = 18443;
-    public static final int DEFAULT_HEALTH_PORT = 18080;
+    public static final int CONTAINER_FACING_PORT = ProxyConfig.CONTAINER_FACING_PORT;
+    public static final int DEFAULT_MITM_PORT = ProxyConfig.DEFAULT_MITM_PORT;
+    public static final int DEFAULT_HEALTH_PORT = ProxyConfig.DEFAULT_HEALTH_PORT;
 
     private static final int BUFFER_SIZE = 64 * 1024;
 
@@ -82,47 +79,6 @@ public class MitmProxy {
             "plugins.gradle.org"
     );
     private static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
-    private static final String BOB_BASE_DOMAIN = "bob.ibm.com";
-    // Regional subdomains need explicit entries so the proxy generates wildcard
-    // certs at each level (*.us-east.bob.ibm.com, etc.) — a single *.bob.ibm.com
-    // cert only covers one subdomain level and won't match api.us-east.bob.ibm.com.
-    private static final java.util.List<String> BOB_REGIONAL_DOMAINS = List.of(
-            "us-east.bob.ibm.com",
-            "eu-de.bob.ibm.com",
-            "jp-tok.bob.ibm.com"
-    );
-
-    // Domains where all subdomains should also be intercepted with credential injection.
-    // Exact matches go into INTERCEPTED_DOMAIN_SET; this list adds suffix matching
-    // so e.g. "api.us-east.bob.ibm.com" is caught without enumerating every subdomain.
-    private static final java.util.List<String> WILDCARD_DOMAIN_SUFFIXES;
-
-    private static final Set<String> INTERCEPTED_DOMAIN_SET;
-    static {
-        var all = new HashSet<String>();
-        all.addAll(ANTHROPIC_DOMAINS);
-        all.addAll(GITHUB_DOMAINS);
-        all.addAll(REGISTRY_DOMAINS);
-        all.addAll(MAVEN_DOMAINS);
-        all.addAll(GRADLE_DOMAINS);
-        all.add(BOB_BASE_DOMAIN);
-        all.addAll(BOB_REGIONAL_DOMAINS);
-        INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
-
-        WILDCARD_DOMAIN_SUFFIXES = List.of("." + BOB_BASE_DOMAIN);
-    }
-
-    private static boolean isInterceptedDomain(String domain) {
-        if (INTERCEPTED_DOMAIN_SET.contains(domain)) return true;
-        for (var suffix : WILDCARD_DOMAIN_SUFFIXES) {
-            if (domain.endsWith(suffix)) return true;
-        }
-        return false;
-    }
-
-    private static boolean isBobDomain(String domain) {
-        return domain.equals(BOB_BASE_DOMAIN) || domain.endsWith("." + BOB_BASE_DOMAIN);
-    }
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
     // Group 1 = image name (e.g. "library/postgres"), group 2 = digest
@@ -235,21 +191,12 @@ public class MitmProxy {
         this.dnsConfigured = configured;
     }
 
-    /**
-     * Resolve the Vertex AI hostname for a region. Some regions use special hostnames
-     * instead of the standard {@code {region}-aiplatform.googleapis.com} pattern.
-     */
     public static String vertexHost(String region) {
-        return switch (region) {
-            case "global" -> "aiplatform.googleapis.com";
-            case "us" -> "aiplatform.us.rep.googleapis.com";
-            case "eu" -> "aiplatform.eu.rep.googleapis.com";
-            default -> region + "-aiplatform.googleapis.com";
-        };
+        return ProxyConfig.vertexHost(region);
     }
 
     private String vertexHost() {
-        return vertexHost(vertexRegion);
+        return ProxyConfig.vertexHost(vertexRegion);
     }
 
     public void setDebugLog(ApiTrafficLog debugLog) {
@@ -258,7 +205,7 @@ public class MitmProxy {
 
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
-        var config = SpawnConfig.load();
+        var config = dev.incusspawn.config.SpawnConfig.load();
         var gatewayIp = resolveGatewayIp(incus);
         var claude = config.getClaude();
         return new MitmProxy(
@@ -276,137 +223,36 @@ public class MitmProxy {
                 claude.getVertexProjectId());
     }
 
-    /** Resolve the Incus bridge gateway IP (e.g. "10.166.11.1").
-     *  Falls back to the cached value in config if the API call fails. */
     public static String resolveGatewayIp(IncusClient incus) {
-        RuntimeException error = null;
-        try {
-            var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
-            if (addr.contains("/")) {
-                addr = addr.substring(0, addr.indexOf('/'));
-            }
-            if (!addr.isEmpty()) return addr;
-        } catch (RuntimeException e) {
-            error = e;
-        }
-        var cached = SpawnConfig.load().getIncusBridgeGateway();
-        if (!cached.isEmpty()) return cached;
-        if (error != null) throw error;
-        throw new IncusException("Bridge incusbr0 has no ipv4.address configured");
+        return ProxyConfig.resolveGatewayIp(incus);
     }
 
-    /** The set of domains intercepted by this proxy. */
     public static Set<String> interceptedDomains() {
-        return INTERCEPTED_DOMAIN_SET;
+        return ProxyConfig.interceptedDomains();
     }
 
-    /**
-     * Configure bridge-level DNS overrides via dnsmasq so all containers on
-     * incusbr0 resolve intercepted domains to the gateway IP.
-     * DNS overrides are durable — they persist across proxy restarts so
-     * containers never silently bypass the proxy.
-     */
     public static void configureBridgeDns(IncusClient incus) {
-        writeBridgeDns(incus);
-        System.out.println("  DNS overrides: " + interceptedDomains().size() +
-                " domains -> " + resolveGatewayIp(incus) + " (via bridge dnsmasq)");
+        ProxyConfig.configureBridgeDns(incus);
     }
 
     public static void writeBridgeDns(IncusClient incus) {
-        var gatewayIp = resolveGatewayIp(incus);
-        var overrides = interceptedDomains().stream()
-                .sorted()
-                .flatMap(d -> java.util.stream.Stream.of(
-                        "address=/" + d + "/" + gatewayIp,
-                        "address=/" + d + "/::"))
-                .collect(java.util.stream.Collectors.joining("\n"));
-
-        var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        var servers = existing.lines()
-                .filter(l -> l.startsWith("server="))
-                .collect(java.util.stream.Collectors.joining("\n"));
-        var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
-
-        if (dnsmasqConfig.equals(existing)) {
-            return;
-        }
-        incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
+        ProxyConfig.writeBridgeDns(incus);
     }
 
-    /**
-     * Configure bridge DNS with retries and exponential backoff.
-     * On macOS the VM/Incus may not be reachable immediately at proxy startup
-     * (e.g. launchd starts the proxy before the VM is ready). Retries in the
-     * background so the proxy itself starts immediately.
-     */
     public static void configureBridgeDnsWithRetry(IncusClient incus, Runnable onDnsConfigured) {
-        try {
-            configureBridgeDns(incus);
-            ProxyLog.info("DNS overrides configured");
-            if (onDnsConfigured != null) onDnsConfigured.run();
-            return;
-        } catch (Exception e) {
-            ProxyLog.warn("DNS override failed, will retry in background: " + e.getMessage());
-        }
-
-        var thread = new Thread(() -> {
-            long delaySec = 2;
-            long maxDelaySec = 60;
-            int attempt = 1;
-            while (true) {
-                try {
-                    Thread.sleep(delaySec * 1000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                attempt++;
-                try {
-                    configureBridgeDns(incus);
-                    ProxyLog.info("DNS overrides configured (attempt " + attempt + ")");
-                    if (onDnsConfigured != null) onDnsConfigured.run();
-                    return;
-                } catch (Exception e) {
-                    ProxyLog.warn("DNS retry " + attempt + " failed (next in "
-                            + Math.min(delaySec * 2, maxDelaySec) + "s): " + e.getMessage());
-                    delaySec = Math.min(delaySec * 2, maxDelaySec);
-                }
-            }
-        }, "dns-override-retry");
-        thread.setDaemon(true);
-        thread.start();
+        ProxyConfig.configureBridgeDnsWithRetry(incus, onDnsConfigured);
     }
 
-    /**
-     * Clear bridge-level DNS overrides, restoring normal DNS resolution.
-     * Only used during full proxy uninstall — normal stop leaves overrides
-     * in place so containers never silently bypass the proxy.
-     */
     public static void clearBridgeDns(IncusClient incus) {
-        try {
-            var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-            var servers = existing.lines()
-                    .filter(l -> l.startsWith("server="))
-                    .collect(java.util.stream.Collectors.joining("\n"));
-            incus.networkConfigSet("incusbr0", "raw.dnsmasq", servers);
-        } catch (Exception e) {
-            System.err.println("Warning: could not clear bridge DNS overrides: " + e.getMessage());
-        }
+        ProxyConfig.clearBridgeDns(incus);
     }
 
     public static String getDnsOverrides(IncusClient incus) {
-        try {
-            return incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        } catch (Exception e) {
-            return "";
-        }
+        return ProxyConfig.getDnsOverrides(incus);
     }
 
     public static boolean isBridgeDnsComplete(IncusClient incus) {
-        var overrides = getDnsOverrides(incus);
-        if (overrides.isEmpty()) return true;
-        return interceptedDomains().stream()
-                .allMatch(d -> overrides.contains("address=/" + d + "/"));
+        return ProxyConfig.isBridgeDnsComplete(incus);
     }
 
     // --- Lifecycle ---
@@ -426,7 +272,7 @@ public class MitmProxy {
         // Build JKS keystore with per-domain certs (alias = domain name for SNI).
         // Also generate wildcard certs (*.domain) so subdomains resolved via
         // dnsmasq address= overrides get a valid cert (e.g. cdn01.quay.io).
-        var allDomains = INTERCEPTED_DOMAIN_SET.stream()
+        var allDomains = ProxyConfig.interceptedDomains().stream()
                 .sorted()
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
@@ -520,7 +366,7 @@ public class MitmProxy {
         ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort);
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
-        System.out.println("Intercepted domains: " + INTERCEPTED_DOMAIN_SET);
+        System.out.println("Intercepted domains: " + ProxyConfig.interceptedDomains());
         System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + mavenCacheDir() +
@@ -612,7 +458,7 @@ public class MitmProxy {
                 handleMavenRequest(clientReq, domain);
             } else if (GRADLE_DOMAINS.contains(domain)) {
                 handleGradleRequest(clientReq, domain);
-            } else if (isInterceptedDomain(domain)) {
+            } else if (ProxyConfig.isInterceptedDomain(domain)) {
                 handleApiRequest(clientReq, domain);
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
@@ -1413,7 +1259,7 @@ public class MitmProxy {
                     upReq.putHeader("Authorization", "Bearer " + ghToken);
                 }
             }
-        } else if (isBobDomain(domain)) {
+        } else if (ProxyConfig.isBobDomain(domain)) {
             if (!bobApiKey.isBlank()) {
                 upReq.putHeader("Authorization", "Apikey " + bobApiKey);
             }
