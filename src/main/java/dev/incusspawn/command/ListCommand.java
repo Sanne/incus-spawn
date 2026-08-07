@@ -35,7 +35,7 @@ import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.tui.ShiftTabBindings;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
-import dev.tamboui.backend.panama.PanamaBackend;
+import dev.incusspawn.tui.FastPanamaBackend;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -300,7 +300,7 @@ public class ListCommand extends BaseCommand {
             }
 
             try (var runner = TuiRunner.create(TuiConfig.builder()
-                    .backend(new PanamaBackend())
+                    .backend(new FastPanamaBackend())
                     .bindings(ShiftTabBindings.createWithBacktab())
                     .tickRate(Duration.ofMillis(100))
                     .build())) {
