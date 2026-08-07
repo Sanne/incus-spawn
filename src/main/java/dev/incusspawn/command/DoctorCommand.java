@@ -12,7 +12,7 @@ import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.vm.VmAgentClient;
@@ -668,24 +668,24 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkBridgeDns(IncusClient incus) {
         try {
-            if (MitmProxy.isBridgeDnsComplete(incus)) {
+            if (ProxyConfig.isBridgeDnsComplete(incus)) {
                 return Finding.ok("Bridge DNS overrides",
-                        "all " + MitmProxy.interceptedDomains().size() + " domains configured");
+                        "all " + ProxyConfig.interceptedDomains().size() + " domains configured");
             }
-            var overrides = MitmProxy.getDnsOverrides(incus);
+            var overrides = ProxyConfig.getDnsOverrides(incus);
             if (overrides.isEmpty()) {
                 return Finding.fail("Bridge DNS overrides", "not configured",
                         new Remediation("Configure bridge DNS", false,
-                                () -> MitmProxy.writeBridgeDns(RuntimeServices.incus())));
+                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
             }
-            var missing = MitmProxy.interceptedDomains().stream()
+            var missing = ProxyConfig.interceptedDomains().stream()
                     .filter(d -> !overrides.contains("address=/" + d + "/"))
                     .sorted()
                     .toList();
             return Finding.warn("Bridge DNS overrides incomplete",
                     "missing: " + String.join(", ", missing),
                     new Remediation("Reconfigure bridge DNS", false,
-                            () -> MitmProxy.writeBridgeDns(RuntimeServices.incus())));
+                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
@@ -719,11 +719,11 @@ public class DoctorCommand extends BaseCommand {
             if (exitCode != 0) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not query firewalld rules)", null);
             }
-            var gatewayIp = MitmProxy.resolveGatewayIp(RuntimeServices.incus());
-            if (isPreRoutingRulePresent(output, MitmProxy.DEFAULT_MITM_PORT, gatewayIp)) {
-                return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+            var gatewayIp = ProxyConfig.resolveGatewayIp(RuntimeServices.incus());
+            if (isPreRoutingRulePresent(output, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
+                return Finding.ok("Firewall PREROUTING redirect (firewalld)", "443 -> " + ProxyConfig.DEFAULT_MITM_PORT);
             }
-            var staleIp = FirewalldCheck.extractRedirectGatewayIp(output, MitmProxy.DEFAULT_MITM_PORT);
+            var staleIp = FirewalldCheck.extractRedirectGatewayIp(output, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
                 return Finding.fail("Firewall PREROUTING redirect",
                         "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
@@ -738,15 +738,15 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkUfwRedirect() {
         try {
-            var gatewayIp = MitmProxy.resolveGatewayIp(RuntimeServices.incus());
+            var gatewayIp = ProxyConfig.resolveGatewayIp(RuntimeServices.incus());
             var beforeRules = UfwCheck.readBeforeRules();
             if (beforeRules.isEmpty()) {
                 return Finding.warn("Firewall PREROUTING redirect", "(could not read /etc/ufw/before.rules)", null);
             }
-            if (UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT, gatewayIp)) {
-                return Finding.ok("Firewall PREROUTING redirect (UFW)", "443 -> " + MitmProxy.DEFAULT_MITM_PORT);
+            if (UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp)) {
+                return Finding.ok("Firewall PREROUTING redirect (UFW)", "443 -> " + ProxyConfig.DEFAULT_MITM_PORT);
             }
-            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
                 return Finding.fail("Firewall PREROUTING redirect",
                         "rule points to stale gateway " + staleIp + " (current: " + gatewayIp + ")",
@@ -824,7 +824,7 @@ public class DoctorCommand extends BaseCommand {
 
             var gatewayIp = "";
             try {
-                gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception ignored) {}
 
             for (var inst : running) {
@@ -863,7 +863,7 @@ public class DoctorCommand extends BaseCommand {
         }
 
         // Check DNS resolution of an intercepted domain
-        var probeDomain = MitmProxy.interceptedDomains().iterator().next();
+        var probeDomain = ProxyConfig.interceptedDomains().iterator().next();
         if (!gatewayIp.isEmpty()) {
             try {
                 var result = incus.shellExec(name, "sh", "-c",

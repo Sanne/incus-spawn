@@ -9,7 +9,7 @@ import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
-import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.ssh.SshKeyManager;
 
 import java.io.IOException;
@@ -37,7 +37,7 @@ public final class InstanceLifecycle {
             case FULL -> {}
             case PROXY_ONLY -> {
                 System.out.println("Configuring proxy-only network...");
-                var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
                 incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
                 incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
             }
@@ -61,7 +61,7 @@ public final class InstanceLifecycle {
         if (mode == NetworkMode.AIRGAP) return null;
 
         var ip = StaticIpAllocator.allocate(incus);
-        var gateway = MitmProxy.resolveGatewayIp(incus);
+        var gateway = ProxyConfig.resolveGatewayIp(incus);
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
 
         System.out.println("Assigning static IP " + ip + " (device: " + nicDevice + ")");
@@ -288,8 +288,8 @@ public final class InstanceLifecycle {
             return;
         }
 
-        var mitmPort = MitmProxy.CONTAINER_FACING_PORT;
-        var healthPort = MitmProxy.DEFAULT_HEALTH_PORT;
+        var mitmPort = ProxyConfig.CONTAINER_FACING_PORT;
+        var healthPort = ProxyConfig.DEFAULT_HEALTH_PORT;
 
         System.out.println("Applying proxy-only firewall rules...");
 

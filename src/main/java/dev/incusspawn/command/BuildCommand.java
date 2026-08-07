@@ -22,7 +22,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import dev.incusspawn.tool.DownloadCache;
@@ -416,7 +416,7 @@ public class BuildCommand extends BaseCommand {
      * is built first (recursively).
      */
     private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var dnsOverrides = MitmProxy.getDnsOverrides(incus);
+        var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
         }
@@ -646,7 +646,7 @@ public class BuildCommand extends BaseCommand {
             waitForIpv4(container);
         }
 
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
@@ -814,7 +814,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         System.out.println("Configuring DNS...");
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +

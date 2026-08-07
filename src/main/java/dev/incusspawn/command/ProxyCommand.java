@@ -6,6 +6,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.proxy.ApiTrafficLog;
 import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.proxy.ProxyService;
@@ -103,7 +104,7 @@ public class ProxyCommand extends BaseCommand {
                 }
             } else {
                 try {
-                    gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                    gatewayIp = ProxyConfig.resolveGatewayIp(incus);
                 } catch (Exception e) {
                     System.err.println("Error: could not determine Incus bridge gateway IP.");
                     System.err.println("Is Incus running? Try 'incus network list'.");
@@ -177,7 +178,7 @@ public class ProxyCommand extends BaseCommand {
                 // bridge access from ad-hoc-signed binaries, so don't retry on failure.
                 dnsCallback = () -> {
                     try {
-                        MitmProxy.configureBridgeDns(incus);
+                        ProxyConfig.configureBridgeDns(incus);
                         ProxyLog.info("DNS overrides configured");
                     } catch (Exception e) {
                         ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
@@ -185,7 +186,7 @@ public class ProxyCommand extends BaseCommand {
                     proxy.setDnsConfigured(true);
                 };
             } else {
-                dnsCallback = () -> MitmProxy.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true));
+                dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true));
             }
             try {
                 proxy.start(dnsCallback);
@@ -221,7 +222,7 @@ public class ProxyCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             String gatewayIp;
             try {
-                gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception e) {
                 System.err.println("Could not determine Incus bridge gateway IP.");
                 System.err.println("Is Incus running? Try 'incus network list'.");
@@ -250,8 +251,8 @@ public class ProxyCommand extends BaseCommand {
                             System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
                         }
                     }
-                    System.out.println("  Health endpoint: http://" + healthIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health");
-                    System.out.println("  MITM port:       " + MitmProxy.DEFAULT_MITM_PORT);
+                    System.out.println("  Health endpoint: http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
+                    System.out.println("  MITM port:       " + ProxyConfig.DEFAULT_MITM_PORT);
                     if (serviceActive) {
                         var manager = Platform.isMacOS() ? "launchd (dev.incusspawn.proxy)" : "systemd (incus-spawn-proxy.service)";
                         System.out.println("  Managed by:      " + manager);
@@ -328,7 +329,7 @@ public class ProxyCommand extends BaseCommand {
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
             if (ProxyService.uninstall()) {
-                MitmProxy.clearBridgeDns(incus);
+                ProxyConfig.clearBridgeDns(incus);
             }
             return CommandResult.SUCCESS;
         }
@@ -354,11 +355,11 @@ public class ProxyCommand extends BaseCommand {
             var build = BuildInfo.instance();
             String gatewayIp = "(unknown)";
             try {
-                gatewayIp = MitmProxy.resolveGatewayIp(incus);
+                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception ignored) {}
 
             System.out.println("Gateway IP:    " + gatewayIp);
-            System.out.println("MITM port:     " + MitmProxy.DEFAULT_MITM_PORT);
+            System.out.println("MITM port:     " + ProxyConfig.DEFAULT_MITM_PORT);
             System.out.println("Version:       " + build.version() + " (" + build.gitSha() + ")");
             System.out.println("Runtime:       " + build.runtime());
             System.out.println();
