@@ -4009,7 +4009,7 @@ public class ListCommand extends BaseCommand {
             // disposition we set here.
             var signalArenaField = terminal.getClass().getDeclaredField("signalArena");
             signalArenaField.setAccessible(true);
-            signalArenaField.set(terminal, java.lang.foreign.Arena.ofShared());
+            signalArenaField.set(terminal, java.lang.foreign.Arena.global());
 
             var signalMethod = Class.forName("dev.tamboui.backend.panama.unix.LibC")
                     .getDeclaredMethod("signal", int.class, java.lang.foreign.MemorySegment.class);
