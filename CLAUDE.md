@@ -24,7 +24,7 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 
 ## Tech Stack
 
-- **Java 17**, **Quarkus 3.x** with picocli for CLI commands
+- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
 - **Tamboui** for the interactive TUI (terminal UI framework)
 - **Jackson YAML** for configuration/definition parsing
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
@@ -33,7 +33,7 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 
 ### Entry Point and Command Structure
 
-`IncusSpawn.java` is the picocli `@TopCommand`. With no subcommand, it launches the TUI (`ListCommand`). Each subcommand in `command/` is a picocli `@Command` with Quarkus DI.
+`IncusSpawn.java` is the aesh `@CommandDefinition` top command. With no subcommand, it launches the TUI (`ListCommand`). Each subcommand in `command/` is an aesh `@CommandDefinition` with Quarkus DI.
 
 ### Init and Versioned Completion
 
