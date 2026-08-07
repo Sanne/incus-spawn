@@ -58,10 +58,6 @@ import java.util.zip.GZIPInputStream;
  */
 public class MitmProxy {
 
-    public static final int CONTAINER_FACING_PORT = ProxyConfig.CONTAINER_FACING_PORT;
-    public static final int DEFAULT_MITM_PORT = ProxyConfig.DEFAULT_MITM_PORT;
-    public static final int DEFAULT_HEALTH_PORT = ProxyConfig.DEFAULT_HEALTH_PORT;
-
     private static final int BUFFER_SIZE = 64 * 1024;
 
     private static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
@@ -191,10 +187,6 @@ public class MitmProxy {
         this.dnsConfigured = configured;
     }
 
-    public static String vertexHost(String region) {
-        return ProxyConfig.vertexHost(region);
-    }
-
     private String vertexHost() {
         return ProxyConfig.vertexHost(vertexRegion);
     }
@@ -206,13 +198,13 @@ public class MitmProxy {
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var config = dev.incusspawn.config.SpawnConfig.load();
-        var gatewayIp = resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var claude = config.getClaude();
         return new MitmProxy(
                 vertx,
                 gatewayIp,
-                DEFAULT_MITM_PORT,
-                DEFAULT_HEALTH_PORT,
+                ProxyConfig.DEFAULT_MITM_PORT,
+                ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
                 claude.getApiKey(),
                 claude.getOauthToken(),
@@ -221,38 +213,6 @@ public class MitmProxy {
                 claude.isUseVertex(),
                 claude.getCloudMlRegion(),
                 claude.getVertexProjectId());
-    }
-
-    public static String resolveGatewayIp(IncusClient incus) {
-        return ProxyConfig.resolveGatewayIp(incus);
-    }
-
-    public static Set<String> interceptedDomains() {
-        return ProxyConfig.interceptedDomains();
-    }
-
-    public static void configureBridgeDns(IncusClient incus) {
-        ProxyConfig.configureBridgeDns(incus);
-    }
-
-    public static void writeBridgeDns(IncusClient incus) {
-        ProxyConfig.writeBridgeDns(incus);
-    }
-
-    public static void configureBridgeDnsWithRetry(IncusClient incus, Runnable onDnsConfigured) {
-        ProxyConfig.configureBridgeDnsWithRetry(incus, onDnsConfigured);
-    }
-
-    public static void clearBridgeDns(IncusClient incus) {
-        ProxyConfig.clearBridgeDns(incus);
-    }
-
-    public static String getDnsOverrides(IncusClient incus) {
-        return ProxyConfig.getDnsOverrides(incus);
-    }
-
-    public static boolean isBridgeDnsComplete(IncusClient incus) {
-        return ProxyConfig.isBridgeDnsComplete(incus);
     }
 
     // --- Lifecycle ---
