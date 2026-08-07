@@ -31,7 +31,6 @@ import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolAction;
 import dev.incusspawn.tool.YamlToolSetup;
-import dev.incusspawn.tui.ShiftTabBindings;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
 import dev.tamboui.backend.aesh.AeshBackend;
@@ -300,7 +299,6 @@ public class ListCommand extends BaseCommand {
 
             try (var runner = TuiRunner.create(TuiConfig.builder()
                     .backend(new AeshBackend())
-                    .bindings(ShiftTabBindings.createWithBacktab())
                     .tickRate(Duration.ofMillis(100))
                     .build())) {
                 runner.run(
@@ -552,7 +550,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         // Tab or Shift+Tab: switch panels
-        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
+        if (key.isKey(KeyCode.TAB)) {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
         }
@@ -941,7 +939,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         // Shift+Tab / Up: cycle backward (check Shift+Tab before Tab to avoid matching TAB+Shift)
-        if (ShiftTabBindings.isShiftTab(key) || key.isKey(KeyCode.UP)) {
+        if ((key.isKey(KeyCode.TAB) && key.hasShift()) || key.isKey(KeyCode.UP)) {
             int max = maxBranchField();
             branchFieldIndex = (branchFieldIndex - 1 + max + 1) % (max + 1);
             return true;
@@ -1059,7 +1057,7 @@ public class ListCommand extends BaseCommand {
             newTemplateFieldIndex = (newTemplateFieldIndex + 1) % 3;
             return true;
         }
-        if (ShiftTabBindings.isShiftTab(key) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.UP))) {
+        if ((key.isKey(KeyCode.TAB) && key.hasShift()) || (newTemplateFieldIndex < 2 && key.isKey(KeyCode.UP))) {
             newTemplateFieldIndex = (newTemplateFieldIndex + 2) % 3;
             return true;
         }
@@ -2072,7 +2070,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         // Tab or Shift+Tab: toggle view mode
-        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
+        if (key.isKey(KeyCode.TAB)) {
             detailViewCompact = !detailViewCompact;
             detailScrollOffset = 0;
             return true;
@@ -3418,7 +3416,7 @@ public class ListCommand extends BaseCommand {
             }
             return true;
         }
-        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
+        if (key.isKey(KeyCode.TAB)) {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
         }

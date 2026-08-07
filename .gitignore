@@ -47,7 +47,7 @@ nb-configuration.xml
 # Build artifacts
 stderr.txt
 stdout.txt
-META-INF/
+/META-INF/
 
 # Appliance build output
 appliance/build/
