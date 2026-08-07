@@ -1,18 +1,13 @@
 [
   {
-    "name": "dev.tamboui.tui.TuiRunner",
-    "fields": [{"name": "backend"}, {"name": "running"}]
+    "name": "sun.misc.Signal",
+    "methods": [
+      { "name": "<init>", "parameterTypes": ["java.lang.String"] },
+      { "name": "handle", "parameterTypes": ["sun.misc.Signal", "sun.misc.SignalHandler"] }
+    ]
   },
   {
-    "name": "dev.tamboui.backend.panama.PanamaBackend",
-    "fields": [{"name": "terminal"}]
-  },
-  {
-    "name": "dev.tamboui.backend.panama.unix.UnixTerminal",
-    "fields": [{"name": "resizePending", "allowWrite": true}, {"name": "signalArena", "allowWrite": true}]
-  },
-  {
-    "name": "dev.tamboui.backend.panama.unix.LibC",
-    "methods": [{"name": "signal", "parameterTypes": ["int", "java.lang.foreign.MemorySegment"]}]
+    "name": "sun.misc.SignalHandler",
+    "allPublicMethods": true
   }
 ]

@@ -38,7 +38,7 @@
         <quarkus.platform.version>3.38.1</quarkus.platform.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.5.6</surefire-plugin.version>
-        <tamboui.version>0.4.0</tamboui.version>
+        <tamboui.version>0.5.0-SNAPSHOT</tamboui.version>
         <aesh.version>3.16.6</aesh.version>
     </properties>
 
