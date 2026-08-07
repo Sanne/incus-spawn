@@ -75,19 +75,22 @@ echo "=== Benchmark: native image proxy ==="
 echo ""
 
 # Check native-image
-if ! command -v native-image &>/dev/null; then
+if command -v native-image &>/dev/null; then
+    GRAALVM_VERSION="$(native-image --version 2>&1 | head -1)"
+    GRAALVM_FULL="$(native-image --version 2>&1)"
+    if ! echo "$GRAALVM_FULL" | grep -qi "oracle"; then
+        echo "Warning: native-image does not appear to be Oracle GraalVM."
+        echo "  Detected: $GRAALVM_VERSION"
+        echo "  Release builds use Oracle GraalVM. Results may not be comparable."
+        echo ""
+    fi
+    echo "GraalVM:  $GRAALVM_VERSION"
+elif [ "$SKIP_BUILD" = true ]; then
+    GRAALVM_VERSION="unknown (native-image not on PATH)"
+    echo "GraalVM:  $GRAALVM_VERSION (skip-build mode)"
+else
     die "native-image not found on PATH. Install Oracle GraalVM and ensure native-image is available."
 fi
-
-GRAALVM_VERSION="$(native-image --version 2>&1 | head -1)"
-GRAALVM_FULL="$(native-image --version 2>&1)"
-if ! echo "$GRAALVM_FULL" | grep -qi "oracle"; then
-    echo "Warning: native-image does not appear to be Oracle GraalVM."
-    echo "  Detected: $GRAALVM_VERSION"
-    echo "  Release builds use Oracle GraalVM. Results may not be comparable."
-    echo ""
-fi
-echo "GraalVM:  $GRAALVM_VERSION"
 
 # Check Podman
 if ! command -v podman &>/dev/null; then
