@@ -1,6 +1,0 @@
-[
-  {
-    "name": "org.aesh.terminal.tty.provider.FfmTerminalProvider",
-    "methods": [{"name": "<init>", "parameterTypes": []}]
-  }
-]

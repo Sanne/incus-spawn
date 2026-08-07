@@ -34,6 +34,8 @@ import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
 import dev.tamboui.backend.aesh.AeshBackend;
+import org.aesh.terminal.tty.TerminalConnection;
+import org.aesh.terminal.tty.provider.FfmTerminalProvider;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -298,7 +300,8 @@ public class ListCommand extends BaseCommand {
             }
 
             try (var runner = TuiRunner.create(TuiConfig.builder()
-                    .backend(new AeshBackend())
+                    .backend(new AeshBackend(new TerminalConnection(
+                            new FfmTerminalProvider().createTerminal("isx", null, true))))
                     .tickRate(Duration.ofMillis(100))
                     .build())) {
                 runner.run(
