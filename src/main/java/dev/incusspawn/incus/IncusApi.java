@@ -298,18 +298,13 @@ class IncusApi {
      */
     ApiResponse filePush(String instanceName, String destPath, Path sourceFile,
                          String uid, String gid, String mode) {
-        try {
-            var content = Files.readAllBytes(sourceFile);
-            var extraHeaders = Map.of(
-                    "X-Incus-uid", uid,
-                    "X-Incus-gid", gid,
-                    "X-Incus-mode", mode != null ? mode : posixModeString(sourceFile),
-                    "X-Incus-type", "file");
-            return requestRaw("POST", filesPath(instanceName, destPath),
-                    "application/octet-stream", extraHeaders, content);
-        } catch (IOException e) {
-            throw new IncusException("Failed to read file for push: " + sourceFile, e);
-        }
+        var extraHeaders = Map.of(
+                "X-Incus-uid", uid,
+                "X-Incus-gid", gid,
+                "X-Incus-mode", mode != null ? mode : posixModeString(sourceFile),
+                "X-Incus-type", "file");
+        return requestRawFromFile("POST", filesPath(instanceName, destPath),
+                "application/octet-stream", extraHeaders, sourceFile);
     }
 
     private static String posixModeString(Path file) {
