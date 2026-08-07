@@ -357,7 +357,7 @@ public final class ProxyService {
 
     private static long findProxyPid() {
         try {
-            var pb = new ProcessBuilder("fuser", MitmProxy.DEFAULT_HEALTH_PORT + "/tcp");
+            var pb = new ProcessBuilder("fuser", ProxyConfig.DEFAULT_HEALTH_PORT + "/tcp");
             pb.redirectErrorStream(false);
             var process = pb.start();
             // fuser sends port label to stderr, PIDs to stdout
@@ -632,7 +632,7 @@ public final class ProxyService {
         // local network access from ad-hoc-signed binaries under launchd.
         System.out.println("  Configuring bridge DNS...");
         try {
-            MitmProxy.configureBridgeDns(new IncusClient());
+            ProxyConfig.configureBridgeDns(new IncusClient());
         } catch (Exception e) {
             System.err.println("  Warning: could not configure bridge DNS: " + e.getMessage());
             System.err.println("  Is the VM running? The proxy will retry DNS at startup.");

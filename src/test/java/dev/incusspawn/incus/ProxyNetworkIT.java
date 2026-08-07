@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import dev.incusspawn.Environment;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.vm.VmNetwork;
 import dev.incusspawn.Platform;
 import io.vertx.core.Vertx;
@@ -51,7 +52,7 @@ class ProxyNetworkIT {
         if (Platform.isMacOS()) {
             proxyAddress = VmNetwork.discoverHostBridgeIp();
         } else {
-            proxyAddress = MitmProxy.resolveGatewayIp(client);
+            proxyAddress = ProxyConfig.resolveGatewayIp(client);
         }
         Assumptions.assumeTrue(proxyAddress != null, "Cannot determine proxy bind address");
 
@@ -75,7 +76,7 @@ class ProxyNetworkIT {
         Assumptions.assumeTrue(healthy, "Proxy health check failed after 15s");
 
         originalDnsmasq = client.networkConfigGet("incusbr0", "raw.dnsmasq");
-        MitmProxy.configureBridgeDns(client);
+        ProxyConfig.configureBridgeDns(client);
     }
 
     @AfterAll
@@ -106,7 +107,7 @@ class ProxyNetworkIT {
         client.launch("images:alpine/edge", CONTAINER, false);
         assertTrue(client.pollUntilReady(CONTAINER, 30, "true"));
         // Point DNS at bridge gateway where dnsmasq runs
-        var gatewayIp = MitmProxy.resolveGatewayIp(client);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(client);
         client.shellExec(CONTAINER, "sh", "-c",
                 "echo nameserver " + gatewayIp + " > /etc/resolv.conf");
     }
@@ -114,7 +115,7 @@ class ProxyNetworkIT {
     @Test @Order(3)
     void dnsResolvesInterceptedDomainToGateway() {
         Assumptions.assumeTrue(client.exists(CONTAINER));
-        var gatewayIp = MitmProxy.resolveGatewayIp(client);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(client);
         // Use getent ahostsv4 which works reliably on Alpine
         var result = client.shellExec(CONTAINER, "sh", "-c",
                 "getent ahostsv4 api.anthropic.com | head -1 | awk '{print $1}'");

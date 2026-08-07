@@ -19,7 +19,7 @@ import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
@@ -3784,11 +3784,11 @@ public class ListCommand extends BaseCommand {
     private void tryFixStaleDns() {
         if (dnsVerified) return;
         dnsVerified = true;
-        if (MitmProxy.isBridgeDnsComplete(incus)) return;
+        if (ProxyConfig.isBridgeDnsComplete(incus)) return;
         setStatusMessage("Updating bridge DNS overrides...");
         var thread = new Thread(() -> {
             try {
-                MitmProxy.writeBridgeDns(incus);
+                ProxyConfig.writeBridgeDns(incus);
                 setStatusMessage("Bridge DNS overrides updated");
             } catch (Exception e) {
                 setStatusMessage("DNS update failed: " + e.getMessage());

@@ -12,7 +12,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.ssh.SshKeyManager;
-import dev.incusspawn.proxy.MitmProxy;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
@@ -288,7 +288,7 @@ public class InitCommand extends BaseCommand {
         installGitRemoteShim();
 
         startStep("DNS Configuration", DNS_HINT);
-        MitmProxy.configureBridgeDns(incus);
+        ProxyConfig.configureBridgeDns(incus);
 
         startStep("Proxy Service",
                 "The MITM proxy intercepts HTTPS traffic from containers",
@@ -325,7 +325,7 @@ public class InitCommand extends BaseCommand {
                 "proxy. Containers trust this CA so the proxy can intercept",
                 "HTTPS and inject credentials transparently.");
         incus.createBridgeIfMissing("incusbr0", VmManager.gatewayIp());
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
         config.setIncusBridgeGateway(gatewayIp);
         config.save();
@@ -349,7 +349,7 @@ public class InitCommand extends BaseCommand {
         installGitRemoteShim();
 
         startStep("DNS Configuration", DNS_HINT);
-        MitmProxy.configureBridgeDns(incus);
+        ProxyConfig.configureBridgeDns(incus);
 
         startStep("macOS Services",
                 "Installs the Incus VM and MITM proxy as macOS launch",
@@ -618,7 +618,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private void configureUfw() {
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var subnet = CidrUtils.deriveSubnet(gatewayIp);
 
         var beforeRules = UfwCheck.readBeforeRules();
@@ -701,7 +701,7 @@ public class InitCommand extends BaseCommand {
                 "tokens directly. This step sets up iptables port redirection",
                 "and generates a custom CA certificate trusted by containers.");
 
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var config = SpawnConfig.load();
         if (!gatewayIp.equals(config.getIncusBridgeGateway())) {
             config.setIncusBridgeGateway(gatewayIp);
@@ -728,37 +728,37 @@ public class InitCommand extends BaseCommand {
 
     private void configureMitmProxyFirewalld(String gatewayIp) {
         var rulesOutput = captureOutput("firewall-cmd", "--direct", "--get-all-rules");
-        boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, MitmProxy.DEFAULT_MITM_PORT, gatewayIp);
+        boolean hasRedirect = FirewalldCheck.isPreRoutingRulePresent(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
             System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
-                    + MitmProxy.DEFAULT_MITM_PORT + ").");
+                    + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
             // Remove stale redirect rule pointing to a previous gateway IP
-            var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, MitmProxy.DEFAULT_MITM_PORT);
+            var staleIp = FirewalldCheck.extractRedirectGatewayIp(rulesOutput, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
                 System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
                 runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                         "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                         "-i", "incusbr0", "-d", staleIp, "-p", "tcp", "--dport",
-                        String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                        String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
                         "-j", "REDIRECT", "--to-port",
-                        String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+                        String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
             }
             System.out.println("  Adding iptables PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0)...");
+                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0)...");
             runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--add-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-d", gatewayIp, "-p", "tcp", "--dport",
-                    String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                    String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
-                    String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+                    String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
             runHostQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
                     "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
                     "-i", "incusbr0", "-p", "tcp", "--dport",
-                    String.valueOf(MitmProxy.CONTAINER_FACING_PORT),
+                    String.valueOf(ProxyConfig.CONTAINER_FACING_PORT),
                     "-j", "REDIRECT", "--to-port",
-                    String.valueOf(MitmProxy.DEFAULT_MITM_PORT));
+                    String.valueOf(ProxyConfig.DEFAULT_MITM_PORT));
             runHostQuiet("sudo", "firewall-cmd", "--reload");
         }
     }
@@ -769,21 +769,21 @@ public class InitCommand extends BaseCommand {
             System.err.println("  Warning: could not read /etc/ufw/before.rules. Skipping PREROUTING redirect.");
             return;
         }
-        boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, MitmProxy.DEFAULT_MITM_PORT, gatewayIp);
+        boolean hasRedirect = UfwCheck.hasPreRoutingRedirect(beforeRules, ProxyConfig.DEFAULT_MITM_PORT, gatewayIp);
 
         if (hasRedirect) {
             System.out.println("  PREROUTING redirect already configured (" + gatewayIp + ":443 -> "
-                    + MitmProxy.DEFAULT_MITM_PORT + ").");
+                    + ProxyConfig.DEFAULT_MITM_PORT + ").");
         } else {
-            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, MitmProxy.DEFAULT_MITM_PORT);
+            var staleIp = UfwCheck.extractRedirectGatewayIp(beforeRules, ProxyConfig.DEFAULT_MITM_PORT);
             if (staleIp != null) {
                 System.out.println("  Removing stale PREROUTING redirect (old gateway " + staleIp + ")...");
             }
             System.out.println("  Adding PREROUTING redirect (" + gatewayIp + ":443 -> "
-                    + MitmProxy.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
+                    + ProxyConfig.DEFAULT_MITM_PORT + " on incusbr0) to UFW before.rules...");
             var subnet = CidrUtils.deriveSubnet(gatewayIp);
             var natBlock = UfwCheck.generateNatBlock(gatewayIp, subnet,
-                    MitmProxy.CONTAINER_FACING_PORT, MitmProxy.DEFAULT_MITM_PORT);
+                    ProxyConfig.CONTAINER_FACING_PORT, ProxyConfig.DEFAULT_MITM_PORT);
             var content = UfwCheck.insertNatBlock(beforeRules, natBlock);
             writeBeforeRules(content);
             runHostQuiet("sudo", "ufw", "reload");
@@ -1451,7 +1451,7 @@ public class InitCommand extends BaseCommand {
         }
 
         try {
-            var host = MitmProxy.vertexHost(region);
+            var host = ProxyConfig.vertexHost(region);
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
                     + "/publishers/anthropic/models/claude-sonnet-4:rawPredict";

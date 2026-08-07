@@ -32,7 +32,7 @@ public final class ProxyHealthCheck {
     /** The IP to query for health checks: localhost on macOS, bridge gateway on Linux. */
     public static String healthAddress(IncusClient incus) {
         return dev.incusspawn.Platform.isMacOS()
-                ? "127.0.0.1" : MitmProxy.resolveGatewayIp(incus);
+                ? "127.0.0.1" : ProxyConfig.resolveGatewayIp(incus);
     }
 
     private record CacheEntry(IncusClient client, ProxyStatus status, long timestamp) {}
@@ -61,12 +61,12 @@ public final class ProxyHealthCheck {
                 return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
             }
         }
-        var gatewayIp = MitmProxy.resolveGatewayIp(incus);
+        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var result = checkHealth(gatewayIp);
         if (result.healthy()) {
             return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
         }
-        var dnsOverrides = MitmProxy.getDnsOverrides(incus);
+        var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             return ProxyStatus.STALE_DNS;
         }
@@ -75,7 +75,7 @@ public final class ProxyHealthCheck {
 
     private static HealthResult checkHealth(String addr) {
         try {
-            var url = URI.create("http://" + addr + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health").toURL();
+            var url = URI.create("http://" + addr + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health").toURL();
             var conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(500);
             conn.setReadTimeout(500);
@@ -90,7 +90,7 @@ public final class ProxyHealthCheck {
     }
 
     static boolean isHealthy(String gatewayIp) {
-        return isHealthy(gatewayIp, MitmProxy.DEFAULT_HEALTH_PORT);
+        return isHealthy(gatewayIp, ProxyConfig.DEFAULT_HEALTH_PORT);
     }
 
     static boolean isHealthy(String gatewayIp, int port) {
@@ -108,7 +108,7 @@ public final class ProxyHealthCheck {
 
     public static ProxyInfo fetchProxyInfo(String gatewayIp) {
         try {
-            var url = URI.create("http://" + gatewayIp + ":" + MitmProxy.DEFAULT_HEALTH_PORT + "/health").toURL();
+            var url = URI.create("http://" + gatewayIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health").toURL();
             var conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(2000);
             conn.setReadTimeout(2000);
