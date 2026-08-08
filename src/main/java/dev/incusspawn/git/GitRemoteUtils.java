@@ -222,7 +222,7 @@ public final class GitRemoteUtils {
                 .anyMatch(r -> normalizeGitUrl(r.url()).equals(normalizedTarget));
     }
 
-    static String hostGitExec(Path repoDir, String... gitArgs) {
+    public static String hostGitExec(Path repoDir, String... gitArgs) {
         var command = new ArrayList<String>();
         command.add("git");
         command.add("-C");
