@@ -81,6 +81,47 @@ class ProxyServiceTest {
         assertFalse(content.contains("it's"), "unescaped single quote would break the shell script");
     }
 
+    // --- start script staleness -------------------------------------------------
+    //
+    // The isx binary path lives only in the start script, never in the unit, so an upgrade that
+    // moves the binary (a distro package landing in /usr/bin over a previous ~/.local/bin install,
+    // or the reverse) is invisible to a unit-text comparison. Checking the unit alone left the
+    // service exec'ing the previous installation's binary forever.
+
+    @Test
+    void startScriptIsStaleWhenMissing() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"));
+    }
+
+    @Test
+    void startScriptIsNotStaleWhenItMatches() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        ProxyService.writeProxyStartScript(script, "/home/user/.local/bin/isx");
+        assertFalse(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"));
+    }
+
+    @Test
+    void startScriptIsStaleWhenBinaryMoved() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        ProxyService.writeProxyStartScript(script, "/usr/bin/isx");
+        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+                "an upgrade that relocates the binary must be detected");
+    }
+
+    @Test
+    void unitTextCarriesNoBinaryPath() {
+        // Pins the reason the script must be checked separately: two installations pointing at
+        // different isx binaries produce byte-identical units, so comparing units can never
+        // notice the difference. If the unit ever does embed the binary path, this test fails
+        // and the staleness logic above should be revisited.
+        var unit = ProxyService.serviceUnitContent();
+        assertFalse(unit.contains("/usr/bin/isx"));
+        assertFalse(unit.contains(".local/bin/isx"));
+        assertTrue(unit.contains("proxy-start.sh"),
+                "the unit should exec the start script, which is what holds the binary path");
+    }
+
     // --- systemd restart policy -------------------------------------------------
     //
     // A misconfiguration the user must fix by hand (init not run, Vertex fields blank) exits

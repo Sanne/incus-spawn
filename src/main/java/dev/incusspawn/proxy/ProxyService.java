@@ -250,7 +250,7 @@ public final class ProxyService {
         if (Platform.isMacOS()) {
             needsReinstall = needsMacOsPlistUpdate();
         } else {
-            needsReinstall = regenerateServiceFile();
+            needsReinstall = regenerateServiceFiles();
         }
 
         if (!needsReinstall) {
@@ -269,35 +269,66 @@ public final class ProxyService {
     }
 
     /**
-     * Bring the on-disk unit into line with {@link #serviceUnitContent()}, rewriting it whenever
-     * it differs. Returns true if the file was rewritten.
+     * Bring both on-disk service files — the systemd unit and the start script it execs — into
+     * line with what this build would write, rewriting whichever differs. Returns true if either
+     * was rewritten, meaning the caller must restart the service.
      * <p>
-     * The generated unit is fully deterministic — the only substitution is {@link #execStartLine()},
-     * a fixed path — so regenerating is equivalent to migrating, and it picks up every future
-     * change to the template for free. Patching individual directives instead meant a new helper
-     * per directive, in each of the places that knew the unit's shape, which is how
-     * {@code RestartPreventExitStatus} came to be missing from this path.
+     * The two files are checked independently because <b>they do not carry the same information</b>.
+     * {@link #execStartLine()} names the start script, at a fixed path, so the unit text is
+     * identical for every installation on every machine; the path to the {@code isx} binary
+     * appears only inside the start script. Comparing the unit alone therefore cannot detect a
+     * binary that moved, which is exactly what happens on an upgrade that changes where {@code isx}
+     * lives (a distro package landing in {@code /usr/bin} over a previous {@code ~/.local/bin}
+     * install, or the reverse). Before this checked the script too, the unit always compared equal,
+     * the script was never refreshed, and the service went on exec'ing a binary from the previous
+     * installation indefinitely — while version-drift detection dutifully restarted that same stale
+     * binary and reported success.
      * <p>
-     * Safe to overwrite: {@link #install()} already writes this file wholesale, and systemd's
+     * Regenerating rather than patching means each file picks up every future change to its
+     * template for free. Patching individual directives instead meant a new helper per directive,
+     * in each of the places that knew the unit's shape, which is how {@code RestartPreventExitStatus}
+     * came to be missing from this path.
+     * <p>
+     * Safe to overwrite: {@link #install()} already writes both files wholesale, and systemd's
      * supported customization mechanism is a drop-in ({@code <unit>.d/override.conf}), a separate
      * file this never touches.
      */
-    private static boolean regenerateServiceFile() {
+    private static boolean regenerateServiceFiles() {
         if (Platform.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
         var isxPath = resolveIsxPath();
         if (isxPath == null) return false;
         try {
-            var content = Files.readString(Environment.proxyServiceFile());
-            var expected = serviceUnitContent();
-            if (expected.equals(content)) return false;
-            writeProxyStartScript(proxyStartScript(), isxPath);
-            Files.writeString(Environment.proxyServiceFile(), expected);
-            runQuiet("systemctl", "--user", "daemon-reload");
-            return true;
+            var changed = false;
+
+            var script = proxyStartScript();
+            if (startScriptIsStale(script, isxPath)) {
+                writeProxyStartScript(script, isxPath);
+                changed = true;
+            }
+
+            var expectedUnit = serviceUnitContent();
+            if (!expectedUnit.equals(Files.readString(Environment.proxyServiceFile()))) {
+                Files.writeString(Environment.proxyServiceFile(), expectedUnit);
+                // Only the unit is systemd's to parse; a start script change needs a restart
+                // (handled by the caller) but not a reload.
+                runQuiet("systemctl", "--user", "daemon-reload");
+                changed = true;
+            }
+
+            return changed;
         } catch (IOException e) {
-            System.err.println("Warning: could not update proxy service file: " + e.getMessage());
+            System.err.println("Warning: could not update proxy service files: " + e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * True when the start script is missing or does not exec {@code isxPath} — i.e. when the
+     * service would otherwise keep running a binary from a previous installation.
+     */
+    static boolean startScriptIsStale(Path script, String isxPath) throws IOException {
+        if (!Files.exists(script)) return true;
+        return !proxyStartScriptContent(isxPath).equals(Files.readString(script));
     }
 
     public static void upgradeIfNeeded() {
@@ -308,8 +339,8 @@ public final class ProxyService {
             }
             return;
         }
-        if (regenerateServiceFile()) {
-            System.out.println("Updated proxy service unit.");
+        if (regenerateServiceFiles()) {
+            System.out.println("Updated proxy service configuration.");
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         }
     }
@@ -439,9 +470,14 @@ public final class ProxyService {
         return Environment.configDir().resolve("proxy-start.sh");
     }
 
+    /** Single source of truth for the start script, so writing and staleness-checking cannot drift. */
+    static String proxyStartScriptContent(String isxPath) {
+        return "#!/bin/bash\nexec " + Container.shellQuote(isxPath) + " proxy start\n";
+    }
+
     static void writeProxyStartScript(Path script, String isxPath) throws IOException {
         Files.createDirectories(script.getParent());
-        Files.writeString(script, "#!/bin/bash\nexec " + Container.shellQuote(isxPath) + " proxy start\n");
+        Files.writeString(script, proxyStartScriptContent(isxPath));
         Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
     }
 
