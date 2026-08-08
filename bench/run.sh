@@ -125,11 +125,11 @@ echo ""
 
 # ── 2. Build native image ───────────────────────────────────────────────────
 
-RUNNER=$(ls -t "$PROJECT_DIR"/target/incus-spawn-*-runner 2>/dev/null | head -1 || true)
+RUNNER=$(ls -t "$PROJECT_DIR"/cli/target/incus-spawn-*-runner 2>/dev/null | head -1 || true)
 
 if $SKIP_BUILD; then
     if [ -z "$RUNNER" ]; then
-        die "No native binary found in target/. Run without --skip-build first."
+        die "No native binary found in cli/target/. Run without --skip-build first."
     fi
     echo "Skipping build, using existing binary: $RUNNER"
 else
@@ -138,8 +138,8 @@ else
     "$PROJECT_DIR/mvnw" -f "$PROJECT_DIR/pom.xml" package -Dnative -DskipTests -q
     BUILD_END=$(epoch_ms)
     BUILD_TIME_MS=$((BUILD_END - BUILD_START))
-    RUNNER=$(ls -t "$PROJECT_DIR"/target/incus-spawn-*-runner 2>/dev/null | head -1)
-    [ -z "$RUNNER" ] && die "Native build succeeded but no runner binary found in target/"
+    RUNNER=$(ls -t "$PROJECT_DIR"/cli/target/incus-spawn-*-runner 2>/dev/null | head -1)
+    [ -z "$RUNNER" ] && die "Native build succeeded but no runner binary found in cli/target/"
     echo "Build completed in $((BUILD_TIME_MS / 1000))s"
 fi
 echo ""
