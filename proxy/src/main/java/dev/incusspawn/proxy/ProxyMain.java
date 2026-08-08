@@ -153,6 +153,7 @@ public class ProxyMain implements QuarkusApplication {
             ProxyLog.error("Failed to start: " + e.getMessage());
             System.err.println("Is another proxy already running? Check port " + port + ".");
             System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
+            return 1;
         }
         return 0;
     }

@@ -540,29 +540,13 @@ public final class ProxyService {
         }
         var logDir = Environment.vmStateDir();
         var proxyBin = Path.of(isxPath).getParent().resolve("isx-proxy");
+        String programArgs;
         if (Files.isExecutable(proxyBin)) {
-            return """
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                    <plist version="1.0">
-                    <dict>
-                        <key>Label</key><string>%s</string>
-                        <key>ProgramArguments</key>
-                        <array>
-                            <string>%s</string>
-                        </array>
-                        <key>RunAtLoad</key><true/>
-                        <key>KeepAlive</key><true/>
-                        <key>ThrottleInterval</key><integer>10</integer>
-                        <key>EnvironmentVariables</key>
-                        <dict>
-                            <key>PATH</key><string>%s</string>
-                        </dict>
-                        <key>StandardOutPath</key><string>%s/proxy-service.log</string>
-                        <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
-                    </dict>
-                    </plist>
-                    """.formatted(PROXY_LABEL, proxyBin, path, logDir, logDir);
+            programArgs = "        <string>" + proxyBin + "</string>";
+        } else {
+            programArgs = "        <string>" + isxPath + "</string>\n"
+                    + "            <string>proxy</string>\n"
+                    + "            <string>start</string>";
         }
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -572,9 +556,7 @@ public final class ProxyService {
                     <key>Label</key><string>%s</string>
                     <key>ProgramArguments</key>
                     <array>
-                        <string>%s</string>
-                        <string>proxy</string>
-                        <string>start</string>
+                %s
                     </array>
                     <key>RunAtLoad</key><true/>
                     <key>KeepAlive</key><true/>
@@ -587,7 +569,7 @@ public final class ProxyService {
                     <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
                 </dict>
                 </plist>
-                """.formatted(PROXY_LABEL, isxPath, path, logDir, logDir);
+                """.formatted(PROXY_LABEL, programArgs, path, logDir, logDir);
     }
 
     private static boolean needsMacOsPlistUpdate() {
@@ -596,7 +578,7 @@ public final class ProxyService {
         if (isxPath == null) return false;
         try {
             var content = Files.readString(proxyPlistFile());
-            return !content.contains("<string>" + isxPath + "</string>");
+            return !content.equals(generateProxyPlist(isxPath));
         } catch (IOException e) {
             return false;
         }

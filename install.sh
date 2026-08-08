@@ -174,6 +174,6 @@ echo "Installed. Run 'isx' to get started."
 if systemctl --user is-active --quiet incus-spawn-proxy 2>/dev/null; then
     "$INSTALL_DIR/$BINARY_NAME" proxy install
 elif [ "$(uname -s)" = "Darwin" ] && launchctl print "gui/$(id -u)/dev.incusspawn.proxy" &>/dev/null; then
-    echo "Restarting macOS proxy service..."
-    launchctl kickstart -k "gui/$(id -u)/dev.incusspawn.proxy"
+    echo "Updating macOS proxy service..."
+    "$INSTALL_DIR/$BINARY_NAME" proxy install
 fi
