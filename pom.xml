@@ -257,7 +257,7 @@
                 </property>
             </activation>
             <properties>
-                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial,--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-R:MaxRAM=128m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist}</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial,--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-R:MaxRAM=512m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist}</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>
