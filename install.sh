@@ -57,15 +57,15 @@ if $NATIVE; then
             exit 1
         fi
         export JAVA_HOME="$GRAALVM_HOME"
-        PLIST="$(cd "$SCRIPT_DIR" && pwd)/src/main/resources/Info.plist"
+        PLIST="$(cd "$SCRIPT_DIR" && pwd)/cli/src/main/resources/Info.plist"
         NATIVE_ARGS="$NATIVE_ARGS -Dmacos.info.plist=$PLIST"
     fi
     "$SCRIPT_DIR/mvnw" package $NATIVE_ARGS
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
     mkdir -p "$INSTALL_DIR"
-    RUNNER=$(ls -t "$SCRIPT_DIR"/target/incus-spawn-*-runner 2>/dev/null | head -1)
+    RUNNER=$(ls -t "$SCRIPT_DIR"/cli/target/incus-spawn-*-runner 2>/dev/null | head -1)
     if [ -z "$RUNNER" ]; then
-        echo "Error: no native runner found in target/"
+        echo "Error: no native runner found in cli/target/"
         exit 1
     fi
     rm -f "$INSTALL_DIR/$BINARY_NAME"
@@ -99,9 +99,9 @@ else
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
     mkdir -p "$INSTALL_DIR"
     # Create a wrapper script that runs the quarkus app jar
-    JARFILE=$(ls "$SCRIPT_DIR"/target/quarkus-app/quarkus-run.jar 2>/dev/null)
+    JARFILE=$(ls "$SCRIPT_DIR"/cli/target/quarkus-app/quarkus-run.jar 2>/dev/null)
     if [ -z "$JARFILE" ]; then
-        echo "Error: quarkus-run.jar not found in target/quarkus-app/"
+        echo "Error: quarkus-run.jar not found in cli/target/quarkus-app/"
         exit 1
     fi
     rm -f "$INSTALL_DIR/$BINARY_NAME"
@@ -135,7 +135,7 @@ if [ -n "$COMPLETIONS_SHELL" ]; then
 fi
 
 # Install git remote helper shim for isx:// URLs
-install -m 755 "$SCRIPT_DIR/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
+install -m 755 "$SCRIPT_DIR/common/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
 # ── Override a Homebrew installation if present ───────────────────────────
 # The brew prefix bin (e.g. /opt/homebrew/bin) usually sorts ahead of
