@@ -196,13 +196,13 @@ class InitCommandTest {
 
     @Test
     void initializedAtCurrentVersion(@TempDir Path home) {
-        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION));
+        writeSentinel(home, String.valueOf(Environment.INIT_VERSION));
         withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
     }
 
     @Test
     void notInitializedWhenSentinelIsOlder(@TempDir Path home) {
-        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION - 1));
+        writeSentinel(home, String.valueOf(Environment.INIT_VERSION - 1));
         withHome(home, () -> assertFalse(InitCommand.hasBeenInitialized()));
     }
 
@@ -213,7 +213,7 @@ class InitCommandTest {
      */
     @Test
     void initializedWhenSentinelIsNewer(@TempDir Path home) {
-        writeSentinel(home, String.valueOf(InitCommand.INIT_VERSION + 1));
+        writeSentinel(home, String.valueOf(Environment.INIT_VERSION + 1));
         withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
     }
 
@@ -225,7 +225,7 @@ class InitCommandTest {
 
     @Test
     void sentinelToleratesSurroundingWhitespace(@TempDir Path home) {
-        writeSentinel(home, "  " + InitCommand.INIT_VERSION + "\n");
+        writeSentinel(home, "  " + Environment.INIT_VERSION + "\n");
         withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
     }
 }

@@ -1,5 +1,7 @@
 package dev.incusspawn;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -25,6 +27,26 @@ public final class Environment {
 
     public static Path initCompleteMarker() {
         return configDir().resolve(".init-complete");
+    }
+
+    public static final int INIT_VERSION = 2;
+
+    public static boolean hasBeenInitialized() {
+        var marker = initCompleteMarker();
+        if (!Files.exists(marker)) return false;
+        try {
+            return Integer.parseInt(Files.readString(marker).strip()) >= INIT_VERSION;
+        } catch (IOException | NumberFormatException e) {
+            return false;
+        }
+    }
+
+    public static void markInitComplete() {
+        try {
+            Files.writeString(initCompleteMarker(), String.valueOf(INIT_VERSION));
+        } catch (IOException e) {
+            System.err.println("Warning: could not write init marker: " + e.getMessage());
+        }
     }
 
     public static Path sshDir() {
