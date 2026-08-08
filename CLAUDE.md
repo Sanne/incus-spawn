@@ -9,17 +9,16 @@ incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development 
 ## Build and Test Commands
 
 ```shell
-mvn package                    # Build (produces target/quarkus-app/quarkus-run.jar)
+mvn package                    # Build both modules (CLI: cli/target/, proxy: proxy/target/)
 mvn test                       # Unit tests only (no Incus required)
 mvn verify -DskipITs=false     # Unit + integration tests (requires running Incus)
 mvn test -Dtest=ToolDefTest    # Run a single test class
 mvn test -Dtest=ToolDefTest#testAllFields  # Run a single test method
 
-mvn package -Prelease -DskipTests          # Uber-jar for distribution
-mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native binary
+mvn package -Dnative -DskipTests           # GraalVM native binaries (isx + isx-proxy)
 
 ./install.sh                   # Build and install JVM version to ~/.local/bin/isx
-./install.sh --native          # Build and install native binary
+./install.sh --native          # Build and install native binaries
 ```
 
 ## Tech Stack
@@ -28,6 +27,16 @@ mvn package -Dnative -Dquarkus.native.container-build=true  # GraalVM native bin
 - **Tamboui** for the interactive TUI (terminal UI framework)
 - **Jackson YAML** for configuration/definition parsing
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
+
+## Module Structure
+
+Three Maven modules under a parent POM:
+
+- **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; provides a `META-INF/beans.xml` so Quarkus discovers its CDI beans and `@RegisterForReflection` annotations from dependent modules.
+- **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized), `-H:-AllowVMInternalThreads`.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized, enables ML-inferred PGO).
+
+Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
 
 ## Architecture
 
@@ -45,7 +54,7 @@ The comparison is `>=`, not equality: the sentinel is a monotonic floor, so a bi
 
 ### Image Hierarchy and Build System
 
-Templates are YAML definitions (`src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents. Each definition can set `type` (`container`, `vm`, or `kvm`) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time. VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.
+Templates are YAML definitions (`common/src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents. Each definition can set `type` (`container`, `vm`, or `kvm`) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time. VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.
 
 `BuildCommand` has two build paths:
 - **`buildFromScratch`** (root image, no parent): launches base OS, configures security/DNS/user, installs packages and tools
@@ -62,7 +71,7 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 ### Tool System
 
 `ToolSetup` interface with two implementations:
-- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
+- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `common/src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
 - **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`, `PiSetup`). Declare env vars via `envEntries(Map<String,String>)` method.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML. Java CDI tools are used as fallback when no YAML tool matches.
@@ -92,7 +101,7 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 
 ### MITM TLS Proxy
 
-`MitmProxy` (in `proxy/`) is a TLS-terminating proxy that intercepts HTTPS to specific domains and injects real auth credentials, so containers only hold placeholder values. Key design:
+`MitmProxy` (in `common/src/main/java/dev/incusspawn/proxy/`) is a TLS-terminating proxy that intercepts HTTPS to specific domains and injects real auth credentials, so containers only hold placeholder values. Key design:
 - Listens on gateway IP:18443 (iptables redirects 443->18443 on the bridge)
 - Per-domain certs signed by a custom CA (installed in templates during build). The CA lives at `~/.config/incus-spawn/ca.{crt,key}`; leaf certs are persisted by `CertStore` under `~/.config/incus-spawn/certs/` (`<domain>.crt`/`.key`, wildcards as `_wildcard.<domain>`) and reused across proxy restarts, re-minting only on miss/CA-rotation/near-expiry. Persisting is what keeps each leaf's `notBefore` stable: the proxy is relaunched frequently (macOS launchd `KeepAlive`), and re-minting on a host whose clock has jumped ahead of a lagging container clock (e.g. an Incus VM after macOS resume) produced certs the container rejected as "not yet valid". Certs are keyed by domain, never by container (a leaf is a function of `(domain, CA)`), so this composes with future per-container interception, which is a routing/DNS concern. `CertificateAuthority.BACKDATE_MS` backdates `notBefore` as a skew margin for the rare fresh-mint moments.
 - Both CA and leaf certs carry RFC 5280 key identifiers: SKI on the CA, SKI + AKI on leaves. Strict validators (OpenSSL 3.5, and so Python 3.13+, which turns on `VERIFY_X509_STRICT` by default) reject a chain without them — including the trust anchor, so leaf-only extensions are not enough. A CA generated before this is re-issued on load over its **existing key** (`reissueWithSki`), which keeps every leaf valid and un-re-minted; the replaced cert is kept as `ca-superseded.crt`. Images stamped with that superseded fingerprint carry a stale-but-not-foreign anchor: `BranchCommand` lets them branch (the new cert is pushed into the instance by `InstancePrep`/`fixContainerCaIfNeeded` on first use) instead of demanding a rebuild the way a real CA rotation does.
