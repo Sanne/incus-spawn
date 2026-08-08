@@ -7,9 +7,9 @@
         <version>0.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>incus-spawn</artifactId>
-    <name>incus-spawn</name>
-    <description>CLI tool for managing isolated Incus development environments</description>
+    <artifactId>incus-spawn-proxy</artifactId>
+    <name>incus-spawn-proxy</name>
+    <description>MITM authentication proxy for incus-spawn</description>
 
     <dependencies>
         <dependency>
@@ -21,57 +21,26 @@
             <artifactId>quarkus-arc</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.aesh</groupId>
-            <artifactId>aesh</artifactId>
-            <version>${aesh.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.aesh</groupId>
-                    <artifactId>readline</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jackson</artifactId>
+            <artifactId>quarkus-vertx</artifactId>
             <exclusions>
                 <exclusion>
-                    <groupId>com.fasterxml.jackson.datatype</groupId>
-                    <artifactId>jackson-datatype-jsr310</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.datatype</groupId>
-                    <artifactId>jackson-datatype-jdk8</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.module</groupId>
-                    <artifactId>jackson-module-parameter-names</artifactId>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>smallrye-fault-tolerance-vertx</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
         <dependency>
-            <groupId>dev.tamboui</groupId>
-            <artifactId>tamboui-tui</artifactId>
-            <version>${tamboui.version}</version>
+            <groupId>com.aayushatharva.brotli4j</groupId>
+            <artifactId>brotli4j</artifactId>
+            <version>1.23.0</version>
+            <optional>true</optional>
         </dependency>
-        <dependency>
-            <groupId>dev.tamboui</groupId>
-            <artifactId>tamboui-toolkit</artifactId>
-            <version>${tamboui.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>dev.tamboui</groupId>
-            <artifactId>tamboui-panama-backend</artifactId>
-            <version>${tamboui.version}</version>
-        </dependency>
+
+        <!-- Test dependencies -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-junit-mockito</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -130,13 +99,6 @@
                 <version>${compiler-plugin.version}</version>
                 <configuration>
                     <parameters>true</parameters>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.aesh</groupId>
-                            <artifactId>aesh-processor</artifactId>
-                            <version>${aesh.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <plugin>
@@ -160,18 +122,4 @@
             </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>macos-native</id>
-            <activation>
-                <property>
-                    <name>macos.info.plist</name>
-                </property>
-            </activation>
-            <properties>
-                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial,--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-R:MaxRAM=128m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist}</quarkus.native.additional-build-args>
-            </properties>
-        </profile>
-    </profiles>
 </project>

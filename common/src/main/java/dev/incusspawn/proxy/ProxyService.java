@@ -466,12 +466,27 @@ public final class ProxyService {
         return null;
     }
 
+    public static String resolveProxyBinaryPath() {
+        var isxPath = resolveIsxPath();
+        if (isxPath != null) {
+            var proxyPath = Path.of(isxPath).getParent().resolve("isx-proxy");
+            if (Files.isExecutable(proxyPath)) return proxyPath.toString();
+        }
+        var fallback = Environment.localBinIsx().getParent().resolve("isx-proxy");
+        if (Files.isExecutable(fallback)) return fallback.toString();
+        return null;
+    }
+
     private static Path proxyStartScript() {
         return Environment.configDir().resolve("proxy-start.sh");
     }
 
     /** Single source of truth for the start script, so writing and staleness-checking cannot drift. */
     static String proxyStartScriptContent(String isxPath) {
+        var proxyBin = Path.of(isxPath).getParent().resolve("isx-proxy");
+        if (Files.isExecutable(proxyBin)) {
+            return "#!/bin/bash\nexec " + Container.shellQuote(proxyBin.toString()) + "\n";
+        }
         return "#!/bin/bash\nexec " + Container.shellQuote(isxPath) + " proxy start\n";
     }
 
@@ -524,6 +539,31 @@ public final class ProxyService {
             path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
         }
         var logDir = Environment.vmStateDir();
+        var proxyBin = Path.of(isxPath).getParent().resolve("isx-proxy");
+        if (Files.isExecutable(proxyBin)) {
+            return """
+                    <?xml version="1.0" encoding="UTF-8"?>
+                    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                    <plist version="1.0">
+                    <dict>
+                        <key>Label</key><string>%s</string>
+                        <key>ProgramArguments</key>
+                        <array>
+                            <string>%s</string>
+                        </array>
+                        <key>RunAtLoad</key><true/>
+                        <key>KeepAlive</key><true/>
+                        <key>ThrottleInterval</key><integer>10</integer>
+                        <key>EnvironmentVariables</key>
+                        <dict>
+                            <key>PATH</key><string>%s</string>
+                        </dict>
+                        <key>StandardOutPath</key><string>%s/proxy-service.log</string>
+                        <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
+                    </dict>
+                    </plist>
+                    """.formatted(PROXY_LABEL, proxyBin, path, logDir, logDir);
+        }
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
