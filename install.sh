@@ -71,6 +71,11 @@ if $NATIVE; then
     rm -f "$INSTALL_DIR/$BINARY_NAME"
     cp "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    PROXY_RUNNER=$(ls -t "$SCRIPT_DIR"/proxy/target/incus-spawn-proxy-*-runner 2>/dev/null | head -1)
+    if [ -n "$PROXY_RUNNER" ]; then
+        cp "$PROXY_RUNNER" "$INSTALL_DIR/isx-proxy"
+        chmod +x "$INSTALL_DIR/isx-proxy"
+    fi
 else
     # Resolve the Java binary so the wrapper always uses the JDK it was built with,
     # even if a different version is the default at runtime.
@@ -110,6 +115,14 @@ else
 exec "$JAVA_BIN" -jar "$JARFILE" "\$@"
 WRAPPER
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    PROXY_JAR=$(ls "$SCRIPT_DIR"/proxy/target/quarkus-app/quarkus-run.jar 2>/dev/null)
+    if [ -n "$PROXY_JAR" ]; then
+        cat > "$INSTALL_DIR/isx-proxy" <<WRAPPER
+#!/bin/bash
+exec "$JAVA_BIN" -jar "$PROXY_JAR" "\$@"
+WRAPPER
+        chmod +x "$INSTALL_DIR/isx-proxy"
+    fi
 fi
 
 # ── Install shell completions (if requested) ──────────────────────────────

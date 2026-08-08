@@ -1,28 +1,11 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.BuildInfo;
-import dev.incusspawn.Environment;
-import dev.incusspawn.RuntimeServices;
-import dev.incusspawn.proxy.ApiTrafficLog;
-import dev.incusspawn.proxy.MitmProxy;
-import dev.incusspawn.proxy.ProxyConfig;
-import dev.incusspawn.proxy.ProxyHealthCheck;
-import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.proxy.ProxyService;
-import dev.incusspawn.vm.VmNetwork;
-import dev.incusspawn.Platform;
-import io.quarkus.arc.Arc;
-import io.vertx.core.Vertx;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.ArrayList;
 
 @CommandDefinition(
         name = "start",
@@ -48,168 +31,25 @@ public class ProxyStartCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
-        var incus = RuntimeServices.incus();
-        if (!InitCommand.hasBeenInitialized()) {
-            System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
-            return CommandResult.valueOf(ProxyService.EXIT_CONFIG);
-        }
-        var config = dev.incusspawn.config.SpawnConfig.load();
-        var claude = config.getClaude();
-        var apiKey = claude.getApiKey();
-        var oauthToken = claude.getOauthToken();
-        var ghToken = config.getGithub().getToken();
-        var bobApiKey = config.getBob().getApiKey();
-
-        if (claude.isUseVertex()) {
-            if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
-                System.err.println("Error: Vertex AI enabled but region or project ID not configured. Run 'isx init' first.");
-                return CommandResult.valueOf(ProxyService.EXIT_CONFIG);
-            }
+        var proxyBin = ProxyService.resolveProxyBinaryPath();
+        if (proxyBin == null) {
+            System.err.println("Error: could not find 'isx-proxy' binary.");
+            System.err.println("Install it alongside 'isx' or rebuild with: mvn package -DskipTests");
+            return CommandResult.valueOf(1);
         }
 
-        String gatewayIp;
+        var cmd = new ArrayList<String>();
+        cmd.add(proxyBin);
+        if (port != 18443) { cmd.add("--port"); cmd.add(String.valueOf(port)); }
+        if (healthPort != 18080) { cmd.add("--health-port"); cmd.add(String.valueOf(healthPort)); }
         if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
-            gatewayIp = gatewayIpOption;
-        } else if (Platform.isMacOS()) {
-            gatewayIp = VmNetwork.discoverHostBridgeIp();
-            if (gatewayIp == null) {
-                System.err.println("Error: could not discover VM-facing bridge interface.");
-                System.err.println("Is the VM running? Try 'isx vm status'.");
-                return CommandResult.valueOf(1);
-            }
-        } else {
-            try {
-                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-            } catch (Exception e) {
-                System.err.println("Error: could not determine Incus bridge gateway IP.");
-                System.err.println("Is Incus running? Try 'incus network list'.");
-                return CommandResult.valueOf(1);
-            }
+            cmd.add("--gateway-ip"); cmd.add(gatewayIpOption);
         }
+        if (debug) cmd.add("--debug");
 
-        installLogTee();
-
-        var build = BuildInfo.instance();
-        ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());
-        System.out.println("Starting MITM authentication proxy...");
-        System.out.println("  Version:       " + build.version() + " (" + build.gitSha() + ")");
-        System.out.println("  Runtime:       " + build.runtime());
-        if (!Platform.isMacOS()) {
-            System.out.println("  Incus:         " + build.incusClient() + " (client) / " + build.incusServer() + " (server)");
-        }
-        System.out.println("  Gateway IP:    " + gatewayIp);
-        System.out.println("  MITM port:     " + port);
-        System.out.println("  Health port:   " + healthPort);
-        if (claude.isUseVertex()) {
-            System.out.println("  Vertex AI:     " + claude.getCloudMlRegion() +
-                    " (project: " + claude.getVertexProjectId() + ")");
-        } else if (!oauthToken.isBlank()) {
-            System.out.println("  OAuth token:   configured");
-        } else if (!apiKey.isBlank()) {
-            System.out.println("  API key:       configured");
-        } else {
-            System.out.println("  Claude:        (not configured)");
-        }
-        System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  Bob API key:   " + (bobApiKey.isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  Log file:      " + logFile());
-        System.out.println();
-
-        var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
-        var vertx = Arc.container().instance(Vertx.class).get();
-        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
-                apiKey, oauthToken, ghToken, bobApiKey,
-                claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
-
-        if (debug) {
-            try {
-                var debugLog = new ApiTrafficLog(Environment.apiDebugDir().resolve("proxy"));
-                proxy.setDebugLog(debugLog);
-                System.out.println("  Debug logs:    " + debugLog.logDir());
-            } catch (IOException e) {
-                System.err.println("Warning: could not create debug log directory: " + e.getMessage());
-            }
-        }
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\nStopping proxy...");
-            var forceExit = new Thread(() -> {
-                try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
-                System.err.println("Proxy shutdown exceeded 10 seconds, forcing exit.");
-                Runtime.getRuntime().halt(0);
-            }, "force-exit");
-            forceExit.setDaemon(true);
-            forceExit.start();
-            proxy.stop();
-        }));
-
-        Runnable dnsCallback;
-        if (Platform.isMacOS()) {
-            dnsCallback = () -> {
-                try {
-                    ProxyConfig.configureBridgeDns(incus);
-                    ProxyLog.info("DNS overrides configured");
-                } catch (Exception e) {
-                    ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
-                }
-                proxy.setDnsConfigured(true);
-            };
-        } else {
-            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true));
-        }
-        try {
-            proxy.start(dnsCallback);
-        } catch (Exception e) {
-            ProxyLog.error("Failed to start: " + e.getMessage());
-            System.err.println("Is another proxy already running? Check port " + port + ".");
-            System.err.println("If the iptables redirect rule is missing, re-run 'isx init'.");
-        }
-        return CommandResult.SUCCESS;
-    }
-
-    static Path logFile() { return Environment.proxyLogFile(); }
-
-    private void installLogTee() {
-        try {
-            Files.createDirectories(logFile().getParent());
-            var fileOut = new FileOutputStream(logFile().toFile(), true);
-            System.setOut(new PrintStream(new TeeOutputStream(System.out, fileOut), true));
-            System.setErr(new PrintStream(new TeeOutputStream(System.err, fileOut), true));
-        } catch (IOException e) {
-            System.err.println("Warning: could not open log file " + logFile() + ": " + e.getMessage());
-        }
-    }
-
-    static class TeeOutputStream extends OutputStream {
-        private final OutputStream console;
-        private final OutputStream file;
-
-        TeeOutputStream(OutputStream console, OutputStream file) {
-            this.console = console;
-            this.file = file;
-        }
-
-        @Override
-        public void write(int b) throws IOException {
-            console.write(b);
-            file.write(b);
-        }
-
-        @Override
-        public void write(byte[] b, int off, int len) throws IOException {
-            console.write(b, off, len);
-            file.write(b, off, len);
-        }
-
-        @Override
-        public void flush() throws IOException {
-            console.flush();
-            file.flush();
-        }
-
-        @Override
-        public void close() throws IOException {
-            file.close();
-        }
+        var pb = new ProcessBuilder(cmd);
+        pb.inheritIO();
+        var process = pb.start();
+        return CommandResult.valueOf(process.waitFor());
     }
 }

@@ -43,6 +43,13 @@ jobs:
           path: cli/target/quarkus-app/
           retention-days: 1
 
+      - name: Upload proxy build
+        uses: actions/upload-artifact@v6
+        with:
+          name: isx-proxy-quarkus-app
+          path: proxy/target/quarkus-app/
+          retention-days: 1
+
   build_appliance:
     uses: ./.github/workflows/build-appliance.yml
 
@@ -182,11 +189,17 @@ jobs:
           java-version: '25'
           distribution: 'oracle'
 
-      - name: Download and install isx
+      - name: Download isx build
         uses: actions/download-artifact@v6
         with:
           name: isx-quarkus-app
           path: quarkus-app/
+
+      - name: Download proxy build
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-proxy-quarkus-app
+          path: proxy-quarkus-app/
 
       - name: Install isx wrapper
         run: |
@@ -194,6 +207,9 @@ jobs:
           printf '#!/bin/sh\nexec java -jar %s/quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
             > "$HOME/.local/bin/isx"
           chmod +x "$HOME/.local/bin/isx"
+          printf '#!/bin/sh\nexec java -jar %s/proxy-quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
+            > "$HOME/.local/bin/isx-proxy"
+          chmod +x "$HOME/.local/bin/isx-proxy"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
@@ -345,11 +361,17 @@ jobs:
           java-version: '25'
           distribution: 'oracle'
 
-      - name: Download isx
+      - name: Download isx build
         uses: actions/download-artifact@v6
         with:
           name: isx-quarkus-app
           path: quarkus-app/
+
+      - name: Download proxy build
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-proxy-quarkus-app
+          path: proxy-quarkus-app/
 
       - name: Install isx wrapper
         run: |
@@ -357,6 +379,9 @@ jobs:
           printf '#!/bin/sh\nexec java -jar %s/quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
             > "$HOME/.local/bin/isx"
           chmod +x "$HOME/.local/bin/isx"
+          printf '#!/bin/sh\nexec java -jar %s/proxy-quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
+            > "$HOME/.local/bin/isx-proxy"
+          chmod +x "$HOME/.local/bin/isx-proxy"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run isx init
