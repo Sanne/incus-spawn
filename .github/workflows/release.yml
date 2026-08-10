@@ -25,7 +25,7 @@ jobs:
         id: detect
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if [[ "$TAG" =~ -(dev|rc|alpha|beta) ]]; then
+          if [[ "$TAG" =~ -dev\. ]]; then
             echo "is_dev=true" >> "$GITHUB_OUTPUT"
             echo "homebrew_formula=incus-spawn-dev.rb" >> "$GITHUB_OUTPUT"
             echo "copr_project=incus-spawn-dev" >> "$GITHUB_OUTPUT"

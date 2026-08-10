@@ -13,24 +13,47 @@ sudo apt update && sudo apt install incus-spawn
 
 Updates with `sudo apt upgrade`.
 
+## Dev Channel
+
+To track development/pre-release builds, use the `dev` suite instead of `stable`:
+
+```bash
+curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases dev main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
+sudo apt update && sudo apt install incus-spawn
+```
+
+To switch between channels, edit `/etc/apt/sources.list.d/incus-spawn.list` and change `stable` to `dev` (or vice versa), then `sudo apt update && sudo apt upgrade`.
+
+The stable and dev pools are fully isolated — a dev release never overwrites stable debs.
+
 ## Repository Structure
 
-The APT repo uses a single `stable` suite (not per-Ubuntu-release) because the GraalVM native binary is self-contained. Both `amd64` and `arm64` architectures are published.
+The APT repo uses `stable` and `dev` suites (not per-Ubuntu-release) because the GraalVM native binary is self-contained. Both `amd64` and `arm64` architectures are published.
 
 ```
 isx-apt-releases repo:
   public.gpg                              # GPG public key for apt verification
   pool/
-    incus-spawn_VERSION_amd64.deb
-    incus-spawn_VERSION_arm64.deb
+    stable/
+      incus-spawn_VERSION_amd64.deb
+      incus-spawn_VERSION_arm64.deb
+    dev/
+      incus-spawn_VERSION_amd64.deb
+      incus-spawn_VERSION_arm64.deb
   dists/stable/
     Release / Release.gpg / InRelease     # Signed repository metadata
+    main/binary-amd64/Packages{,.gz}
+    main/binary-arm64/Packages{,.gz}
+  dists/dev/
+    Release / Release.gpg / InRelease
     main/binary-amd64/Packages{,.gz}
     main/binary-arm64/Packages{,.gz}
 ```
 
 Each `.deb` contains:
 - `/usr/bin/isx` -- the native binary
+- `/usr/bin/isx-proxy` -- the MITM proxy binary
 - `/usr/bin/git-remote-isx` -- git remote helper
 - Shell completions for bash, zsh, and fish
 
@@ -113,4 +136,4 @@ After generating, add the armored private key as the `APT_GPG_PRIVATE_KEY` secre
 
 ## Supported Platforms
 
-The APT repository supports `amd64` (x86_64) and `arm64` (aarch64) on any Debian-based distribution. A single `stable` suite is used because the GraalVM native binary has no distribution-specific dependencies.
+The APT repository supports `amd64` (x86_64) and `arm64` (aarch64) on any Debian-based distribution. Suites are `stable` and `dev` (not per-Ubuntu-release) because the GraalVM native binary has no distribution-specific dependencies.
