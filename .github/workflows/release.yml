@@ -303,11 +303,12 @@ jobs:
           APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
           APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
 
-      - name: Update Nixpkgs
-        continue-on-error: true
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          packaging/nix/submit-nixpkgs-pr.sh "$VERSION"
-        env:
-          GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
+      # Disabled: automated PRs to NixOS/nixpkgs need maintainer alignment first.
+      # - name: Update Nixpkgs
+      #   continue-on-error: true
+      #   run: |
+      #     VERSION=${GITHUB_REF_NAME#v}
+      #     packaging/nix/submit-nixpkgs-pr.sh "$VERSION"
+      #   env:
+      #     GH_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
+      #     GITHUB_TOKEN: ${{ secrets.NIXPKGS_TOKEN }}
