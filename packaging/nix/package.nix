@@ -41,6 +41,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preInstall
 
     install -Dm755 $src $out/bin/isx
+    install -Dm755 ${finalAttrs.passthru.isx-proxy.${stdenvNoCC.hostPlatform.system}} $out/bin/isx-proxy
     install -Dm755 ${finalAttrs.passthru.git-remote-isx} $out/bin/git-remote-isx
 
     runHook postInstall
@@ -78,6 +79,21 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       };
     };
 
+    isx-proxy = {
+      "x86_64-linux" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/isx-proxy-linux-amd64";
+        hash = lib.fakeHash;
+      };
+      "aarch64-linux" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/isx-proxy-linux-aarch64";
+        hash = lib.fakeHash;
+      };
+      "aarch64-darwin" = fetchurl {
+        url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/isx-proxy-macos-aarch64";
+        hash = lib.fakeHash;
+      };
+    };
+
     git-remote-isx = fetchurl {
       url = "https://github.com/Sanne/incus-spawn/releases/download/v${finalAttrs.version}/git-remote-isx";
       hash = "sha256-I9zmdLzO7VcfLHdgFD2Lvwiq4fkDw885j1JWsL8c+hA=";
@@ -105,6 +121,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       update-source-version incus-spawn "$NEW_VERSION" --source-key="git-remote-isx" --ignore-same-hash
       for platform in ${lib.escapeShellArgs finalAttrs.meta.platforms}; do
         update-source-version incus-spawn "$NEW_VERSION" --ignore-same-version --source-key="sources.$platform"
+        update-source-version incus-spawn "$NEW_VERSION" --ignore-same-version --source-key="isx-proxy.$platform"
       done
     '';
   };

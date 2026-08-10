@@ -7,6 +7,8 @@ URL:            https://github.com/Sanne/incus-spawn
 Source0:        incus-spawn-linux-amd64
 Source1:        git-remote-isx
 Source2:        incus-spawn-linux-aarch64
+Source3:        isx-proxy-linux-amd64
+Source4:        isx-proxy-linux-aarch64
 
 ExclusiveArch:  x86_64 aarch64
 
@@ -29,9 +31,11 @@ for credential isolation, and an interactive TUI.
 mkdir -p %{buildroot}%{_bindir}
 %ifarch x86_64
 install -m 755 %{SOURCE0} %{buildroot}%{_bindir}/isx
+install -m 755 %{SOURCE3} %{buildroot}%{_bindir}/isx-proxy
 %endif
 %ifarch aarch64
 install -m 755 %{SOURCE2} %{buildroot}%{_bindir}/isx
+install -m 755 %{SOURCE4} %{buildroot}%{_bindir}/isx-proxy
 %endif
 
 install -m 755 %{SOURCE1} %{buildroot}%{_bindir}/git-remote-isx
@@ -45,6 +49,7 @@ mkdir -p %{buildroot}%{_datadir}/fish/vendor_completions.d
 
 %files
 %{_bindir}/isx
+%{_bindir}/isx-proxy
 %{_bindir}/git-remote-isx
 %{_datadir}/bash-completion/completions/isx
 %{_datadir}/zsh/site-functions/_isx
