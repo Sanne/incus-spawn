@@ -106,7 +106,8 @@ jobs:
       - name: Build native image (macOS, GC override)
         if: matrix.os == 'macos' && matrix.proxy-gc
         run: |
-          mvn install -Dnative -DskipTests -Dmacos.info.plist="$(pwd)/cli/src/main/resources/Info.plist" -pl cli,common
+          mvn install -DskipTests
+          mvn package -Dnative -DskipTests -Dmacos.info.plist="$(pwd)/cli/src/main/resources/Info.plist" -pl cli
           mvn package -Dnative -DskipTests -pl proxy -Dquarkus.native.additional-build-args="--initialize-at-run-time=dev.incusspawn.Environment,-O3,--gc=${{ matrix.proxy-gc }},-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-H:-JNIExportSymbols,-R:MaxRAM=256m,-R:ActiveProcessorCount=4"
           mkdir -p dist
           cp cli/target/incus-spawn-*-runner dist/incus-spawn-macos-${{ matrix.arch }}
