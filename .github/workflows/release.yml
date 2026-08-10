@@ -13,6 +13,32 @@ jobs:
   appliance:
     uses: ./.github/workflows/build-appliance.yml
 
+  channel:
+    runs-on: ubuntu-latest
+    outputs:
+      is_dev: ${{ steps.detect.outputs.is_dev }}
+      homebrew_formula: ${{ steps.detect.outputs.homebrew_formula }}
+      copr_project: ${{ steps.detect.outputs.copr_project }}
+      apt_suite: ${{ steps.detect.outputs.apt_suite }}
+    steps:
+      - name: Detect release channel from tag
+        id: detect
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" =~ -(dev|rc|alpha|beta) ]]; then
+            echo "is_dev=true" >> "$GITHUB_OUTPUT"
+            echo "homebrew_formula=incus-spawn-dev.rb" >> "$GITHUB_OUTPUT"
+            echo "copr_project=incus-spawn-dev" >> "$GITHUB_OUTPUT"
+            echo "apt_suite=dev" >> "$GITHUB_OUTPUT"
+            echo "Dev release detected: $TAG"
+          else
+            echo "is_dev=false" >> "$GITHUB_OUTPUT"
+            echo "homebrew_formula=incus-spawn.rb" >> "$GITHUB_OUTPUT"
+            echo "copr_project=incus-spawn" >> "$GITHUB_OUTPUT"
+            echo "apt_suite=stable" >> "$GITHUB_OUTPUT"
+            echo "Stable release detected: $TAG"
+          fi
+
   build:
     strategy:
       matrix:
@@ -98,7 +124,7 @@ jobs:
           path: dist/
 
   release:
-    needs: [build, appliance]
+    needs: [build, appliance, channel]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -156,7 +182,7 @@ jobs:
             artifacts/disk-aarch64.img.gz \
             artifacts/completions.tar.gz \
             common/src/main/resources/git-remote-isx \
-            --generate-notes
+            ${{ needs.channel.outputs.is_dev == 'true' && '--prerelease' || '' }} --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -185,12 +211,13 @@ jobs:
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
             -e "/resource \"completions\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/completions.tar.gz\"|}" \
             -e "/resource \"completions\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${COMPLETIONS_SHA}\"/}" \
-            Formula/incus-spawn.rb
+            Formula/${{ needs.channel.outputs.homebrew_formula }}
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/incus-spawn.rb
-          git commit -m "Update incus-spawn to ${VERSION}"
+          git add Formula/${{ needs.channel.outputs.homebrew_formula }}
+          FORMULA_NAME="${{ needs.channel.outputs.homebrew_formula }}"
+          git commit -m "Update ${FORMULA_NAME%.rb} to ${VERSION}"
           git push
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -214,7 +241,7 @@ jobs:
           cp common/src/main/resources/git-remote-isx ~/rpmbuild/SOURCES/
           cp /tmp/incus-spawn.spec ~/rpmbuild/SPECS/
           rpmbuild -bs ~/rpmbuild/SPECS/incus-spawn.spec
-          copr-cli build incus-spawn ~/rpmbuild/SRPMS/incus-spawn-*.src.rpm
+          copr-cli build ${{ needs.channel.outputs.copr_project }} ~/rpmbuild/SRPMS/incus-spawn-*.src.rpm
         env:
           COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
           COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
@@ -280,26 +307,27 @@ jobs:
 
           gpg --export --armor "$GPG_KEY_ID" > "$APT_DIR/public.gpg"
 
-          # Copy debs into pool, removing old versions
-          mkdir -p "$APT_DIR/pool"
-          rm -f "$APT_DIR"/pool/incus-spawn_*.deb
-          cp /tmp/incus-spawn_${VERSION}_*.deb "$APT_DIR/pool/"
+          # Copy debs into channel-specific pool, removing old versions
+          APT_SUITE="${{ needs.channel.outputs.apt_suite }}"
+          mkdir -p "$APT_DIR/pool/${APT_SUITE}"
+          rm -f "$APT_DIR"/pool/${APT_SUITE}/incus-spawn_*.deb
+          cp /tmp/incus-spawn_${VERSION}_*.deb "$APT_DIR/pool/${APT_SUITE}/"
 
           # Generate Packages indices
           cd "$APT_DIR"
           for deb_arch in amd64 arm64; do
-            mkdir -p "dists/stable/main/binary-${deb_arch}"
-            dpkg-scanpackages --arch "$deb_arch" pool 2>/dev/null > "dists/stable/main/binary-${deb_arch}/Packages"
-            gzip -9c "dists/stable/main/binary-${deb_arch}/Packages" > "dists/stable/main/binary-${deb_arch}/Packages.gz"
+            mkdir -p "dists/${APT_SUITE}/main/binary-${deb_arch}"
+            dpkg-scanpackages --arch "$deb_arch" "pool/${APT_SUITE}" 2>/dev/null > "dists/${APT_SUITE}/main/binary-${deb_arch}/Packages"
+            gzip -9c "dists/${APT_SUITE}/main/binary-${deb_arch}/Packages" > "dists/${APT_SUITE}/main/binary-${deb_arch}/Packages.gz"
           done
 
           # Generate and sign Release file
-          cd "$APT_DIR/dists/stable"
+          cd "$APT_DIR/dists/$APT_SUITE"
           apt-ftparchive \
             -o APT::FTPArchive::Release::Origin="incus-spawn" \
             -o APT::FTPArchive::Release::Label="incus-spawn" \
-            -o APT::FTPArchive::Release::Suite="stable" \
-            -o APT::FTPArchive::Release::Codename="stable" \
+            -o APT::FTPArchive::Release::Suite="$APT_SUITE" \
+            -o APT::FTPArchive::Release::Codename="$APT_SUITE" \
             -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
             -o APT::FTPArchive::Release::Components="main" \
             release . > Release
