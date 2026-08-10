@@ -79,14 +79,14 @@ Dev releases are fully isolated from stable — a dev release cannot affect user
 
 - **GitHub Releases**: dev tags are marked as pre-releases and excluded from `latest`
 - **Homebrew**: separate formulas (`incus-spawn` vs `incus-spawn-dev`) with `conflicts_with` to prevent co-installation
-- **COPR**: separate projects (`incus-spawn` vs `incus-spawn-dev`)
+- **COPR**: separate projects (`incus-spawn` vs `isx-dev`)
 - **APT**: separate pool directories (`pool/stable/` vs `pool/dev/`) and suites (`dists/stable/` vs `dists/dev/`), so `rm` during publish only touches that channel's debs
 
 ### Prerequisites for Dev Channel
 
 Before the first dev release, these one-time steps are needed:
 
-1. **COPR**: Create the `incus-spawn-dev` project at copr.fedorainfracloud.org (same settings as `incus-spawn`)
+1. **COPR**: Create the `isx-dev` project at copr.fedorainfracloud.org (same settings as `incus-spawn`)
 2. **Homebrew tap**: Ensure `Formula/incus-spawn-dev.rb` exists in `Sanne/homebrew-tap`
 
 ### Installing Dev Builds
@@ -98,7 +98,7 @@ See [docs/HOMEBREW.md](docs/HOMEBREW.md) and [docs/APT.md](docs/APT.md) for per-
 brew install Sanne/tap/incus-spawn-dev
 
 # Fedora (COPR)
-sudo dnf copr enable sanne/incus-spawn-dev
+sudo dnf copr enable sanne/isx-dev
 sudo dnf install incus-spawn
 
 # Ubuntu/Debian (APT)

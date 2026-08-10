@@ -28,7 +28,7 @@ jobs:
           if [[ "$TAG" =~ -dev\. ]]; then
             echo "is_dev=true" >> "$GITHUB_OUTPUT"
             echo "homebrew_formula=incus-spawn-dev.rb" >> "$GITHUB_OUTPUT"
-            echo "copr_project=incus-spawn-dev" >> "$GITHUB_OUTPUT"
+            echo "copr_project=isx-dev" >> "$GITHUB_OUTPUT"
             echo "apt_suite=dev" >> "$GITHUB_OUTPUT"
             echo "Dev release detected: $TAG"
           else
