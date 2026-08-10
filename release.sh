@@ -14,6 +14,7 @@ branch=$(git symbolic-ref --short HEAD)
 if [ -n "$1" ]; then
     version="${1#v}"
 else
+    git fetch origin --tags --quiet
     latest_tag=$(git tag --sort=-v:refname --list 'v*' | head -1)
     if [ -z "$latest_tag" ]; then
         echo "ERROR: No existing v* tags found — cannot derive next version." >&2
