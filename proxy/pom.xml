@@ -11,6 +11,10 @@
     <name>incus-spawn-proxy</name>
     <description>MITM authentication proxy for incus-spawn</description>
 
+    <properties>
+        <proxy.native.gc>serial</proxy.native.gc>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>dev.incusspawn</groupId>
@@ -140,4 +144,15 @@
             </plugin>
         </plugins>
     </build>
+    <profiles>
+        <profile>
+            <id>linux-g1</id>
+            <activation>
+                <os><name>linux</name></os>
+            </activation>
+            <properties>
+                <proxy.native.gc>G1</proxy.native.gc>
+            </properties>
+        </profile>
+    </profiles>
 </project>
