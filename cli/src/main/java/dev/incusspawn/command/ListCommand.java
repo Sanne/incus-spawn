@@ -3855,12 +3855,18 @@ public class ListCommand extends BaseCommand {
     }
 
     private boolean showProxyErrorIfNeeded(String containerName) {
-        var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
-        if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
-        if (showProxyError()) return true;
-        showSubnetWarning();
-        fixCaMismatchIfNeeded(containerName);
-        return false;
+        try {
+            var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
+            if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
+            if (showProxyError()) return true;
+            showSubnetWarning();
+            fixCaMismatchIfNeeded(containerName);
+            return false;
+        } catch (IncusException e) {
+            errorMessage = "Cannot reach Incus: " + e.getMessage();
+            mode = Mode.ERROR;
+            return true;
+        }
     }
 
     private void showSubnetWarning() {
