@@ -242,8 +242,9 @@ jobs:
           mkdir -p ~/.config
           printf '[copr-cli]\nlogin = %s\nusername = %s\ntoken = %s\ncopr_url = https://copr.fedorainfracloud.org\n' \
             "$COPR_LOGIN" "$COPR_USERNAME" "$COPR_TOKEN" > ~/.config/copr
-          CHANGELOG="* $(date +'%a %b %d %Y') Sanne Grinovero <sanne@hibernate.org> - ${VERSION}-1\n- See https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
-          sed -e "s/@VERSION@/$VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
+          RPM_VERSION="${VERSION//-dev./~dev.}"
+          CHANGELOG="* $(date +'%a %b %d %Y') Sanne Grinovero <sanne@hibernate.org> - ${RPM_VERSION}-1\n- See https://github.com/Sanne/incus-spawn/releases/tag/v${VERSION}"
+          sed -e "s/@VERSION@/$RPM_VERSION/g" -e "s|@CHANGELOG@|$CHANGELOG|g" packaging/incus-spawn.spec > /tmp/incus-spawn.spec
           mkdir -p ~/rpmbuild/{SOURCES,SPECS}
           cp artifacts/native-linux-amd64/incus-spawn-linux-amd64 ~/rpmbuild/SOURCES/
           cp artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 ~/rpmbuild/SOURCES/
@@ -283,11 +284,14 @@ jobs:
           COMPLETIONS_DIR=$(mktemp -d)
           tar -xzf artifacts/completions.tar.gz -C "$COMPLETIONS_DIR"
 
+          # Convert -dev.N to ~dev.N for Debian versioning (~ sorts lower, correct pre-release ordering)
+          DEB_VERSION="${VERSION//-dev./~dev.}"
+
           # Build .deb for each architecture
           for arch_pair in "amd64:amd64" "aarch64:arm64"; do
             BUILD_ARCH=${arch_pair%%:*}
             DEB_ARCH=${arch_pair##*:}
-            PKG_DIR="/tmp/incus-spawn_${VERSION}_${DEB_ARCH}"
+            PKG_DIR="/tmp/incus-spawn_${DEB_VERSION}_${DEB_ARCH}"
 
             mkdir -p "$PKG_DIR/DEBIAN"
             mkdir -p "$PKG_DIR/usr/bin"
@@ -295,7 +299,7 @@ jobs:
             mkdir -p "$PKG_DIR/usr/share/zsh/vendor-completions"
             mkdir -p "$PKG_DIR/usr/share/fish/vendor_completions.d"
 
-            sed -e "s/@VERSION@/$VERSION/" -e "s/@ARCH@/$DEB_ARCH/" \
+            sed -e "s/@VERSION@/$DEB_VERSION/" -e "s/@ARCH@/$DEB_ARCH/" \
               packaging/debian/control > "$PKG_DIR/DEBIAN/control"
             install -m 755 packaging/debian/prerm "$PKG_DIR/DEBIAN/prerm"
 
@@ -322,7 +326,7 @@ jobs:
           APT_SUITE="${{ needs.channel.outputs.apt_suite }}"
           mkdir -p "$APT_DIR/pool/${APT_SUITE}"
           rm -f "$APT_DIR"/pool/${APT_SUITE}/incus-spawn_*.deb
-          cp /tmp/incus-spawn_${VERSION}_*.deb "$APT_DIR/pool/${APT_SUITE}/"
+          cp /tmp/incus-spawn_${DEB_VERSION}_*.deb "$APT_DIR/pool/${APT_SUITE}/"
 
           # Generate Packages indices
           cd "$APT_DIR"
