@@ -32,7 +32,7 @@ mvn package -Dnative -DskipTests           # GraalVM native binaries (isx + isx-
 
 Three Maven modules under a parent POM:
 
-- **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; provides a `META-INF/beans.xml` so Quarkus discovers its CDI beans and `@RegisterForReflection` annotations from dependent modules.
+- **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a `META-INF/jandex.idx` so Quarkus discovers its CDI beans and `@RegisterForReflection` annotations from dependent modules.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized), `-H:-AllowVMInternalThreads`.
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized, enables ML-inferred PGO).
 
