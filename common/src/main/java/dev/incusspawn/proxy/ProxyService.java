@@ -325,10 +325,17 @@ public final class ProxyService {
     /**
      * True when the start script is missing or does not exec {@code isxPath} — i.e. when the
      * service would otherwise keep running a binary from a previous installation.
+     * <p>
+     * Only the exec'd binary matters for staleness. PATH changes across sessions must not trigger
+     * restarts — users with conda/nvm/sdkman get different PATHs per session, and each would
+     * cause a spurious proxy restart that interrupts in-flight proxied requests. PATH is refreshed
+     * whenever the script is rewritten for binary-path reasons or on explicit reinstall.
      */
     static boolean startScriptIsStale(Path script, String isxPath) throws IOException {
         if (!Files.exists(script)) return true;
-        return !proxyStartScriptContent(isxPath).equals(Files.readString(script));
+        var content = Files.readString(script);
+        if (!content.contains("export PATH=")) return true;
+        return !content.contains(execCommand(isxPath));
     }
 
     public static void upgradeIfNeeded() {
@@ -481,13 +488,29 @@ public final class ProxyService {
         return Environment.configDir().resolve("proxy-start.sh");
     }
 
-    /** Single source of truth for the start script, so writing and staleness-checking cannot drift. */
-    static String proxyStartScriptContent(String isxPath) {
+    private static final String LINUX_PATH_FALLBACK =
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+    /** The exec command the start script should contain for this isx binary. */
+    private static String execCommand(String isxPath) {
         var proxyBin = Path.of(isxPath).getParent().resolve("isx-proxy");
         if (Files.isExecutable(proxyBin)) {
-            return "#!/bin/bash\nexec " + Container.shellQuote(proxyBin.toString()) + "\n";
+            return "exec " + Container.shellQuote(proxyBin.toString());
         }
-        return "#!/bin/bash\nexec " + Container.shellQuote(isxPath) + " proxy start\n";
+        return "exec " + Container.shellQuote(isxPath) + " proxy start";
+    }
+
+    /** Single source of truth for the start script, so writing and staleness-checking cannot drift. */
+    static String proxyStartScriptContent(String isxPath) {
+        return proxyStartScriptContent(isxPath, System.getenv("PATH"));
+    }
+
+    static String proxyStartScriptContent(String isxPath, String path) {
+        var sb = new StringBuilder("#!/bin/bash\n");
+        var effectivePath = (path != null && !path.isBlank()) ? path : LINUX_PATH_FALLBACK;
+        sb.append("export PATH=").append(Container.shellQuote(effectivePath)).append('\n');
+        sb.append(execCommand(isxPath)).append('\n');
+        return sb.toString();
     }
 
     static void writeProxyStartScript(Path script, String isxPath) throws IOException {
