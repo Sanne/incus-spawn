@@ -71,6 +71,38 @@ class ProxyServiceTest {
     }
 
     @Test
+    void startScriptIncludesPath() {
+        var content = ProxyService.proxyStartScriptContent("/home/user/.local/bin/isx",
+                "/usr/bin:/usr/local/bin:/opt/gcloud/bin");
+        assertTrue(content.contains("export PATH='/usr/bin:/usr/local/bin:/opt/gcloud/bin'"));
+    }
+
+    @Test
+    void startScriptUsesFallbackPathWhenNull() {
+        var content = ProxyService.proxyStartScriptContent("/home/user/.local/bin/isx", null);
+        assertTrue(content.contains("export PATH="), "should use fallback PATH, not omit it");
+    }
+
+    @Test
+    void oldScriptWithoutPathIsStale() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        Files.writeString(script, "#!/bin/bash\nexec '/home/user/.local/bin/isx' proxy start\n");
+        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+                "scripts from before the PATH fix must be rewritten on upgrade");
+    }
+
+    @Test
+    void pathDriftDoesNotCauseStaleness() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        // Install with one PATH
+        Files.writeString(script, ProxyService.proxyStartScriptContent(
+                "/home/user/.local/bin/isx", "/usr/bin:/usr/local/bin"));
+        // Check staleness with the same binary but a different PATH (conda activated)
+        assertFalse(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+                "PATH differences alone must not trigger a restart");
+    }
+
+    @Test
     void writeProxyStartScriptEscapesSingleQuotes() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
         ProxyService.writeProxyStartScript(script, "/home/user/it's here/isx");
