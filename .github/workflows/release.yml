@@ -201,6 +201,41 @@ jobs:
           git clone https://x-access-token:${TAP_TOKEN}@github.com/Sanne/homebrew-tap.git /tmp/homebrew-tap
           cd /tmp/homebrew-tap
 
+          FORMULA="Formula/${{ needs.channel.outputs.homebrew_formula }}"
+
+          # Add isx-proxy resource and install blocks if not yet present (handles
+          # the transition from monolithic CLI to separate proxy binary)
+          if ! grep -q 'resource "isx-proxy"' "$FORMULA"; then
+            awk -v ver="$VERSION" -v sha_arm="$PROXY_SHA_ARM64" -v sha_x86="$PROXY_SHA_X86_64" '
+              /resource "git-remote-isx"/ {
+                print "  resource \"isx-proxy\" do"
+                print "    on_macos do"
+                print "      on_arm do"
+                print "        url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-aarch64\""
+                print "        sha256 \"" sha_arm "\""
+                print "      end"
+                print "      on_intel do"
+                print "        url \"https://github.com/Sanne/incus-spawn/releases/download/v" ver "/isx-proxy-macos-x86_64\""
+                print "        sha256 \"" sha_x86 "\""
+                print "      end"
+                print "    end"
+                print "  end"
+                print ""
+              }
+              /resource\("git-remote-isx"\)/ {
+                print "    resource(\"isx-proxy\").stage do"
+                print "      if Hardware::CPU.arm?"
+                print "        bin.install \"isx-proxy-macos-aarch64\" => \"isx-proxy\""
+                print "      else"
+                print "        bin.install \"isx-proxy-macos-x86_64\" => \"isx-proxy\""
+                print "      end"
+                print "    end"
+                print ""
+              }
+              {print}
+            ' "$FORMULA" > "${FORMULA}.tmp" && mv "${FORMULA}.tmp" "$FORMULA"
+          fi
+
           sed -i \
             -e "s/version \"[^\"]*\"/version \"${VERSION}\"/" \
             -e "/incus-spawn-macos-aarch64/,/sha256/{s|/v[0-9][^/]*/|/v${VERSION}/|; s/sha256 \"[^\"]*\"/sha256 \"${SHA_ARM64}\"/;}" \
@@ -211,11 +246,11 @@ jobs:
             -e "/resource \"git-remote-isx\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${GIT_REMOTE_SHA}\"/}" \
             -e "/resource \"completions\"/,/end/{s|url \"[^\"]*\"|url \"https://github.com/Sanne/incus-spawn/releases/download/v${VERSION}/completions.tar.gz\"|}" \
             -e "/resource \"completions\"/,/end/{s/sha256 \"[^\"]*\"/sha256 \"${COMPLETIONS_SHA}\"/}" \
-            Formula/${{ needs.channel.outputs.homebrew_formula }}
+            "$FORMULA"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/${{ needs.channel.outputs.homebrew_formula }}
+          git add "$FORMULA"
           FORMULA_NAME="${{ needs.channel.outputs.homebrew_formula }}"
           git commit -m "Update ${FORMULA_NAME%.rb} to ${VERSION}"
           git push
