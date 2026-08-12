@@ -14,14 +14,32 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * GraalVM native-image feature that reports which system-property lazy resolvers
- * are reachable in the built image.  Each resolver triggers a syscall on first
- * access (getcwd for user.dir, uname for os.name / os.version, etc.).
+ * Build-time guard that fails the native-image build if any code path can
+ * reach a GraalVM lazy system-property resolver that triggers a syscall
+ * (getcwd for user.dir, uname for os.name/os.version, getpwuid for
+ * user.home/user.name).
  *
- * Enable via: --features=dev.incusspawn.graal.SyscallReachabilityFeature
+ * <h2>Why this matters</h2>
+ * Short-lived CLI commands (--help, --version, completions) should start in
+ * microseconds.  GraalVM resolves these properties lazily — only on first
+ * access — but the syscall cost is still measurable when it lands on the
+ * hot path of every invocation.  Worse, a single transitive call to
+ * {@code System.getProperty("user.dir")} anywhere in the reachability graph
+ * is enough to pull the resolver into the image, even if that path is rarely
+ * executed at runtime.
  *
- * Internal analysis APIs (AnalysisMethod, callers) are accessed via reflection
- * so this compiles against the stable org.graalvm.sdk:nativeimage artifact.
+ * <p>By failing the build when a resolver is reachable, we catch accidental
+ * regressions (e.g. a new dependency that reads user.dir at class-init time)
+ * before they ship, rather than discovering them via strace after the fact.
+ * When a resolver IS legitimately needed, the fix is to add it to this
+ * class's allowed list and document why the syscall is acceptable.
+ *
+ * <h2>How it works</h2>
+ * Hooks into {@code afterAnalysis} and calls the public
+ * {@link Feature.AfterAnalysisAccess#isReachable} API.  If a resolver is
+ * reachable, a BFS over the caller graph (via reflection into the internal
+ * {@code AnalysisMethod.getCallers()} API) identifies the application-level
+ * entry points that pull it in, then the build is aborted with that context.
  */
 public class SyscallReachabilityFeature implements Feature {
 
