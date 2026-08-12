@@ -116,12 +116,14 @@ public class ClaudeSetup implements ToolSetup {
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
         var claude = SpawnConfig.load().getClaude();
+        syncGcloudStub(c, claude);
         configureSettings(c, claude, resolvedParams);
     }
 
     @Override
     public void reconfigure(Container c, java.util.Map<String, String> resolvedParams) {
         var claude = SpawnConfig.load().getClaude();
+        syncGcloudStub(c, claude);
         configureSettings(c, claude, resolvedParams);
     }
 
@@ -156,6 +158,36 @@ public class ClaudeSetup implements ToolSetup {
                     + " /home/agentuser/.cache");
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
+        }
+    }
+
+    static final String GCLOUD_STUB_PATH = "/usr/local/bin/gcloud";
+
+    private static final String GCLOUD_STUB_SCRIPT = """
+            #!/bin/bash
+            case "$*" in
+              *auth*print-access-token*) echo "ya29.placeholder-for-proxy" ;;
+              *) echo "gcloud stub: unsupported command: $*" >&2; exit 1 ;;
+            esac
+            """;
+
+    /**
+     * Ensure the gcloud stub state matches the current Vertex config.
+     * In Vertex mode: install a stub that satisfies credential-refresh attempts
+     * inside the container — the MITM proxy replaces the Authorization header,
+     * so the token value is irrelevant.  Never overwrites an existing non-stub gcloud.
+     * Outside Vertex mode: remove a leftover stub (from a parent built with Vertex)
+     * so it doesn't shadow a real gcloud installed later.
+     */
+    public void syncGcloudStub(Container c, SpawnConfig.ClaudeConfig claude) {
+        if (claude.isUseVertex()) {
+            if (c.sh("command -v gcloud").success()) {
+                return;
+            }
+            c.writeFile(GCLOUD_STUB_PATH, GCLOUD_STUB_SCRIPT);
+            c.exec("chmod", "+x", GCLOUD_STUB_PATH);
+        } else {
+            c.sh("grep -q 'placeholder-for-proxy' " + GCLOUD_STUB_PATH + " 2>/dev/null && rm -f " + GCLOUD_STUB_PATH);
         }
     }
 
