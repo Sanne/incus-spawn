@@ -13,6 +13,8 @@
 
     <properties>
         <proxy.native.gc>serial</proxy.native.gc>
+<!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
+        <svm.target.name.args/>
     </properties>
 
     <dependencies>
@@ -152,6 +154,7 @@
             </activation>
             <properties>
                 <proxy.native.gc>G1</proxy.native.gc>
+                <svm.target.name.args>,-Dsvm.targetName=Linux</svm.target.name.args>
             </properties>
         </profile>
     </profiles>
