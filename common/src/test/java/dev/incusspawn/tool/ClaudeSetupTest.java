@@ -332,6 +332,59 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void syncGcloudStubSkipsWhenGcloudExists() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq("command -v gcloud")))
+                .thenReturn(OK);
+
+        var claude = new SpawnConfig.ClaudeConfig();
+        claude.setUseVertex(true);
+
+        new ClaudeSetup().syncGcloudStub(new Container(incus, CONTAINER), claude);
+
+        verify(incus, never()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), contains(ClaudeSetup.GCLOUD_STUB_PATH));
+    }
+
+    @Test
+    void syncGcloudStubInstallsWhenNoGcloud() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq("command -v gcloud")))
+                .thenReturn(new IncusClient.ExecResult(1, "", ""));
+
+        var claude = new SpawnConfig.ClaudeConfig();
+        claude.setUseVertex(true);
+
+        new ClaudeSetup().syncGcloudStub(new Container(incus, CONTAINER), claude);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+        assertTrue(captor.getAllValues().stream().anyMatch(cmd ->
+                        cmd.contains(ClaudeSetup.GCLOUD_STUB_PATH) && cmd.contains("placeholder-for-proxy")),
+                "Should write stub gcloud script");
+        verify(incus).shellExec(eq(CONTAINER), eq("chmod"), eq("+x"), eq(ClaudeSetup.GCLOUD_STUB_PATH));
+    }
+
+    @Test
+    void syncGcloudStubRemovesStubWhenVertexDisabled() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var claude = new SpawnConfig.ClaudeConfig();
+
+        new ClaudeSetup().syncGcloudStub(new Container(incus, CONTAINER), claude);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+        assertTrue(captor.getAllValues().stream().anyMatch(cmd ->
+                        cmd.contains("placeholder-for-proxy") && cmd.contains("rm -f")),
+                "Should remove stub gcloud when Vertex is disabled");
+    }
+
+    @Test
     void downloadCacheIsInjectable(@TempDir Path tempDir) {
         var cache = new DownloadCache(tempDir);
         var setup = new ClaudeSetup(cache);

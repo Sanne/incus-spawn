@@ -25,6 +25,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
+import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -673,6 +674,7 @@ public class BuildCommand extends BaseCommand {
         removePackages(container, imageDef);
 
         var toolResolution = collectEffectiveTools(imageDef, defs);
+        syncInheritedGcloudStub(container, toolResolution);
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
 
@@ -1286,6 +1288,16 @@ public class BuildCommand extends BaseCommand {
                 resolved.setup().reconfigure(container, resolved.parameters());
             } else {
                 resolved.setup().install(container, resolved.parameters());
+            }
+        }
+    }
+
+    static void syncInheritedGcloudStub(Container container, ToolResolution toolResolution) {
+        var effectiveNames = toolResolution.effective().stream()
+                .map(ResolvedTool::name).collect(java.util.stream.Collectors.toSet());
+        for (var tool : toolResolution.ancestors()) {
+            if (!effectiveNames.contains(tool.name()) && tool.setup() instanceof ClaudeSetup claudeSetup) {
+                claudeSetup.syncGcloudStub(container, SpawnConfig.load().getClaude());
             }
         }
     }

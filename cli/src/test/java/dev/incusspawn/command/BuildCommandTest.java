@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -1196,5 +1197,59 @@ class BuildCommandTest {
         var names = resolved.stream().map(r -> r.name()).toList();
         assertTrue(names.contains("sshd"), "YAML tool 'sshd' should be present");
         assertTrue(names.contains("claude"), "CDI tool 'claude' should be present");
+    }
+
+    // --- syncInheritedGcloudStub ---
+
+    @Test
+    void syncInheritedGcloudStubCallsForInheritedClaude() {
+        var claudeSetup = spy(new ClaudeSetup());
+        doNothing().when(claudeSetup).syncGcloudStub(any(), any());
+
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var ancestors = List.of(
+                new BuildCommand.ResolvedTool("claude", claudeSetup, java.util.Map.of()));
+        var effective = List.<BuildCommand.ResolvedTool>of();
+        var resolution = new BuildCommand.ToolResolution(effective, ancestors);
+
+        BuildCommand.syncInheritedGcloudStub(container, resolution);
+
+        verify(claudeSetup).syncGcloudStub(eq(container), any());
+    }
+
+    @Test
+    void syncInheritedGcloudStubSkipsWhenClaudeInEffective() {
+        var claudeSetup = spy(new ClaudeSetup());
+        doNothing().when(claudeSetup).syncGcloudStub(any(), any());
+
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var resolved = new BuildCommand.ResolvedTool("claude", claudeSetup, java.util.Map.of());
+        var ancestors = List.of(resolved);
+        var effective = List.of(resolved);
+        var resolution = new BuildCommand.ToolResolution(effective, ancestors);
+
+        BuildCommand.syncInheritedGcloudStub(container, resolution);
+
+        verify(claudeSetup, never()).syncGcloudStub(any(), any());
+    }
+
+    @Test
+    void syncInheritedGcloudStubIgnoresNonClaudeAncestors() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var mavenSetup = simpleToolSetup("maven");
+        var ancestors = List.of(
+                new BuildCommand.ResolvedTool("maven", mavenSetup, java.util.Map.of()));
+        var effective = List.<BuildCommand.ResolvedTool>of();
+        var resolution = new BuildCommand.ToolResolution(effective, ancestors);
+
+        BuildCommand.syncInheritedGcloudStub(container, resolution);
+
+        verifyNoInteractions(incus);
     }
 }
