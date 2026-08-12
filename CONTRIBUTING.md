@@ -17,7 +17,9 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 
 ## Website Development
 
-The project website is hosted on GitHub Pages. To preview changes locally:
+The project website is hosted on GitHub Pages. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).
+
+To preview changes locally:
 
 ```shell
 # Build the site (generates _site/ directory from README.md)
@@ -108,3 +110,25 @@ sudo apt update && sudo apt install incus-spawn
 ```
 
 Users can then update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `apt upgrade` (Ubuntu/Debian), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
+
+### Switching Between Dev and Stable Channels
+
+The two channels use separate packages/repos, so switching means uninstalling one and installing the other:
+
+```shell
+# macOS (Homebrew) — the formulas conflict, so uninstall first
+brew uninstall incus-spawn-dev
+brew install Sanne/tap/incus-spawn
+# (reverse to go back to dev)
+
+# Fedora (COPR)
+sudo dnf copr disable sanne/isx-dev
+sudo dnf copr enable sanne/incus-spawn
+sudo dnf reinstall incus-spawn
+# (reverse the enable/disable to go back to dev)
+
+# Ubuntu/Debian (APT) — change "dev" to "stable" in the sources list
+sudo sed -i 's/ dev main/ stable main/' /etc/apt/sources.list.d/incus-spawn.list
+sudo apt update && sudo apt install incus-spawn
+# (change "stable" back to "dev" to go back to dev)
+```
