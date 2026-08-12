@@ -23,11 +23,13 @@ public final class FirewalldCheck {
 
     public static boolean isActive() {
         try {
-            var pb = new ProcessBuilder("firewall-cmd", "--state");
-            pb.redirectErrorStream(true);
+            // systemctl is-active does not require root, unlike firewall-cmd --state
+            // which needs polkit authorization and fails with exit 253 as a normal user
+            var pb = new ProcessBuilder("systemctl", "is-active", "firewalld");
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             var process = pb.start();
             var output = new String(process.getInputStream().readAllBytes()).strip();
-            return process.waitFor() == 0 && "running".equals(output);
+            return process.waitFor() == 0 && "active".equals(output);
         } catch (IOException e) {
             return false;
         } catch (InterruptedException e) {
