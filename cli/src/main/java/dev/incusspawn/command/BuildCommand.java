@@ -680,6 +680,7 @@ public class BuildCommand extends BaseCommand {
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+        linkJavaTrustStores(container);
         maskServices(container, imageDef);
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef, effectiveVm);
@@ -927,6 +928,7 @@ public class BuildCommand extends BaseCommand {
             updateClaudeJsonTrust(container, layer);
         }
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+        linkJavaTrustStores(container);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
@@ -1294,9 +1296,6 @@ public class BuildCommand extends BaseCommand {
 
         resolver.add(EnvEntry.raw("export ISX_CONTAINER=\"${HOSTNAME}\""), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
-        resolver.add(EnvEntry.prepend("JAVA_TOOL_OPTIONS",
-                "-Djavax.net.ssl.trustStore=/etc/pki/java/cacerts", " "), "built-in");
-
         var ancestors = ImageDef.ancestors(imageDef, defs);
         for (int i = ancestors.size() - 1; i >= 0; i--) {
             var ancestor = ancestors.get(i);
@@ -1311,6 +1310,15 @@ public class BuildCommand extends BaseCommand {
 
         var script = resolver.resolve();
         container.writeFile("/etc/profile.d/isx-env.sh", script);
+    }
+
+    private static void linkJavaTrustStores(Container container) {
+        container.sh(
+                "find /usr/lib/jvm /opt -name cacerts -path '*/lib/security/cacerts' 2>/dev/null | while IFS= read -r f; do " +
+                "t=$(readlink -f \"$f\" 2>/dev/null); " +
+                "if [ \"$t\" != /etc/pki/java/cacerts ]; then " +
+                "ln -sf /etc/pki/java/cacerts \"$f\"; " +
+                "fi; done");
     }
 
     private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {

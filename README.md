@@ -505,8 +505,8 @@ env:
     strategy: set-if-unset
 
   # Prepend to existing value (with separator):
-  - name: JAVA_TOOL_OPTIONS
-    value: "-Dfoo=true"
+  - name: MAVEN_OPTS
+    value: "-Xmx2g"
     strategy: prepend
     separator: " "
 
