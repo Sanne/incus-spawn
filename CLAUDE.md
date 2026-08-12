@@ -88,7 +88,7 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 
 `EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values → `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
 
-`BuildCommand.writeEnvFile()` orchestrates collection: built-in entries (`ISX_CONTAINER`, `ISX_TEMPLATE`, `JAVA_TOOL_OPTIONS` truststore prepend) → template chain env → tool `envEntries()`. Called after `runToolSetup()` in both `buildFromScratch` and `buildFromParent`.
+`BuildCommand.writeEnvFile()` orchestrates collection: built-in entries (`ISX_CONTAINER`, `ISX_TEMPLATE`) → template chain env → tool `envEntries()`. Called after `runToolSetup()` in both `buildFromScratch` and `buildFromParent`. `linkJavaTrustStores()` runs after `writeEnvFile()` and symlinks any JDK `cacerts` under `/usr/lib/jvm` or `/opt` to the system trust store (`/etc/pki/java/cacerts`), so non-Fedora JDKs (GraalVM, labsjdk, etc.) trust the MITM CA without needing `JAVA_TOOL_OPTIONS`.
 
 ### Incus Interaction
 
