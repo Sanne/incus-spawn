@@ -101,11 +101,12 @@ public class BranchCommand extends BaseCommand {
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
         incus.copy(resolvedSource, name);
 
-        var cpu = String.valueOf(cpuLimit != null ? cpuLimit : ResourceLimits.adaptiveCpuLimit());
+        var cpu = cpuLimit != null ? String.valueOf(cpuLimit) : null;
         var memory = memoryLimit != null ? memoryLimit : ResourceLimits.adaptiveMemoryLimit();
         var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
 
-        System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
+        System.out.println("Applying resource limits: " +
+                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);

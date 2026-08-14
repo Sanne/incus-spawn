@@ -67,8 +67,7 @@ public final class VmManager {
             int pcores = detectPerformanceCores();
             if (pcores > 0) return pcores;
         }
-        int available = Runtime.getRuntime().availableProcessors();
-        return Math.max(1, available - 2);
+        return Math.max(1, ResourceLimits.hostProcessorCount() - 2);
     }
 
     private static int detectPerformanceCores() {

@@ -888,10 +888,9 @@ public class ListCommand extends BaseCommand {
         branchEnableInbox = false;
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = runtime.toUpperCase().contains("VIRTUAL");
-        var adaptiveCpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
         var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
         var adaptiveDisk = ResourceLimits.defaultDiskLimit();
-        vmCpuInput = new TextInputState(adaptiveCpu);
+        vmCpuInput = new TextInputState(String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2)));
         vmMemoryInput = new TextInputState(adaptiveMemory);
         vmDiskInput = new TextInputState(adaptiveDisk);
         branchFieldIndex = 0;
@@ -1857,8 +1856,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        int height = 9;
-        if (branchSourceIsVm) height += 2;
+        int height = 11;
         var modalArea = ModalRenderer.centerRect(screen, 54, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
@@ -1873,10 +1871,8 @@ public class ListCommand extends BaseCommand {
         var constraints = new ArrayList<Constraint>();
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
-        if (branchSourceIsVm) {
-            constraints.add(Constraint.length(1));
-            constraints.add(Constraint.length(1));
-        }
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
@@ -1903,10 +1899,8 @@ public class ListCommand extends BaseCommand {
                     rows.get(row++));
         }
 
-        if (branchSourceIsVm) {
-            row++;
-            renderVmResourceFields(frame, rows.get(row++));
-        }
+        row++;
+        renderResourceFields(frame, rows.get(row++));
 
         row++;
         modal.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
@@ -1922,19 +1916,23 @@ public class ListCommand extends BaseCommand {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 
-    private void renderVmResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+    private void renderResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         var labelStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
 
         var spans = new ArrayList<Span>();
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("CPU ", labelStyle));
-        modal.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
+        if (branchSourceIsVm) {
+            modal.renderInlineField(spans, vmCpuInput.text(), false, branchFieldIndex == 1);
+        } else {
+            modal.renderInlineField(spans, "(all)", true, false);
+        }
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("RAM ", labelStyle));
-        modal.renderInlineField(spans, vmMemoryInput.text(), false, branchFieldIndex == 2);
+        modal.renderInlineField(spans, vmMemoryInput.text(), !branchSourceIsVm, branchFieldIndex == 2);
         spans.add(Span.styled("  ", Style.EMPTY.bg(modal.bg())));
         spans.add(Span.styled("Disk ", labelStyle));
-        modal.renderInlineField(spans, vmDiskInput.text(), false, branchFieldIndex == 3);
+        modal.renderInlineField(spans, vmDiskInput.text(), !branchSourceIsVm, branchFieldIndex == 3);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
     }
 
@@ -3714,15 +3712,17 @@ public class ListCommand extends BaseCommand {
 
         String cpu, memory, disk;
         if (vm) {
-            cpu = vmCpuInput.text().strip();
+            var cpuText = vmCpuInput.text().strip();
+            cpu = cpuText.isEmpty() ? null : cpuText;
             memory = vmMemoryInput.text().strip();
             disk = vmDiskInput.text().strip();
         } else {
-            cpu = String.valueOf(ResourceLimits.adaptiveCpuLimit());
+            cpu = null;
             memory = ResourceLimits.adaptiveMemoryLimit();
             disk = ResourceLimits.defaultDiskLimit();
         }
-        System.out.println("Applying resource limits: " + cpu + " CPUs, " + memory + " memory, " + disk + " disk");
+        System.out.println("Applying resource limits: " +
+                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
