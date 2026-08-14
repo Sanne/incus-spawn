@@ -148,8 +148,10 @@ public class BranchCommand extends BaseCommand {
         // Push SSH keys and terminfo into stopped containers (direct filesystem
         // access). VMs require the incus-agent, so these are deferred to after start.
         if (!isVm) {
-            System.out.println("Configuring SSH access...");
-            InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
+            if (prefetched.hasSshKeys()) {
+                System.out.println("Configuring SSH access...");
+                InstanceLifecycle.injectSshKeyIfAvailable(incus, name, true);
+            }
             InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         }
 

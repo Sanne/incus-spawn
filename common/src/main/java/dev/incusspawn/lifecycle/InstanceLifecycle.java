@@ -170,7 +170,7 @@ public final class InstanceLifecycle {
     public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
         var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
         var hasSshKeys = !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
-                || buildSourceJson.contains("\"sshd\"");
+                || hasSshdTool(buildSourceJson);
         var workdir = incus.configGet(name, Metadata.WORKDIR);
         var shellCommand = incus.configGet(name, Metadata.SHELL_COMMAND);
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
@@ -264,12 +264,18 @@ public final class InstanceLifecycle {
             System.err.println("Warning: container setup may not be complete.");
         }
 
-        if (prefetched == null) {
-            System.out.println("Configuring SSH access...");
-            injectSshKeyIfAvailable(incus, name, null);
+        boolean sshCapable;
+        if (prefetched != null) {
+            sshCapable = prefetched.hasSshKeys();
+        } else {
+            sshCapable = hasSshCapability(incus, name);
+            if (sshCapable) {
+                System.out.println("Configuring SSH access...");
+                injectSshKeyIfAvailable(incus, name, null);
+            }
         }
 
-        configureSshHostEntry(incus, name);
+        configureSshHostEntry(incus, name, sshCapable);
     }
 
     public static void setupRuntime(IncusClient incus, String name,
@@ -427,7 +433,12 @@ public final class InstanceLifecycle {
      * the container is started so the IPv4 address is available.
      */
     public static void configureSshHostEntry(IncusClient incus, String name) {
+        configureSshHostEntry(incus, name, hasSshCapability(incus, name));
+    }
+
+    static void configureSshHostEntry(IncusClient incus, String name, boolean hasSsh) {
         if (!SshKeyManager.exists()) return;
+        if (!hasSsh) return;
 
         boolean includeConfigured = SshKeyManager.ensureSshConfigInclude();
         boolean hostConfigured = false;
@@ -445,6 +456,21 @@ public final class InstanceLifecycle {
         } else {
             System.out.println("  SSH is available — connect with: isx shell " + name);
         }
+    }
+
+    /**
+     * Check whether an instance was built with SSH capability (sshd tool or
+     * explicit ssh-setup config). Used to avoid advertising SSH access for
+     * containers that don't have sshd installed.
+     */
+    public static boolean hasSshCapability(IncusClient incus, String name) {
+        return !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
+                || hasSshdTool(incus.configGet(name, Metadata.BUILD_SOURCE));
+    }
+
+    static boolean hasSshdTool(String buildSourceJson) {
+        var bs = BuildSource.fromJson(buildSourceJson);
+        return bs != null && bs.getTools().containsKey("sshd");
     }
 
     public static String getUid() {

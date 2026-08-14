@@ -1107,7 +1107,9 @@ public class ListCommand extends BaseCommand {
                 try {
                     InstanceLifecycle.removeHostIntegration(renameSourceName);
                     AutoRemoteService.addRemotes(incus, newName, msg -> {});
-                    SshKeyManager.addHostEntry(newName);
+                    if (InstanceLifecycle.hasSshCapability(incus, newName)) {
+                        SshKeyManager.addHostEntry(newName);
+                    }
                 } catch (Exception ignore) {
                     // best-effort: instance is renamed, host integration may partially fail
                 }
