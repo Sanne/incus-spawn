@@ -174,6 +174,10 @@ public class BranchCommand extends BaseCommand {
 
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
 
+        if (networkMode != NetworkMode.AIRGAP) {
+            CertificateAuthority.fixContainerCaIfNeeded(incus, name);
+        }
+
         System.out.println("Branch '" + name + "' is ready.\n");
         incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
         return CommandResult.SUCCESS;
