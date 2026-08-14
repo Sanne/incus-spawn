@@ -6,8 +6,8 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 ARCH=$(uname -m)
 case "$ARCH" in
-  x86_64) ASSET="incus-spawn-linux-amd64" ;;
-  aarch64) ASSET="incus-spawn-linux-aarch64" ;;
+  x86_64)  ASSET="incus-spawn-linux-amd64"; PROXY_ASSET="isx-proxy-linux-amd64" ;;
+  aarch64) ASSET="incus-spawn-linux-aarch64"; PROXY_ASSET="isx-proxy-linux-aarch64" ;;
   *) echo "Error: unsupported architecture: $ARCH (only x86_64 and aarch64 are supported)"; exit 1 ;;
 esac
 
@@ -27,6 +27,9 @@ echo "Installing incus-spawn $VERSION to $INSTALL_DIR/isx..."
 mkdir -p "$INSTALL_DIR"
 curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$ASSET" -o "$INSTALL_DIR/isx"
 chmod +x "$INSTALL_DIR/isx"
+
+curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$PROXY_ASSET" -o "$INSTALL_DIR/isx-proxy"
+chmod +x "$INSTALL_DIR/isx-proxy"
 
 # Install git remote helper shim for isx:// URLs
 curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/git-remote-isx" -o "$INSTALL_DIR/git-remote-isx"
