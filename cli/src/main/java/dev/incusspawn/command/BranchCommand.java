@@ -101,7 +101,14 @@ public class BranchCommand extends BaseCommand {
         System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
         incus.copy(resolvedSource, name);
 
-        var cpu = cpuLimit != null ? String.valueOf(cpuLimit) : null;
+        String cpu;
+        if (cpuLimit != null) {
+            cpu = String.valueOf(cpuLimit);
+        } else if (incus.isVm(resolvedSource)) {
+            cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
+        } else {
+            cpu = null;
+        }
         var memory = memoryLimit != null ? memoryLimit : ResourceLimits.adaptiveMemoryLimit();
         var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
 

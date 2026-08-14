@@ -31,6 +31,7 @@ public final class InstanceLifecycle {
         if (cpu != null && !cpu.isEmpty()) {
             incus.configSetAll(name, Map.of("limits.cpu", cpu, "limits.memory", memory));
         } else {
+            incus.configUnset(name, "limits.cpu");
             incus.configSet(name, "limits.memory", memory);
         }
         incus.deviceConfigSet(name, "root", "size", disk);
