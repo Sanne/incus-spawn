@@ -28,7 +28,11 @@ public final class InstanceLifecycle {
 
     public static void applyResourceLimits(IncusClient incus, String name,
                                           String cpu, String memory, String disk) {
-        incus.configSetAll(name, Map.of("limits.cpu", cpu, "limits.memory", memory));
+        if (cpu != null && !cpu.isEmpty()) {
+            incus.configSetAll(name, Map.of("limits.cpu", cpu, "limits.memory", memory));
+        } else {
+            incus.configSet(name, "limits.memory", memory);
+        }
         incus.deviceConfigSet(name, "root", "size", disk);
     }
 
