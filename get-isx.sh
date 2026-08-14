@@ -28,6 +28,7 @@ mkdir -p "$INSTALL_DIR"
 curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$ASSET" -o "$INSTALL_DIR/isx"
 chmod +x "$INSTALL_DIR/isx"
 
+echo "Installing isx-proxy $VERSION to $INSTALL_DIR/isx-proxy..."
 curl -fsSL "https://github.com/$REPO/releases/download/$VERSION/$PROXY_ASSET" -o "$INSTALL_DIR/isx-proxy"
 chmod +x "$INSTALL_DIR/isx-proxy"
 
