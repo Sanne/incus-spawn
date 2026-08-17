@@ -125,7 +125,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq podman zstd btrfs-progs build-essential flex bison bc libelf-dev libssl-dev
           sudo mkdir -p /etc/containers
-          printf '[engine]\nnum_locks = 256\n' | sudo tee /etc/containers/containers.conf >/dev/null
+          printf '[engine]\nlock_type = "file"\n' | sudo tee /etc/containers/containers.conf >/dev/null
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
