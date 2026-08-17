@@ -124,6 +124,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq podman zstd btrfs-progs build-essential flex bison bc libelf-dev libssl-dev
+          sudo podman system reset --force
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
