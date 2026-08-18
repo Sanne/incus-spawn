@@ -50,6 +50,32 @@ jobs:
           path: proxy/target/quarkus-app/
           retention-days: 1
 
+  build-native:
+    needs: [unit-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.2
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.2'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Build native images
+        run: mvn package -Dnative -DskipTests
+
+      - name: Upload native CLI
+        uses: actions/upload-artifact@v6
+        with:
+          name: isx-native
+          path: |
+            cli/target/incus-spawn-*-runner
+            proxy/target/incus-spawn-proxy-*-runner
+          retention-days: 1
+
   build_appliance:
     uses: ./.github/workflows/build-appliance.yml
 
@@ -150,9 +176,13 @@ jobs:
           retention-days: 7
 
   isx-integration-tests:
-    needs: [unit-tests]
+    needs: [unit-tests, build-native]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [jvm, native]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -184,24 +214,28 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Install JDK 25
+        if: matrix.runtime == 'jvm'
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'oracle'
 
-      - name: Download isx build
+      - name: Download isx build (JVM)
+        if: matrix.runtime == 'jvm'
         uses: actions/download-artifact@v6
         with:
           name: isx-quarkus-app
           path: quarkus-app/
 
-      - name: Download proxy build
+      - name: Download proxy build (JVM)
+        if: matrix.runtime == 'jvm'
         uses: actions/download-artifact@v6
         with:
           name: isx-proxy-quarkus-app
           path: proxy-quarkus-app/
 
-      - name: Install isx wrapper
+      - name: Install isx (JVM)
+        if: matrix.runtime == 'jvm'
         run: |
           mkdir -p "$HOME/.local/bin"
           printf '#!/bin/sh\nexec java -jar %s/quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
@@ -210,6 +244,21 @@ jobs:
           printf '#!/bin/sh\nexec java -jar %s/proxy-quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
             > "$HOME/.local/bin/isx-proxy"
           chmod +x "$HOME/.local/bin/isx-proxy"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Download native build
+        if: matrix.runtime == 'native'
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native
+          path: native-bin/
+
+      - name: Install isx (native)
+        if: matrix.runtime == 'native'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 native-bin/cli/target/incus-spawn-*-runner "$HOME/.local/bin/isx"
+          install -m 755 native-bin/proxy/target/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
@@ -314,6 +363,24 @@ jobs:
           done
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
+
+      - name: Assert proxy survived
+        run: |
+          # JVM proxy runs as 'java -jar .../proxy-quarkus-app/...', native as 'isx-proxy'
+          PROXY_PID=$(pgrep -f 'isx-proxy|incus-spawn-proxy|proxy-quarkus-app' | head -1)
+          if [ -z "$PROXY_PID" ]; then
+            echo "::error::Proxy process is not running — it crashed during the test"
+            exit 1
+          fi
+          echo "Proxy still running (PID $PROXY_PID)"
+
+          PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' /proc/$PROXY_PID/status)
+          PEAK_RSS_MB=$((PEAK_RSS_KB / 1024))
+          echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
+
+          if [ "${{ matrix.runtime }}" = "native" ] && [ "$PEAK_RSS_MB" -gt 200 ]; then
+            echo "::warning::Proxy peak RSS (${PEAK_RSS_MB}MB) is approaching the 256MB MaxRAM ceiling"
+          fi
 
       - name: Cleanup
         if: always()
