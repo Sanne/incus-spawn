@@ -1,6 +1,9 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.Metadata;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -37,6 +40,8 @@ public class UpdateAllCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
+        refreshHostRepos(incus, templates);
+
         System.out.println("Updating " + templates.size() + " template(s)...\n");
 
         for (var name : templates) {
@@ -47,6 +52,25 @@ public class UpdateAllCommand extends BaseCommand {
 
         System.out.println("All templates updated.");
         return CommandResult.SUCCESS;
+    }
+
+    private void refreshHostRepos(dev.incusspawn.incus.IncusClient incus, java.util.List<String> templateNames) {
+        var config = SpawnConfig.load();
+        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
+
+        var defs = ImageDef.loadAll();
+        var repos = new ArrayList<ImageDef.RepoEntry>();
+        for (var name : templateNames) {
+            var profile = incus.configGet(name, Metadata.PROFILE);
+            var templateName = (profile != null && !profile.isEmpty()) ? profile : name;
+            var imageDef = defs.get(templateName);
+            if (imageDef != null) {
+                repos.addAll(HostRepoRefresh.collectAllRepos(imageDef, defs));
+            }
+        }
+        if (repos.isEmpty()) return;
+
+        HostRepoRefresh.refresh(repos, config, false, false, System.out::println);
     }
 
     private void updateImage(dev.incusspawn.incus.IncusClient incus, String name) {
