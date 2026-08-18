@@ -102,6 +102,40 @@ jobs:
           cp cli/target/incus-spawn-*-runner dist/incus-spawn-macos-${{ matrix.arch }}
           cp proxy/target/incus-spawn-proxy-*-runner dist/isx-proxy-macos-${{ matrix.arch }}
 
+      - name: Smoke-test native binaries
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          CLI=dist/incus-spawn-${{ matrix.os }}-${{ matrix.arch }}
+          PROXY=dist/isx-proxy-${{ matrix.os }}-${{ matrix.arch }}
+          chmod +x "$CLI" "$PROXY"
+
+          # --version: must exit 0 and contain the expected version string
+          VERSION_OUTPUT=$("$CLI" --version)
+          echo "$VERSION_OUTPUT"
+          echo "$VERSION_OUTPUT" | grep -qF "$VERSION"
+
+          # --help: must exit 0
+          "$CLI" --help > /dev/null
+
+          # Shell completions: must exit 0 with non-empty output
+          for shell in bash zsh fish; do
+            OUTPUT=$("$CLI" completion "$shell")
+            if [ -z "$OUTPUT" ]; then
+              echo "::error::completion $shell produced empty output"
+              exit 1
+            fi
+          done
+
+          # Proxy --help: must exit 0
+          "$PROXY" --help > /dev/null
+
+          # templates list: exercises YAML resource bundling and definition parsing
+          TEMPLATES_OUTPUT=$("$CLI" templates list)
+          echo "$TEMPLATES_OUTPUT"
+          echo "$TEMPLATES_OUTPUT" | grep -q "tpl-minimal"
+
+          echo "Smoke tests passed for ${{ matrix.os }}-${{ matrix.arch }}"
+
       - name: Upload uber-jar
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@v6
