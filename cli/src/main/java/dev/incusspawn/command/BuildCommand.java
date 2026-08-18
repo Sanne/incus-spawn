@@ -134,10 +134,6 @@ public class BuildCommand extends BaseCommand {
 
         var defs = ImageDef.loadAll();
 
-        if (!skipGitRefresh) {
-            refreshHostRepos(defs);
-        }
-
         try {
             if (withParents) {
                 if (name == null) {
@@ -150,6 +146,7 @@ public class BuildCommand extends BaseCommand {
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
                     return CommandResult.valueOf(1);
                 }
+                refreshHostRepos(List.of(imageDef), defs);
                 buildWithParents(imageDef, defs);
                 return CommandResult.SUCCESS;
             }
@@ -164,18 +161,22 @@ public class BuildCommand extends BaseCommand {
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
                     return CommandResult.valueOf(1);
                 }
+                refreshHostRepos(List.of(imageDef), defs);
                 buildWithDescendants(imageDef, defs);
                 return CommandResult.SUCCESS;
             }
             if (missing) {
+                refreshHostRepos(new ArrayList<>(defs.values()), defs);
                 buildMissing(defs);
                 return CommandResult.SUCCESS;
             }
             if (outOfSync) {
+                refreshHostRepos(new ArrayList<>(defs.values()), defs);
                 buildAll(defs, true);
                 return CommandResult.SUCCESS;
             }
             if (all) {
+                refreshHostRepos(new ArrayList<>(defs.values()), defs);
                 buildAll(defs, false);
                 return CommandResult.SUCCESS;
             }
@@ -203,6 +204,7 @@ public class BuildCommand extends BaseCommand {
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
                 return CommandResult.valueOf(1);
             }
+            refreshHostRepos(List.of(imageDef), defs);
             build(imageDef, defs);
             return CommandResult.SUCCESS;
         } catch (BuildFailedException e) {
@@ -210,11 +212,12 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void refreshHostRepos(Map<String, ImageDef> defs) {
+    private void refreshHostRepos(List<ImageDef> targets, Map<String, ImageDef> defs) {
+        if (skipGitRefresh) return;
         var config = SpawnConfig.load();
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
-        var allRepos = HostRepoRefresh.collectAllRepos(new ArrayList<>(defs.values()), defs);
+        var allRepos = HostRepoRefresh.collectAllRepos(targets, defs);
         if (allRepos.isEmpty()) return;
 
         HostRepoRefresh.refresh(allRepos, config, true, yes, System.out::println);

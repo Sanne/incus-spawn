@@ -151,7 +151,11 @@ public final class HostRepoRefresh {
         };
     }
 
-    private static Path resolveCloneTarget(String repoName, SpawnConfig config) {
+    static Path resolveCloneTarget(String repoName, SpawnConfig config) {
+        var override = config.getRepoPaths().get(repoName);
+        if (override != null && !override.isEmpty()) {
+            return Path.of(HostResourceSetup.expandHostTilde(override));
+        }
         var hostPaths = config.getHostPaths();
         if (hostPaths.isEmpty()) return null;
         var basePath = HostResourceSetup.expandHostTilde(hostPaths.get(0));
