@@ -34,6 +34,8 @@ public class SpawnConfig {
     private Map<String, String> repoPaths = Map.of();
     @JsonProperty("incus-bridge-gateway")
     private String incusBridgeGateway = "";
+    @JsonProperty("auto-clone-repos")
+    private String autoCloneRepos = "";
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
@@ -117,6 +119,8 @@ public class SpawnConfig {
     public void setRepoPaths(Map<String, String> repoPaths) { this.repoPaths = repoPaths == null ? Map.of() : repoPaths; }
     public String getIncusBridgeGateway() { return incusBridgeGateway; }
     public void setIncusBridgeGateway(String incusBridgeGateway) { this.incusBridgeGateway = incusBridgeGateway == null ? "" : incusBridgeGateway; }
+    public String getAutoCloneRepos() { return autoCloneRepos; }
+    public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
 
     public static Path configDir() {
         return Environment.configDir();

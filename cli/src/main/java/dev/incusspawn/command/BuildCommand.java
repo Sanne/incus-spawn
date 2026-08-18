@@ -12,6 +12,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
+import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
@@ -88,6 +89,9 @@ public class BuildCommand extends BaseCommand {
     @Option(name = "yes", hasValue = false, description = "Skip interactive confirmations (for TUI integration)")
     boolean yes;
 
+    @Option(name = "skip-git-refresh", hasValue = false, description = "Skip refreshing host-side git repositories before building")
+    boolean skipGitRefresh;
+
     IncusClient incus;
     ToolDefLoader toolDefLoader;
     Iterable<ToolSetup> toolSetups;
@@ -129,6 +133,10 @@ public class BuildCommand extends BaseCommand {
         }));
 
         var defs = ImageDef.loadAll();
+
+        if (!skipGitRefresh) {
+            refreshHostRepos(defs);
+        }
 
         try {
             if (withParents) {
@@ -200,6 +208,16 @@ public class BuildCommand extends BaseCommand {
         } catch (BuildFailedException e) {
             return CommandResult.valueOf(1);
         }
+    }
+
+    private void refreshHostRepos(Map<String, ImageDef> defs) {
+        var config = SpawnConfig.load();
+        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
+
+        var allRepos = HostRepoRefresh.collectAllRepos(new ArrayList<>(defs.values()), defs);
+        if (allRepos.isEmpty()) return;
+
+        HostRepoRefresh.refresh(allRepos, config, true, yes, System.out::println);
     }
 
     /**
