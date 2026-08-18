@@ -52,7 +52,7 @@ jobs:
 
   build-native:
     needs: [unit-tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -67,7 +67,7 @@ jobs:
       - name: Build native images
         run: mvn package -Dnative -DskipTests
 
-      - name: Upload native CLI
+      - name: Upload native binaries
         uses: actions/upload-artifact@v6
         with:
           name: isx-native
@@ -367,19 +367,21 @@ jobs:
       - name: Assert proxy survived
         run: |
           # JVM proxy runs as 'java -jar .../proxy-quarkus-app/...', native as 'isx-proxy'
-          PROXY_PID=$(pgrep -f 'isx-proxy|incus-spawn-proxy|proxy-quarkus-app' | head -1)
+          PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy|proxy-quarkus-app' || true)
           if [ -z "$PROXY_PID" ]; then
             echo "::error::Proxy process is not running — it crashed during the test"
             exit 1
           fi
           echo "Proxy still running (PID $PROXY_PID)"
 
-          PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' /proc/$PROXY_PID/status)
-          PEAK_RSS_MB=$((PEAK_RSS_KB / 1024))
-          echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
+          if [ -f /proc/$PROXY_PID/status ]; then
+            PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' /proc/$PROXY_PID/status)
+            PEAK_RSS_MB=$((PEAK_RSS_KB / 1024))
+            echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
 
-          if [ "${{ matrix.runtime }}" = "native" ] && [ "$PEAK_RSS_MB" -gt 200 ]; then
-            echo "::warning::Proxy peak RSS (${PEAK_RSS_MB}MB) is approaching the 256MB MaxRAM ceiling"
+            if [ "${{ matrix.runtime }}" = "native" ] && [ "$PEAK_RSS_MB" -gt 200 ]; then
+              echo "::warning::Proxy peak RSS (${PEAK_RSS_MB}MB) is approaching the 256MB MaxRAM ceiling"
+            fi
           fi
 
       - name: Cleanup
