@@ -245,7 +245,7 @@ public final class GitRemoteUtils {
             int exitCode = process.waitFor();
             return new ExecResult(exitCode == 0, output);
         } catch (IOException e) {
-            return new ExecResult(false, e.getMessage());
+            return new ExecResult(false, e.toString());
         } catch (InterruptedException e) {
             if (process != null) process.destroyForcibly();
             Thread.currentThread().interrupt();

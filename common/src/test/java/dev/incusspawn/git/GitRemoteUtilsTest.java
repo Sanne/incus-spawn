@@ -463,6 +463,33 @@ class GitRemoteUtilsTest {
         assertTrue(GitRemoteUtils.anyRemoteMatches(tempDir, "https://github.com/quarkusio/quarkus.git"));
     }
 
+    // ── matchingRemoteName ──────────────────────────────────────────────────
+
+    @Test
+    void matchingRemoteNameReturnsOrigin() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "https://github.com/org/repo.git");
+        assertEquals("origin", GitRemoteUtils.matchingRemoteName(tempDir, "https://github.com/org/repo.git"));
+    }
+
+    @Test
+    void matchingRemoteNameReturnsUpstream() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "git@github.com:user/repo.git");
+        runGit(tempDir, "remote", "add", "upstream", "https://github.com/org/repo.git");
+        assertEquals("upstream", GitRemoteUtils.matchingRemoteName(tempDir, "https://github.com/org/repo.git"));
+    }
+
+    @Test
+    void matchingRemoteNameMatchesSshVsHttps() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "git@github.com:org/repo.git");
+        assertEquals("origin", GitRemoteUtils.matchingRemoteName(tempDir, "https://github.com/org/repo.git"));
+    }
+
+    @Test
+    void matchingRemoteNameReturnsNullWhenNoMatch() throws IOException, InterruptedException {
+        initGitRepoWithRemote(tempDir, "origin", "https://github.com/other/repo.git");
+        assertNull(GitRemoteUtils.matchingRemoteName(tempDir, "https://github.com/org/repo.git"));
+    }
+
     // ── parseGitRemotes ─────────────────────────────────────────────────────
 
     @Test

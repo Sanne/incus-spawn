@@ -132,6 +132,38 @@ class HostRepoRefreshTest {
         assertEquals(2, repos.size());
     }
 
+    // ── extractGitError ────────────────────────────────────────────────────
+
+    @Test
+    void extractGitErrorReturnsFatalLine() {
+        var text = "remote: Enumerating objects: 5\nfatal: could not read Username";
+        assertEquals("fatal: could not read Username", HostRepoRefresh.extractGitError(text));
+    }
+
+    @Test
+    void extractGitErrorReturnsErrorLine() {
+        var text = "something\nerror: cannot lock ref\nother stuff";
+        assertEquals("error: cannot lock ref", HostRepoRefresh.extractGitError(text));
+    }
+
+    @Test
+    void extractGitErrorFallsBackToLastLine() {
+        var text = "some info\nconnection timed out";
+        assertEquals("connection timed out", HostRepoRefresh.extractGitError(text));
+    }
+
+    @Test
+    void extractGitErrorReturnsEmptyForNullOrEmpty() {
+        assertEquals("", HostRepoRefresh.extractGitError(null));
+        assertEquals("", HostRepoRefresh.extractGitError(""));
+    }
+
+    @Test
+    void extractGitErrorPrefersFatalOverLaterContent() {
+        var text = "fatal: Authentication failed\nerror: also this\nlast line";
+        assertEquals("fatal: Authentication failed", HostRepoRefresh.extractGitError(text));
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────
 
     private static ImageDef.RepoEntry repoEntry(String url) {
