@@ -14,7 +14,7 @@ public class BobSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
     private static final String VERSION_URL =
-            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-version.txt";
+            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell2-version.txt";
     private static final String BASE_URL =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-";
     private static final Pattern VERSION_PATTERN = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
