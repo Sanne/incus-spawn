@@ -30,6 +30,26 @@ public class ProxyMain implements QuarkusApplication {
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
+                case "--help", "-h" -> {
+                    System.out.println("Usage: isx-proxy [OPTIONS]");
+                    System.out.println();
+                    System.out.println("MITM authentication proxy for incus-spawn containers.");
+                    System.out.println();
+                    System.out.println("Options:");
+                    System.out.println("  --port <port>         MITM listen port (default: " + ProxyConfig.DEFAULT_MITM_PORT + ")");
+                    System.out.println("  --health-port <port>  Health check port (default: " + ProxyConfig.DEFAULT_HEALTH_PORT + ")");
+                    System.out.println("  --gateway-ip <ip>     Override gateway IP detection");
+                    System.out.println("  --debug               Enable API traffic debug logging");
+                    System.out.println("  --version, -V         Display version info");
+                    System.out.println("  --help, -h            Show this help");
+                    return 0;
+                }
+                case "--version", "-V" -> {
+                    var info = BuildInfo.instance();
+                    System.out.println("isx-proxy " + info.version() + " (" + info.gitSha() + ")");
+                    System.out.println(info.runtime());
+                    return 0;
+                }
                 case "--port" -> { if (i + 1 < args.length) port = Integer.parseInt(args[++i]); }
                 case "--health-port" -> { if (i + 1 < args.length) healthPort = Integer.parseInt(args[++i]); }
                 case "--gateway-ip" -> { if (i + 1 < args.length) gatewayIpOption = args[++i]; }
