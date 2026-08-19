@@ -33,6 +33,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public String feature() {
+        return def.getFeature();
+    }
+
+    @Override
     public java.util.List<String> packages() {
         return def.getPackages();
     }

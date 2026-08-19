@@ -13,6 +13,9 @@ public interface ToolSetup {
     /** Short name for display during build (e.g. "podman", "gh", "claude"). */
     String name();
 
+    /** Feature flag that must be enabled for this tool to be available. Null means always available. */
+    default String feature() { return null; }
+
     /** Packages this tool needs installed via dnf. Used to batch all installs into one call. */
     default java.util.List<String> packages() { return java.util.List.of(); }
 

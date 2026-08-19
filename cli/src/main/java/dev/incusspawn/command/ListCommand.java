@@ -2960,6 +2960,17 @@ public class ListCommand extends BaseCommand {
             collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
         }
         tools.addAll(allDeps);
+        var config = SpawnConfig.load();
+        tools.removeIf(name -> {
+            var setup = toolDefLoader.find(name);
+            if (setup != null) return BuildCommand.isFeatureGated(setup, config);
+            if (cdiTools != null) {
+                for (var t : cdiTools) {
+                    if (t.name().equals(name)) return BuildCommand.isFeatureGated(t, config);
+                }
+            }
+            return false;
+        });
         return tools;
     }
 

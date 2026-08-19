@@ -14,6 +14,11 @@ public class CodexSetup implements ToolSetup {
     }
 
     @Override
+    public String feature() {
+        return "openai";
+    }
+
+    @Override
     public List<ToolDef.ActionEntry> actions() {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Codex CLI");

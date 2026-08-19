@@ -57,6 +57,7 @@ public class ToolDef {
     @JsonProperty("package_repos")
     private List<ImageDef.PackageRepo> packageRepos = List.of();
     private Map<String, ParameterDef> parameters = Map.of();
+    private String feature;
 
     private transient volatile String cachedFingerprint;
 
@@ -90,6 +91,8 @@ public class ToolDef {
     public void setParameters(Map<String, ParameterDef> parameters) {
         this.parameters = parameters != null ? parameters : Map.of();
     }
+    public String getFeature() { return feature; }
+    public void setFeature(String feature) { this.feature = feature != null && feature.isBlank() ? null : feature; }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DownloadEntry {
