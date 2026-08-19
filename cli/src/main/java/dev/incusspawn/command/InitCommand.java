@@ -1709,7 +1709,7 @@ public class InitCommand extends BaseCommand {
         }
 
         System.out.println("  To create an API key:");
-        System.out.println("    1. Go to https://bob.ibm.com/admin/apikeys");
+        System.out.println("    1. Go to https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key");
         System.out.println("    2. Click 'Create API key'");
         System.out.println("    3. Set the scope to " + BOLD + "Inference" + RESET);
         System.out.println("    4. Copy the generated key");
