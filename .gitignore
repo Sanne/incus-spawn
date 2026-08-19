@@ -48,6 +48,7 @@ nb-configuration.xml
 stderr.txt
 stdout.txt
 META-INF/
+!**/src/main/resources/META-INF/
 
 # Appliance build output
 appliance/build/

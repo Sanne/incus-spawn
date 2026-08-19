@@ -1,0 +1,30 @@
+[
+  {
+    "condition": {
+      "typeReachable": "io.netty.channel.epoll.Epoll"
+    },
+    "name": "io.netty.channel.epoll.Epoll",
+    "methods": [{"name": "isAvailable", "parameterTypes": []}]
+  },
+  {
+    "condition": {
+      "typeReachable": "io.netty.channel.epoll.Epoll"
+    },
+    "name": "io.vertx.core.impl.transports.EpollTransport",
+    "allDeclaredConstructors": true
+  },
+  {
+    "condition": {
+      "typeReachable": "io.netty.channel.kqueue.KQueue"
+    },
+    "name": "io.netty.channel.kqueue.KQueue",
+    "methods": [{"name": "isAvailable", "parameterTypes": []}]
+  },
+  {
+    "condition": {
+      "typeReachable": "io.netty.channel.kqueue.KQueue"
+    },
+    "name": "io.vertx.core.impl.transports.KQueueTransport",
+    "allDeclaredConstructors": true
+  }
+]

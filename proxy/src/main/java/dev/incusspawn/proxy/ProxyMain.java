@@ -107,6 +107,7 @@ public class ProxyMain implements QuarkusApplication {
 
         var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
+        System.out.println("  Transport:     " + (vertx.isNativeTransportEnabled() ? "native" : "NIO"));
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
                 apiKey, oauthToken, ghToken, bobApiKey,
                 claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
