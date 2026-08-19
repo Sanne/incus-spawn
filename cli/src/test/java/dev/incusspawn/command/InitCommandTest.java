@@ -228,4 +228,41 @@ class InitCommandTest {
         writeSentinel(home, "  " + Environment.INIT_VERSION + "\n");
         withHome(home, () -> assertTrue(InitCommand.hasBeenInitialized()));
     }
+
+    // --- hasExistingTemplatesSearchPath ---
+
+    @Test
+    void detectsExactTemplatesRepoPath() {
+        assertTrue(InitCommand.hasExistingTemplatesSearchPath(
+                java.util.List.of("/home/user/.config/incus-spawn/incus-spawn-templates")));
+    }
+
+    @Test
+    void detectsTemplatesRepoInCustomLocation() {
+        assertTrue(InitCommand.hasExistingTemplatesSearchPath(
+                java.util.List.of("/home/user/sources/incus-spawn-templates")));
+    }
+
+    @Test
+    void doesNotMatchSubstringInParentDir() {
+        assertFalse(InitCommand.hasExistingTemplatesSearchPath(
+                java.util.List.of("/home/user/not-incus-spawn-templates-backup/stuff")));
+    }
+
+    @Test
+    void doesNotMatchPartialRepoName() {
+        assertFalse(InitCommand.hasExistingTemplatesSearchPath(
+                java.util.List.of("/home/user/incus-spawn-templates-old")));
+    }
+
+    @Test
+    void emptySearchPathsReturnsFalse() {
+        assertFalse(InitCommand.hasExistingTemplatesSearchPath(java.util.List.of()));
+    }
+
+    @Test
+    void matchesAmongMultiplePaths() {
+        assertTrue(InitCommand.hasExistingTemplatesSearchPath(
+                java.util.List.of("/home/user/other-templates", "/home/user/incus-spawn-templates")));
+    }
 }

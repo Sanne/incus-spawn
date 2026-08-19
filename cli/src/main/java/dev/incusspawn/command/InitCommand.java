@@ -1808,20 +1808,194 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    private static final String TEMPLATES_REPO = "incus-spawn-templates";
+    private static final String TEMPLATES_UPSTREAM = "Sanne/" + TEMPLATES_REPO;
+
     private void setupSearchPaths() {
         startStep("Template Search Paths",
                 "Local directories where isx looks for custom image and",
                 "tool definitions. Definitions found here can extend or",
                 "override the built-in templates. Each directory should",
                 "contain images/ and/or tools/ subdirectories with YAML",
-                "files.",
-                "",
-                "For an example layout, see (clone it, don't enter the URL):",
-                "https://github.com/Sanne/incus-spawn-templates");
+                "files.");
+
+        if (!hasExistingTemplatesSearchPath(SpawnConfig.load().getSearchPaths())) {
+            offerTemplatesRepo();
+        }
+
         setupPathList(
                 SpawnConfig::getSearchPaths,
                 SpawnConfig::setSearchPaths,
                 "  No search paths configured. You can add them later in ~/.config/incus-spawn/config.yaml");
+    }
+
+    static boolean hasExistingTemplatesSearchPath(java.util.List<String> searchPaths) {
+        return searchPaths.stream()
+                .anyMatch(p -> Path.of(p).getFileName().toString().equals(TEMPLATES_REPO));
+    }
+
+    private void offerTemplatesRepo() {
+        if (!commandExists("gh") || !commandExists("git")) {
+            System.out.println("  For community templates, see (clone and add the local path):");
+            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println();
+            return;
+        }
+
+        var login = getGhLogin();
+        if (login == null) {
+            System.out.println("  For community templates, see (clone and add the local path):");
+            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println();
+            return;
+        }
+
+        var console = System.console();
+        if (console == null) {
+            System.out.println("  For community templates, see (clone and add the local path):");
+            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println();
+            return;
+        }
+
+        if (ghRepoExists(login + "/" + TEMPLATES_REPO)) {
+            offerCloneTemplates(console, login);
+        } else {
+            offerForkAndCloneTemplates(console, login);
+        }
+    }
+
+    private String getGhLogin() {
+        if (runHostCapturingExit("gh", "auth", "status") != 0) return null;
+        var login = captureOutput("gh", "api", "user", "--jq", ".login");
+        return login.isEmpty() ? null : login;
+    }
+
+    private boolean ghRepoExists(String nwo) {
+        try {
+            var pb = new ProcessBuilder("gh", "api", "repos/" + nwo, "--silent");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void offerCloneTemplates(Console console, String login) {
+        System.out.println("  Found " + BOLD + login + "/" + TEMPLATES_REPO + RESET + " on GitHub.");
+        var defaultPath = defaultClonePath();
+        var clonePath = askClonePath(console, defaultPath);
+        if (clonePath == null) return;
+        cloneAndAddSearchPath(login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
+    }
+
+    private void offerForkAndCloneTemplates(Console console, String login) {
+        System.out.println("  You don't have a " + BOLD + TEMPLATES_REPO + RESET + " repo yet.");
+        System.out.print("  Fork " + TEMPLATES_UPSTREAM + " to your account? (Y/n): ");
+        var answer = console.readLine().strip();
+        if (answer.equalsIgnoreCase("n")) {
+            System.out.println("  Skipped. You can fork it manually at:");
+            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println();
+            return;
+        }
+
+        System.out.println("  Forking " + TEMPLATES_UPSTREAM + "...");
+        var forkResult = runHostCapturingExit("gh", "repo", "fork", TEMPLATES_UPSTREAM, "--clone=false");
+        if (forkResult != 0) {
+            System.out.println("  Fork failed. You can fork it manually at:");
+            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM + "/fork");
+            System.out.println();
+            return;
+        }
+        System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Forked to " + login + "/" + TEMPLATES_REPO);
+
+        var defaultPath = defaultClonePath();
+        var clonePath = askClonePath(console, defaultPath);
+        if (clonePath == null) {
+            System.out.println("  You can clone it later with: gh repo clone " + login + "/" + TEMPLATES_REPO);
+            System.out.println();
+            return;
+        }
+        cloneAndAddSearchPath(login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
+    }
+
+    private static String defaultClonePath() {
+        return Environment.configDir().resolve(TEMPLATES_REPO).toString();
+    }
+
+    private String askClonePath(Console console, String defaultPath) {
+        System.out.print("  Clone to " + defaultPath + "? (Y/path/n): ");
+        var answer = console.readLine().strip();
+        if (answer.equalsIgnoreCase("n")) return null;
+        if (answer.isEmpty() || answer.equalsIgnoreCase("y")) return defaultPath;
+
+        if (answer.equalsIgnoreCase("path")) {
+            System.out.print("  Clone path: ");
+            var path = console.readLine().strip();
+            if (path.isEmpty()) return defaultPath;
+            return HostResourceSetup.expandHostTilde(path);
+        }
+        return HostResourceSetup.expandHostTilde(answer);
+    }
+
+    private void cloneAndAddSearchPath(String nwo, String targetPath, boolean alreadyConfirmed) {
+        var console = System.console();
+        var target = Path.of(targetPath).toAbsolutePath().normalize();
+        var adjusted = false;
+        if (Files.isDirectory(target) && !target.getFileName().toString().equals(TEMPLATES_REPO)) {
+            target = target.resolve(TEMPLATES_REPO);
+            adjusted = true;
+        }
+        if (Files.isDirectory(target)) {
+            System.out.println("  Directory already exists: " + target);
+            addToSearchPaths(target.toString());
+            return;
+        }
+
+        if (console != null && (!alreadyConfirmed || adjusted)) {
+            System.out.print("  Will clone to " + target + ". Proceed? (Y/n): ");
+            var confirm = console.readLine().strip();
+            if (confirm.equalsIgnoreCase("n")) {
+                System.out.println("  Skipped cloning. You can add the path manually below.");
+                return;
+            }
+        }
+
+        System.out.println("  Cloning...");
+        var result = runHostCapturingExit("gh", "repo", "clone", nwo, target.toString());
+        if (result != 0) {
+            System.out.println("  Clone failed. You can clone it manually and add the path below.");
+            return;
+        }
+        System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Cloned to " + target);
+        addToSearchPaths(target.toString());
+    }
+
+    private void addToSearchPaths(String path) {
+        var config = SpawnConfig.load();
+        var paths = new java.util.ArrayList<>(config.getSearchPaths());
+        if (!paths.contains(path)) {
+            paths.add(path);
+            config.setSearchPaths(paths);
+            config.save();
+            System.out.println("  Added to search paths.");
+        }
+        System.out.println();
+    }
+
+    private int runHostCapturingExit(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor();
+        } catch (Exception e) {
+            return 1;
+        }
     }
 
     private void setupHostPaths() {
