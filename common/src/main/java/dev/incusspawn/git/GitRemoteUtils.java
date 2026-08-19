@@ -217,12 +217,20 @@ public final class GitRemoteUtils {
     }
 
     public static boolean anyRemoteMatches(Path repoDir, String cloneUrl) {
-        var normalizedTarget = normalizeGitUrl(cloneUrl);
-        return parseGitRemotes(repoDir).stream()
-                .anyMatch(r -> normalizeGitUrl(r.url()).equals(normalizedTarget));
+        return matchingRemoteName(repoDir, cloneUrl) != null;
     }
 
-    static String hostGitExec(Path repoDir, String... gitArgs) {
+    public static String matchingRemoteName(Path repoDir, String cloneUrl) {
+        var normalizedTarget = normalizeGitUrl(cloneUrl);
+        return parseGitRemotes(repoDir).stream()
+                .filter(r -> normalizeGitUrl(r.url()).equals(normalizedTarget))
+                .map(RemoteEntry::name)
+                .findFirst().orElse(null);
+    }
+
+    record ExecResult(boolean success, String output) {}
+
+    static ExecResult hostGitExecResult(Path repoDir, String... gitArgs) {
         var command = new ArrayList<String>();
         command.add("git");
         command.add("-C");
@@ -233,16 +241,21 @@ public final class GitRemoteUtils {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             process = pb.start();
-            var stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+            var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
             int exitCode = process.waitFor();
-            return exitCode == 0 ? stdout : null;
+            return new ExecResult(exitCode == 0, output);
         } catch (IOException e) {
-            return null;
+            return new ExecResult(false, e.getMessage());
         } catch (InterruptedException e) {
             if (process != null) process.destroyForcibly();
             Thread.currentThread().interrupt();
-            return null;
+            return new ExecResult(false, "interrupted");
         }
+    }
+
+    static String hostGitExec(Path repoDir, String... gitArgs) {
+        var result = hostGitExecResult(repoDir, gitArgs);
+        return result.success() ? result.output() : null;
     }
 
     private static List<Path> findRepoDirsNamed(Path basePath, String repoName) {

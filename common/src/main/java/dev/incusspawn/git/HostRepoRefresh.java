@@ -40,8 +40,9 @@ public final class HostRepoRefresh {
             }
 
             if (hostPath != null && Files.isDirectory(hostPath) && GitRemoteUtils.isGitRepo(hostPath)) {
-                if (GitRemoteUtils.anyRemoteMatches(hostPath, repo.getUrl())) {
-                    toFetch.add(new FetchTask(repoName, hostPath));
+                var remoteName = GitRemoteUtils.matchingRemoteName(hostPath, repo.getUrl());
+                if (remoteName != null) {
+                    toFetch.add(new FetchTask(repoName, hostPath, remoteName));
                 } else {
                     output.accept("  Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping refresh");
                 }
@@ -69,11 +70,14 @@ public final class HostRepoRefresh {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var futures = tasks.stream()
                     .map(task -> executor.submit(() -> {
-                        var result = GitRemoteUtils.hostGitExec(task.hostPath, "fetch", "--all");
-                        if (result != null) {
+                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", task.remoteName);
+                        if (result.success()) {
                             output.accept("  Fetched " + task.repoName + " (" + task.hostPath + ")");
                         } else {
-                            output.accept("  Warning: fetch failed for " + task.repoName + " at " + task.hostPath);
+                            var detail = extractGitError(result.output());
+                            var msg = "  Warning: fetch failed for " + task.repoName + " at " + task.hostPath;
+                            if (!detail.isEmpty()) msg += ": " + detail;
+                            output.accept(msg);
                         }
                     }))
                     .toList();
@@ -118,12 +122,15 @@ public final class HostRepoRefresh {
             }
 
             output.accept("  Cloning " + task.url + " into " + task.targetDir + "...");
-            var result = GitRemoteUtils.hostGitExec(task.targetDir.getParent(),
+            var result = GitRemoteUtils.hostGitExecResult(task.targetDir.getParent(),
                     "clone", "--", task.url, task.targetDir.getFileName().toString());
-            if (result != null) {
+            if (result.success()) {
                 output.accept("  Cloned " + task.repoName);
             } else {
-                output.accept("  Warning: clone failed for " + task.url);
+                var detail = extractGitError(result.output());
+                var msg = "  Warning: clone failed for " + task.url;
+                if (!detail.isEmpty()) msg += ": " + detail;
+                output.accept(msg);
             }
         }
     }
@@ -187,7 +194,19 @@ public final class HostRepoRefresh {
         return repos;
     }
 
-    private record FetchTask(String repoName, Path hostPath) {}
+    private static String extractGitError(String text) {
+        if (text == null || text.isEmpty()) return "";
+        for (var line : text.split("\n")) {
+            var trimmed = line.strip();
+            if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) {
+                return trimmed;
+            }
+        }
+        var lines = text.strip().split("\n");
+        return lines[lines.length - 1].strip();
+    }
+
+    private record FetchTask(String repoName, Path hostPath, String remoteName) {}
     private record CloneTask(String repoName, String url, Path targetDir) {}
 
     private enum ClonePolicy { ASK, ALWAYS, NEVER }
