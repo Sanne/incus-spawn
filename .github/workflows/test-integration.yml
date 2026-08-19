@@ -19,6 +19,10 @@ on:
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
+concurrency:
+  group: integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
@@ -82,6 +86,7 @@ jobs:
   integration-tests:
     needs: [unit-tests, build_appliance]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
