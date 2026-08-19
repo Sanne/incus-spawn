@@ -70,14 +70,18 @@ public final class HostRepoRefresh {
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var futures = tasks.stream()
                     .map(task -> executor.submit(() -> {
-                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", task.remoteName);
-                        if (result.success()) {
-                            output.accept("  Fetched " + task.repoName + " (" + task.hostPath + ")");
-                        } else {
-                            var detail = extractGitError(result.output());
-                            var msg = "  Warning: fetch failed for " + task.repoName + " at " + task.hostPath;
-                            if (!detail.isEmpty()) msg += ": " + detail;
-                            output.accept(msg);
+                        try {
+                            var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", "--", task.remoteName);
+                            if (result.success()) {
+                                output.accept("  Fetched " + task.repoName + " (" + task.hostPath + ")");
+                            } else {
+                                var detail = extractGitError(result.output());
+                                var msg = "  Warning: fetch failed for " + task.repoName + " at " + task.hostPath;
+                                if (!detail.isEmpty()) msg += ": " + detail;
+                                output.accept(msg);
+                            }
+                        } catch (Exception e) {
+                            output.accept("  Warning: fetch failed for " + task.repoName + " at " + task.hostPath + ": " + e);
                         }
                     }))
                     .toList();
@@ -194,7 +198,7 @@ public final class HostRepoRefresh {
         return repos;
     }
 
-    private static String extractGitError(String text) {
+    static String extractGitError(String text) {
         if (text == null || text.isEmpty()) return "";
         for (var line : text.split("\n")) {
             var trimmed = line.strip();
