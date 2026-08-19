@@ -47,16 +47,21 @@ public class CodexSetup implements ToolSetup {
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
     }
 
+    static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
+
     private void configureSettings(Container c) {
         System.out.println("Configuring Codex CLI...");
-        var configJson = """
-                {
-                  "model": "o4-mini",
-                  "approval_mode": "suggest"
-                }
+        var configToml = """
+                model = "o4-mini"
+                approval_policy = "full-auto"
+                forced_login_method = "api"
+                check_for_update_on_startup = false
+
+                [projects."/home/agentuser"]
+                trust_level = "trusted"
                 """;
         c.sh("mkdir -p /home/agentuser/.codex");
-        c.writeFile("/home/agentuser/.codex/config.json", configJson);
+        c.writeFile(CONFIG_PATH, configToml);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
     }
 
