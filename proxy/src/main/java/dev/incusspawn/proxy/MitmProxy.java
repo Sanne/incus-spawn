@@ -66,6 +66,7 @@ public class MitmProxy {
     private static final Set<String> MAVEN_DOMAINS = ProxyConfig.MAVEN_DOMAINS;
     private static final Set<String> GRADLE_DOMAINS = ProxyConfig.GRADLE_DOMAINS;
     private static final Set<String> OPENAI_DOMAINS = ProxyConfig.OPENAI_DOMAINS;
+    private static final Set<String> NPM_DOMAINS = ProxyConfig.NPM_DOMAINS;
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
     // Group 1 = image name (e.g. "library/postgres"), group 2 = digest
@@ -77,6 +78,16 @@ public class MitmProxy {
     private static final Pattern GRADLE_DIST_PATTERN = Pattern.compile(
             "/distributions/(gradle-[\\w.\\-]+-(?:bin|all)\\.zip)");
 
+    // npm tarball: /<scope>/<name>/-/<name>-<version>.tgz or /<name>/-/<name>-<version>.tgz
+    // Group 1 = full path after leading slash (used as cache key)
+    static final Pattern NPM_TARBALL_PATTERN = Pattern.compile(
+            "/((?:@[^/]+/)?[^/]+/-/[^/]+-\\d[^/]*\\.tgz)");
+
+    // npm packument: /<name> or /@scope/name (no further path segments)
+    // Group 1 = package name
+    static final Pattern NPM_PACKUMENT_PATTERN = Pattern.compile(
+            "/((?:@[^/]+/)?[^/]+)");
+
     private static Path registryCacheDir() {
         return Environment.registryCacheDir();
     }
@@ -87,6 +98,10 @@ public class MitmProxy {
 
     private static Path gradleCacheDir() {
         return Environment.gradleCacheDir();
+    }
+
+    private static Path npmCacheDir() {
+        return Environment.npmCacheDir();
     }
 
     private static Path m2Repository() {
@@ -300,6 +315,8 @@ public class MitmProxy {
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         System.out.println("Gradle cache: " + gradleCacheDir() +
                 " (domains: " + GRADLE_DOMAINS + ")");
+        System.out.println("npm cache: " + npmCacheDir() +
+                " (domains: " + NPM_DOMAINS + ")");
         if (credentials.useVertex()) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexHost() +
@@ -383,6 +400,8 @@ public class MitmProxy {
                 handleMavenRequest(clientReq, domain);
             } else if (GRADLE_DOMAINS.contains(domain)) {
                 handleGradleRequest(clientReq, domain);
+            } else if (NPM_DOMAINS.contains(domain)) {
+                handleNpmRequest(clientReq, domain);
             } else if (ProxyConfig.isInterceptedDomain(domain)) {
                 handleApiRequest(clientReq, domain);
             } else {
@@ -863,7 +882,7 @@ public class MitmProxy {
             }
 
             if (digest != null && !verifyDigest(tempFile, digest)) {
-                System.err.println("Cache: SHA256 mismatch for " +
+                System.err.println("Cache: checksum mismatch for " +
                         ref + " " + digest + ", not caching");
                 Files.deleteIfExists(tempFile);
             } else {
@@ -940,6 +959,241 @@ public class MitmProxy {
                 System.err.println("Gradle SHA256 fetch error for " + ref + ": " + err.getMessage());
                 fetchCacheAndServe(clientReq, domain, null, cacheFile, ref);
             });
+    }
+
+    // --- npm tarball caching ---
+
+    record NpmPackageRef(String packageName, String version) {}
+
+    /**
+     * Parse a matched npm tarball path into a package name and version.
+     * Input format: {@code @scope/name/-/name-version.tgz} or {@code name/-/name-version.tgz}.
+     */
+    static NpmPackageRef parseNpmTarballPath(String tarballPath) {
+        var sepIdx = tarballPath.indexOf("/-/");
+        if (sepIdx < 0) return null;
+        var packageName = tarballPath.substring(0, sepIdx);
+        var filename = tarballPath.substring(sepIdx + 3);
+        var basename = packageName.contains("/")
+                ? packageName.substring(packageName.lastIndexOf('/') + 1)
+                : packageName;
+        if (filename.length() <= basename.length() + 5) return null;
+        var version = filename.substring(basename.length() + 1, filename.length() - 4);
+        return new NpmPackageRef(packageName, version);
+    }
+
+    /**
+     * Handle a request to registry.npmjs.org.
+     * <p>
+     * Three request types:
+     * <ul>
+     *   <li><b>Tarball</b> ({@code GET /<pkg>/-/<name>-<ver>.tgz}): served from cache when
+     *       the package's ETag hasn't changed since the tarball was verified. When the ETag
+     *       has changed (a new version was published or a version was republished), the
+     *       tarball's shasum is re-verified against per-version metadata. Cache misses
+     *       are verified on store.</li>
+     *   <li><b>Packument</b> ({@code GET /<pkg>}): relayed fresh to upstream. The response's
+     *       ETag header is stored so tarball cache hits can be served without re-verification
+     *       when the packument is unchanged.</li>
+     *   <li><b>Everything else</b> (search, audit, publish, per-version metadata):
+     *       relayed transparently.</li>
+     * </ul>
+     */
+    private void handleNpmRequest(HttpServerRequest clientReq, String domain) {
+        var path = clientReq.path();
+        if (path == null) {
+            relayRequest(clientReq, domain);
+            return;
+        }
+
+        var cacheDir = npmCacheDir();
+
+        if (clientReq.method() == HttpMethod.GET) {
+            var matcher = NPM_TARBALL_PATTERN.matcher(path);
+            if (matcher.matches()) {
+                var tarballPath = matcher.group(1);
+                var pkgRef = parseNpmTarballPath(tarballPath);
+                if (pkgRef != null) {
+                    var cacheFile = cacheDir.resolve(tarballPath).normalize();
+                    if (!cacheFile.startsWith(cacheDir)) {
+                        relayRequest(clientReq, domain);
+                        return;
+                    }
+                    var ref = domain + path;
+                    fetchNpmTarballAndServe(clientReq, domain, cacheFile, ref,
+                            pkgRef.packageName(), pkgRef.version());
+                    return;
+                }
+            }
+        }
+
+        var packumentMatcher = NPM_PACKUMENT_PATTERN.matcher(path);
+        if (packumentMatcher.matches()) {
+            relayNpmPackument(clientReq, domain, packumentMatcher.group(1));
+            return;
+        }
+
+        relayRequest(clientReq, domain);
+    }
+
+    /**
+     * Relay a packument request to upstream and store the response ETag.
+     * The ETag is used by tarball cache hits to skip re-verification when
+     * the packument hasn't changed.
+     */
+    private void relayNpmPackument(HttpServerRequest clientReq, String domain,
+                                    String packageName) {
+        relayRequest(clientReq, domain, upResp -> {
+            var etag = upResp.getHeader("ETag");
+            if (etag != null && !etag.isBlank()) {
+                vertx.executeBlocking(() -> {
+                    storePackageEtag(packageName, etag);
+                    return null;
+                });
+            }
+        });
+    }
+
+    static void storePackageEtag(String packageName, String etag) {
+        try {
+            var cacheDir = npmCacheDir();
+            var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
+            if (!etagFile.startsWith(cacheDir)) return;
+            Files.createDirectories(etagFile.getParent());
+            Files.writeString(etagFile, etag);
+        } catch (IOException e) {
+            System.err.println("npm: failed to store ETag for " + packageName +
+                    ": " + e.getMessage());
+        }
+    }
+
+    static String readFileOrNull(Path file) {
+        try {
+            return Files.readString(file).strip();
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    record NpmVerifyResult(boolean cacheHit, long size, String digest) {}
+
+    /**
+     * Serve an npm tarball from cache or fetch fresh.
+     * <p>
+     * <b>Cache hit + ETag unchanged</b>: serve directly (zero cost — no upstream,
+     * no hash computation). The package's ETag hasn't changed since this tarball was
+     * last verified, so the shasum is guaranteed unchanged.
+     * <p>
+     * <b>Cache hit + ETag changed/missing</b>: fetch per-version metadata, compare
+     * the upstream shasum with the stored sidecar. Same shasum → update the tarball's
+     * ETag marker and serve. Different shasum → evict and re-fetch.
+     * <p>
+     * <b>Cache miss</b>: fetch per-version shasum, download with digest verification,
+     * write shasum + ETag sidecar files alongside the cached tarball.
+     */
+    private void fetchNpmTarballAndServe(HttpServerRequest clientReq, String domain,
+                                          Path cacheFile, String ref,
+                                          String packageName, String version) {
+        vertx.<NpmVerifyResult>executeBlocking(() -> {
+            var cacheDir = npmCacheDir();
+            var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
+            var packageEtag = etagFile.startsWith(cacheDir)
+                    ? readFileOrNull(etagFile) : null;
+            return checkNpmTarballCache(cacheFile, packageEtag, ref,
+                    () -> fetchNpmShasum(domain, packageName, version));
+        }).onSuccess(result -> {
+            if (result == null) {
+                relayRequest(clientReq, domain);
+            } else if (result.cacheHit()) {
+                System.out.println("npm cache hit: " + ref +
+                        " (" + formatSize(result.size()) + ")");
+                serveCachedFile(clientReq.response(), cacheFile, null);
+            } else {
+                fetchCacheAndServe(clientReq, domain, result.digest(), cacheFile, ref);
+            }
+        }).onFailure(err -> {
+            System.err.println("npm integrity check error for " + ref +
+                    ": " + err.getMessage());
+            relayRequest(clientReq, domain);
+        });
+    }
+
+    static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
+                                                 String ref,
+                                                 java.util.function.Supplier<String> shasumSupplier)
+            throws IOException {
+        var etagPath = Path.of(cacheFile + ".etag");
+        var shasumPath = Path.of(cacheFile + ".shasum");
+
+        if (Files.isRegularFile(cacheFile)) {
+            var tarballEtag = readFileOrNull(etagPath);
+
+            if (packageEtag != null && !packageEtag.isEmpty()
+                    && packageEtag.equals(tarballEtag)) {
+                return new NpmVerifyResult(true, Files.size(cacheFile), null);
+            }
+
+            var shasum = shasumSupplier.get();
+            if (shasum == null) {
+                return new NpmVerifyResult(true, Files.size(cacheFile), null);
+            }
+
+            var storedShasum = readFileOrNull(shasumPath);
+            if (shasum.equals(storedShasum)) {
+                if (packageEtag != null) {
+                    Files.writeString(etagPath, packageEtag);
+                }
+                return new NpmVerifyResult(true, Files.size(cacheFile), null);
+            }
+
+            System.out.println("npm cache stale: " + ref +
+                    " (shasum changed), evicting");
+            Files.deleteIfExists(cacheFile);
+            Files.deleteIfExists(shasumPath);
+            Files.deleteIfExists(etagPath);
+            var digest = "sha1:" + shasum;
+            writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
+            return new NpmVerifyResult(false, 0, digest);
+        }
+
+        var shasum = shasumSupplier.get();
+        if (shasum == null) return null;
+        var digest = "sha1:" + shasum;
+        writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
+        return new NpmVerifyResult(false, 0, digest);
+    }
+
+    static void writeNpmSidecarFiles(Path cacheFile, String shasum,
+                                              String packageEtag) {
+        try {
+            Files.createDirectories(cacheFile.getParent());
+            Files.writeString(Path.of(cacheFile + ".shasum"), shasum);
+            if (packageEtag != null) {
+                Files.writeString(Path.of(cacheFile + ".etag"), packageEtag);
+            }
+        } catch (IOException e) {
+            System.err.println("npm: failed to write sidecar files: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Fetch the SHA-1 checksum for an npm package version from the registry's
+     * per-version metadata endpoint ({@code /<package>/<version>}).
+     * Returns the 40-char hex shasum, or null on any failure.
+     */
+    static String fetchNpmShasum(String domain, String packageName, String version) {
+        var encodedName = packageName.replace("/", "%2F");
+        var body = fetchUpstreamBody(domain, "/" + encodedName + "/" + version,
+                "Accept: application/json");
+        if (body == null) return null;
+        try {
+            var dist = JSON.readTree(body).path("dist").path("shasum");
+            if (dist.isTextual()) {
+                var hex = dist.asText().trim().toLowerCase();
+                if (hex.matches("[a-f0-9]{40}")) return hex;
+            }
+        } catch (Exception e) { /* JSON parse error */ }
+        return null;
     }
 
     // --- Maven/Gradle artifact caching ---
@@ -1024,6 +1278,16 @@ public class MitmProxy {
 
     /** Relay a non-cacheable request transparently to upstream. */
     private void relayRequest(HttpServerRequest clientReq, String domain) {
+        relayRequest(clientReq, domain, null);
+    }
+
+    /**
+     * Relay a request to upstream with an optional response callback.
+     * When {@code responseCallback} is non-null it fires after the upstream
+     * response headers arrive but before the body is piped to the client.
+     */
+    private void relayRequest(HttpServerRequest clientReq, String domain,
+                               java.util.function.Consumer<HttpClientResponse> responseCallback) {
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
                 .setHost(domain)
@@ -1034,6 +1298,9 @@ public class MitmProxy {
             copyRequestHeaders(clientReq, upReq, domain);
 
             sendWithBody(clientReq, upReq).onSuccess(upResp -> {
+                if (responseCallback != null) {
+                    responseCallback.accept(upResp);
+                }
                 var clientResp = clientReq.response();
                 clientResp.setStatusCode(upResp.statusCode());
                 clientResp.setStatusMessage(upResp.statusMessage());
@@ -1282,12 +1549,10 @@ public class MitmProxy {
     }
 
     /**
-     * Fetch a checksum sidecar file from upstream (e.g. .sha1 or .sha256).
-     * Returns the hex checksum string, or null if it could not be retrieved
-     * or doesn't match the expected length.
+     * Fetch a resource body from upstream via a raw SSL GET.
+     * Returns the response body, or null on any failure (non-200, network error).
      */
-    private static String fetchChecksumFromUpstream(String domain, String checksumPath,
-                                                     int hexLength) {
+    static byte[] fetchUpstreamBody(String domain, String path, String... extraHeaders) {
         try {
             var socket = (javax.net.ssl.SSLSocket) javax.net.ssl.SSLSocketFactory.getDefault()
                     .createSocket(domain, 443);
@@ -1298,47 +1563,65 @@ public class MitmProxy {
                 var out = socket.getOutputStream();
                 var in = socket.getInputStream();
 
-                var request = "GET " + checksumPath + " HTTP/1.1\r\n"
-                        + "Host: " + domain + "\r\n"
-                        + "Connection: close\r\n"
-                        + "\r\n";
-                out.write(request.getBytes());
+                var sb = new StringBuilder();
+                sb.append("GET ").append(path).append(" HTTP/1.1\r\n");
+                sb.append("Host: ").append(domain).append("\r\n");
+                for (var header : extraHeaders) {
+                    sb.append(header).append("\r\n");
+                }
+                sb.append("Connection: close\r\n\r\n");
+                out.write(sb.toString().getBytes());
                 out.flush();
 
                 var response = HttpMessage.readResponse(in);
                 if (response == null || response.statusCode() != 200) return null;
 
                 var clHeader = response.header("Content-Length");
-                byte[] body;
                 if (clHeader != null) {
                     int len = Integer.parseInt(clHeader.trim());
-                    body = new byte[len];
+                    var body = new byte[len];
                     int offset = 0;
                     while (offset < len) {
                         int n = in.read(body, offset, len - offset);
                         if (n == -1) break;
                         offset += n;
                     }
-                } else {
-                    body = in.readAllBytes();
+                    return body;
                 }
-
-                var hex = new String(body).trim().split("\\s+")[0].toLowerCase();
-                if (hex.matches("[a-f0-9]{" + hexLength + "}")) return hex;
-                return null;
+                return in.readAllBytes();
             }
         } catch (Exception e) {
             return null;
         }
     }
 
+    /**
+     * Fetch a checksum sidecar file from upstream (e.g. .sha1 or .sha256).
+     * Returns the hex checksum string, or null if it could not be retrieved
+     * or doesn't match the expected length.
+     */
+    private static String fetchChecksumFromUpstream(String domain, String checksumPath,
+                                                     int hexLength) {
+        var body = fetchUpstreamBody(domain, checksumPath);
+        if (body == null) return null;
+        var hex = new String(body).trim().split("\\s+")[0].toLowerCase();
+        if (hex.matches("[a-f0-9]{" + hexLength + "}")) return hex;
+        return null;
+    }
+
     // --- Digest verification ---
 
-    private static boolean verifyDigest(Path file, String expectedDigest) throws Exception {
+    static boolean verifyDigest(Path file, String expectedDigest) throws Exception {
         var parts = expectedDigest.split(":", 2);
-        if (parts.length != 2 || !"sha256".equals(parts[0])) return false;
+        if (parts.length != 2) return false;
+        var algorithm = switch (parts[0]) {
+            case "sha256" -> "SHA-256";
+            case "sha1" -> "SHA-1";
+            default -> null;
+        };
+        if (algorithm == null) return false;
 
-        var md = MessageDigest.getInstance("SHA-256");
+        var md = MessageDigest.getInstance(algorithm);
         try (var in = Files.newInputStream(file)) {
             var buffer = new byte[BUFFER_SIZE];
             int n;
