@@ -1053,7 +1053,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("    1. Claude Code — AI coding assistant" + claudeTag);
         System.out.println("    2. GitHub — PAT for git operations" + githubTag);
         System.out.println("    3. Bob Shell — IBM AI coding assistant" + bobTag);
-        System.out.println("    4. OpenAI — API key for Codex CLI" + openaiTag);
+        System.out.println("    4. OpenAI — API key for Codex CLI (experimental)" + openaiTag);
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
         var input = console.readLine();
