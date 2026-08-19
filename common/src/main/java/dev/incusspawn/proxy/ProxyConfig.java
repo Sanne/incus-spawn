@@ -113,10 +113,10 @@ public final class ProxyConfig {
     public static boolean fixResolvConfIfNeeded(IncusClient incus, String name) {
         var expected = resolvConfContent(incus);
         var result = incus.shellExec(name, "cat", "/etc/resolv.conf");
-        if (!result.success() || result.stdout().contains(expected.strip())) return false;
-        incus.shellExec(name, "sh", "-c",
+        if (result.success() && result.stdout().contains(expected.strip())) return false;
+        var write = incus.shellExec(name, "sh", "-c",
                 "rm -f /etc/resolv.conf; printf '%s' '" + expected + "' > /etc/resolv.conf");
-        return true;
+        return write.success();
     }
 
     public static void configureBridgeDns(IncusClient incus) {
