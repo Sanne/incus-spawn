@@ -129,6 +129,19 @@ jobs:
           # Proxy --help: must exit 0
           "$PROXY" --help > /dev/null
 
+          # Native transport: verify epoll (Linux) or kqueue (macOS) classes are in the proxy image
+          if [[ "${{ matrix.os }}" == "linux" ]]; then
+            TRANSPORT_CLASS="EpollTransport"
+          else
+            TRANSPORT_CLASS="KQueueTransport"
+          fi
+          if strings "$PROXY" | grep -q "$TRANSPORT_CLASS"; then
+            echo "Native transport class $TRANSPORT_CLASS found in proxy binary"
+          else
+            echo "::error::Native transport class $TRANSPORT_CLASS missing from proxy binary"
+            exit 1
+          fi
+
           # templates list: exercises YAML resource bundling and definition parsing
           TEMPLATES_OUTPUT=$("$CLI" templates list)
           echo "$TEMPLATES_OUTPUT"

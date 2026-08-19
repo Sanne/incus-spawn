@@ -290,6 +290,18 @@ jobs:
             sleep 1
           done
 
+          # Verify native transport (epoll) is active
+          sleep 1
+          PROXY_LOG="$HOME/.local/share/incus-spawn/proxy.log"
+          if [ -f "$PROXY_LOG" ]; then
+            if grep -q "Transport:.*native" "$PROXY_LOG"; then
+              echo "Native transport (epoll) confirmed"
+            else
+              echo "::warning::Proxy is not using native transport"
+              grep "Transport:" "$PROXY_LOG" || true
+            fi
+          fi
+
       - name: Allow unprivileged user namespaces
         run: |
           # Ubuntu 24.04 restricts unprivileged user namespace creation via AppArmor.
