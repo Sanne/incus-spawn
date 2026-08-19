@@ -164,10 +164,12 @@ else
     echo "Binary not found at $INSTALL_DIR/$BINARY_NAME (skipping)"
 fi
 
-if [ -f "$INSTALL_DIR/git-remote-isx" ]; then
-    echo "Removing $INSTALL_DIR/git-remote-isx..."
-    rm -f "$INSTALL_DIR/git-remote-isx"
-fi
+for f in isx-proxy git-remote-isx; do
+    if [ -f "$INSTALL_DIR/$f" ]; then
+        echo "Removing $INSTALL_DIR/$f..."
+        rm -f "$INSTALL_DIR/$f"
+    fi
+done
 
 # ── Undo install.sh's Homebrew override ───────────────────────────────────
 # install.sh points the brew prefix bin entries at our build (a symlink into
@@ -181,7 +183,7 @@ if command -v brew >/dev/null 2>&1; then
     if [ "$INSTALL_DIR" != "$BREW_BIN" ]; then
         FORMULA_INSTALLED=false
         brew list --formula "$BREW_FORMULA" >/dev/null 2>&1 && FORMULA_INSTALLED=true
-        for f in "$BINARY_NAME" git-remote-isx; do
+        for f in "$BINARY_NAME" isx-proxy git-remote-isx; do
             target="$(readlink "$BREW_BIN/$f" 2>/dev/null || true)"
             if [ "$target" = "$INSTALL_DIR/$f" ]; then
                 echo "Removing Homebrew override symlink: $BREW_BIN/$f"
