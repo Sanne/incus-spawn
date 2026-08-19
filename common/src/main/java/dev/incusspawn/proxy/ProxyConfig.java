@@ -20,21 +20,22 @@ public final class ProxyConfig {
     public static final int DEFAULT_MITM_PORT = 18443;
     public static final int DEFAULT_HEALTH_PORT = 18080;
 
-    private static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
-    private static final Set<String> GITHUB_DOMAINS = Set.of(
+    public static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
+    public static final Set<String> GITHUB_DOMAINS = Set.of(
             "github.com", "api.github.com",
             "raw.githubusercontent.com", "objects.githubusercontent.com",
             "codeload.github.com", "uploads.github.com"
     );
-    private static final Set<String> REGISTRY_DOMAINS = Set.of(
+    public static final Set<String> REGISTRY_DOMAINS = Set.of(
             "registry-1.docker.io", "auth.docker.io",
             "ghcr.io", "quay.io"
     );
-    private static final Set<String> MAVEN_DOMAINS = Set.of(
+    public static final Set<String> MAVEN_DOMAINS = Set.of(
             "repo.maven.apache.org", "repo1.maven.org",
             "plugins.gradle.org"
     );
-    private static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
+    public static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
+    public static final Set<String> OPENAI_DOMAINS = Set.of("api.openai.com");
     private static final String BOB_BASE_DOMAIN = "bob.ibm.com";
     private static final List<String> BOB_REGIONAL_DOMAINS = List.of(
             "us-east.bob.ibm.com",
@@ -52,6 +53,7 @@ public final class ProxyConfig {
         all.addAll(REGISTRY_DOMAINS);
         all.addAll(MAVEN_DOMAINS);
         all.addAll(GRADLE_DOMAINS);
+        all.addAll(OPENAI_DOMAINS);
         all.add(BOB_BASE_DOMAIN);
         all.addAll(BOB_REGIONAL_DOMAINS);
         INTERCEPTED_DOMAIN_SET = Set.copyOf(all);

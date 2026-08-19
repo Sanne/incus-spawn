@@ -257,6 +257,7 @@ public class InitCommand extends BaseCommand {
         if (credentials.contains("claude")) setupClaudeAuth();
         if (credentials.contains("github")) setupGitHubAuth();
         if (credentials.contains("bob")) setupBobAuth();
+        if (credentials.contains("openai")) setupOpenaiAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -318,6 +319,7 @@ public class InitCommand extends BaseCommand {
         if (macCredentials.contains("claude")) setupClaudeAuth();
         if (macCredentials.contains("github")) setupGitHubAuth();
         if (macCredentials.contains("bob")) setupBobAuth();
+        if (macCredentials.contains("openai")) setupOpenaiAuth();
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -1045,11 +1047,13 @@ public class InitCommand extends BaseCommand {
         var claudeTag = config.getClaude().hasAuth() ? " [configured]" : "";
         var githubTag = !config.getGithub().getToken().isBlank() ? " [configured]" : "";
         var bobTag = config.getBob().hasAuth() ? " [configured]" : "";
+        var openaiTag = config.getOpenai().hasAuth() ? " [configured]" : "";
 
         System.out.println("  Which credentials do you want to configure?");
         System.out.println("    1. Claude Code — AI coding assistant" + claudeTag);
         System.out.println("    2. GitHub — PAT for git operations" + githubTag);
         System.out.println("    3. Bob Shell — IBM AI coding assistant" + bobTag);
+        System.out.println("    4. OpenAI — API key for Codex CLI" + openaiTag);
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
         var input = console.readLine();
@@ -1062,12 +1066,14 @@ public class InitCommand extends BaseCommand {
             selected.add("claude");
             selected.add("github");
             selected.add("bob");
+            selected.add("openai");
         } else {
             for (var part : input.split(",")) {
                 switch (part.strip()) {
                     case "1" -> selected.add("claude");
                     case "2" -> selected.add("github");
                     case "3" -> selected.add("bob");
+                    case "4" -> selected.add("openai");
                 }
             }
         }
@@ -1737,6 +1743,49 @@ public class InitCommand extends BaseCommand {
 
         config.save();
         System.out.println("  Bob configuration saved.");
+    }
+
+    private void setupOpenaiAuth() {
+        startStep("OpenAI Authentication",
+                "Sets up an OpenAI API key so containers can use Codex CLI",
+                "for AI-assisted coding. The real key stays on the host —",
+                "containers only hold a placeholder value, and the MITM",
+                "proxy injects the real credential transparently.");
+        var config = SpawnConfig.load();
+        var console = System.console();
+        if (console == null) {
+            System.err.println("  Error: no console available for interactive setup.");
+            return;
+        }
+
+        if (config.getOpenai().hasAuth()) {
+            System.out.println("  OpenAI auth: API key configured (" + maskSecret(config.getOpenai().getApiKey()) + ")");
+            System.out.print("  Keep current? (Y/n): ");
+            var keep = console.readLine();
+            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+                return;
+            }
+        }
+
+        System.out.println("  To create an API key:");
+        System.out.println("    1. Go to https://platform.openai.com/api-keys");
+        System.out.println("    2. Click 'Create new secret key'");
+        System.out.println("    3. Copy the generated key (it is only shown once)");
+        System.out.println();
+        System.out.println("  Note: API usage requires billing credits, even on free accounts.");
+        System.out.println("  Add credits at https://platform.openai.com/settings/organization/billing");
+        System.out.println();
+        System.out.print("  OpenAI API key (or press Enter to skip): ");
+        var passwordChars = console.readPassword();
+        var apiKey = passwordChars != null ? new String(passwordChars) : "";
+        if (apiKey.isBlank()) {
+            System.out.println("  Skipped OpenAI setup. You can configure it later by re-running 'isx init'.");
+            return;
+        }
+
+        config.getOpenai().setApiKey(apiKey);
+        config.save();
+        System.out.println("  OpenAI configuration saved.");
     }
 
     private void setupPathList(
