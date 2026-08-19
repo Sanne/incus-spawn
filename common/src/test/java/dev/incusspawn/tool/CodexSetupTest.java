@@ -60,7 +60,7 @@ class CodexSetupTest {
     }
 
     @Test
-    void installWritesConfigJson() {
+    void installWritesConfigToml() {
         var incus = mock(IncusClient.class);
         when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
@@ -69,10 +69,12 @@ class CodexSetupTest {
 
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
-                        arg.contains("model") &&
-                        arg.contains("o4-mini") &&
-                        arg.contains("approval_mode") &&
-                        arg.contains("suggest")));
+                        arg.contains(CodexSetup.CONFIG_PATH) &&
+                        arg.contains("model = \"o4-mini\"") &&
+                        arg.contains("approval_policy = \"full-auto\"") &&
+                        arg.contains("forced_login_method = \"api\"") &&
+                        arg.contains("check_for_update_on_startup = false") &&
+                        arg.contains("trust_level = \"trusted\"")));
     }
 
     @Test
