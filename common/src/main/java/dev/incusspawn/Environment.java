@@ -89,6 +89,10 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/gradle");
     }
 
+    public static Path npmCacheDir() {
+        return home().resolve(".cache/incus-spawn/npm");
+    }
+
     public static Path lockDir() {
         return home().resolve(".cache/incus-spawn/locks");
     }

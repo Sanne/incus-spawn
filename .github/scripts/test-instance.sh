@@ -122,7 +122,25 @@ assert "ISX_CONTAINER is set (matches hostname)" \
     su -l agentuser -c 'bash -c "source ~/.bashrc 2>/dev/null; test -n \"\$ISX_CONTAINER\""'
 echo ""
 
-# --- 7. TLS certificate quality (AKI/SKI extensions) ---
+# --- 7. npm install through proxy (tarball caching) ---
+# Verifies npm registry interception: packument fetch, tarball download,
+# and cache hit on repeat install.
+echo "[7] npm Install (Proxy + Cache)"
+assert "install nodejs/npm through proxy" \
+    dnf install -y -q nodejs npm
+assert "npm install a package through proxy" \
+    bash -c "cd /tmp && rm -rf npm-test && mkdir npm-test && cd npm-test && \
+        npm init -y --silent >/dev/null 2>&1 && \
+        npm install --prefer-online is-odd@3.0.1 2>&1 | tail -1"
+assert "installed package is usable" \
+    bash -c "cd /tmp/npm-test && node -e 'require(\"is-odd\")'"
+assert "npm install scoped package through proxy" \
+    bash -c "cd /tmp/npm-test && \
+        npm install --prefer-online @sindresorhus/is@5.6.0 2>&1 | tail -1"
+rm -rf /tmp/npm-test
+echo ""
+
+# --- 8. TLS certificate quality (AKI/SKI extensions) ---
 # Python 3.14+ (OpenSSL 3.5+) rejects MITM leaf certs missing Authority
 # Key Identifier or Subject Key Identifier extensions.
 echo "[7] TLS Certificate Quality (AKI/SKI)"
