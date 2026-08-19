@@ -668,11 +668,10 @@ public class BuildCommand extends BaseCommand {
             waitForIpv4(container);
         }
 
-        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
-                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
+                "printf '%s' '" + ProxyConfig.resolvConfContent(incus) + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to fix DNS after copy");
 
         // The copy carries the parent's trust store, which may predate a CA re-issue
@@ -838,11 +837,10 @@ public class BuildCommand extends BaseCommand {
         }
 
         System.out.println("Configuring DNS...");
-        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
-                "echo 'nameserver " + gatewayIp + "' > /etc/resolv.conf")
+                "printf '%s' '" + ProxyConfig.resolvConfContent(incus) + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to configure DNS");
 
         waitForNetwork(buildName);
