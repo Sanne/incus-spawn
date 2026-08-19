@@ -3863,6 +3863,7 @@ public class ListCommand extends BaseCommand {
             if (showProxyError()) return true;
             showSubnetWarning();
             fixCaMismatchIfNeeded(containerName);
+            fixResolvConfIfNeeded(containerName);
             return false;
         } catch (IncusException e) {
             errorMessage = "Cannot reach Incus: " + e.getMessage();
@@ -3877,6 +3878,14 @@ public class ListCommand extends BaseCommand {
             if (diagnostic != null) {
                 statusMessage = "Bridge subnet conflict detected — run 'isx init' to fix";
             }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void fixResolvConfIfNeeded(String name) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+        try {
+            ProxyConfig.fixResolvConfIfNeeded(incus, name);
         } catch (Exception ignored) {
         }
     }

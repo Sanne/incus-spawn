@@ -103,6 +103,22 @@ public final class ProxyConfig {
         throw new IncusException("Bridge incusbr0 has no ipv4.address configured");
     }
 
+    public static String resolvConfContent(IncusClient incus) {
+        return "nameserver " + resolveGatewayIp(incus) + "\n";
+    }
+
+    /**
+     * @return true if resolv.conf was updated
+     */
+    public static boolean fixResolvConfIfNeeded(IncusClient incus, String name) {
+        var expected = resolvConfContent(incus);
+        var result = incus.shellExec(name, "cat", "/etc/resolv.conf");
+        if (!result.success() || result.stdout().contains(expected.strip())) return false;
+        incus.shellExec(name, "sh", "-c",
+                "rm -f /etc/resolv.conf; printf '%s' '" + expected + "' > /etc/resolv.conf");
+        return true;
+    }
+
     public static void configureBridgeDns(IncusClient incus) {
         writeBridgeDns(incus);
         System.out.println("  DNS overrides: " + interceptedDomains().size() +

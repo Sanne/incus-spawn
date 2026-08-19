@@ -16,6 +16,7 @@ import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -176,6 +177,7 @@ public class BranchCommand extends BaseCommand {
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name);
+            ProxyConfig.fixResolvConfIfNeeded(incus, name);
         }
 
         System.out.println("Branch '" + name + "' is ready.\n");

@@ -8,6 +8,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
 /**
@@ -50,6 +51,7 @@ public class InstancePrep {
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             fixCaMismatch(incus, name);
+            fixResolvConfMismatch(incus, name);
         }
 
         // Start if stopped, or restart VMs with unresponsive agent
@@ -68,6 +70,19 @@ public class InstancePrep {
         GuiPassthrough.checkGuiHealth(incus, name);
 
         return templateName;
+    }
+
+    private static void fixResolvConfMismatch(IncusClient incus, String name) {
+        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+        try {
+            if (ProxyConfig.fixResolvConfIfNeeded(incus, name)) {
+                var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+                System.err.println(sep);
+                System.err.println("\033[1;33mDNS configuration mismatch\033[0m — updated /etc/resolv.conf automatically.");
+                System.err.println(sep);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private static void fixCaMismatch(IncusClient incus, String container) {
