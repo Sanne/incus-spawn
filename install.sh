@@ -161,7 +161,7 @@ if command -v brew >/dev/null 2>&1 \
     && [ -x "$BREW_BIN/isx" ] && [ "$INSTALL_DIR" != "$BREW_BIN" ]; then
     echo "Homebrew installation detected at $BREW_BIN/isx"
     echo "Linking it to the locally built binary..."
-    for f in "$BINARY_NAME" git-remote-isx; do
+    for f in "$BINARY_NAME" isx-proxy git-remote-isx; do
         if [ -e "$INSTALL_DIR/$f" ] && { [ -e "$BREW_BIN/$f" ] || [ -L "$BREW_BIN/$f" ]; }; then
             ln -sf "$INSTALL_DIR/$f" "$BREW_BIN/$f"
         fi
