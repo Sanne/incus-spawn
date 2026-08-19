@@ -45,10 +45,7 @@ public class ProxyMain implements QuarkusApplication {
 
         var config = SpawnConfig.load();
         var claude = config.getClaude();
-        var apiKey = claude.getApiKey();
-        var oauthToken = claude.getOauthToken();
-        var ghToken = config.getGithub().getToken();
-        var bobApiKey = config.getBob().getApiKey();
+        var creds = ProxyCredentials.fromConfig(config);
 
         if (claude.isUseVertex()) {
             if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
@@ -90,26 +87,25 @@ public class ProxyMain implements QuarkusApplication {
         System.out.println("  Gateway IP:    " + gatewayIp);
         System.out.println("  MITM port:     " + port);
         System.out.println("  Health port:   " + healthPort);
-        if (claude.isUseVertex()) {
-            System.out.println("  Vertex AI:     " + claude.getCloudMlRegion() +
-                    " (project: " + claude.getVertexProjectId() + ")");
-        } else if (!oauthToken.isBlank()) {
+        if (creds.useVertex()) {
+            System.out.println("  Vertex AI:     " + creds.vertexRegion() +
+                    " (project: " + creds.vertexProjectId() + ")");
+        } else if (!creds.oauthToken().isBlank()) {
             System.out.println("  OAuth token:   configured");
-        } else if (!apiKey.isBlank()) {
+        } else if (!creds.anthropicApiKey().isBlank()) {
             System.out.println("  API key:       configured");
         } else {
             System.out.println("  Claude:        (not configured)");
         }
-        System.out.println("  GitHub token:  " + (ghToken.isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  Bob API key:   " + (bobApiKey.isBlank() ? "(not configured)" : "configured"));
+        System.out.println("  GitHub token:  " + (creds.ghToken().isBlank() ? "(not configured)" : "configured"));
+        System.out.println("  Bob API key:   " + (creds.bobApiKey().isBlank() ? "(not configured)" : "configured"));
+        System.out.println("  OpenAI key:    " + (creds.openaiApiKey().isBlank() ? "(not configured)" : "configured"));
         System.out.println("  Log file:      " + Environment.proxyLogFile());
         System.out.println();
 
         var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
-        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
-                apiKey, oauthToken, ghToken, bobApiKey,
-                claude.isUseVertex(), claude.getCloudMlRegion(), claude.getVertexProjectId());
+        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, creds);
 
         if (debug) {
             try {

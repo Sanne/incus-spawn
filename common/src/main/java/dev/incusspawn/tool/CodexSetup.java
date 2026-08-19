@@ -1,0 +1,63 @@
+package dev.incusspawn.tool;
+
+import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.incus.Container;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class CodexSetup implements ToolSetup {
+
+    @Override
+    public String name() {
+        return "codex";
+    }
+
+    @Override
+    public List<ToolDef.ActionEntry> actions() {
+        var a = new ToolDef.ActionEntry();
+        a.setLabel("Codex CLI");
+        a.setType("shell");
+        a.setCommand("codex");
+        a.setAutoReturn(true);
+        return List.of(a);
+    }
+
+    @Override
+    public List<String> packages() {
+        return List.of("nodejs");
+    }
+
+    @Override
+    public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        var entries = new ArrayList<EnvEntry>();
+        entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
+        return entries;
+    }
+
+    @Override
+    public void install(Container c, java.util.Map<String, String> resolvedParams) {
+        installBinary(c);
+        configureSettings(c);
+    }
+
+    private void installBinary(Container c) {
+        System.out.println("Installing Codex CLI...");
+        c.runInteractive("Failed to install Codex CLI",
+                "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
+    }
+
+    private void configureSettings(Container c) {
+        System.out.println("Configuring Codex CLI...");
+        var configJson = """
+                {
+                  "model": "o4-mini",
+                  "approval_mode": "suggest"
+                }
+                """;
+        c.sh("mkdir -p /home/agentuser/.codex");
+        c.writeFile("/home/agentuser/.codex/config.json", configJson);
+        c.chown("/home/agentuser/.codex", "agentuser:agentuser");
+    }
+
+}

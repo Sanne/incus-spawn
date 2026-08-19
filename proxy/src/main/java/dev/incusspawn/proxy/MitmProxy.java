@@ -60,21 +60,12 @@ public class MitmProxy {
 
     private static final int BUFFER_SIZE = 64 * 1024;
 
-    private static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
-    private static final Set<String> GITHUB_DOMAINS = Set.of(
-            "github.com", "api.github.com",
-            "raw.githubusercontent.com", "objects.githubusercontent.com",
-            "codeload.github.com", "uploads.github.com"
-    );
-    private static final Set<String> REGISTRY_DOMAINS = Set.of(
-            "registry-1.docker.io", "auth.docker.io",
-            "ghcr.io", "quay.io"
-    );
-    private static final Set<String> MAVEN_DOMAINS = Set.of(
-            "repo.maven.apache.org", "repo1.maven.org",
-            "plugins.gradle.org"
-    );
-    private static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
+    private static final Set<String> ANTHROPIC_DOMAINS = ProxyConfig.ANTHROPIC_DOMAINS;
+    private static final Set<String> GITHUB_DOMAINS = ProxyConfig.GITHUB_DOMAINS;
+    private static final Set<String> REGISTRY_DOMAINS = ProxyConfig.REGISTRY_DOMAINS;
+    private static final Set<String> MAVEN_DOMAINS = ProxyConfig.MAVEN_DOMAINS;
+    private static final Set<String> GRADLE_DOMAINS = ProxyConfig.GRADLE_DOMAINS;
+    private static final Set<String> OPENAI_DOMAINS = ProxyConfig.OPENAI_DOMAINS;
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
     // Group 1 = image name (e.g. "library/postgres"), group 2 = digest
@@ -112,18 +103,7 @@ public class MitmProxy {
     private final String bindAddress;
     private final int mitmPort;
     private final int healthPort;
-    private final String anthropicApiKey;
-    private final String oauthToken;
-    private final String ghToken;
-    private final String bobApiKey;
-
-    // Vertex AI configuration. When useVertex=true, the proxy transparently translates
-    // standard Anthropic API requests (to api.anthropic.com) into Vertex AI rawPredict
-    // requests. Containers always run Claude Code in standard mode — they have no
-    // knowledge of Vertex AI.
-    private final boolean useVertex;
-    private final String vertexRegion;
-    private final String vertexProjectId;
+    private final ProxyCredentials credentials;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -166,21 +146,13 @@ public class MitmProxy {
     private final String healthBindAddress;
 
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
-                     String healthBindAddress, String anthropicApiKey, String oauthToken,
-                     String ghToken, String bobApiKey,
-                     boolean useVertex, String vertexRegion, String vertexProjectId) {
+                     String healthBindAddress, ProxyCredentials credentials) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
-        this.anthropicApiKey = anthropicApiKey != null ? anthropicApiKey : "";
-        this.oauthToken = oauthToken != null ? oauthToken : "";
-        this.ghToken = ghToken;
-        this.bobApiKey = bobApiKey != null ? bobApiKey : "";
-        this.useVertex = useVertex;
-        this.vertexRegion = vertexRegion != null ? vertexRegion : "";
-        this.vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
+        this.credentials = credentials;
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -188,7 +160,7 @@ public class MitmProxy {
     }
 
     private String vertexHost() {
-        return ProxyConfig.vertexHost(vertexRegion);
+        return ProxyConfig.vertexHost(credentials.vertexRegion());
     }
 
     public void setDebugLog(ApiTrafficLog debugLog) {
@@ -199,20 +171,13 @@ public class MitmProxy {
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var config = dev.incusspawn.config.SpawnConfig.load();
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var claude = config.getClaude();
         return new MitmProxy(
                 vertx,
                 gatewayIp,
                 ProxyConfig.DEFAULT_MITM_PORT,
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
-                claude.getApiKey(),
-                claude.getOauthToken(),
-                config.getGithub().getToken(),
-                config.getBob().getApiKey(),
-                claude.isUseVertex(),
-                claude.getCloudMlRegion(),
-                claude.getVertexProjectId());
+                ProxyCredentials.fromConfig(config));
     }
 
     // --- Lifecycle ---
@@ -335,11 +300,11 @@ public class MitmProxy {
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         System.out.println("Gradle cache: " + gradleCacheDir() +
                 " (domains: " + GRADLE_DOMAINS + ")");
-        if (useVertex) {
+        if (credentials.useVertex()) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
                     " to " + vertexHost() +
-                    " (region: " + vertexRegion + ", project: " + vertexProjectId + ")");
-        } else if (!oauthToken.isBlank()) {
+                    " (region: " + credentials.vertexRegion() + ", project: " + credentials.vertexProjectId() + ")");
+        } else if (!credentials.oauthToken().isBlank()) {
             System.out.println("OAuth mode: injecting Bearer token for api.anthropic.com");
         }
         System.out.println();
@@ -481,7 +446,7 @@ public class MitmProxy {
                 .setMethod(clientReq.method())
                 .setPort(443);
 
-        if (useVertex && ANTHROPIC_DOMAINS.contains(domain) && path != null) {
+        if (credentials.useVertex() && ANTHROPIC_DOMAINS.contains(domain) && path != null) {
             if (path.startsWith("/v1/projects/")) {
                 // Already Vertex-formatted (container running in Vertex mode with
                 // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
@@ -565,7 +530,7 @@ public class MitmProxy {
                     return;
                 }
 
-                if (upResp.statusCode() == 401 && !oauthToken.isBlank()
+                if (upResp.statusCode() == 401 && !credentials.oauthToken().isBlank()
                         && ANTHROPIC_DOMAINS.contains(domain)) {
                     System.err.println("Claude OAuth token rejected (HTTP 401). " +
                             "The token may have expired — run 'isx init' to refresh.");
@@ -1142,7 +1107,7 @@ public class MitmProxy {
             var rewrittenBytes = JSON.writeValueAsBytes(root);
 
             var endpoint = streaming ? ":streamRawPredict" : ":rawPredict";
-            var vertexPath = "/v1/projects/" + vertexProjectId + "/locations/" + vertexRegion +
+            var vertexPath = "/v1/projects/" + credentials.vertexProjectId() + "/locations/" + credentials.vertexRegion() +
                     "/publishers/anthropic/models/" + model + endpoint;
 
             return new VertexTranslation(vertexPath, rewrittenBytes);
@@ -1194,34 +1159,40 @@ public class MitmProxy {
             upReq.headers().remove("anthropic-version");
             upReq.headers().remove("anthropic-dangerous-direct-browser-access");
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
-            if (!oauthToken.isBlank()) {
+            if (!credentials.oauthToken().isBlank()) {
                 // The container's tool (claude or pi) was configured with an OAuth-shaped
                 // placeholder, so it already built the OAuth request itself — Bearer auth
                 // plus whatever Claude Code identity/beta headers Anthropic currently
                 // requires. We only swap the placeholder token for the real one and never
                 // touch those headers, so we don't have to track Anthropic's auth quirks here.
-                upReq.putHeader("Authorization", "Bearer " + oauthToken);
+                upReq.putHeader("Authorization", "Bearer " + credentials.oauthToken());
                 upReq.headers().remove("x-api-key");
-            } else if (!anthropicApiKey.isBlank()) {
-                upReq.putHeader("x-api-key", anthropicApiKey);
+            } else if (!credentials.anthropicApiKey().isBlank()) {
+                upReq.putHeader("x-api-key", credentials.anthropicApiKey());
             } else {
                 upReq.headers().remove("x-api-key");
             }
         } else if (GITHUB_DOMAINS.contains(domain)) {
-            if (ghToken != null && !ghToken.isBlank()) {
+            if (!credentials.ghToken().isBlank()) {
                 if ("github.com".equals(domain)) {
                     // Git HTTP transport requires Basic auth (token as password)
-                    var credentials = "x-access-token:" + ghToken;
-                    var encoded = java.util.Base64.getEncoder().encodeToString(credentials.getBytes());
+                    var basicAuth = "x-access-token:" + credentials.ghToken();
+                    var encoded = java.util.Base64.getEncoder().encodeToString(basicAuth.getBytes());
                     upReq.putHeader("Authorization", "Basic " + encoded);
                 } else {
                     // API and CDN domains accept Bearer tokens
-                    upReq.putHeader("Authorization", "Bearer " + ghToken);
+                    upReq.putHeader("Authorization", "Bearer " + credentials.ghToken());
                 }
             }
         } else if (ProxyConfig.isBobDomain(domain)) {
-            if (!bobApiKey.isBlank()) {
-                upReq.putHeader("Authorization", "Apikey " + bobApiKey);
+            if (!credentials.bobApiKey().isBlank()) {
+                upReq.putHeader("Authorization", "Apikey " + credentials.bobApiKey());
+            }
+        } else if (OPENAI_DOMAINS.contains(domain)) {
+            if (!credentials.openaiApiKey().isBlank()) {
+                upReq.putHeader("Authorization", "Bearer " + credentials.openaiApiKey());
+            } else {
+                upReq.headers().remove("Authorization");
             }
         }
         return true;
