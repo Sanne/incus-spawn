@@ -26,6 +26,7 @@ public class SpawnConfig {
     private GitHubConfig github = new GitHubConfig();
     private BobConfig bob = new BobConfig();
     private OpenaiConfig openai = new OpenaiConfig();
+    private java.util.List<String> features = java.util.List.of();
     private java.util.List<String> searchPaths = java.util.List.of();
     @JsonProperty("host-path")
     private String hostPath = "";
@@ -105,6 +106,16 @@ public class SpawnConfig {
         public boolean hasAuth() { return !apiKey.isBlank(); }
     }
 
+    public java.util.List<String> getFeatures() { return features; }
+    public void setFeatures(java.util.List<String> features) { this.features = features == null ? java.util.List.of() : features; }
+    public boolean isFeatureEnabled(String feature) {
+        if (features.contains(feature)) return true;
+        // Implicitly enable features when the user already has credentials configured,
+        // so upgrading doesn't silently break existing setups.
+        if ("openai".equals(feature)) return openai.hasAuth();
+        return false;
+    }
+
     public ClaudeConfig getClaude() { return claude; }
     public void setClaude(ClaudeConfig claude) { this.claude = claude; }
     public GitHubConfig getGithub() { return github; }
@@ -178,7 +189,7 @@ public class SpawnConfig {
                 missing.add("Bob API key");
             }
         }
-        if (tools.contains("codex")) {
+        if (tools.contains("codex") && config.isFeatureEnabled("openai")) {
             if (!config.getOpenai().hasAuth()) {
                 missing.add("OpenAI API key");
             }

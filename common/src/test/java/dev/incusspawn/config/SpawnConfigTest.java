@@ -118,6 +118,51 @@ class SpawnConfigTest {
     }
 
     @Test
+    void deserializeFeatures() throws Exception {
+        var yaml = """
+                features:
+                  - openai
+                  - aider
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertEquals(java.util.List.of("openai", "aider"), config.getFeatures());
+        assertTrue(config.isFeatureEnabled("openai"));
+        assertTrue(config.isFeatureEnabled("aider"));
+        assertFalse(config.isFeatureEnabled("unknown"));
+    }
+
+    @Test
+    void featuresDefaultsToEmpty() throws Exception {
+        var config = YAML.readValue("{}", SpawnConfig.class);
+        assertTrue(config.getFeatures().isEmpty());
+        assertFalse(config.isFeatureEnabled("openai"));
+    }
+
+    @Test
+    void openaiFeatureImplicitlyEnabledWhenKeyConfigured() throws Exception {
+        var yaml = """
+                openai:
+                  apiKey: sk-test-key
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertTrue(config.getFeatures().isEmpty());
+        assertTrue(config.isFeatureEnabled("openai"));
+    }
+
+    @Test
+    void openaiFeatureNotImplicitlyEnabledWithoutKey() throws Exception {
+        var config = YAML.readValue("{}", SpawnConfig.class);
+        assertFalse(config.isFeatureEnabled("openai"));
+    }
+
+    @Test
+    void featuresSetterHandlesNull() {
+        var config = new SpawnConfig();
+        config.setFeatures(null);
+        assertTrue(config.getFeatures().isEmpty());
+    }
+
+    @Test
     void deserializeSearchPaths() throws Exception {
         var yaml = """
                 searchPaths:

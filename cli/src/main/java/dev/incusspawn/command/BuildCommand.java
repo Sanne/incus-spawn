@@ -1127,7 +1127,13 @@ public class BuildCommand extends BaseCommand {
         var tool = findTool(name, toolDefLoader, cdiTools);
         if (tool == null) {
             if (!quiet) {
-                System.err.println("Warning: unknown tool '" + name + "', skipping.");
+                var ungated = findToolUngated(name, toolDefLoader, cdiTools);
+                if (ungated != null) {
+                    System.err.println("Warning: tool '" + name + "' requires feature '"
+                            + ungated.feature() + "' — add it to the features list in config.yaml to enable.");
+                } else {
+                    System.err.println("Warning: unknown tool '" + name + "', skipping.");
+                }
             }
             visiting.remove(name);
             return;
@@ -1354,9 +1360,28 @@ public class BuildCommand extends BaseCommand {
 
     private static ToolSetup findTool(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
         var tool = toolDefLoader.find(name);
-        if (tool != null) return tool;
+        if (tool != null) return isFeatureGated(tool) ? null : tool;
         for (var t : cdiTools) {
-            if (t.name().equals(name)) return t;
+            if (t.name().equals(name)) return isFeatureGated(t) ? null : t;
+        }
+        return null;
+    }
+
+    static boolean isFeatureGated(ToolSetup tool) {
+        var feature = tool.feature();
+        return feature != null && !SpawnConfig.load().isFeatureEnabled(feature);
+    }
+
+    static boolean isFeatureGated(ToolSetup tool, SpawnConfig config) {
+        var feature = tool.feature();
+        return feature != null && !config.isFeatureEnabled(feature);
+    }
+
+    private static ToolSetup findToolUngated(String name, ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools) {
+        var tool = toolDefLoader.find(name);
+        if (tool != null && tool.feature() != null) return tool;
+        for (var t : cdiTools) {
+            if (t.name().equals(name) && t.feature() != null) return t;
         }
         return null;
     }

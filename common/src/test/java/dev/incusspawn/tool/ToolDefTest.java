@@ -800,6 +800,38 @@ class ToolDefTest {
         }
     }
 
+    @Test
+    void parseFeatureField() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: gated-tool
+                feature: openai
+                run:
+                  - echo hello
+                """));
+        assertEquals("openai", def.getFeature());
+    }
+
+    @Test
+    void featureDefaultsToNull() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: ungated-tool
+                run:
+                  - echo hello
+                """));
+        assertNull(def.getFeature());
+    }
+
+    @Test
+    void blankFeatureNormalizesToNull() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: blank-feature
+                feature: ""
+                run:
+                  - echo hello
+                """));
+        assertNull(def.getFeature());
+    }
+
     private static ByteArrayInputStream toStream(String yaml) {
         return new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8));
     }

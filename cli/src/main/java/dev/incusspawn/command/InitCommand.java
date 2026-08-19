@@ -1047,13 +1047,16 @@ public class InitCommand extends BaseCommand {
         var claudeTag = config.getClaude().hasAuth() ? " [configured]" : "";
         var githubTag = !config.getGithub().getToken().isBlank() ? " [configured]" : "";
         var bobTag = config.getBob().hasAuth() ? " [configured]" : "";
+        var openaiEnabled = config.isFeatureEnabled("openai");
         var openaiTag = config.getOpenai().hasAuth() ? " [configured]" : "";
 
         System.out.println("  Which credentials do you want to configure?");
         System.out.println("    1. Claude Code — AI coding assistant" + claudeTag);
         System.out.println("    2. GitHub — PAT for git operations" + githubTag);
         System.out.println("    3. Bob Shell — IBM AI coding assistant" + bobTag);
-        System.out.println("    4. OpenAI — API key for Codex CLI (experimental)" + openaiTag);
+        if (openaiEnabled) {
+            System.out.println("    4. OpenAI — API key for Codex CLI" + openaiTag);
+        }
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
         var input = console.readLine();
@@ -1066,14 +1069,14 @@ public class InitCommand extends BaseCommand {
             selected.add("claude");
             selected.add("github");
             selected.add("bob");
-            selected.add("openai");
+            if (openaiEnabled) selected.add("openai");
         } else {
             for (var part : input.split(",")) {
                 switch (part.strip()) {
                     case "1" -> selected.add("claude");
                     case "2" -> selected.add("github");
                     case "3" -> selected.add("bob");
-                    case "4" -> selected.add("openai");
+                    case "4" -> { if (openaiEnabled) selected.add("openai"); }
                 }
             }
         }

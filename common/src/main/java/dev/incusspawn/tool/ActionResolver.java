@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
@@ -132,7 +133,20 @@ public class ActionResolver {
             collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
         }
         tools.addAll(allDeps);
+        removeFeatureGated(tools);
         return tools;
+    }
+
+    private void removeFeatureGated(Set<String> toolNames) {
+        var config = SpawnConfig.load();
+        toolNames.removeIf(name -> {
+            var tool = toolDefLoader.find(name);
+            if (tool != null && tool.feature() != null) return !config.isFeatureEnabled(tool.feature());
+            for (var t : cdiTools) {
+                if (t.name().equals(name) && t.feature() != null) return !config.isFeatureEnabled(t.feature());
+            }
+            return false;
+        });
     }
 
     /**
