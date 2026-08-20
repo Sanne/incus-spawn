@@ -495,6 +495,7 @@ public class BuildCommand extends BaseCommand {
                 System.out.println("Image '" + canonicalName + "' already exists.");
                 System.out.println("It will be replaced if the build succeeds.");
             }
+            warnDroppedTools(canonicalName, imageDef, defs);
             if (!confirm("Rebuild?")) return;
         }
 
@@ -525,6 +526,43 @@ public class BuildCommand extends BaseCommand {
         incus.deleteIfExists(canonicalName);
         incus.rename(tempName, canonicalName);
         activeBuild = null;
+    }
+
+    private void warnDroppedTools(String existingImage, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var oldSourceJson = incus.configGet(existingImage, Metadata.BUILD_SOURCE);
+        var removed = findDroppedTools(oldSourceJson, imageDef, defs);
+        if (!removed.isEmpty()) {
+            System.out.println("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
+            for (var tool : removed) {
+                System.out.println("  - " + tool);
+            }
+            System.out.println("  Add to your template's tools: list if you still need them.");
+        }
+    }
+
+    static Set<String> findDroppedTools(String oldBuildSourceJson, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var oldSource = BuildSource.fromJson(oldBuildSourceJson);
+        if (oldSource == null) return Set.of();
+
+        var oldTools = new LinkedHashSet<String>();
+        for (var def : oldSource.getDefinitions().values()) {
+            if (def.getTools() != null) {
+                for (var t : def.getTools()) oldTools.add(t.getName());
+            }
+        }
+
+        var newTools = new LinkedHashSet<String>();
+        var current = imageDef;
+        while (current != null) {
+            if (current.getTools() != null) {
+                for (var t : current.getTools()) newTools.add(t.getName());
+            }
+            if (current.isRoot()) break;
+            current = defs.get(current.getParent());
+        }
+
+        oldTools.removeAll(newTools);
+        return oldTools;
     }
 
     /**
