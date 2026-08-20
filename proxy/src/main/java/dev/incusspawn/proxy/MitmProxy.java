@@ -21,6 +21,8 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
+import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.JksOptions;
 import io.vertx.core.net.SocketAddress;
 
@@ -160,6 +162,15 @@ public class MitmProxy {
 
     private final String healthBindAddress;
 
+    // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
+    int upstreamWsPort = 443;
+    boolean upstreamWsSsl = true;
+    boolean upstreamTrustAll = false;
+
+    void overrideDns(String host, String ip) {
+        dns.put(host, DnsEntry.resolved(ip));
+    }
+
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
         this.vertx = vertx;
@@ -253,8 +264,8 @@ public class MitmProxy {
         // when built via container, so point Vert.x at the system PEM CA bundle.
         var clientOptions = new HttpClientOptions()
                 .setSsl(true)
-                .setVerifyHost(true)
-                .setTrustAll(false)
+                .setVerifyHost(!upstreamTrustAll)
+                .setTrustAll(upstreamTrustAll)
                 .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(30_000)
@@ -280,6 +291,7 @@ public class MitmProxy {
                 err.printStackTrace(System.err);
             });
             mitmServer.requestHandler(this::routeRequest);
+            mitmServer.webSocketHandler(this::routeWebSocket);
             try {
                 mitmServer.listen()
                         .toCompletionStage().toCompletableFuture().get();
@@ -426,6 +438,116 @@ public class MitmProxy {
         }
         var sni = req.connection().indicatedServerName();
         return (sni != null && !sni.isEmpty()) ? sni : null;
+    }
+
+    // --- WebSocket passthrough ---
+
+    private void routeWebSocket(ServerWebSocket clientWs) {
+        var host = clientWs.headers().get("Host");
+        if (host == null) {
+            clientWs.reject(400);
+            return;
+        }
+        var colon = host.indexOf(':');
+        var domain = colon > 0 ? host.substring(0, colon) : host;
+        handleWebSocketUpgrade(clientWs, domain);
+    }
+
+    private void handleWebSocketUpgrade(ServerWebSocket clientWs, String domain) {
+        var wsOptions = new WebSocketConnectOptions()
+                .setHost(domain)
+                .setPort(upstreamWsPort)
+                .setSsl(upstreamWsSsl)
+                .setURI(clientWs.uri());
+
+        for (var entry : clientWs.headers()) {
+            var key = entry.getKey().toLowerCase(java.util.Locale.ROOT);
+            if (!key.startsWith("sec-websocket") && !key.equals("connection")
+                    && !key.equals("upgrade") && !key.equals("host")
+                    && !key.equals("authorization") && !key.equals("x-api-key")) {
+                wsOptions.addHeader(entry.getKey(), entry.getValue());
+            }
+        }
+
+        var protocols = clientWs.headers().get("Sec-WebSocket-Protocol");
+        if (protocols != null && !protocols.isBlank()) {
+            for (var p : protocols.split(",")) {
+                wsOptions.addSubProtocol(p.trim());
+            }
+        }
+
+        injectWebSocketAuth(wsOptions, domain);
+
+        // Pause the client socket so frames arriving before the upstream
+        // connection is ready are buffered, not dropped.
+        clientWs.pause();
+
+        // Let Vert.x resolve DNS via its built-in resolver (configured on the
+        // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
+        // so manual resolveHost() + setHost(ip) would break TLS SNI.
+        upstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
+            ProxyLog.info("WebSocket connected: " + domain + clientWs.uri());
+
+            clientWs.frameHandler(frame -> {
+                if (frame.isText() || frame.isBinary() || frame.isContinuation()) {
+                    upstreamWs.writeFrame(frame);
+                }
+            });
+            upstreamWs.frameHandler(frame -> {
+                if (frame.isText() || frame.isBinary() || frame.isContinuation()) {
+                    clientWs.writeFrame(frame);
+                }
+            });
+
+            clientWs.closeHandler(v -> upstreamWs.close());
+            upstreamWs.closeHandler(v -> clientWs.close());
+
+            clientWs.exceptionHandler(err -> {
+                if (!isBenignConnectionError(err)) {
+                    System.err.println("WebSocket client error (" + domain + "): " + err.getMessage());
+                }
+                upstreamWs.close();
+            });
+            upstreamWs.exceptionHandler(err -> {
+                if (!isBenignConnectionError(err)) {
+                    System.err.println("WebSocket upstream error (" + domain + "): " + err.getMessage());
+                }
+                clientWs.close();
+            });
+
+            clientWs.resume();
+        }).onFailure(err -> {
+            System.err.println("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
+            clientWs.close((short) 1011, "Upstream connection failed");
+        });
+    }
+
+    private void injectWebSocketAuth(WebSocketConnectOptions options, String domain) {
+        if (OPENAI_DOMAINS.contains(domain)) {
+            if (!credentials.openaiApiKey().isBlank()) {
+                options.addHeader("Authorization", "Bearer " + credentials.openaiApiKey());
+            }
+        } else if (ANTHROPIC_DOMAINS.contains(domain)) {
+            if (!credentials.oauthToken().isBlank()) {
+                options.addHeader("Authorization", "Bearer " + credentials.oauthToken());
+            } else if (!credentials.anthropicApiKey().isBlank()) {
+                options.addHeader("x-api-key", credentials.anthropicApiKey());
+            }
+        } else if (GITHUB_DOMAINS.contains(domain)) {
+            if (!credentials.ghToken().isBlank()) {
+                if ("github.com".equals(domain)) {
+                    var basicAuth = "x-access-token:" + credentials.ghToken();
+                    var encoded = java.util.Base64.getEncoder().encodeToString(basicAuth.getBytes());
+                    options.addHeader("Authorization", "Basic " + encoded);
+                } else {
+                    options.addHeader("Authorization", "Bearer " + credentials.ghToken());
+                }
+            }
+        } else if (ProxyConfig.isBobDomain(domain)) {
+            if (!credentials.bobApiKey().isBlank()) {
+                options.addHeader("Authorization", "Apikey " + credentials.bobApiKey());
+            }
+        }
     }
 
     // --- API requests (Anthropic, GitHub) ---
