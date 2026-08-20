@@ -140,10 +140,46 @@ assert "npm install scoped package through proxy" \
 rm -rf /tmp/npm-test
 echo ""
 
-# --- 8. TLS certificate quality (AKI/SKI extensions) ---
+# --- 8. Codex CLI config validation ---
+# Installs Codex and validates that the generated config.toml parses
+# successfully. Codex will fail on auth (no real API key), but must
+# not fail on config parsing — that was the "full-auto" regression.
+echo "[8] Codex CLI Config Validation"
+assert "install @openai/codex globally" \
+    npm install -g --ignore-scripts --loglevel=error @openai/codex
+mkdir -p /home/agentuser/.codex
+cat > /home/agentuser/.codex/config.toml << 'TOML'
+model = "o4-mini"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+forced_login_method = "api"
+check_for_update_on_startup = false
+
+[notice]
+hide_full_access_warning = true
+
+[tui]
+show_tooltips = false
+
+[projects."/home/agentuser"]
+trust_level = "trusted"
+TOML
+cat > /home/agentuser/.codex/auth.json << 'JSON'
+{
+  "auth_mode": "apikey",
+  "OPENAI_API_KEY": "sk-placeholder"
+}
+JSON
+chown -R agentuser:agentuser /home/agentuser/.codex
+assert "codex config.toml parses without errors" \
+    bash -c "output=\$(su -l agentuser -c 'OPENAI_API_KEY=sk-test timeout 5 codex \"test\" </dev/null' 2>&1 || true); \
+        ! echo \"\$output\" | grep -q 'Error loading config'"
+echo ""
+
+# --- 9. TLS certificate quality (AKI/SKI extensions) ---
 # Python 3.14+ (OpenSSL 3.5+) rejects MITM leaf certs missing Authority
 # Key Identifier or Subject Key Identifier extensions.
-echo "[7] TLS Certificate Quality (AKI/SKI)"
+echo "[9] TLS Certificate Quality (AKI/SKI)"
 # Installed rather than assumed: tpl-minimal ships neither. Asserted so a failure
 # here is reported as a missing tool, not as three confusing cert failures.
 assert "python3 and openssl installable through the proxy" \

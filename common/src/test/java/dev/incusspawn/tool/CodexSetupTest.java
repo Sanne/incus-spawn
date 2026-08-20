@@ -71,10 +71,28 @@ class CodexSetupTest {
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
                         arg.contains("model = \"o4-mini\"") &&
-                        arg.contains("approval_policy = \"full-auto\"") &&
+                        arg.contains("approval_policy = \"never\"") &&
+                        arg.contains("sandbox_mode = \"danger-full-access\"") &&
                         arg.contains("forced_login_method = \"api\"") &&
                         arg.contains("check_for_update_on_startup = false") &&
+                        arg.contains("hide_full_access_warning = true") &&
+                        arg.contains("show_tooltips = false") &&
                         arg.contains("trust_level = \"trusted\"")));
+    }
+
+    @Test
+    void installWritesAuthJson() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), argThat(arg ->
+                        arg.contains(CodexSetup.AUTH_PATH) &&
+                        arg.contains("\"auth_mode\": \"apikey\"") &&
+                        arg.contains("\"OPENAI_API_KEY\": \"sk-placeholder\"")));
     }
 
     @Test
