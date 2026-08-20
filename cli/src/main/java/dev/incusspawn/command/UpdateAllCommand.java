@@ -81,9 +81,15 @@ public class UpdateAllCommand extends BaseCommand {
         System.out.println("  Running system updates...");
         incus.shellExec(name, "dnf", "update", "-y");
 
-        // Update Claude Code
-        System.out.println("  Updating Claude Code...");
-        incus.shellExec(name, "npm", "update", "-g", "@anthropic-ai/claude-code");
+        // Update globally installed npm coding tools (if any)
+        if (incus.shellExec(name, "npm", "list", "-g", "@anthropic-ai/claude-code").success()) {
+            System.out.println("  Updating Claude Code...");
+            incus.shellExec(name, "npm", "update", "-g", "@anthropic-ai/claude-code");
+        }
+        if (incus.shellExec(name, "npm", "list", "-g", "@openai/codex").success()) {
+            System.out.println("  Updating Codex CLI...");
+            incus.shellExec(name, "npm", "update", "-g", "@openai/codex");
+        }
 
         // Git fetch in all repos (for project images)
         System.out.println("  Updating git repositories...");
