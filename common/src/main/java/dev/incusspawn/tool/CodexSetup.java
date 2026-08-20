@@ -53,20 +53,35 @@ public class CodexSetup implements ToolSetup {
     }
 
     static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
+    static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
     private void configureSettings(Container c) {
         System.out.println("Configuring Codex CLI...");
         var configToml = """
                 model = "o4-mini"
-                approval_policy = "full-auto"
+                approval_policy = "never"
+                sandbox_mode = "danger-full-access"
                 forced_login_method = "api"
                 check_for_update_on_startup = false
+
+                [notice]
+                hide_full_access_warning = true
+
+                [tui]
+                show_tooltips = false
 
                 [projects."/home/agentuser"]
                 trust_level = "trusted"
                 """;
+        var authJson = """
+                {
+                  "auth_mode": "apikey",
+                  "OPENAI_API_KEY": "sk-placeholder"
+                }
+                """;
         c.sh("mkdir -p /home/agentuser/.codex");
         c.writeFile(CONFIG_PATH, configToml);
+        c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
     }
 
