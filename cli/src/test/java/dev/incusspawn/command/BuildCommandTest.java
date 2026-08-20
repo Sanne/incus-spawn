@@ -723,6 +723,127 @@ class BuildCommandTest {
 
 
 
+    // --- updateCodexTrust ---
+
+    @Test
+    void updateCodexTrustAddsRepoDirectories() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var existingConfig = """
+                model = "o4-mini"
+                approval_policy = "never"
+
+                [projects."/home/agentuser"]
+                trust_level = "trusted"
+                """;
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("cat"), anyString())).thenReturn(
+                new IncusClient.ExecResult(0, existingConfig, ""));
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("chown"), anyString(), anyString(), anyString())).thenReturn(OK);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/quarkusio/quarkus.git");
+        repo.setPath("~/quarkus");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.updateCodexTrust(container, imageDef);
+
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), captor.capture());
+
+        String writtenContent = null;
+        for (var call : captor.getAllValues()) {
+            if (call.contains(".codex/config.toml")) {
+                var start = call.indexOf('\n') + 1;
+                var end = call.lastIndexOf("\nINCUS_EOF");
+                if (start > 0 && end > start) {
+                    writtenContent = call.substring(start, end);
+                }
+            }
+        }
+        assertNotNull(writtenContent, "Expected config.toml to be written");
+        assertTrue(writtenContent.contains("[projects.\"/home/agentuser/quarkus\"]"));
+        assertTrue(writtenContent.contains("trust_level = \"trusted\""));
+        // Original content preserved
+        assertTrue(writtenContent.contains("model = \"o4-mini\""));
+        assertTrue(writtenContent.contains("[projects.\"/home/agentuser\"]"));
+    }
+
+    @Test
+    void updateCodexTrustNoopWhenNoRepos() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-empty");
+
+        var cmd = new BuildCommand();
+        cmd.updateCodexTrust(container, imageDef);
+
+        verifyNoInteractions(incus);
+    }
+
+    @Test
+    void updateCodexTrustNoopWhenCodexNotInstalled() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(FAIL);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-nocodex");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.updateCodexTrust(container, imageDef);
+
+        verify(incus).shellExec(eq("test"), eq("test"), eq("-f"), anyString());
+        verify(incus, never()).shellExec(eq("test"), eq("cat"), anyString());
+    }
+
+    @Test
+    void updateCodexTrustSkipsAlreadyTrustedPath() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var existingConfig = """
+                model = "o4-mini"
+
+                [projects."/home/agentuser"]
+                trust_level = "trusted"
+
+                [projects."/home/agentuser/quarkus"]
+                trust_level = "trusted"
+                """;
+        when(incus.shellExec(eq("test"), eq("test"), eq("-f"), anyString())).thenReturn(OK);
+        when(incus.shellExec(eq("test"), eq("cat"), anyString())).thenReturn(
+                new IncusClient.ExecResult(0, existingConfig, ""));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/quarkusio/quarkus.git");
+        repo.setPath("~/quarkus");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-quarkus");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        cmd.updateCodexTrust(container, imageDef);
+
+        // Should not write since path already trusted
+        verify(incus, never()).shellExec(eq("test"), eq("sh"), eq("-c"), anyString());
+    }
+
     // --- findDroppedTools ---
 
     @Test

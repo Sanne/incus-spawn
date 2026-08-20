@@ -27,6 +27,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 
 import dev.incusspawn.tool.ClaudeSetup;
+import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -745,6 +746,7 @@ public class BuildCommand extends BaseCommand {
         installSkills(container, imageDef, defs);
         cloneRepos(container, imageDef, effectiveVm);
         updateClaudeJsonTrust(container, imageDef);
+        updateCodexTrust(container, imageDef);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
@@ -985,6 +987,7 @@ public class BuildCommand extends BaseCommand {
             installSkills(container, layer, defs);
             cloneRepos(container, layer, effectiveVm);
             updateClaudeJsonTrust(container, layer);
+            updateCodexTrust(container, layer);
         }
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
@@ -2103,6 +2106,35 @@ public class BuildCommand extends BaseCommand {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;
         }
+    }
+
+    private static final String CODEX_CONFIG_PATH = CodexSetup.CONFIG_PATH;
+
+    void updateCodexTrust(Container container, ImageDef imageDef) {
+        if (imageDef.getRepos().isEmpty()) return;
+
+        var checkResult = container.exec("test", "-f", CODEX_CONFIG_PATH);
+        if (!checkResult.success()) return;
+
+        var catResult = container.exec("cat", CODEX_CONFIG_PATH);
+        if (!catResult.success()) return;
+
+        var existing = catResult.stdout();
+        var sb = new StringBuilder();
+
+        for (var repo : imageDef.getRepos()) {
+            var expandedPath = expandHome(repo.getPath());
+            var section = "[projects.\"" + expandedPath + "\"]";
+            if (!existing.contains(section) && !sb.toString().contains(section)) {
+                sb.append("\n").append(section).append("\n");
+                sb.append("trust_level = \"trusted\"\n");
+            }
+        }
+
+        if (sb.isEmpty()) return;
+
+        container.writeFile(CODEX_CONFIG_PATH, existing + sb);
+        container.chown(CODEX_CONFIG_PATH, "agentuser:agentuser");
     }
 
     private static final String CLAUDE_JSON_PATH = "/home/agentuser/.claude.json";

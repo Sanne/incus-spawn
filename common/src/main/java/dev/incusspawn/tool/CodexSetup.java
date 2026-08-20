@@ -52,7 +52,7 @@ public class CodexSetup implements ToolSetup {
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
     }
 
-    static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
+    public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
     private void configureSettings(Container c) {
