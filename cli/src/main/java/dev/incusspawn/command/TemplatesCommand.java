@@ -323,7 +323,7 @@ public class TemplatesCommand extends BaseCommand {
             #   - ripgrep
 
             # Tool definitions to set up
-            # Built-in tools: podman, maven-3, gh, claude, codex, sshd
+            # Available tools (non-exhaustive): podman, maven-3, gh, claude, codex, pi, bob, sshd, headroom
             # tools:
             #   - podman
 
