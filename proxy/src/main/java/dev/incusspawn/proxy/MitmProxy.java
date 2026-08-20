@@ -386,6 +386,7 @@ public class MitmProxy {
                     var m = msg.toLowerCase(java.util.Locale.ROOT);
                     if (m.contains("connection reset")
                             || m.contains("broken pipe")
+                            || m.contains("connection was closed")
                             || m.contains("connection or outbound has closed")) {
                         return true;
                     }
@@ -499,8 +500,22 @@ public class MitmProxy {
                 }
             });
 
-            clientWs.closeHandler(v -> upstreamWs.close());
-            upstreamWs.closeHandler(v -> clientWs.close());
+            clientWs.closeHandler(v -> {
+                var code = clientWs.closeStatusCode();
+                if (code != null) {
+                    upstreamWs.close(code, clientWs.closeReason() != null ? clientWs.closeReason() : "");
+                } else {
+                    upstreamWs.close();
+                }
+            });
+            upstreamWs.closeHandler(v -> {
+                var code = upstreamWs.closeStatusCode();
+                if (code != null) {
+                    clientWs.close(code, upstreamWs.closeReason() != null ? upstreamWs.closeReason() : "");
+                } else {
+                    clientWs.close();
+                }
+            });
 
             clientWs.exceptionHandler(err -> {
                 if (!isBenignConnectionError(err)) {
@@ -537,7 +552,8 @@ public class MitmProxy {
             if (!credentials.ghToken().isBlank()) {
                 if ("github.com".equals(domain)) {
                     var basicAuth = "x-access-token:" + credentials.ghToken();
-                    var encoded = java.util.Base64.getEncoder().encodeToString(basicAuth.getBytes());
+                    var encoded = java.util.Base64.getEncoder().encodeToString(
+                            basicAuth.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     options.addHeader("Authorization", "Basic " + encoded);
                 } else {
                     options.addHeader("Authorization", "Bearer " + credentials.ghToken());
@@ -1566,7 +1582,8 @@ public class MitmProxy {
                 if ("github.com".equals(domain)) {
                     // Git HTTP transport requires Basic auth (token as password)
                     var basicAuth = "x-access-token:" + credentials.ghToken();
-                    var encoded = java.util.Base64.getEncoder().encodeToString(basicAuth.getBytes());
+                    var encoded = java.util.Base64.getEncoder().encodeToString(
+                            basicAuth.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     upReq.putHeader("Authorization", "Basic " + encoded);
                 } else {
                     // API and CDN domains accept Bearer tokens

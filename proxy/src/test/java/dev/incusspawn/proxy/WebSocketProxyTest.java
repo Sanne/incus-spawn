@@ -11,7 +11,6 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.PemKeyCertOptions;
-import io.vertx.core.net.PemTrustOptions;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -59,7 +58,6 @@ class WebSocketProxyTest {
         var leaf = ca.generateDomainCert("api.openai.com");
         var leafCertPem = DerEncoder.toPem("CERTIFICATE", leaf.cert().getEncoded());
         var leafKeyPem = DerEncoder.toPem("PRIVATE KEY", leaf.key().getEncoded());
-        var caCertPem = ca.caCertPem();
 
         // Resolve api.openai.com to loopback for both the proxy's upstream
         // client and the test client.
@@ -79,7 +77,13 @@ class WebSocketProxyTest {
         mockUpstream.webSocketHandler(ws -> {
             var auth = ws.headers().get("Authorization");
             if (auth != null) capturedAuthHeaders.add(auth);
-            ws.textMessageHandler(msg -> ws.writeTextMessage("echo:" + msg));
+            ws.textMessageHandler(msg -> {
+                if ("close-with-4008".equals(msg)) {
+                    ws.close((short) 4008, "quota_exceeded");
+                } else {
+                    ws.writeTextMessage("echo:" + msg);
+                }
+            });
             ws.binaryMessageHandler(buf ->
                     ws.writeBinaryMessage(Buffer.buffer("echo:").appendBuffer(buf)));
             ws.closeHandler(v -> upstreamCloseCount.incrementAndGet());
@@ -217,6 +221,22 @@ class WebSocketProxyTest {
         }
         assertTrue(upstreamCloseCount.get() > countBefore,
                 "Upstream WebSocket should close when client disconnects");
+        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void upstreamCloseCodeIsPropagated() throws Exception {
+        var client = createClient();
+        var closeCode = new CompletableFuture<Short>();
+
+        var ws = client.webSocket(connectOptions("/v1/close-code-test"))
+                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+        ws.closeHandler(v -> closeCode.complete(ws.closeStatusCode()));
+        ws.writeTextMessage("close-with-4008");
+
+        assertEquals((short) 4008, closeCode.get(5, TimeUnit.SECONDS),
+                "Upstream close status code should propagate through the proxy");
         client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
     }
 
