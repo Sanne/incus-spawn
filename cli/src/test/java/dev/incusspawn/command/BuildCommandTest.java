@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -14,7 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -719,6 +722,136 @@ class BuildCommandTest {
     }
 
 
+
+    // --- findDroppedTools ---
+
+    @Test
+    void findDroppedToolsDetectsRemovedTool() {
+        var oldDef = new ImageDef();
+        oldDef.setName("tpl-dev");
+        oldDef.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("claude"),
+                new ToolDef.ToolRef("gh")));
+
+        var oldSource = new BuildSource(
+                Map.of("tpl-dev", oldDef), Map.of(), Map.of(), Map.of());
+
+        var newDef = new ImageDef();
+        newDef.setName("tpl-dev");
+        newDef.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("gh")));
+
+        var dropped = BuildCommand.findDroppedTools(oldSource.toJson(), newDef, Map.of("tpl-dev", newDef));
+        assertEquals(java.util.Set.of("claude"), dropped);
+    }
+
+    @Test
+    void findDroppedToolsNoChanges() {
+        var oldDef = new ImageDef();
+        oldDef.setName("tpl-dev");
+        oldDef.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("gh")));
+
+        var oldSource = new BuildSource(
+                Map.of("tpl-dev", oldDef), Map.of(), Map.of(), Map.of());
+
+        var newDef = new ImageDef();
+        newDef.setName("tpl-dev");
+        newDef.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("gh")));
+
+        var dropped = BuildCommand.findDroppedTools(oldSource.toJson(), newDef, Map.of("tpl-dev", newDef));
+        assertTrue(dropped.isEmpty());
+    }
+
+    @Test
+    void findDroppedToolsNullBuildSourceReturnsEmpty() {
+        var newDef = new ImageDef();
+        newDef.setName("tpl-dev");
+        newDef.setTools(List.of(new ToolDef.ToolRef("podman")));
+
+        var dropped = BuildCommand.findDroppedTools(null, newDef, Map.of("tpl-dev", newDef));
+        assertTrue(dropped.isEmpty());
+    }
+
+    @Test
+    void findDroppedToolsEmptyBuildSourceReturnsEmpty() {
+        var newDef = new ImageDef();
+        newDef.setName("tpl-dev");
+
+        var dropped = BuildCommand.findDroppedTools("", newDef, Map.of("tpl-dev", newDef));
+        assertTrue(dropped.isEmpty());
+    }
+
+    @Test
+    void findDroppedToolsConsidersParentChain() {
+        // Old build had claude in tpl-dev
+        var oldDev = new ImageDef();
+        oldDev.setName("tpl-dev");
+        oldDev.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("claude")));
+
+        var oldSource = new BuildSource(
+                Map.of("tpl-dev", oldDev), Map.of(), Map.of(), Map.of());
+
+        // New definitions: claude removed from tpl-dev but added in child tpl-mydev
+        var newMinimal = new ImageDef();
+        newMinimal.setName("tpl-minimal");
+        newMinimal.setImage("images:fedora/44");
+
+        var newDev = new ImageDef();
+        newDev.setName("tpl-dev");
+        newDev.setParent("tpl-minimal");
+        newDev.setTools(List.of(new ToolDef.ToolRef("podman")));
+
+        var newMydev = new ImageDef();
+        newMydev.setName("tpl-mydev");
+        newMydev.setParent("tpl-dev");
+        newMydev.setTools(List.of(new ToolDef.ToolRef("claude")));
+
+        var defs = Map.of(
+                "tpl-minimal", newMinimal,
+                "tpl-dev", newDev,
+                "tpl-mydev", newMydev);
+
+        // When rebuilding tpl-dev, claude IS dropped (child doesn't count)
+        var droppedFromDev = BuildCommand.findDroppedTools(oldSource.toJson(), newDev, defs);
+        assertEquals(java.util.Set.of("claude"), droppedFromDev);
+
+        // When rebuilding tpl-mydev with same old source, claude is NOT dropped (it's in mydev)
+        var droppedFromMydev = BuildCommand.findDroppedTools(oldSource.toJson(), newMydev, defs);
+        assertTrue(droppedFromMydev.isEmpty());
+    }
+
+    @Test
+    void findDroppedToolsMultipleDefinitionsInOldSource() {
+        // Old build stored definitions for the whole chain
+        var oldMinimal = new ImageDef();
+        oldMinimal.setName("tpl-minimal");
+        oldMinimal.setTools(List.of(new ToolDef.ToolRef("tmux")));
+
+        var oldDev = new ImageDef();
+        oldDev.setName("tpl-dev");
+        oldDev.setTools(List.of(new ToolDef.ToolRef("podman"), new ToolDef.ToolRef("claude")));
+
+        var oldDefs = new LinkedHashMap<String, ImageDef>();
+        oldDefs.put("tpl-minimal", oldMinimal);
+        oldDefs.put("tpl-dev", oldDev);
+
+        var oldSource = new BuildSource(oldDefs, Map.of(), Map.of(), Map.of());
+
+        // New: tpl-dev dropped claude, tmux still inherited from parent
+        var newMinimal = new ImageDef();
+        newMinimal.setName("tpl-minimal");
+        newMinimal.setImage("images:fedora/44");
+        newMinimal.setTools(List.of(new ToolDef.ToolRef("tmux")));
+
+        var newDev = new ImageDef();
+        newDev.setName("tpl-dev");
+        newDev.setParent("tpl-minimal");
+        newDev.setTools(List.of(new ToolDef.ToolRef("podman")));
+
+        var defs = Map.of("tpl-minimal", newMinimal, "tpl-dev", newDev);
+
+        var dropped = BuildCommand.findDroppedTools(oldSource.toJson(), newDev, defs);
+        assertEquals(java.util.Set.of("claude"), dropped,
+                "claude should be detected as dropped; tmux and podman remain");
+    }
 
     private static ToolSetup simpleToolSetup(String toolName) {
         return new ToolSetup() {
