@@ -42,8 +42,10 @@ class ImageDefTest {
         assertEquals("tpl-minimal", dev.getParent());
         assertTrue(dev.getTools().stream().anyMatch(t -> "podman".equals(t.getName())));
         assertTrue(dev.getTools().stream().anyMatch(t -> "gh".equals(t.getName())));
-        assertFalse(dev.getTools().stream().anyMatch(t -> "claude".equals(t.getName())),
-                "tpl-dev should not include any coding agent by default");
+        var agentTools = java.util.Set.of("claude", "codex", "pi", "bob");
+        var found = dev.getTools().stream().map(t -> t.getName()).filter(agentTools::contains).toList();
+        assertTrue(found.isEmpty(),
+                "tpl-dev should not include any coding agent by default, but found: " + found);
     }
 
     @Test

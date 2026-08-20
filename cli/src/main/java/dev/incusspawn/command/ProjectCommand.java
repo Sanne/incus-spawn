@@ -147,8 +147,10 @@ public class ProjectCommand extends BaseCommand {
             incus.shellExec(name, "dnf", "update", "-y");
 
             // Update globally installed npm packages (coding tools, etc.)
-            System.out.println("Updating npm packages...");
-            incus.shellExec(name, "npm", "update", "-g");
+            if (incus.shellExec(name, "which", "npm").success()) {
+                System.out.println("Updating npm packages...");
+                incus.shellExec(name, "npm", "update", "-g");
+            }
 
             // Git fetch in all repos
             System.out.println("Updating git repositories...");
