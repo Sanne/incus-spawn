@@ -464,8 +464,7 @@ public class MitmProxy {
         for (var entry : clientWs.headers()) {
             var key = entry.getKey().toLowerCase(java.util.Locale.ROOT);
             if (!key.startsWith("sec-websocket") && !key.equals("connection")
-                    && !key.equals("upgrade") && !key.equals("host")
-                    && !key.equals("authorization") && !key.equals("x-api-key")) {
+                    && !key.equals("upgrade") && !key.equals("host")) {
                 wsOptions.addHeader(entry.getKey(), entry.getValue());
             }
         }
@@ -540,13 +539,16 @@ public class MitmProxy {
     private void injectWebSocketAuth(WebSocketConnectOptions options, String domain) {
         if (OPENAI_DOMAINS.contains(domain)) {
             if (!credentials.openaiApiKey().isBlank()) {
-                options.addHeader("Authorization", "Bearer " + credentials.openaiApiKey());
+                options.putHeader("Authorization", "Bearer " + credentials.openaiApiKey());
+            } else {
+                options.removeHeader("Authorization");
             }
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (!credentials.oauthToken().isBlank()) {
-                options.addHeader("Authorization", "Bearer " + credentials.oauthToken());
+                options.putHeader("Authorization", "Bearer " + credentials.oauthToken());
+                options.removeHeader("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
-                options.addHeader("x-api-key", credentials.anthropicApiKey());
+                options.putHeader("x-api-key", credentials.anthropicApiKey());
             }
         } else if (GITHUB_DOMAINS.contains(domain)) {
             if (!credentials.ghToken().isBlank()) {
@@ -554,14 +556,14 @@ public class MitmProxy {
                     var basicAuth = "x-access-token:" + credentials.ghToken();
                     var encoded = java.util.Base64.getEncoder().encodeToString(
                             basicAuth.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    options.addHeader("Authorization", "Basic " + encoded);
+                    options.putHeader("Authorization", "Basic " + encoded);
                 } else {
-                    options.addHeader("Authorization", "Bearer " + credentials.ghToken());
+                    options.putHeader("Authorization", "Bearer " + credentials.ghToken());
                 }
             }
         } else if (ProxyConfig.isBobDomain(domain)) {
             if (!credentials.bobApiKey().isBlank()) {
-                options.addHeader("Authorization", "Apikey " + credentials.bobApiKey());
+                options.putHeader("Authorization", "Apikey " + credentials.bobApiKey());
             }
         }
     }
