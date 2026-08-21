@@ -258,7 +258,9 @@ public class MitmProxy {
                 .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"))
                 .setIdleTimeout(120)
                 .setIdleTimeoutUnit(TimeUnit.SECONDS)
-                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1));
+                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
+                .setMaxWebSocketFrameSize(1024 * 1024)
+                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
 
         // Upstream HTTPS client with connection pooling.
         // GraalVM native images don't embed the build-time trust store reliably
@@ -285,7 +287,9 @@ public class MitmProxy {
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
                 .setConnectTimeout(30_000)
-                .setReadIdleTimeout(0);
+                .setReadIdleTimeout(0)
+                .setMaxWebSocketFrameSize(1024 * 1024)
+                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
         if (systemCaBundle != null) {
             wsClientOptions.setTrustOptions(new io.vertx.core.net.PemTrustOptions().addCertPath(systemCaBundle));
         }
@@ -506,65 +510,88 @@ public class MitmProxy {
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
         wsUpstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
+            if (clientWs.isClosed()) {
+                upstreamWs.close();
+                return;
+            }
+
             ProxyLog.info("WebSocket connected: " + domain + clientWs.uri());
 
-            // Periodic ping to prevent NAT/firewall idle timeouts from
-            // killing the connection during long AI thinking phases.
-            var pingTimer = vertx.setPeriodic(30_000, id ->  {
+            // Periodic pings on both legs to prevent idle timeouts.
+            // Upstream pings prevent NAT/firewall timeouts during long AI
+            // thinking phases; client pings prevent the MITM server's own
+            // idle timeout (120s) from killing the connection when no data
+            // flows on the client leg (e.g. while the model is reasoning).
+            var upstreamPingTimer = vertx.setPeriodic(30_000, id ->  {
                 if (!upstreamWs.isClosed()) {
                     upstreamWs.writePing(Buffer.buffer("keepalive"));
                 }
             });
+            var clientPingTimer = vertx.setPeriodic(30_000, id -> {
+                if (!clientWs.isClosed()) {
+                    clientWs.writePing(Buffer.buffer("keepalive"));
+                }
+            });
 
             clientWs.frameHandler(frame -> {
-                if (frame.isText() || frame.isBinary() || frame.isContinuation()) {
+                if ((frame.isText() || frame.isBinary() || frame.isContinuation())
+                        && !upstreamWs.isClosed()) {
                     upstreamWs.writeFrame(frame);
                 }
             });
             upstreamWs.frameHandler(frame -> {
-                if (frame.isText() || frame.isBinary() || frame.isContinuation()) {
+                if ((frame.isText() || frame.isBinary() || frame.isContinuation())
+                        && !clientWs.isClosed()) {
                     clientWs.writeFrame(frame);
                 }
             });
 
             clientWs.closeHandler(v -> {
-                vertx.cancelTimer(pingTimer);
-                var code = clientWs.closeStatusCode();
-                if (code != null) {
-                    upstreamWs.close(code, clientWs.closeReason() != null ? clientWs.closeReason() : "");
-                } else {
-                    upstreamWs.close();
+                vertx.cancelTimer(upstreamPingTimer);
+                vertx.cancelTimer(clientPingTimer);
+                if (!upstreamWs.isClosed()) {
+                    var code = clientWs.closeStatusCode();
+                    if (code != null) {
+                        upstreamWs.close(code, clientWs.closeReason() != null ? clientWs.closeReason() : "");
+                    } else {
+                        upstreamWs.close();
+                    }
                 }
             });
             upstreamWs.closeHandler(v -> {
-                vertx.cancelTimer(pingTimer);
-                var code = upstreamWs.closeStatusCode();
-                if (code != null) {
-                    clientWs.close(code, upstreamWs.closeReason() != null ? upstreamWs.closeReason() : "");
-                } else {
-                    clientWs.close();
+                vertx.cancelTimer(upstreamPingTimer);
+                vertx.cancelTimer(clientPingTimer);
+                if (!clientWs.isClosed()) {
+                    var code = upstreamWs.closeStatusCode();
+                    if (code != null) {
+                        clientWs.close(code, upstreamWs.closeReason() != null ? upstreamWs.closeReason() : "");
+                    } else {
+                        clientWs.close();
+                    }
                 }
             });
 
             clientWs.exceptionHandler(err -> {
-                vertx.cancelTimer(pingTimer);
+                vertx.cancelTimer(upstreamPingTimer);
+                vertx.cancelTimer(clientPingTimer);
                 if (!isBenignConnectionError(err)) {
                     System.err.println("WebSocket client error (" + domain + "): " + err.getMessage());
                 }
-                upstreamWs.close();
+                if (!upstreamWs.isClosed()) upstreamWs.close();
             });
             upstreamWs.exceptionHandler(err -> {
-                vertx.cancelTimer(pingTimer);
+                vertx.cancelTimer(upstreamPingTimer);
+                vertx.cancelTimer(clientPingTimer);
                 if (!isBenignConnectionError(err)) {
                     System.err.println("WebSocket upstream error (" + domain + "): " + err.getMessage());
                 }
-                clientWs.close();
+                if (!clientWs.isClosed()) clientWs.close();
             });
 
             clientWs.resume();
         }).onFailure(err -> {
             System.err.println("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
-            clientWs.close((short) 1011, "Upstream connection failed");
+            if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
         });
     }
 
