@@ -96,6 +96,97 @@ class InitCommandTest {
         assertFalse(InitCommand.subidRangeCovers("root", "root", 1000, 1));
     }
 
+    // --- computeSubidUpdate ---
+
+    @Test
+    void computeSubidUpdateNoChangeWhenEntryPresent() {
+        var result = InitCommand.computeSubidUpdate("root:1000:1\n", "root:1000:1", null);
+        assertEquals(InitCommand.SubidAction.UNCHANGED, result.action());
+    }
+
+    @Test
+    void computeSubidUpdateAppendsWhenNoPrefixMatch() {
+        var result = InitCommand.computeSubidUpdate("nobody:1000:1\n", "root:1000:1", null);
+        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals("nobody:1000:1\nroot:1000:1\n", result.newContent());
+    }
+
+    @Test
+    void computeSubidUpdateAppendsNewlineWhenContentLacksTrailingNewline() {
+        var result = InitCommand.computeSubidUpdate("nobody:1000:1", "root:1000:1", null);
+        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals("nobody:1000:1\nroot:1000:1\n", result.newContent());
+    }
+
+    @Test
+    void computeSubidUpdateReplacesOldEntry() {
+        var result = InitCommand.computeSubidUpdate(
+                "root:1000000:65536\n", "root:1000000:1000000000", "root:1000000:65536");
+        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals("root:1000000:1000000000\n", result.newContent());
+    }
+
+    @Test
+    void computeSubidUpdateReplacesOldEntryPreservingOtherLines() {
+        var content = "root:1000:1\nroot:1000000:65536\n";
+        var result = InitCommand.computeSubidUpdate(
+                content, "root:1000000:1000000000", "root:1000000:65536");
+        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertEquals("root:1000:1\nroot:1000000:1000000000\n", result.newContent());
+    }
+
+    @Test
+    void computeSubidUpdateUnchangedWhenExistingRangeCovers() {
+        var result = InitCommand.computeSubidUpdate(
+                "root:1000000:2000000000\n", "root:1000000:1000000000", null);
+        assertEquals(InitCommand.SubidAction.UNCHANGED, result.action());
+    }
+
+    @Test
+    void computeSubidUpdateNeedsConfirmationWhenRangeInsufficient() {
+        var result = InitCommand.computeSubidUpdate(
+                "root:1000000:100\n", "root:1000000:1000000000", null);
+        assertEquals(InitCommand.SubidAction.NEEDS_CONFIRMATION, result.action());
+        assertEquals("root:1000000:100", result.conflictingEntry());
+    }
+
+    @Test
+    void computeSubidUpdatePrefersExactOldEntryOverPrefix() {
+        var content = "root:1000000:65536\n";
+        var result = InitCommand.computeSubidUpdate(
+                content, "root:1000000:1000000000", "root:1000000:65536");
+        assertEquals(InitCommand.SubidAction.UPDATED, result.action());
+        assertTrue(result.newContent().contains("root:1000000:1000000000"));
+        assertFalse(result.newContent().contains("root:1000000:65536"));
+    }
+
+    // --- replaceSubidLine ---
+
+    @Test
+    void replaceSubidLineReplacesExactLine() {
+        assertEquals("root:1000000:1000000000\n",
+                InitCommand.replaceSubidLine("root:1000000:65536\n", "root:1000000:65536", "root:1000000:1000000000"));
+    }
+
+    @Test
+    void replaceSubidLinePreservesOtherLines() {
+        String content = "nobody:100000:65536\nroot:1000000:65536\n";
+        assertEquals("nobody:100000:65536\nroot:1000000:1000000000\n",
+                InitCommand.replaceSubidLine(content, "root:1000000:65536", "root:1000000:1000000000"));
+    }
+
+    @Test
+    void replaceSubidLineSafeWithDollarInReplacement() {
+        assertEquals("$1:1000:1\n",
+                InitCommand.replaceSubidLine("old:1000:1\n", "old:1000:1", "$1:1000:1"));
+    }
+
+    @Test
+    void replaceSubidLineSafeWithBackslashInReplacement() {
+        assertEquals("user\\1:1000:1\n",
+                InitCommand.replaceSubidLine("old:1000:1\n", "old:1000:1", "user\\1:1000:1"));
+    }
+
     // --- parseGitHubEmails ---
 
     @Test
