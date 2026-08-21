@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -810,6 +811,51 @@ public class InitCommand extends BaseCommand {
         System.out.println("  subuid/subgid configured.");
     }
 
+    enum SubidAction { UNCHANGED, UPDATED, NEEDS_CONFIRMATION }
+
+    record SubidUpdateResult(SubidAction action, String newContent, String conflictingEntry) {
+        static SubidUpdateResult unchanged() {
+            return new SubidUpdateResult(SubidAction.UNCHANGED, null, null);
+        }
+        static SubidUpdateResult updated(String newContent) {
+            return new SubidUpdateResult(SubidAction.UPDATED, newContent, null);
+        }
+        static SubidUpdateResult needsConfirmation(String conflictingEntry) {
+            return new SubidUpdateResult(SubidAction.NEEDS_CONFIRMATION, null, conflictingEntry);
+        }
+    }
+
+    static SubidUpdateResult computeSubidUpdate(String content, String entry, String oldEntry) {
+        if (content.lines().anyMatch(l -> l.equals(entry))) {
+            return SubidUpdateResult.unchanged();
+        }
+
+        if (oldEntry != null && content.lines().anyMatch(l -> l.equals(oldEntry))) {
+            return SubidUpdateResult.updated(replaceSubidLine(content, oldEntry, entry));
+        }
+
+        var prefix = entry.substring(0, entry.lastIndexOf(':') + 1);
+        var existing = content.lines().filter(l -> l.startsWith(prefix)).findFirst();
+
+        if (existing.isEmpty()) {
+            String appended = content.endsWith("\n") ? content + entry + "\n" : content + "\n" + entry + "\n";
+            return SubidUpdateResult.updated(appended);
+        }
+
+        String[] entryParts = entry.split(":");
+        long neededBase = Long.parseLong(entryParts[1]);
+        long neededCount = Long.parseLong(entryParts[2]);
+        if (subidRangeCovers(existing.get(), entryParts[0], neededBase, neededCount)) {
+            return SubidUpdateResult.unchanged();
+        }
+
+        return SubidUpdateResult.needsConfirmation(existing.get());
+    }
+
+    static String replaceSubidLine(String content, String oldLine, String newLine) {
+        return content.replaceAll("(?m)^" + Pattern.quote(oldLine) + "$", Matcher.quoteReplacement(newLine));
+    }
+
     private boolean ensureSubidEntry(String path, String entry, String oldEntry) {
         String content;
         try {
@@ -819,47 +865,40 @@ public class InitCommand extends BaseCommand {
             return false;
         }
 
-        if (content.lines().anyMatch(l -> l.equals(entry))) {
-            return false;
-        }
+        var result = computeSubidUpdate(content, entry, oldEntry);
 
-        if (oldEntry != null && content.lines().anyMatch(l -> l.equals(oldEntry))) {
-            writeSubidFile(path, content.replaceAll("(?m)^" + Pattern.quote(oldEntry) + "$", entry));
-            return true;
-        }
-
-        // Extract the prefix (e.g. "root:1000000:") to detect unexpected entries.
-        var prefix = entry.substring(0, entry.lastIndexOf(':') + 1);
-        var existing = content.lines().filter(l -> l.startsWith(prefix)).findFirst();
-
-        if (existing.isEmpty()) {
-            writeSubidFile(path, content.endsWith("\n") ? content + entry + "\n" : content + "\n" + entry + "\n");
-            return true;
-        }
-
-        String[] entryParts = entry.split(":");
-        long neededBase = Long.parseLong(entryParts[1]);
-        long neededCount = Long.parseLong(entryParts[2]);
-        if (subidRangeCovers(existing.get(), entryParts[0], neededBase, neededCount)) {
-            return false;
-        }
-
-        System.err.println();
-        System.err.println("  " + path + " contains an unexpected entry: " + existing.get());
-        System.err.println("  incus-spawn expects: " + entry);
-        var console = System.console();
-        if (console != null) {
-            if (askConfirmation(console, System.err, "  \u001B[1;33mReplace it?\u001B[0m", false)) {
-                writeSubidFile(path, content.replaceAll("(?m)^" + Pattern.quote(existing.get()) + "$", entry));
-                return true;
+        return switch (result.action()) {
+            case UNCHANGED -> false;
+            case UPDATED -> writeSubidFile(path, result.newContent());
+            case NEEDS_CONFIRMATION -> {
+                System.err.println();
+                System.err.println("  " + path + " contains an unexpected entry: " + result.conflictingEntry());
+                System.err.println("  incus-spawn expects: " + entry);
+                var console = System.console();
+                if (console != null) {
+                    if (askConfirmation(console, System.err, "  \u001B[1;33mReplace it?\u001B[0m", false)) {
+                        yield writeSubidFile(path,
+                                replaceSubidLine(content, result.conflictingEntry(), entry));
+                    }
+                }
+                System.err.println("  Skipped \u2014 containers may not start correctly.");
+                yield false;
             }
-        }
-        System.err.println("  Skipped — containers may not start correctly.");
-        return false;
+        };
     }
 
-    private void writeSubidFile(String path, String content) {
-        runHost("sh", "-c", "printf '%s' '" + content.replace("'", "'\\''") + "' | sudo tee " + path + " > /dev/null");
+    private boolean writeSubidFile(String path, String content) {
+        var tmpPath = path + ".isx-tmp";
+        int exitCode = runHost("sh", "-c",
+                "printf '%s' '" + content.replace("'", "'\\''") + "' | sudo tee " + tmpPath + " > /dev/null"
+                        + " && sudo chmod --reference=" + path + " " + tmpPath
+                        + " && sudo mv " + tmpPath + " " + path);
+        if (exitCode != 0) {
+            System.err.println("  Warning: failed to write " + path);
+            runHostCapturingExit("sudo", "rm", "-f", tmpPath);
+            return false;
+        }
+        return true;
     }
 
     static boolean subidRangeCovers(String line, String user, long base, long count) {
