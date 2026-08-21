@@ -13,7 +13,23 @@ public final class ProxyLog {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
+    private static volatile boolean debugEnabled =
+            Boolean.getBoolean("isx.proxy.debug");
+
     private ProxyLog() {}
+
+    public static boolean isDebugEnabled() {
+        return debugEnabled;
+    }
+
+    public static void setDebugEnabled(boolean enabled) {
+        debugEnabled = enabled;
+    }
+
+    public static void debug(String message) {
+        if (!debugEnabled) return;
+        logToFile("DEBUG", message);
+    }
 
     public static void info(String message) {
         log("INFO", message);
@@ -30,6 +46,15 @@ public final class ProxyLog {
     private static void log(String level, String message) {
         var line = LocalDateTime.now().format(FMT) + " [" + level + "] " + message;
         System.err.println(line);
+        writeToFile(line);
+    }
+
+    private static void logToFile(String level, String message) {
+        var line = LocalDateTime.now().format(FMT) + " [" + level + "] " + message;
+        writeToFile(line);
+    }
+
+    private static void writeToFile(String line) {
         try {
             var path = Environment.proxyLifecycleLogFile();
             Files.createDirectories(path.getParent());

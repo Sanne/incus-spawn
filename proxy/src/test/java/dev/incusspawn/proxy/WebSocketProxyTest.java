@@ -241,6 +241,36 @@ class WebSocketProxyTest {
     }
 
     @Test
+    void upstreamCloseDoesNotLogClientError() throws Exception {
+        var client = createClient();
+        var stderrCapture = new java.io.ByteArrayOutputStream();
+        var origStderr = System.err;
+        var captureErr = new java.io.PrintStream(stderrCapture);
+
+        var ws = client.webSocket(connectOptions("/v1/close-quiet-test"))
+                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+        var closed = new CompletableFuture<Void>();
+        ws.closeHandler(v -> closed.complete(null));
+
+        System.setErr(captureErr);
+        try {
+            ws.writeTextMessage("close-with-4008");
+            closed.get(5, TimeUnit.SECONDS);
+            // Wait for any async exception handlers on the server event loop
+            // to fire while stderr is still captured.
+            Thread.sleep(500);
+        } finally {
+            System.setErr(origStderr);
+        }
+
+        var captured = stderrCapture.toString();
+        assertFalse(captured.contains("WebSocket client error"),
+                "Normal upstream close should not log a client error, got: " + captured);
+        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+    }
+
+    @Test
     void proxySendsKeepalivePingsToClient() throws Exception {
         var client = createClient();
         var pingReceived = new CompletableFuture<Void>();
