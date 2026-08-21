@@ -5,7 +5,6 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.BridgeSubnetCheck;
-import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
@@ -54,11 +53,11 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Allocate a static IP for a new branch and configure it on the Incus NIC device.
-     * The systemd-networkd {@code .network} file is pushed into the still-stopped
-     * container here so the interface comes up statically at boot — no DHCP lease is
-     * ever acquired, which is the whole point: leases expire across host sleep/wake.
-     * Skipped for AIRGAP mode (no NIC).
+     * Allocate an IP for a new branch and configure it on the Incus NIC device.
+     * The {@code ipv4.address} device config tells the bridge DHCP server which
+     * IP to hand out for this instance's MAC. The in-guest systemd-networkd uses
+     * DHCP, so if the bridge subnet ever changes, containers pick up the new
+     * address on their next restart. Skipped for AIRGAP mode (no NIC).
      *
      * @return the allocated IP, or null if skipped
      */
@@ -76,28 +75,19 @@ public final class InstanceLifecycle {
                 Metadata.STATIC_GATEWAY, gateway));
 
         if (!incus.isVm(name)) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+            pushDhcpNetworkConfig(incus, name);
         }
         return ip;
     }
 
-    private static int bridgePrefixLen(IncusClient incus) {
-        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
-        return bridgeAddr.contains("/") ? CidrUtils.parseCidr(bridgeAddr).prefixLen() : 24;
-    }
-
     /**
-     * Push a systemd-networkd static config into the stopped container, overwriting the
-     * temporary DHCP config the template carries from build time. This makes the branch
-     * boot directly into static addressing (instant network, no DHCP round trip). The
-     * in-container watchdog re-applies this same file if connectivity is ever lost.
+     * Push a DHCP systemd-networkd config into the stopped container, replacing
+     * the build-time config (which carries {@code UseDNS=no} to avoid DNS
+     * conflicts during image builds). At runtime the DHCP server on the bridge
+     * provides both the reserved IP and the gateway as DNS.
      */
-    private static void pushStaticNetworkConfig(IncusClient incus, String name,
-                                                String ip, String gateway, int prefixLen) {
-        var content = "[Match]\nName=eth0\n\n[Network]\n"
-                + "Address=" + ip + "/" + prefixLen + "\n"
-                + "Gateway=" + gateway + "\n"
-                + "DNS=" + gateway + "\n";
+    private static void pushDhcpNetworkConfig(IncusClient incus, String name) {
+        var content = "[Match]\nName=eth0\n\n[Network]\nDHCP=ipv4\n";
         try {
             var tmp = Files.createTempFile("isx-network-", ".network");
             try {
@@ -107,7 +97,7 @@ public final class InstanceLifecycle {
                 Files.deleteIfExists(tmp);
             }
         } catch (IOException | RuntimeException e) {
-            System.err.println("  Warning: failed to push static network config: " + e.getMessage());
+            System.err.println("  Warning: failed to push DHCP network config: " + e.getMessage());
         }
     }
 
@@ -118,11 +108,7 @@ public final class InstanceLifecycle {
     public static void pushDeferredVmFiles(IncusClient incus, String name,
                                            NetworkMode networkMode, RuntimeConfig prefetched) {
         if (networkMode != NetworkMode.AIRGAP) {
-            var ip = incus.configGet(name, Metadata.STATIC_IP);
-            var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
-            if (!ip.isEmpty() && !gateway.isEmpty()) {
-                pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-            }
+            pushDhcpNetworkConfig(incus, name);
         }
         if (prefetched != null) {
             injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
@@ -347,9 +333,6 @@ public final class InstanceLifecycle {
         if (prefetched != null && prefetched.terminfo() != null) {
             sb.append("; tic -x /tmp/.isx-terminfo.src 2>/dev/null; rm -f /tmp/.isx-terminfo.src");
         }
-        // The static .network config is pushed into the stopped container before start
-        // (see assignStaticIp), so the interface comes up immediately at boot — no DHCP
-        // wait. Here we only ensure the service is running and confirm the address is up.
         // Airgap branches have no NIC, so the wait would always time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
             sb.append(" && { systemctl start systemd-networkd 2>/dev/null; ")

@@ -1046,8 +1046,9 @@ public class BuildCommand extends BaseCommand {
                 "  printf '# container override\\n' > /etc/tmpfiles.d/$(basename \"$f\"); " +
                 "done; " +
                 "mkdir -p /usr/share/man/man{1,2,3,4,5,6,7,8,9}; " +
-                // Write a temporary DHCP network config for systemd-networkd to use during the build.
-                // Branches replace this with a static config at creation time.
+                // Write a DHCP network config for systemd-networkd. UseDNS=no during build
+                // because DNS is not yet configured; branches overwrite with a clean DHCP
+                // config that accepts DNS from the bridge's DHCP server.
                 "mkdir -p /etc/systemd/network; " +
                 "printf '[Match]\\nName=eth0\\n\\n[Network]\\nDHCP=ipv4\\n\\n[DHCPv4]\\nUseDNS=no\\n' " +
                 "> /etc/systemd/network/10-eth0.network; " +
