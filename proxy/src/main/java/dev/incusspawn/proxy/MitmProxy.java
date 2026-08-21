@@ -143,6 +143,7 @@ public class MitmProxy {
     private HttpServer mitmServer;
     private HttpServer healthHttpServer;
     private HttpClient upstreamClient;
+    private HttpClient wsUpstreamClient;
     private CountDownLatch stopLatch;
 
     private ApiTrafficLog debugLog;
@@ -276,6 +277,20 @@ public class MitmProxy {
         }
         upstreamClient = vertx.createHttpClient(clientOptions);
 
+        // Separate client for WebSocket: no read-idle timeout (WebSocket
+        // connections are long-lived and may be idle between prompts) and
+        // no connection pooling (each WebSocket is its own connection).
+        var wsClientOptions = new HttpClientOptions()
+                .setSsl(true)
+                .setVerifyHost(!upstreamTrustAll)
+                .setTrustAll(upstreamTrustAll)
+                .setConnectTimeout(30_000)
+                .setReadIdleTimeout(0);
+        if (systemCaBundle != null) {
+            wsClientOptions.setTrustOptions(new io.vertx.core.net.PemTrustOptions().addCertPath(systemCaBundle));
+        }
+        wsUpstreamClient = vertx.createHttpClient(wsClientOptions);
+
         int maxRetries = 30;
         for (int attempt = 1; ; attempt++) {
             mitmServer = vertx.createHttpServer(serverOptions);
@@ -350,6 +365,9 @@ public class MitmProxy {
             } catch (Exception ignored) {}
             try {
                 if (upstreamClient != null) upstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
+            } catch (Exception ignored) {}
+            try {
+                if (wsUpstreamClient != null) wsUpstreamClient.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
             try {
                 if (healthHttpServer != null) healthHttpServer.close().toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS);
@@ -485,8 +503,18 @@ public class MitmProxy {
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
         // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
         // so manual resolveHost() + setHost(ip) would break TLS SNI.
-        upstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
+        // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
+        // sessions can be idle between prompts for minutes).
+        wsUpstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
             ProxyLog.info("WebSocket connected: " + domain + clientWs.uri());
+
+            // Periodic ping to prevent NAT/firewall idle timeouts from
+            // killing the connection during long AI thinking phases.
+            var pingTimer = vertx.setPeriodic(30_000, id ->  {
+                if (!upstreamWs.isClosed()) {
+                    upstreamWs.writePing(Buffer.buffer("keepalive"));
+                }
+            });
 
             clientWs.frameHandler(frame -> {
                 if (frame.isText() || frame.isBinary() || frame.isContinuation()) {
@@ -500,6 +528,7 @@ public class MitmProxy {
             });
 
             clientWs.closeHandler(v -> {
+                vertx.cancelTimer(pingTimer);
                 var code = clientWs.closeStatusCode();
                 if (code != null) {
                     upstreamWs.close(code, clientWs.closeReason() != null ? clientWs.closeReason() : "");
@@ -508,6 +537,7 @@ public class MitmProxy {
                 }
             });
             upstreamWs.closeHandler(v -> {
+                vertx.cancelTimer(pingTimer);
                 var code = upstreamWs.closeStatusCode();
                 if (code != null) {
                     clientWs.close(code, upstreamWs.closeReason() != null ? upstreamWs.closeReason() : "");
@@ -517,12 +547,14 @@ public class MitmProxy {
             });
 
             clientWs.exceptionHandler(err -> {
+                vertx.cancelTimer(pingTimer);
                 if (!isBenignConnectionError(err)) {
                     System.err.println("WebSocket client error (" + domain + "): " + err.getMessage());
                 }
                 upstreamWs.close();
             });
             upstreamWs.exceptionHandler(err -> {
+                vertx.cancelTimer(pingTimer);
                 if (!isBenignConnectionError(err)) {
                     System.err.println("WebSocket upstream error (" + domain + "): " + err.getMessage());
                 }
