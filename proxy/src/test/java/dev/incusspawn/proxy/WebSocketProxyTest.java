@@ -240,6 +240,29 @@ class WebSocketProxyTest {
         client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
     }
 
+    @Test
+    void proxySendsKeepalivePingsToClient() throws Exception {
+        var client = createClient();
+        var pingReceived = new CompletableFuture<Void>();
+
+        var ws = client.webSocket(connectOptions("/v1/ping-test"))
+                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+        // Detect the proxy's keepalive ping via raw frame handler since
+        // Vert.x handles ping/pong at the protocol level automatically.
+        ws.frameHandler(frame -> {
+            if (frame.isPing()) {
+                pingReceived.complete(null);
+            }
+        });
+
+        // The proxy sends keepalive pings every 30s. The periodic timer
+        // starts on connect, so we wait up to 35s.
+        pingReceived.get(35, TimeUnit.SECONDS);
+        ws.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+    }
+
     static int findFreePort() throws Exception {
         try (var ss = new ServerSocket(0)) {
             return ss.getLocalPort();
