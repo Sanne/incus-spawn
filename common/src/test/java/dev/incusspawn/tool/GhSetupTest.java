@@ -3,8 +3,13 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -103,6 +108,54 @@ class GhSetupTest {
     }
 
     @Test
+    void retriesTransientIdentityLookupFailure(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq")))
+                .thenReturn(FAIL)
+                .thenReturn(new IncusClient.ExecResult(0, "octocat\tThe Octocat\t\n", ""));
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user/emails")))
+                .thenReturn(FAIL);
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[]{0, 0, 0, 0};
+        withTokenConfig(home, () ->
+                setup.install(new Container(incus, CONTAINER), java.util.Map.of()));
+
+        verify(incus, times(2)).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq"));
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("The Octocat"));
+    }
+
+    @Test
+    void throwsWhenTokenConfiguredButIdentityLookupFails(@TempDir Path home) throws IOException {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq")))
+                .thenReturn(FAIL);
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[]{0, 0, 0, 0};
+        assertThrows(IncusException.class, () ->
+                withTokenConfig(home, () ->
+                        setup.install(new Container(incus, CONTAINER), java.util.Map.of())));
+    }
+
+    @Test
+    void noRetryWithoutConfiguredToken() {
+        var incus = stubIncus();
+        noExistingConfig(incus);
+        noExistingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq")))
+                .thenReturn(FAIL);
+
+        new GhSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
+
+        verify(incus, times(1)).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq"));
+    }
+
+    @Test
     void prefersNoreplyWhenPrivacyEnabled() {
         var incus = stubIncus();
         noExistingConfig(incus);
@@ -178,6 +231,19 @@ class GhSetupTest {
     }
 
     // --- Test helpers ---
+
+    private static void withTokenConfig(Path home, Runnable action) throws IOException {
+        var configDir = home.resolve(".config/incus-spawn");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("config.yaml"), "github:\n  token: ghp_test123\n");
+        var prev = System.getProperty("user.home");
+        System.setProperty("user.home", home.toString());
+        try {
+            action.run();
+        } finally {
+            System.setProperty("user.home", prev);
+        }
+    }
 
     private static IncusClient stubIncus() {
         var incus = mock(IncusClient.class);
