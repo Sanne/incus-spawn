@@ -317,6 +317,7 @@ else
     check "incus daemon responsive"             "incus API responsive"
     check "storage pool 'cow' exists"           "smoke test: storage pool"
     check "bridge 'incusbr0' exists"            "smoke test: bridge"
+    check "inotify instance limit raised"       "smoke test: per-UID inotify budget"
     check "SMOKE TEST PASSED"                    "smoke test passed"
 fi
 
