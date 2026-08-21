@@ -58,6 +58,6 @@ files:
       error_symbol = "[❯](red)"
 
 run_as_user:
-  - echo 'eval "$(starship init bash)"' >> ~/.bashrc
+  - echo '[ "$TERM" != "dumb" ] && eval "$(starship init bash)"' >> ~/.bashrc
 
 verify: starship --version
