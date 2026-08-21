@@ -127,7 +127,8 @@ public final class ProxyService {
         var javaIssue = checkJvmWrapper(isxPath);
         if (javaIssue != null) {
             System.err.println(javaIssue);
-            System.err.println("Reinstall with: install.sh --native   (builds a standalone binary that does not need Java)");
+            System.err.println("The proxy requires a native binary. Reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
+            System.err.println("Then run: isx init");
             return false;
         }
 
@@ -446,7 +447,7 @@ public final class ProxyService {
                     } catch (Exception ignored) {}
                     System.err.println("If isx was installed as a JVM wrapper, ensure Java "
                             + REQUIRED_JAVA_MAJOR + "+ is available at the path embedded in the wrapper.");
-                    System.err.println("Alternatively, reinstall with: install.sh --native");
+                    System.err.println("Alternatively, reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
                 }
             } else {
                 System.err.println("Check logs with: journalctl --user -u " + SERVICE_NAME);
