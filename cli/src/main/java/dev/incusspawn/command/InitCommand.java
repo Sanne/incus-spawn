@@ -824,7 +824,7 @@ public class InitCommand extends BaseCommand {
         }
 
         if (oldEntry != null && content.lines().anyMatch(l -> l.equals(oldEntry))) {
-            runHost("sudo", "sed", "-i", "s/^" + Pattern.quote(oldEntry) + "$/" + entry + "/", path);
+            writeSubidFile(path, content.replaceAll("(?m)^" + Pattern.quote(oldEntry) + "$", entry));
             return true;
         }
 
@@ -833,7 +833,7 @@ public class InitCommand extends BaseCommand {
         var existing = content.lines().filter(l -> l.startsWith(prefix)).findFirst();
 
         if (existing.isEmpty()) {
-            runHost("sh", "-c", "echo '" + entry + "' | sudo tee -a " + path);
+            writeSubidFile(path, content.endsWith("\n") ? content + entry + "\n" : content + "\n" + entry + "\n");
             return true;
         }
 
@@ -850,12 +850,16 @@ public class InitCommand extends BaseCommand {
         var console = System.console();
         if (console != null) {
             if (askConfirmation(console, System.err, "  \u001B[1;33mReplace it?\u001B[0m", false)) {
-                runHost("sudo", "sed", "-i", "s/^" + Pattern.quote(existing.get()) + "$/" + entry + "/", path);
+                writeSubidFile(path, content.replaceAll("(?m)^" + Pattern.quote(existing.get()) + "$", entry));
                 return true;
             }
         }
         System.err.println("  Skipped — containers may not start correctly.");
         return false;
+    }
+
+    private void writeSubidFile(String path, String content) {
+        runHost("sh", "-c", "printf '%s' '" + content.replace("'", "'\\''") + "' | sudo tee " + path + " > /dev/null");
     }
 
     static boolean subidRangeCovers(String line, String user, long base, long count) {
