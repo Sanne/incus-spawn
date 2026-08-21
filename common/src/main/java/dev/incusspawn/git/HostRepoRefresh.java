@@ -97,7 +97,12 @@ public final class HostRepoRefresh {
 
     private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config,
                                           boolean autoConfirm, Consumer<String> output) {
-        var policy = autoConfirm ? ClonePolicy.ALWAYS : resolvePolicy(config);
+        var policy = resolvePolicy(config);
+
+        if (policy == ClonePolicy.ASK && (autoConfirm || System.console() == null)) {
+            output.accept("  Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically");
+            return;
+        }
 
         for (var task : tasks) {
             if (policy == ClonePolicy.NEVER) {
