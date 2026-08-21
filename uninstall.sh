@@ -243,7 +243,7 @@ if ! $PURGE; then
 fi
 if $IS_MACOS; then
     echo ""
-    echo "To reinstall: ./install.sh && isx init"
+    echo "To reinstall: brew install Sanne/tap/incus-spawn && isx init"
 else
     echo ""
     echo "Note: Incus containers and images created by isx are still present."

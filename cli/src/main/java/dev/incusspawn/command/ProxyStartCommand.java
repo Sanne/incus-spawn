@@ -35,7 +35,8 @@ public class ProxyStartCommand extends BaseCommand {
         var proxyBin = ProxyService.resolveProxyBinaryPath();
         if (proxyBin == null) {
             System.err.println("Error: could not find 'isx-proxy' binary.");
-            System.err.println("Reinstall with: ./install.sh --native");
+            System.err.println("Reinstall isx using your package manager, or: curl -fsSL https://isx.run | sh");
+            System.err.println("Then run: isx init");
             return CommandResult.valueOf(ProxyService.EXIT_CONFIG);
         }
 
