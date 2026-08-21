@@ -62,6 +62,17 @@ incus profile device get default eth0 network > /dev/null 2>&1 \
     || fail "default profile has no NIC (incus-spawn-vm-init did not populate it)"
 echo "  PASS: default profile has a NIC"
 
+# Every container's root maps to the same host UID, so they all share one per-UID inotify
+# budget. At the 128 default it runs out around the tenth concurrent container and the next
+# one's systemd exits before it can log anything — a failure that surfaces only as an
+# unhelpful "Failed to get init pid" from lxc attach. rcS applies 99-incus-spawn.conf with
+# stderr discarded, so a typo or a knob the custom kernel lacks would fail silently; assert
+# the value actually took.
+INOTIFY_INSTANCES=$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 0)
+[ "$INOTIFY_INSTANCES" -ge 1024 ] \
+    || fail "fs.inotify.max_user_instances is $INOTIFY_INSTANCES (99-incus-spawn.conf did not apply)"
+echo "  PASS: inotify instance limit raised ($INOTIFY_INSTANCES)"
+
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
 IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
     | grep -i ',container' | head -n1 | cut -d, -f1)
