@@ -14,6 +14,25 @@ import static org.junit.jupiter.api.Assertions.*;
 class InitCommandTest {
 
     @Test
+    void verificationFailureActionParsesAllSupportedResponses() {
+        assertEquals(InitCommand.VerificationFailureAction.RETRY,
+                InitCommand.parseVerificationFailureAction(" y "));
+        assertEquals(InitCommand.VerificationFailureAction.RETRY,
+                InitCommand.parseVerificationFailureAction(""));
+        assertEquals(InitCommand.VerificationFailureAction.SKIP,
+                InitCommand.parseVerificationFailureAction("n"));
+        assertEquals(InitCommand.VerificationFailureAction.SKIP,
+                InitCommand.parseVerificationFailureAction(null));
+        assertEquals(InitCommand.VerificationFailureAction.SAVE_UNVERIFIED,
+                InitCommand.parseVerificationFailureAction("S"));
+    }
+
+    @Test
+    void verificationFailureActionRejectsUnsupportedResponses() {
+        assertNull(InitCommand.parseVerificationFailureAction("later"));
+    }
+
+    @Test
     void maskSecretApiKey() {
         assertEquals("sk-ant-...7x3Q", InitCommand.maskSecret("sk-ant-api03-abcdefghij7x3Q"));
     }
