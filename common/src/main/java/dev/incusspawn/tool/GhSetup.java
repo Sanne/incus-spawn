@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.IncusException;
 import static dev.incusspawn.incus.Container.shellQuote;
 
 import java.util.List;
@@ -10,6 +11,8 @@ import java.util.List;
 public class GhSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_TOKEN = "gho_placeholder";
+    private static final long[] DEFAULT_RETRY_DELAYS_MS = {500, 500, 500, 500};
+    long[] retryDelaysMs = DEFAULT_RETRY_DELAYS_MS;
 
     @Override
     public String name() {
@@ -47,10 +50,30 @@ public class GhSetup implements ToolSetup {
             return;
         }
 
-        var result = c.sh("GH_TOKEN=" + PLACEHOLDER_TOKEN
-                + " gh api user --jq '[.login, .name, .email] | @tsv'");
+        var command = "GH_TOKEN=" + PLACEHOLDER_TOKEN
+                + " gh api user --jq '[.login, .name, .email] | @tsv'";
+        var tokenConfigured = !SpawnConfig.load().getGithub().getToken().isBlank();
+        var result = c.sh(command);
+        if (tokenConfigured) {
+            for (int attempt = 0; attempt < retryDelaysMs.length
+                    && (!result.success() || result.stdout().isBlank()); attempt++) {
+                try {
+                    Thread.sleep(retryDelaysMs[attempt]);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IncusException("Interrupted while determining git identity from GitHub", e);
+                }
+                System.out.println("  GitHub identity lookup failed; retrying...");
+                result = c.sh(command);
+            }
+        }
         if (!result.success() || result.stdout().isBlank()) {
-            System.out.println("  Could not determine git identity from GitHub token — skipping user.name/email.");
+            var detail = result.stderr().isBlank() ? "" : " (" + result.stderr().strip() + ")";
+            var message = "Could not determine git identity from GitHub token" + detail;
+            if (tokenConfigured) {
+                throw new IncusException(message + "; refusing to create a template without git identity");
+            }
+            System.out.println("  " + message + " — skipping user.name/email.");
             return;
         }
 
