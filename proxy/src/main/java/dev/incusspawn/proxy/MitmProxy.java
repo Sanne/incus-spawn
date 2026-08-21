@@ -402,16 +402,19 @@ public class MitmProxy {
         Throwable cause = err;
         while (cause != null) {
             if (cause instanceof java.nio.channels.ClosedChannelException) return true;
-            if (cause instanceof java.net.SocketException) {
-                var msg = cause.getMessage();
-                if (msg != null) {
-                    var m = msg.toLowerCase(java.util.Locale.ROOT);
-                    if (m.contains("connection reset")
-                            || m.contains("broken pipe")
-                            || m.contains("connection was closed")
-                            || m.contains("connection or outbound has closed")) {
+            var msg = cause.getMessage();
+            if (msg != null) {
+                var m = msg.toLowerCase(java.util.Locale.ROOT);
+                if (cause instanceof java.io.IOException) {
+                    if (m.contains("connection reset") || m.contains("broken pipe")) {
                         return true;
                     }
+                }
+                // Vert.x wraps transport errors in VertxException (not IOException)
+                // when a WebSocket operation hits a closed connection.
+                if (m.contains("connection was closed")
+                        || m.contains("connection or outbound has closed")) {
+                    return true;
                 }
             }
             cause = cause.getCause();
@@ -515,7 +518,9 @@ public class MitmProxy {
                 return;
             }
 
-            ProxyLog.info("WebSocket connected: " + domain + clientWs.uri());
+            if (ProxyLog.isDebugEnabled()) {
+                ProxyLog.debug("WebSocket connected: " + domain + clientWs.uri());
+            }
 
             // Periodic pings on both legs to prevent idle timeouts.
             // Upstream pings prevent NAT/firewall timeouts during long AI
