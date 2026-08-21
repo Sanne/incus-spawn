@@ -264,7 +264,8 @@ class WebSocketProxyTest {
             System.setErr(origStderr);
         }
 
-        var captured = stderrCapture.toString();
+        captureErr.flush();
+        var captured = stderrCapture.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertFalse(captured.contains("WebSocket client error"),
                 "Normal upstream close should not log a client error, got: " + captured);
         client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);

@@ -13,21 +13,21 @@ public final class ProxyLog {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
-    private static volatile boolean debugEnabled =
-            Boolean.getBoolean("isx.proxy.debug");
+    private static volatile Boolean debugOverride;
 
     private ProxyLog() {}
 
     public static boolean isDebugEnabled() {
-        return debugEnabled;
+        var v = debugOverride;
+        return v != null ? v : Boolean.getBoolean("isx.proxy.debug");
     }
 
     public static void setDebugEnabled(boolean enabled) {
-        debugEnabled = enabled;
+        debugOverride = enabled;
     }
 
     public static void debug(String message) {
-        if (!debugEnabled) return;
+        if (!isDebugEnabled()) return;
         logToFile("DEBUG", message);
     }
 
