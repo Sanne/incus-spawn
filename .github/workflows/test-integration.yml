@@ -54,8 +54,17 @@ jobs:
           path: proxy/target/quarkus-app/
           retention-days: 1
 
-  build-native:
+  cancel-on-unit-failure:
     needs: [unit-tests]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel workflow run
+        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build-native:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -180,14 +189,10 @@ jobs:
           path: vm-console.log
           retention-days: 7
 
-  isx-integration-tests:
-    needs: [unit-tests, build-native]
+  isx-integration-tests-jvm:
+    needs: [unit-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        runtime: [jvm, native]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -203,10 +208,6 @@ jobs:
           sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
-          # Pre-initialize Incus and create a small btrfs CoW pool so
-          # isx init doesn't hang creating an unbounded one (timed out at 19min on CI).
-          # Use sudo for both commands — admin init creates ~/.config/incus/config.yml
-          # as root, so subsequent commands must also use sudo to read it.
           sg incus-admin -c "sudo incus admin init --minimal"
           sudo chown -R "$USER:$USER" ~/.config/incus/
           sg incus-admin -c "incus storage create cow btrfs size=5GiB"
@@ -219,28 +220,24 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Install JDK 25
-        if: matrix.runtime == 'jvm'
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'oracle'
 
-      - name: Download isx build (JVM)
-        if: matrix.runtime == 'jvm'
+      - name: Download isx build
         uses: actions/download-artifact@v6
         with:
           name: isx-quarkus-app
           path: quarkus-app/
 
-      - name: Download proxy build (JVM)
-        if: matrix.runtime == 'jvm'
+      - name: Download proxy build
         uses: actions/download-artifact@v6
         with:
           name: isx-proxy-quarkus-app
           path: proxy-quarkus-app/
 
-      - name: Install isx (JVM)
-        if: matrix.runtime == 'jvm'
+      - name: Install isx
         run: |
           mkdir -p "$HOME/.local/bin"
           printf '#!/bin/sh\nexec java -jar %s/quarkus-app/quarkus-run.jar "$@"\n' "$PWD" \
@@ -251,36 +248,14 @@ jobs:
           chmod +x "$HOME/.local/bin/isx-proxy"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Download native build
-        if: matrix.runtime == 'native'
-        uses: actions/download-artifact@v6
-        with:
-          name: isx-native
-          path: native-bin/
-
-      - name: Install isx (native)
-        if: matrix.runtime == 'native'
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          install -m 755 native-bin/cli/target/incus-spawn-*-runner "$HOME/.local/bin/isx"
-          install -m 755 native-bin/proxy/target/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - name: Initialize isx
-        run: |
-          # Run isx init non-interactively (empty stdin skips all prompts)
-          sg incus-admin -c "yes '' | isx init"
+        run: sg incus-admin -c "yes '' | isx init"
 
       - name: Start MITM proxy
         run: |
-          # Set a placeholder API key so the proxy starts (it needs claude.hasAuth() == true)
           sed -i 's/apiKey: ""/apiKey: "sk-ant-placeholder-for-ci"/' \
               ~/.config/incus-spawn/config.yaml
-
-          # Start the proxy in the background (no systemd user session on CI)
           sg incus-admin -c "isx proxy start" &
-
-          # Wait for the proxy health endpoint
           GATEWAY=$(sg incus-admin -c "incus network get incusbr0 ipv4.address" | cut -d/ -f1)
           echo "Waiting for proxy..."
           for i in $(seq 1 30); do
@@ -296,10 +271,7 @@ jobs:
           done
 
       - name: Allow unprivileged user namespaces
-        run: |
-          # Ubuntu 24.04 restricts unprivileged user namespace creation via AppArmor.
-          # Rootless podman inside Incus containers needs user namespaces for UID mapping.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Create test templates
         run: |
@@ -371,7 +343,6 @@ jobs:
 
       - name: Assert proxy survived
         run: |
-          # JVM proxy runs as 'java -jar .../proxy-quarkus-app/...', native as 'isx-proxy'
           PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy|proxy-quarkus-app' || true)
           if [ -z "$PROXY_PID" ]; then
             echo "::error::Proxy process is not running — it crashed during the test"
@@ -383,8 +354,166 @@ jobs:
             PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' /proc/$PROXY_PID/status)
             PEAK_RSS_MB=$((PEAK_RSS_KB / 1024))
             echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
+          fi
 
-            if [ "${{ matrix.runtime }}" = "native" ] && [ "$PEAK_RSS_MB" -gt 200 ]; then
+      - name: Cleanup
+        if: always()
+        run: |
+          sg incus-admin -c "isx destroy test-container" || true
+          sg incus-admin -c "isx destroy test-podman" || true
+          sg incus-admin -c "isx destroy test-vm" || true
+
+  isx-integration-tests-native:
+    needs: [build-native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Incus
+        run: |
+          curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor \
+            | sudo tee /etc/apt/keyrings/zabbly.gpg >/dev/null
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $codename main" \
+            | sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
+          sudo usermod -aG incus-admin "$USER"
+
+          sg incus-admin -c "sudo incus admin init --minimal"
+          sudo chown -R "$USER:$USER" ~/.config/incus/
+          sg incus-admin -c "incus storage create cow btrfs size=5GiB"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Download native build
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native
+          path: native-bin/
+
+      - name: Install isx
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 native-bin/cli/target/incus-spawn-*-runner "$HOME/.local/bin/isx"
+          install -m 755 native-bin/proxy/target/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize isx
+        run: sg incus-admin -c "yes '' | isx init"
+
+      - name: Start MITM proxy
+        run: |
+          sed -i 's/apiKey: ""/apiKey: "sk-ant-placeholder-for-ci"/' \
+              ~/.config/incus-spawn/config.yaml
+          sg incus-admin -c "isx proxy start" &
+          GATEWAY=$(sg incus-admin -c "incus network get incusbr0 ipv4.address" | cut -d/ -f1)
+          echo "Waiting for proxy..."
+          for i in $(seq 1 30); do
+            if curl -sf "http://$GATEWAY:18080/health" >/dev/null 2>&1; then
+              echo "Proxy ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Proxy did not become healthy within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Create test templates
+        run: |
+          mkdir -p ~/.config/incus-spawn/images
+          cat > ~/.config/incus-spawn/images/test-podman.yaml << 'EOF'
+          name: tpl-test-podman
+          parent: tpl-minimal
+          tools:
+            - podman
+          EOF
+          cat > ~/.config/incus-spawn/images/test-vm.yaml << 'EOF'
+          name: tpl-test-vm
+          parent: tpl-minimal
+          type: vm
+          EOF
+
+      - name: Build templates
+        run: |
+          sg incus-admin -c "isx build tpl-minimal --yes"
+          sg incus-admin -c "isx build tpl-test-podman --yes"
+          sg incus-admin -c "isx build tpl-test-vm --yes"
+
+      - name: Test container
+        run: |
+          sg incus-admin -c "isx branch test-container --from tpl-minimal --no-start"
+          sg incus-admin -c "incus start test-container"
+          echo "Waiting for container network..."
+          sg incus-admin -c "incus exec test-container -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for i in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
+          sg incus-admin -c "incus exec test-container -- bash /tmp/test-instance.sh"
+
+      - name: Test rootless podman
+        run: |
+          sg incus-admin -c "isx branch test-podman --from tpl-test-podman --no-start"
+          sg incus-admin -c "incus start test-podman"
+          echo "Waiting for container network..."
+          sg incus-admin -c "incus exec test-podman -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for i in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-podman.sh test-podman/tmp/"
+          sg incus-admin -c "incus exec test-podman -- bash /tmp/test-podman.sh"
+
+      - name: Test VM
+        run: |
+          sg incus-admin -c "isx branch test-vm --from tpl-test-vm --no-start"
+          sg incus-admin -c "incus start test-vm"
+          echo "Waiting for VM agent..."
+          for i in $(seq 1 60); do
+            if sg incus-admin -c "incus exec test-vm -- true" 2>/dev/null; then
+              echo "VM agent ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::VM agent did not become ready within 60s"
+              exit 1
+            fi
+            sleep 1
+          done
+          sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
+          sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
+
+      - name: Assert proxy survived
+        run: |
+          PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy' || true)
+          if [ -z "$PROXY_PID" ]; then
+            echo "::error::Proxy process is not running — it crashed during the test"
+            exit 1
+          fi
+          echo "Proxy still running (PID $PROXY_PID)"
+
+          if [ -f /proc/$PROXY_PID/status ]; then
+            PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' /proc/$PROXY_PID/status)
+            PEAK_RSS_MB=$((PEAK_RSS_KB / 1024))
+            echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
+
+            if [ "$PEAK_RSS_MB" -gt 200 ]; then
               echo "::warning::Proxy peak RSS (${PEAK_RSS_MB}MB) is approaching the 256MB MaxRAM ceiling"
             fi
           fi
