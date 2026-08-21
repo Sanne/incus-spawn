@@ -45,8 +45,7 @@ public class CleanCommand extends BaseCommand {
         if (skipConfirmation) return true;
         var console = System.console();
         if (console == null) return true;
-        System.out.print(prompt + " (y/N): ");
-        if (!console.readLine().strip().equalsIgnoreCase("y")) {
+        if (!askConfirmation(console, prompt, false)) {
             System.out.println("Aborted.");
             return false;
         }

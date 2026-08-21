@@ -265,9 +265,7 @@ public class TemplatesCommand extends BaseCommand {
 
             var console = System.console();
             if (console == null) return;
-            System.out.print("Re-edit? (Y/n): ");
-            var answer = console.readLine();
-            if (answer != null && answer.strip().equalsIgnoreCase("n")) {
+            if (!askConfirmation(console, "Re-edit?", true, true)) {
                 if (isBuiltinCopy) {
                     cleanup(file);
                 }

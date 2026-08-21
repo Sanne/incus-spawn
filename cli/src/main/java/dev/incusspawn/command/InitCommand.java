@@ -433,9 +433,7 @@ public class InitCommand extends BaseCommand {
 
             var console = System.console();
             if (console != null) {
-                System.out.print("  Proceed with automatic installation? (Y/n): ");
-                var answer = console.readLine().strip();
-                if (answer.equalsIgnoreCase("n")) {
+                if (!askConfirmation(console, "  Proceed with automatic installation?", true)) {
                     System.out.println("  Aborted. Install Incus manually and re-run 'isx init'.");
                     System.exit(0);
                 }
@@ -851,9 +849,7 @@ public class InitCommand extends BaseCommand {
         System.err.println("  incus-spawn expects: " + entry);
         var console = System.console();
         if (console != null) {
-            System.err.print("  \u001B[1;33mReplace it? (y/N): \u001B[0m");
-            var answer = console.readLine().strip();
-            if (answer.equalsIgnoreCase("y")) {
+            if (askConfirmation(console, System.err, "  \u001B[1;33mReplace it?\u001B[0m", false)) {
                 runHost("sudo", "sed", "-i", "s/^" + Pattern.quote(existing.get()) + "$/" + entry + "/", path);
                 return true;
             }
@@ -999,9 +995,8 @@ public class InitCommand extends BaseCommand {
 
                 var console = System.console();
                 if (console != null) {
-                    System.err.print("  \u001B[1;33mContinue without CoW storage? (y/N): \u001B[0m");
-                    var answer = console.readLine().strip();
-                    if (!answer.equalsIgnoreCase("y")) {
+                    if (!askConfirmation(console, System.err,
+                            "  \u001B[1;33mContinue without CoW storage?\u001B[0m", false)) {
                         System.out.println("  Aborted. Re-run 'isx init' after creating a CoW storage pool.");
                         System.exit(0);
                     }
@@ -1117,9 +1112,7 @@ public class InitCommand extends BaseCommand {
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                    System.out.print("  Use this configuration? (Y/n): ");
-                    var accept = console.readLine().strip();
-                    if (!accept.equalsIgnoreCase("n")) {
+                    if (askConfirmation(console, "  Use this configuration?", true)) {
                         saveVertexConfig(config, region, projectId);
                         System.out.println("  Claude auth configuration saved.");
                         return;
@@ -1127,9 +1120,7 @@ public class InitCommand extends BaseCommand {
                     System.out.println("  Skipping environment config. Continuing with manual setup...");
                 } else {
                     System.out.println("  " + result.message());
-                    System.out.print("  Save anyway? (y/N) or press Enter to configure manually: ");
-                    var answer = console.readLine().strip();
-                    if (answer.equalsIgnoreCase("y")) {
+                    if (askConfirmation(console, "  Save anyway? Press Enter to configure manually.", false)) {
                         saveVertexConfig(config, region, projectId);
                         System.out.println("  Claude auth configuration saved (unverified).");
                         return;
@@ -1142,9 +1133,7 @@ public class InitCommand extends BaseCommand {
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
-                System.out.print("  Use this token? (Y/n): ");
-                var accept = console.readLine().strip();
-                if (!accept.equalsIgnoreCase("n")) {
+                if (askConfirmation(console, "  Use this token?", true)) {
                     saveOauthConfig(config, envOauthToken);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1160,9 +1149,7 @@ public class InitCommand extends BaseCommand {
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                System.out.print("  Use this key? (Y/n): ");
-                var accept = console.readLine().strip();
-                if (!accept.equalsIgnoreCase("n")) {
+                if (askConfirmation(console, "  Use this key?", true)) {
                     saveDirectConfig(config, envApiKey);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1188,9 +1175,7 @@ public class InitCommand extends BaseCommand {
                 desc = "Anthropic API key (" + maskSecret(config.getClaude().getApiKey()) + ")";
             }
             System.out.println("  Claude auth: " + desc);
-            System.out.print("  Keep current? (Y/n): ");
-            var keep = console.readLine();
-            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+            if (askConfirmation(console, "  Keep current?", true, true)) {
                 return;
             }
         }
@@ -1227,16 +1212,21 @@ public class InitCommand extends BaseCommand {
                     break;
                 } else {
                     System.out.println("  " + result.message());
-                    System.out.print("  Try again? (Y/n/s to save anyway): ");
-                    var retry = console.readLine().strip();
-                    if (retry.equalsIgnoreCase("n")) {
-                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
-                        break;
-                    } else if (retry.equalsIgnoreCase("s")) {
-                        saveVertexConfig(config, region, projectId);
-                        System.out.println("  Claude auth configuration saved (unverified).");
-                        break;
+                    switch (askVerificationFailureAction(console)) {
+                        case SKIP -> {
+                            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                            break;
+                        }
+                        case SAVE_UNVERIFIED -> {
+                            saveVertexConfig(config, region, projectId);
+                            System.out.println("  Claude auth configuration saved (unverified).");
+                            break;
+                        }
+                        case RETRY -> {
+                            continue;
+                        }
                     }
+                    break;
                 }
             }
         } else if (authChoice.equals("2")) {
@@ -1259,16 +1249,21 @@ public class InitCommand extends BaseCommand {
                     break;
                 } else {
                     System.out.println("  " + result.message());
-                    System.out.print("  Try again? (Y/n/s to save anyway): ");
-                    var retry = console.readLine().strip();
-                    if (retry.equalsIgnoreCase("n")) {
-                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
-                        break;
-                    } else if (retry.equalsIgnoreCase("s")) {
-                        saveDirectConfig(config, key);
-                        System.out.println("  Claude auth configuration saved (unverified).");
-                        break;
+                    switch (askVerificationFailureAction(console)) {
+                        case SKIP -> {
+                            System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                            break;
+                        }
+                        case SAVE_UNVERIFIED -> {
+                            saveDirectConfig(config, key);
+                            System.out.println("  Claude auth configuration saved (unverified).");
+                            break;
+                        }
+                        case RETRY -> {
+                            continue;
+                        }
                     }
+                    break;
                 }
             }
         } else {
@@ -1277,6 +1272,27 @@ public class InitCommand extends BaseCommand {
     }
 
     private record AuthResult(boolean verified, String message) {}
+
+    enum VerificationFailureAction { RETRY, SKIP, SAVE_UNVERIFIED }
+
+    private static VerificationFailureAction askVerificationFailureAction(Console console) {
+        while (true) {
+            System.out.print("  Try again? (Y/n/s to save anyway): ");
+            var action = parseVerificationFailureAction(console.readLine());
+            if (action != null) return action;
+            System.out.println("  Please answer y, n, or s.");
+        }
+    }
+
+    static VerificationFailureAction parseVerificationFailureAction(String answer) {
+        if (answer == null) return VerificationFailureAction.SKIP;
+        return switch (answer.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "", "y" -> VerificationFailureAction.RETRY;
+            case "n" -> VerificationFailureAction.SKIP;
+            case "s" -> VerificationFailureAction.SAVE_UNVERIFIED;
+            default -> null;
+        };
+    }
 
     private static final String[] KNOWN_PREFIXES = {"github_pat_", "sk-ant-", "ghp_"};
 
@@ -1352,9 +1368,7 @@ public class InitCommand extends BaseCommand {
     private void setupClaudeOauth(SpawnConfig config, java.io.Console console) {
         if (commandExists("claude")) {
             System.out.println("  Found 'claude' CLI on this host.");
-            System.out.print("  Run 'claude setup-token' to generate an OAuth token? (Y/n): ");
-            var proceed = console.readLine().strip();
-            if (!proceed.equalsIgnoreCase("n")) {
+            if (askConfirmation(console, "  Run 'claude setup-token' to generate an OAuth token?", true)) {
                 try {
                     var pb = new ProcessBuilder("claude", "setup-token");
                     pb.inheritIO();
@@ -1393,16 +1407,21 @@ public class InitCommand extends BaseCommand {
                 break;
             } else {
                 System.out.println("  " + result.message());
-                System.out.print("  Try again? (Y/n/s to save anyway): ");
-                var retry = console.readLine().strip();
-                if (retry.equalsIgnoreCase("n")) {
-                    System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
-                    break;
-                } else if (retry.equalsIgnoreCase("s")) {
-                    saveOauthConfig(config, token);
-                    System.out.println("  Claude auth configuration saved (unverified).");
-                    break;
+                switch (askVerificationFailureAction(console)) {
+                    case SKIP -> {
+                        System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+                        break;
+                    }
+                    case SAVE_UNVERIFIED -> {
+                        saveOauthConfig(config, token);
+                        System.out.println("  Claude auth configuration saved (unverified).");
+                        break;
+                    }
+                    case RETRY -> {
+                        continue;
+                    }
                 }
+                break;
             }
         }
     }
@@ -1490,9 +1509,7 @@ public class InitCommand extends BaseCommand {
         // Offer to keep existing token on re-run
         if (!config.getGithub().getToken().isBlank()) {
             System.out.println("  GitHub auth: token configured (" + maskSecret(config.getGithub().getToken()) + ")");
-            System.out.print("  Keep current? (Y/n): ");
-            var keep = console.readLine();
-            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+            if (askConfirmation(console, "  Keep current?", true, true)) {
                 return;
             }
         }
@@ -1507,9 +1524,7 @@ public class InitCommand extends BaseCommand {
 
             var result = verifyGitHubToken(token);
             if (result == null) {
-                System.out.print("  Try again? (Y/n): ");
-                var retry = console.readLine().strip();
-                if (retry.equalsIgnoreCase("n")) {
+                if (!askConfirmation(console, "  Try again?", true)) {
                     System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                     break;
                 }
@@ -1710,9 +1725,7 @@ public class InitCommand extends BaseCommand {
 
         if (config.getBob().hasAuth()) {
             System.out.println("  Bob auth: API key configured (" + maskSecret(config.getBob().getApiKey()) + ")");
-            System.out.print("  Keep current? (Y/n): ");
-            var keep = console.readLine();
-            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+            if (askConfirmation(console, "  Keep current?", true, true)) {
                 return;
             }
         }
@@ -1737,9 +1750,8 @@ public class InitCommand extends BaseCommand {
         System.out.println("  IBM Bob Shell requires acceptance of the IBM license agreement.");
         System.out.println("  The license is presented on first launch of Bob Shell.");
         System.out.println("  Pre-accepting here skips that prompt inside containers.");
-        System.out.print("  Do you accept the IBM license agreement? (y/N): ");
-        var consent = console.readLine();
-        config.getBob().setLicenseConsent(consent != null && consent.strip().equalsIgnoreCase("y"));
+        config.getBob().setLicenseConsent(
+                askConfirmation(console, "  Do you accept the IBM license agreement?", false));
         if (!config.getBob().isLicenseConsent()) {
             System.out.println("  License not accepted. Bob Shell will prompt for consent on first use.");
         }
@@ -1763,9 +1775,7 @@ public class InitCommand extends BaseCommand {
 
         if (config.getOpenai().hasAuth()) {
             System.out.println("  OpenAI auth: API key configured (" + maskSecret(config.getOpenai().getApiKey()) + ")");
-            System.out.print("  Keep current? (Y/n): ");
-            var keep = console.readLine();
-            if (keep == null || !keep.strip().equalsIgnoreCase("n")) {
+            if (askConfirmation(console, "  Keep current?", true, true)) {
                 return;
             }
         }
@@ -1945,9 +1955,7 @@ public class InitCommand extends BaseCommand {
 
     private void offerForkAndCloneTemplates(Console console, String login) {
         System.out.println("  You don't have a " + BOLD + TEMPLATES_REPO + RESET + " repo yet.");
-        System.out.print("  Fork " + TEMPLATES_UPSTREAM + " to your account? (Y/n): ");
-        var answer = console.readLine().strip();
-        if (answer.equalsIgnoreCase("n")) {
+        if (!askConfirmation(console, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
             System.out.println("  Skipped. You can fork it manually at:");
             System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
             System.out.println();
@@ -2008,9 +2016,7 @@ public class InitCommand extends BaseCommand {
         }
 
         if (console != null && (!alreadyConfirmed || adjusted)) {
-            System.out.print("  Will clone to " + target + ". Proceed? (Y/n): ");
-            var confirm = console.readLine().strip();
-            if (confirm.equalsIgnoreCase("n")) {
+            if (!askConfirmation(console, "  Will clone to " + target + ". Proceed?", true)) {
                 System.out.println("  Skipped cloning. You can add the path manually below.");
                 return;
             }
@@ -2077,9 +2083,7 @@ public class InitCommand extends BaseCommand {
         System.out.println();
         var console = System.console();
         if (console == null) return;
-        System.out.print("  Install services? (Y/n): ");
-        var answer = console.readLine().strip();
-        if (answer.equalsIgnoreCase("n")) {
+        if (!askConfirmation(console, "  Install services?", true)) {
             System.out.println("  Skipped. Start manually with: isx vm start && isx proxy start");
             return;
         }
@@ -2099,9 +2103,7 @@ public class InitCommand extends BaseCommand {
         System.out.println();
         var console = System.console();
         if (console == null) return false;
-        System.out.print("  Install proxy service? (Y/n): ");
-        var answer = console.readLine().strip();
-        if (answer.equalsIgnoreCase("n")) {
+        if (!askConfirmation(console, "  Install proxy service?", true)) {
             System.out.println("  Skipped. You can start the proxy manually with: isx proxy start");
             return false;
         }

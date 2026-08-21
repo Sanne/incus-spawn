@@ -123,9 +123,7 @@ public class DoctorCommand extends BaseCommand {
             return;
         }
         var warn = r.destructive() ? " This is disruptive." : "";
-        System.out.print("     " + r.description() + "." + warn + " Apply now? (y/N): ");
-        var answer = console.readLine();
-        if (answer == null || !answer.strip().equalsIgnoreCase("y")) {
+        if (!askConfirmation(console, "     " + r.description() + "." + warn + " Apply now?", false)) {
             System.out.println("     skipped.");
             return;
         }
