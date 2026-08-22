@@ -37,6 +37,13 @@ jobs:
           java-version: '25'
           distribution: 'graalvm'
 
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
       - name: Build and test
         run: mvn package
 
@@ -64,7 +71,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  build-native:
+  build-native-cli:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -77,16 +84,51 @@ jobs:
           java-version: '25'
           distribution: 'graalvm'
 
-      - name: Build native images
-        run: mvn package -Dnative -DskipTests
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
 
-      - name: Upload native binaries
+      - name: Build CLI native image
+        run: mvn package -Dnative -DskipTests -pl cli -am
+
+      - name: Upload CLI native binary
         uses: actions/upload-artifact@v6
         with:
-          name: isx-native
-          path: |
-            cli/target/incus-spawn-*-runner
-            proxy/target/incus-spawn-proxy-*-runner
+          name: isx-native-cli
+          path: cli/target/incus-spawn-*-runner
+          retention-days: 1
+
+  build-native-proxy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.2
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.2'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
+      - name: Build proxy native image
+        run: mvn package -Dnative -DskipTests -pl proxy -am
+
+      - name: Upload proxy native binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: isx-native-proxy
+          path: proxy/target/incus-spawn-proxy-*-runner
           retention-days: 1
 
   build_appliance:
@@ -364,7 +406,7 @@ jobs:
           sg incus-admin -c "isx destroy test-vm" || true
 
   isx-integration-tests-native:
-    needs: [build-native]
+    needs: [build-native-cli, build-native-proxy]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -393,17 +435,23 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Download native build
+      - name: Download CLI native binary
         uses: actions/download-artifact@v6
         with:
-          name: isx-native
-          path: native-bin/
+          name: isx-native-cli
+          path: native-cli/
+
+      - name: Download proxy native binary
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native-proxy
+          path: native-proxy/
 
       - name: Install isx
         run: |
           mkdir -p "$HOME/.local/bin"
-          install -m 755 native-bin/cli/target/incus-spawn-*-runner "$HOME/.local/bin/isx"
-          install -m 755 native-bin/proxy/target/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
+          install -m 755 native-cli/incus-spawn-*-runner "$HOME/.local/bin/isx"
+          install -m 755 native-proxy/incus-spawn-proxy-*-runner "$HOME/.local/bin/isx-proxy"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
