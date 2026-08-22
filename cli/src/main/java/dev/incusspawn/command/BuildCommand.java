@@ -620,15 +620,21 @@ public class BuildCommand extends BaseCommand {
                 System.err.println("  " + mem);
             }
 
-            if ("Error".equals(status)) {
-                var dmesg = incus.queryDmesgForContainer(buildName);
-                if (!dmesg.isEmpty()) {
-                    var cause = diagnoseCrashCause(dmesg);
-                    if (cause != null) {
-                        System.err.println("  Cause: " + cause);
+            if ("Error".equals(status) || "Stopped".equals(status)) {
+                var cause = diagnoseInotifyExhaustion(incus);
+                if (cause != null) {
+                    System.err.println("  Cause: " + cause);
+                }
+                if ("Error".equals(status)) {
+                    var dmesg = incus.queryDmesgForContainer(buildName);
+                    if (!dmesg.isEmpty()) {
+                        var dmesgCause = diagnoseCrashCause(dmesg);
+                        if (dmesgCause != null && cause == null) {
+                            System.err.println("  Cause: " + dmesgCause);
+                        }
+                        System.err.println("  Kernel log (dmesg):");
+                        dmesg.lines().forEach(l -> System.err.println("    " + l));
                     }
-                    System.err.println("  Kernel log (dmesg):");
-                    dmesg.lines().forEach(l -> System.err.println("    " + l));
                 }
             }
         } catch (Exception diag) {
@@ -647,6 +653,27 @@ public class BuildCommand extends BaseCommand {
         if (pidsLimit) {
             return "process limit exceeded — the container hit the cgroup process (PID) limit";
         }
+        return null;
+    }
+
+    static String diagnoseInotifyExhaustion(IncusClient incus) {
+        try {
+            int limit = incus.getInotifyMaxInstances();
+            if (limit < 0) return null;
+            var instances = incus.list();
+            long running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .count();
+            // +1: the container that just died isn't Running anymore but was consuming inotify instances
+            long estimatedUsage = (running + 1) * 10;
+            if (estimatedUsage >= limit * 0.7) {
+                return "inotify instance limit likely exhausted — ~" + (running + 1)
+                        + " containers × ~10 inotify instances each ≈ " + estimatedUsage
+                        + ", limit is " + limit
+                        + ". Fix: sudo sysctl -w fs.inotify.max_user_instances=8192"
+                        + " (or run 'isx init' to apply permanently)";
+            }
+        } catch (Exception ignored) {}
         return null;
     }
 

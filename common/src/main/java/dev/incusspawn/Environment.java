@@ -29,7 +29,7 @@ public final class Environment {
         return configDir().resolve(".init-complete");
     }
 
-    public static final int INIT_VERSION = 2;
+    public static final int INIT_VERSION = 3;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();
