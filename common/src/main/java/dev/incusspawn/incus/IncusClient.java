@@ -226,7 +226,17 @@ public class IncusClient {
             try {
                 if (shellExec(name, command).success()) return true;
             } catch (Exception ignored) {
-                // Container may not be Running yet — treat any exec failure as not-ready and retry.
+                try {
+                    var status = getInstanceStatus(name);
+                    if ("Stopped".equals(status) || "Error".equals(status)) {
+                        throw new IncusException("Container " + name
+                                + " died during startup (status: " + status + ")");
+                    }
+                } catch (IncusException e) {
+                    throw e;
+                } catch (Exception statusCheckFailed) {
+                    // Daemon unreachable — retry the poll rather than crashing.
+                }
             }
             try {
                 Thread.sleep(POLL_INTERVAL_MS);
@@ -635,6 +645,27 @@ public class IncusClient {
         } catch (Exception e) {
             return "(error querying dmesg: " + e.getMessage() + ")";
         }
+    }
+
+    /**
+     * Read fs.inotify.max_user_instances from the kernel. On both Linux and macOS
+     * this execs into a running container (the procfs value reflects the host kernel).
+     * Returns -1 if no running container is available or the read fails.
+     */
+    public int getInotifyMaxInstances() {
+        try {
+            var instances = list();
+            var running = instances.stream()
+                    .filter(i -> "Running".equals(i.get("status")))
+                    .map(i -> i.get("name"))
+                    .findFirst().orElse(null);
+            if (running == null) return -1;
+            var result = shellExec(running, "cat", "/proc/sys/fs/inotify/max_user_instances");
+            if (result.success()) {
+                return Integer.parseInt(result.stdout().strip());
+            }
+        } catch (Exception ignored) {}
+        return -1;
     }
 
     /**

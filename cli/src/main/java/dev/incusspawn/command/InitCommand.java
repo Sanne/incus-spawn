@@ -671,6 +671,41 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    private static final String SYSCTL_CONF = "/etc/sysctl.d/99-incus-spawn.conf";
+
+    private void configureInotifyLimits() {
+        var sysctlPath = Path.of(SYSCTL_CONF);
+        var content = """
+                # All containers share one host UID range, so they draw on the same
+                # per-UID inotify budget.  The kernel default (128 instances) runs out
+                # around the tenth concurrent container and the next one's systemd dies
+                # before it can log anything.
+                fs.inotify.max_user_instances=8192
+                fs.inotify.max_user_watches=524288
+                """;
+        try {
+            if (Files.exists(sysctlPath)) {
+                var existing = Files.readString(sysctlPath);
+                var matcher = Pattern.compile("max_user_instances\\s*=\\s*(\\d+)").matcher(existing);
+                if (matcher.find()) {
+                    int current = Integer.parseInt(matcher.group(1));
+                    if (current >= 8192) {
+                        return;
+                    }
+                }
+            }
+            var tempFile = Files.createTempFile("isx-sysctl-", ".conf");
+            Files.writeString(tempFile, content);
+            if (runHostQuiet("sudo", "cp", tempFile.toString(), SYSCTL_CONF) == 0) {
+                runHostQuiet("sudo", "sysctl", "-p", SYSCTL_CONF);
+                System.out.println("  Raised inotify limits for concurrent containers.");
+            }
+            Files.deleteIfExists(tempFile);
+        } catch (IOException e) {
+            System.err.println("  Warning: could not configure inotify limits: " + e.getMessage());
+        }
+    }
+
     private void configureMitmProxy() {
         startStep("MITM Authentication Proxy",
                 "The MITM proxy intercepts HTTPS from containers and injects",
@@ -691,8 +726,7 @@ public class InitCommand extends BaseCommand {
             configureMitmProxyFirewalld(gatewayIp);
         }
 
-        // Clean up old sysctl config from previous installs (no longer needed)
-        runHostQuiet("sudo", "rm", "-f", "/etc/sysctl.d/99-incus-spawn.conf");
+        configureInotifyLimits();
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {
