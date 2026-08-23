@@ -11,6 +11,7 @@ import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -190,6 +191,7 @@ public class DoctorCommand extends BaseCommand {
         findings.add(checkInotifyBudget());
         findings.addAll(checkProxy());
         findings.addAll(checkDnsAndBridge());
+        findings.add(checkInstanceSubnets());
         findings.addAll(checkTemplates());
         if (deep) {
             findings.addAll(checkInstances());
@@ -798,6 +800,36 @@ public class DoctorCommand extends BaseCommand {
 
     static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort, String gatewayIp) {
         return FirewalldCheck.isPreRoutingRulePresent(firewalldOutput, mitmPort, gatewayIp);
+    }
+
+    // ---- Layer 5b: Instance subnet consistency ----
+
+    private Finding checkInstanceSubnets() {
+        try {
+            var incus = RuntimeServices.incus();
+            var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
+            if (stale.isEmpty()) {
+                return Finding.ok("Instance network config", "(all on current subnet)");
+            }
+            var names = stale.size() <= 3
+                    ? String.join(", ", stale)
+                    : stale.get(0) + ", " + stale.get(1) + " + " + (stale.size() - 2) + " more";
+            return Finding.fail("Instance network config",
+                    "(" + stale.size() + " on stale subnet: " + names + ")",
+                    new Remediation("Migrate all instances to current bridge subnet",
+                            false,
+                            () -> {
+                                var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(
+                                        RuntimeServices.incus());
+                                System.out.println("Migrated " + migrated + " instance"
+                                        + (migrated == 1 ? "" : "s") + ".");
+                                System.out.println("Note: running instances may need"
+                                        + " a restart for network changes to take effect.");
+                            }));
+        } catch (Exception e) {
+            return Finding.warn("Instance network config",
+                    "(could not check: " + e.getMessage() + ")", null);
+        }
     }
 
     // ---- Layer 6: Templates ----

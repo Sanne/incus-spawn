@@ -98,6 +98,29 @@ class CidrUtilsTest {
     }
 
     @Test
+    void isInSubnetReturnsTrueForMatchingIp() {
+        var subnet = CidrUtils.parseCidr("172.20.0.1/24");
+        assertTrue(CidrUtils.isInSubnet("172.20.0.5", subnet));
+        assertTrue(CidrUtils.isInSubnet("172.20.0.1", subnet));
+        assertTrue(CidrUtils.isInSubnet("172.20.0.254", subnet));
+    }
+
+    @Test
+    void isInSubnetReturnsFalseForDifferentSubnet() {
+        var subnet = CidrUtils.parseCidr("172.21.0.1/24");
+        assertFalse(CidrUtils.isInSubnet("172.20.0.5", subnet));
+        assertFalse(CidrUtils.isInSubnet("172.22.0.1", subnet));
+    }
+
+    @Test
+    void isInSubnetHandlesNarrowPrefix() {
+        var subnet = CidrUtils.parseCidr("10.0.0.0/28");
+        assertTrue(CidrUtils.isInSubnet("10.0.0.1", subnet));
+        assertTrue(CidrUtils.isInSubnet("10.0.0.14", subnet));
+        assertFalse(CidrUtils.isInSubnet("10.0.0.16", subnet));
+    }
+
+    @Test
     void overlapsReturnsFalseForAdjacentSubnets() {
         var a = CidrUtils.parseCidr("10.0.0.0/24");
         var b = CidrUtils.parseCidr("10.0.1.0/24");

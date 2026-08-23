@@ -3873,6 +3873,7 @@ public class ListCommand extends BaseCommand {
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
             showSubnetWarning();
+            fixStaticIpIfNeeded(containerName);
             fixCaMismatchIfNeeded(containerName);
             fixResolvConfIfNeeded(containerName);
             return false;
@@ -3888,6 +3889,16 @@ public class ListCommand extends BaseCommand {
             var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
             if (diagnostic != null) {
                 statusMessage = "Bridge subnet conflict detected — run 'isx init' to fix";
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void fixStaticIpIfNeeded(String name) {
+        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+        try {
+            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
+                statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
         }
@@ -3925,6 +3936,9 @@ public class ListCommand extends BaseCommand {
             incus.forceStop(name);
             incus.start(name);
             incus.waitForReady(name);
+        }
+        if (incus.isVm(name)) {
+            InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
         }
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);

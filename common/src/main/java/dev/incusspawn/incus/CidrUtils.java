@@ -45,6 +45,10 @@ public final class CidrUtils {
         return longToIp(network) + "/24";
     }
 
+    public static boolean isInSubnet(String ip, Cidr subnet) {
+        return (ipToLong(ip) & networkMask(subnet.prefixLen())) == subnet.network();
+    }
+
     public static boolean overlaps(Cidr a, Cidr b) {
         int shorter = Math.min(a.prefixLen(), b.prefixLen());
         long mask = networkMask(shorter);
