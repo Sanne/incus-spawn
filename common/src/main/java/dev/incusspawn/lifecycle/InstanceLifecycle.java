@@ -216,6 +216,12 @@ public final class InstanceLifecycle {
         var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
         if (!ip.isEmpty() && !gateway.isEmpty()) {
             pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+            // The VM already booted with the old .network file; tell networkd
+            // to re-read and apply the new config without a full reboot.
+            try {
+                incus.shellExec(name, "networkctl", "reconfigure", "eth0");
+            } catch (Exception ignored) {
+            }
         }
     }
 

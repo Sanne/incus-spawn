@@ -819,10 +819,18 @@ public class DoctorCommand extends BaseCommand {
                     new Remediation("Migrate all instances to current bridge subnet",
                             false,
                             () -> {
+                                var incusClient = RuntimeServices.incus();
                                 var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(
-                                        RuntimeServices.incus());
+                                        incusClient);
                                 System.out.println("Migrated " + migrated + " instance"
                                         + (migrated == 1 ? "" : "s") + ".");
+                                var remaining = InstanceLifecycle.findStaleSubnetInstances(
+                                        incusClient);
+                                if (!remaining.isEmpty()) {
+                                    System.err.println("Warning: " + remaining.size()
+                                            + " instance(s) could not be migrated: "
+                                            + String.join(", ", remaining));
+                                }
                                 System.out.println("Note: running instances may need"
                                         + " a restart for network changes to take effect.");
                             }));
