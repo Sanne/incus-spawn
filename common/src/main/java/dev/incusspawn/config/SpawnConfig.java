@@ -174,7 +174,7 @@ public class SpawnConfig {
             current = allDefs.get(current.getParent());
         }
 
-        if (tools.contains("claude") || tools.contains("pi")) {
+        if (tools.contains("claude") || tools.contains("pi") || tools.contains("aider")) {
             if (!config.getClaude().hasAuth()) {
                 missing.add("Anthropic API key, OAuth token, or Vertex AI");
             }

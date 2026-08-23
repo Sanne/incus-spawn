@@ -329,12 +329,19 @@ jobs:
           parent: tpl-minimal
           type: vm
           EOF
+          cat > ~/.config/incus-spawn/images/test-aider.yaml << 'EOF'
+          name: tpl-test-aider
+          parent: tpl-minimal
+          tools:
+            - aider
+          EOF
 
       - name: Build templates
         run: |
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+          sg incus-admin -c "isx build tpl-test-aider --yes"
 
       - name: Test container
         run: |
@@ -383,6 +390,20 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
 
+      - name: Test aider
+        run: |
+          sg incus-admin -c "isx branch test-aider --from tpl-test-aider --no-start"
+          sg incus-admin -c "incus start test-aider"
+          echo "Waiting for container network..."
+          sg incus-admin -c "incus exec test-aider -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for i in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-aider.sh test-aider/tmp/"
+          sg incus-admin -c "incus exec test-aider -- bash /tmp/test-aider.sh"
+
       - name: Assert proxy survived
         run: |
           PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy|proxy-quarkus-app' || true)
@@ -404,6 +425,7 @@ jobs:
           sg incus-admin -c "isx destroy test-container" || true
           sg incus-admin -c "isx destroy test-podman" || true
           sg incus-admin -c "isx destroy test-vm" || true
+          sg incus-admin -c "isx destroy test-aider" || true
 
   isx-integration-tests-native:
     needs: [build-native-cli, build-native-proxy]
@@ -493,12 +515,19 @@ jobs:
           parent: tpl-minimal
           type: vm
           EOF
+          cat > ~/.config/incus-spawn/images/test-aider.yaml << 'EOF'
+          name: tpl-test-aider
+          parent: tpl-minimal
+          tools:
+            - aider
+          EOF
 
       - name: Build templates
         run: |
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+          sg incus-admin -c "isx build tpl-test-aider --yes"
 
       - name: Test container
         run: |
@@ -547,6 +576,20 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
 
+      - name: Test aider
+        run: |
+          sg incus-admin -c "isx branch test-aider --from tpl-test-aider --no-start"
+          sg incus-admin -c "incus start test-aider"
+          echo "Waiting for container network..."
+          sg incus-admin -c "incus exec test-aider -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for i in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-aider.sh test-aider/tmp/"
+          sg incus-admin -c "incus exec test-aider -- bash /tmp/test-aider.sh"
+
       - name: Assert proxy survived
         run: |
           PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy' || true)
@@ -572,6 +615,7 @@ jobs:
           sg incus-admin -c "isx destroy test-container" || true
           sg incus-admin -c "isx destroy test-podman" || true
           sg incus-admin -c "isx destroy test-vm" || true
+          sg incus-admin -c "isx destroy test-aider" || true
 
   # Regression: isx init must produce a working setup on a machine where Incus has never been
   # initialized. The isx-integration-tests job above runs 'incus admin init --minimal' first,
