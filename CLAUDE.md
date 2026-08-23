@@ -64,6 +64,8 @@ For VMs, `buildFromScratch` applies the entire ancestor chain from YAML definiti
 
 Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.
 
+**Host repo refresh**: Before building, `HostRepoRefresh` (`git/HostRepoRefresh.java`) fetches host-side git repos matching image definition repos so reference-clone optimization uses current objects. Optionally clones missing repos (persisted via `auto-clone-repos` config). `--skip-git-refresh` bypasses the refresh. `update-all` only fetches.
+
 ### Host Resources
 
 `HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container. VM-specific: virtiofs disk devices are mounted asynchronously by the incus-agent, so overlay mounts poll `mountpoint -q` for up to 15s before overlaying. File-level resources (not directories) fall back to `copy` mode on VMs since disk devices only support directories.
@@ -72,7 +74,7 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 `ToolSetup` interface with two implementations:
 - **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `common/src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
-- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `GhSetup`, `PiSetup`). Declare env vars via `envEntries(Map<String,String>)` method.
+- **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `GhSetup`, `PiSetup`, `BobSetup`). Declare env vars via `envEntries(Map<String,String>)` method. Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features`.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML. Java CDI tools are used as fallback when no YAML tool matches.
 
@@ -106,7 +108,9 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 - Per-domain certs signed by a custom CA (installed in templates during build). The CA lives at `~/.config/incus-spawn/ca.{crt,key}`; leaf certs are persisted by `CertStore` under `~/.config/incus-spawn/certs/` (`<domain>.crt`/`.key`, wildcards as `_wildcard.<domain>`) and reused across proxy restarts, re-minting only on miss/CA-rotation/near-expiry. Persisting is what keeps each leaf's `notBefore` stable: the proxy is relaunched frequently (macOS launchd `KeepAlive`), and re-minting on a host whose clock has jumped ahead of a lagging container clock (e.g. an Incus VM after macOS resume) produced certs the container rejected as "not yet valid". Certs are keyed by domain, never by container (a leaf is a function of `(domain, CA)`), so this composes with future per-container interception, which is a routing/DNS concern. `CertificateAuthority.BACKDATE_MS` backdates `notBefore` as a skew margin for the rare fresh-mint moments.
 - Both CA and leaf certs carry RFC 5280 key identifiers: SKI on the CA, SKI + AKI on leaves. Strict validators (OpenSSL 3.5, and so Python 3.13+, which turns on `VERIFY_X509_STRICT` by default) reject a chain without them — including the trust anchor, so leaf-only extensions are not enough. A CA generated before this is re-issued on load over its **existing key** (`reissueWithSki`), which keeps every leaf valid and un-re-minted; the replaced cert is kept as `ca-superseded.crt`. Images stamped with that superseded fingerprint carry a stale-but-not-foreign anchor: `BranchCommand` lets them branch (the new cert is pushed into the instance by `InstancePrep`/`fixContainerCaIfNeeded` on first use) instead of demanding a rebuild the way a real CA rotation does.
 - Three auth modes for Anthropic domains (priority: Vertex > OAuth > API key): OAuth mode strips `x-api-key` and injects `Authorization: Bearer <token>` for Claude Pro/Max users; Vertex mode does three-way routing — passthrough for Vertex-formatted requests, standard-to-Vertex translation for `/v1/messages` (using `VERTEX_ALLOWED_FIELDS` body allowlist), and direct forwarding for non-messages endpoints; API key mode replaces `x-api-key` with the real key
-- Caches OCI blobs by SHA256 and Maven artifacts by coordinate
+- OpenAI support (behind `openai` feature flag): intercepts `api.openai.com` and injects `Authorization: Bearer <openai-api-key>`
+- WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection), then relaying frames bidirectionally with keepalive pings and close-code propagation. Used by Codex CLI for `api.openai.com`
+- Caches OCI blobs by SHA256, Maven artifacts by coordinate, and npm tarballs from `registry.npmjs.org` with ETag-based packument verification
 
 ### TUI
 
@@ -127,11 +131,14 @@ Resolution order for both images and tools (later overrides earlier): built-in -
 
 ## CI Integration Tests
 
-`.github/workflows/test-integration.yml` runs on every push/PR to `main`. Four test jobs:
+`.github/workflows/test-integration.yml` runs on every push/PR to `main`. Key jobs:
 
 - **`unit-tests`**: `mvn package` (no Incus required)
+- **`build-native-cli`**: builds the CLI native image, uploads artifact
+- **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests`**: boots the appliance VM image under QEMU, checks it reaches `ISX READY` and passes an Incus smoke test
-- **`isx-integration-tests`**: installs Incus on Ubuntu 24.04, builds isx from the unit-tests artifact, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
+- **`isx-integration-tests-jvm`**: installs Incus on Ubuntu 24.04, builds isx from the unit-tests artifact, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
+- **`isx-integration-tests-native`**: same as jvm but uses native binaries from the build-native jobs
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
