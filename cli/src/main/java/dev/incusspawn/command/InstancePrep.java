@@ -96,7 +96,9 @@ public class InstancePrep {
                 System.err.println(sep);
                 return true;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            System.err.println("Warning: could not repair static IP for " + name
+                    + ": " + e.getMessage());
         }
         return false;
     }
