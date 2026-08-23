@@ -47,11 +47,12 @@ public class InstancePrep {
         var templateName = (profile != null && !profile.isEmpty()) ? profile : parent;
 
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
+        boolean ipFixed = false;
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return null;
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            fixStaticIpMismatch(incus, name);
+            ipFixed = fixStaticIpMismatch(incus, name);
             fixCaMismatch(incus, name);
             fixResolvConfMismatch(incus, name);
         }
@@ -62,15 +63,20 @@ public class InstancePrep {
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
             incus.waitForReady(name);
+            if (ipFixed && incus.isVm(name)) {
+                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
+            }
         } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
             System.out.println("VM agent not responding, restarting " + name + "...");
             incus.forceStop(name);
             incus.start(name);
             incus.waitForReady(name);
-        }
-        // Ensure VM network config is current — covers starts by the block above
-        // and starts triggered earlier by fixCaMismatch
-        if (incus.isVm(name)) {
+            if (ipFixed) {
+                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
+            }
+        } else if (ipFixed && incus.isVm(name)) {
+            // fixCaMismatch started the VM before the block above — still need
+            // to push the .network file that couldn't be written while stopped
             InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
         }
 
@@ -79,8 +85,8 @@ public class InstancePrep {
         return templateName;
     }
 
-    private static void fixStaticIpMismatch(IncusClient incus, String name) {
-        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+    private static boolean fixStaticIpMismatch(IncusClient incus, String name) {
+        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return false;
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
                 var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
@@ -88,9 +94,11 @@ public class InstancePrep {
                 System.err.println("\033[1;33mStatic IP mismatch\033[0m"
                         + " — reassigned to current bridge subnet.");
                 System.err.println(sep);
+                return true;
             }
         } catch (Exception ignored) {
         }
+        return false;
     }
 
     private static void fixResolvConfMismatch(IncusClient incus, String name) {

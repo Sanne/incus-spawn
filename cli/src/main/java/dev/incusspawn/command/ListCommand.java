@@ -140,6 +140,7 @@ public class ListCommand extends BaseCommand {
     private int newTemplateLocationIndex;
     private int newTemplateFieldIndex;
     private String statusMessage;
+    private boolean vmIpFixApplied;
     private String progressMessage;
     // Search/filter state
     private boolean searchActive = false;
@@ -3895,9 +3896,11 @@ public class ListCommand extends BaseCommand {
     }
 
     private void fixStaticIpIfNeeded(String name) {
+        vmIpFixApplied = false;
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
+                vmIpFixApplied = incus.isVm(name);
                 statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
@@ -3931,13 +3934,20 @@ public class ListCommand extends BaseCommand {
             HostResourceSetup.removeStaleDevices(incus, name);
             incus.start(name);
             incus.waitForReady(name);
+            if (vmIpFixApplied) {
+                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
+            }
         } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
             System.out.println("VM agent not responding, restarting " + name + "...");
             incus.forceStop(name);
             incus.start(name);
             incus.waitForReady(name);
-        }
-        if (incus.isVm(name)) {
+            if (vmIpFixApplied) {
+                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
+            }
+        } else if (vmIpFixApplied) {
+            // fixCaMismatchIfNeeded started the VM before this block —
+            // still need to push the .network file
             InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
         }
         ZmxSocketForward.ensureSymlink(name);
