@@ -10,6 +10,7 @@ import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.FirewallDetector.DetectionResult;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.UfwCheck;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1092,6 +1093,13 @@ public class InitCommand extends BaseCommand {
                 if (result.newSubnet() != null) {
                     System.out.println("  Reconfigured bridge to " + result.newSubnet()
                             + " to avoid conflict.");
+                    var migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(incus);
+                    if (migrated > 0) {
+                        System.out.println("  Migrated network config for " + migrated
+                                + " instance" + (migrated == 1 ? "" : "s") + ".");
+                        System.out.println("  Note: running instances may need a restart"
+                                + " for network changes to take effect.");
+                    }
                 } else {
                     System.err.println("  Warning: could not find a non-conflicting subnet.");
                     System.err.println("  You may need to manually set the bridge address:");

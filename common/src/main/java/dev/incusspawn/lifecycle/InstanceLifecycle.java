@@ -15,6 +15,8 @@ import dev.incusspawn.ssh.SshKeyManager;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,18 +83,17 @@ public final class InstanceLifecycle {
         return ip;
     }
 
-    private static int bridgePrefixLen(IncusClient incus) {
+    static int bridgePrefixLen(IncusClient incus) {
         var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
         return bridgeAddr.contains("/") ? CidrUtils.parseCidr(bridgeAddr).prefixLen() : 24;
     }
 
     /**
-     * Push a systemd-networkd static config into the stopped container, overwriting the
-     * temporary DHCP config the template carries from build time. This makes the branch
-     * boot directly into static addressing (instant network, no DHCP round trip). The
-     * in-container watchdog re-applies this same file if connectivity is ever lost.
+     * Push a systemd-networkd static config into the container, overwriting the
+     * DHCP config the template carries from build time. This makes the branch
+     * boot directly into static addressing (instant network, no DHCP round trip).
      */
-    private static void pushStaticNetworkConfig(IncusClient incus, String name,
+    static void pushStaticNetworkConfig(IncusClient incus, String name,
                                                 String ip, String gateway, int prefixLen) {
         var content = "[Match]\nName=eth0\n\n[Network]\n"
                 + "Address=" + ip + "/" + prefixLen + "\n"
@@ -128,6 +129,116 @@ public final class InstanceLifecycle {
             injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
             pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         }
+    }
+
+    /**
+     * Detect and fix stale static IP configuration caused by a bridge subnet
+     * change. Compares the instance's stored {@code STATIC_IP} against the
+     * current bridge subnet. If stale, allocates a new IP on the current
+     * subnet and updates the NIC device config, metadata, and (for containers)
+     * the in-guest {@code .network} file.
+     *
+     * <p>For VMs the {@code .network} file cannot be pushed while stopped
+     * (requires the incus-agent). The caller must arrange a deferred push
+     * via {@link #pushDeferredNetworkConfig} after start.
+     *
+     * @return true if a fix was applied
+     */
+    public static boolean fixStaticIpIfNeeded(IncusClient incus, String name) {
+        var storedIp = incus.configGet(name, Metadata.STATIC_IP);
+        if (storedIp.isEmpty()) return false;
+
+        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
+        if (bridgeAddr.isEmpty()) return false;
+        var bridgeCidr = CidrUtils.parseCidr(bridgeAddr);
+
+        if (CidrUtils.isInSubnet(storedIp, bridgeCidr)) return false;
+
+        var newIp = StaticIpAllocator.allocate(incus);
+        var newGateway = ProxyConfig.resolveGatewayIp(incus);
+        var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
+        var prefixLen = bridgePrefixLen(incus);
+
+        System.out.println("  Reassigning " + name + ": " + storedIp + " → " + newIp);
+        incus.deviceConfigSet(name, nicDevice, "ipv4.address", newIp);
+
+        var updates = new HashMap<String, String>();
+        updates.put(Metadata.STATIC_IP, newIp);
+        updates.put(Metadata.STATIC_GATEWAY, newGateway);
+        var proxyGw = incus.configGet(name, Metadata.PROXY_GATEWAY);
+        if (!proxyGw.isEmpty()) {
+            updates.put(Metadata.PROXY_GATEWAY, newGateway);
+        }
+        incus.configSetAll(name, updates);
+
+        if (!incus.isVm(name)) {
+            pushStaticNetworkConfig(incus, name, newIp, newGateway, prefixLen);
+        }
+        return true;
+    }
+
+    /**
+     * Walk all instances and fix any whose static IP belongs to a stale subnet.
+     * Called from {@code InitCommand} after a bridge subnet change, and from
+     * {@code DoctorCommand} as an interactive remediation.
+     *
+     * @return count of instances that were migrated
+     */
+    public static int migrateAllInstancesToNewSubnet(IncusClient incus) {
+        int fixed = 0;
+        try {
+            for (var instance : incus.list()) {
+                var name = instance.get("name");
+                if (name == null || name.isEmpty()) continue;
+                try {
+                    if (fixStaticIpIfNeeded(incus, name)) {
+                        fixed++;
+                    }
+                } catch (Exception e) {
+                    System.err.println("  Warning: failed to migrate " + name
+                            + ": " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("  Warning: could not list instances for migration: "
+                    + e.getMessage());
+        }
+        return fixed;
+    }
+
+    /**
+     * Push the static {@code .network} file into a running VM using its stored
+     * metadata. Call after {@code incus.start()} + {@code waitForReady()} for
+     * VMs whose static IP was fixed while stopped.
+     */
+    public static void pushDeferredNetworkConfig(IncusClient incus, String name) {
+        var ip = incus.configGet(name, Metadata.STATIC_IP);
+        var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
+        if (!ip.isEmpty() && !gateway.isEmpty()) {
+            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        }
+    }
+
+    /**
+     * Count instances whose static IP is on a different subnet than the
+     * current bridge. Used by {@code DoctorCommand} for detection.
+     */
+    public static List<String> findStaleSubnetInstances(IncusClient incus) {
+        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
+        if (bridgeAddr.isEmpty()) return List.of();
+        var bridgeCidr = CidrUtils.parseCidr(bridgeAddr);
+
+        var stale = new ArrayList<String>();
+        for (var instance : incus.list()) {
+            var name = instance.get("name");
+            if (name == null || name.isEmpty()) continue;
+            var storedIp = incus.configGet(name, Metadata.STATIC_IP);
+            if (storedIp.isEmpty()) continue;
+            if (!CidrUtils.isInSubnet(storedIp, bridgeCidr)) {
+                stale.add(name);
+            }
+        }
+        return stale;
     }
 
     public static void tagMetadata(IncusClient incus, String name, String type, String parent) {
