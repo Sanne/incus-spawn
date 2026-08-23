@@ -189,7 +189,7 @@ Template images are reusable base environments defined in YAML. They can inherit
 ```yaml
 # images/java.yaml
 name: tpl-java
-description: JDK + Maven + Claude Code
+description: JDK + Maven
 parent: tpl-dev
 packages:
   - java-25-openjdk-devel
