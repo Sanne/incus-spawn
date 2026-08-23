@@ -164,7 +164,68 @@ class HostRepoRefreshTest {
         assertEquals("fatal: Authentication failed", HostRepoRefresh.extractGitError(text));
     }
 
+    // ── formatFetchLine ────────────────────────────────────────────────────
+
+    @Test
+    void formatFetchLineShowsSpinnerWhenFetching() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null);
+        var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
+        assertTrue(line.contains("Fetching"), "should contain 'Fetching'");
+        assertTrue(line.contains("myrepo"), "should contain repo name");
+        assertTrue(line.contains("/tmp/myrepo"), "should contain path");
+    }
+
+    @Test
+    void formatFetchLineShowsCheckmarkWhenDone() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.DONE, null);
+        var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
+        assertTrue(line.contains("Fetched"), "should contain 'Fetched'");
+        assertTrue(line.contains("✓"), "should contain checkmark");
+    }
+
+    @Test
+    void formatFetchLineShowsErrorDetailWhenFailed() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, "fatal: could not read Username");
+        var line = HostRepoRefresh.formatFetchLine(task, progress, 0);
+        assertTrue(line.contains("Failed"), "should contain 'Failed'");
+        assertTrue(line.contains("✗"), "should contain cross");
+        assertTrue(line.contains("fatal: could not read Username"), "should contain error detail");
+    }
+
+    @Test
+    void formatFetchLineAlignsPrefixAcrossStates() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var fetching = HostRepoRefresh.formatFetchLine(task,
+                new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null), 0);
+        var done = HostRepoRefresh.formatFetchLine(task,
+                new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.DONE, null), 0);
+        var failed = HostRepoRefresh.formatFetchLine(task,
+                new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FAILED, null), 0);
+
+        int fetchingIdx = stripAnsi(fetching).indexOf("myrepo");
+        int doneIdx = stripAnsi(done).indexOf("myrepo");
+        int failedIdx = stripAnsi(failed).indexOf("myrepo");
+        assertEquals(fetchingIdx, doneIdx, "repo name should align between FETCHING and DONE");
+        assertEquals(doneIdx, failedIdx, "repo name should align between DONE and FAILED");
+    }
+
+    @Test
+    void formatFetchLineCyclesSpinnerFrames() {
+        var task = new HostRepoRefresh.FetchTask("myrepo", Path.of("/tmp/myrepo"), "origin");
+        var progress = new HostRepoRefresh.TaskProgress(HostRepoRefresh.FetchState.FETCHING, null);
+        var line0 = stripAnsi(HostRepoRefresh.formatFetchLine(task, progress, 0));
+        var line3 = stripAnsi(HostRepoRefresh.formatFetchLine(task, progress, 3));
+        assertNotEquals(line0, line3, "different frames should produce different spinner chars");
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────
+
+    private static String stripAnsi(String s) {
+        return s.replaceAll("\033\\[[0-9;]*m", "");
+    }
 
     private static ImageDef.RepoEntry repoEntry(String url) {
         var entry = new ImageDef.RepoEntry();

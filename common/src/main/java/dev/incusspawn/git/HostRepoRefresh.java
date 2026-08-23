@@ -22,8 +22,8 @@ public final class HostRepoRefresh {
 
     private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
-    private enum FetchState { FETCHING, DONE, FAILED }
-    private record TaskProgress(FetchState state, String detail) {}
+    enum FetchState { FETCHING, DONE, FAILED }
+    record TaskProgress(FetchState state, String detail) {}
 
     public static void refresh(List<ImageDef.RepoEntry> repos, SpawnConfig config,
                                boolean cloneMissing, boolean autoConfirm,
@@ -113,27 +113,29 @@ public final class HostRepoRefresh {
         });
         ticker.scheduleAtFixedRate(redraw, 80, 80, TimeUnit.MILLISECONDS);
 
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (int i = 0; i < tasks.size(); i++) {
-                int idx = i;
-                var task = tasks.get(i);
-                executor.submit(() -> {
-                    try {
-                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", "--", task.remoteName);
-                        if (result.success()) {
-                            states.set(idx, new TaskProgress(FetchState.DONE, null));
-                        } else {
-                            states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output())));
+        try {
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                for (int i = 0; i < tasks.size(); i++) {
+                    int idx = i;
+                    var task = tasks.get(i);
+                    executor.submit(() -> {
+                        try {
+                            var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", "--", task.remoteName);
+                            if (result.success()) {
+                                states.set(idx, new TaskProgress(FetchState.DONE, null));
+                            } else {
+                                states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output())));
+                            }
+                        } catch (Exception e) {
+                            states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
                         }
-                    } catch (Exception e) {
-                        states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
-                    }
-                });
+                    });
+                }
             }
+        } finally {
+            ticker.shutdownNow();
+            try { ticker.awaitTermination(200, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
-
-        ticker.shutdownNow();
-        try { ticker.awaitTermination(200, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
         synchronized (lock) {
             redrawLines(tasks, states, out, 0);
@@ -153,7 +155,7 @@ public final class HostRepoRefresh {
         out.flush();
     }
 
-    private static String formatFetchLine(FetchTask task, TaskProgress progress, int frame) {
+    static String formatFetchLine(FetchTask task, TaskProgress progress, int frame) {
         var sb = new StringBuilder("  ");
         switch (progress.state()) {
             case FETCHING -> sb.append(SPINNER[frame % SPINNER.length]).append(" \033[2mFetching\033[0m ");
@@ -318,7 +320,7 @@ public final class HostRepoRefresh {
         return lines[lines.length - 1].strip();
     }
 
-    private record FetchTask(String repoName, Path hostPath, String remoteName) {}
+    record FetchTask(String repoName, Path hostPath, String remoteName) {}
     private record CloneTask(String repoName, String url, Path targetDir) {}
 
     private enum ClonePolicy { ASK, ALWAYS, NEVER }
