@@ -194,9 +194,8 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
 
-        // git clone succeeds
-        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
-        when(incus.shellExecInteractivePtyAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
+        // Clone, refspec restore, and prime all run as captured exec as agentuser.
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/quarkusio/quarkus.git");
@@ -210,11 +209,11 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef, false);
 
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/quarkus' remote set-branches origin '*'");
-        verify(incus).shellExecInteractivePtyAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "cd '/home/agentuser/quarkus' && mvn -B dependency:go-offline");
     }
 
@@ -1000,7 +999,7 @@ class BuildCommandTest {
     void cloneReposWithBranch() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
-        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -1014,9 +1013,9 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.cloneRepos(container, imageDef, false);
 
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' remote set-branches origin '*'");
     }
 
@@ -1025,7 +1024,7 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
 
-        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -1040,14 +1039,14 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef, false);
 
         // Clone call + refspec restore, but no prime
-        verify(incus, times(2)).shellExecInteractiveAsUser(eq("test"), anyString(), anyString());
+        verify(incus, times(2)).execInContainer(eq("test"), anyString(), anyString());
     }
 
     @Test
     void cloneReposWithReferenceDissociates() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
-        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString())).thenReturn(0);
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -1065,10 +1064,10 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef, false);
 
         // Reference clone command
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch --reference '/mnt/ref/repo' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Dissociation: repack + alternates removal
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git -C '/home/agentuser/repo' repack -a -d && rm -f -- '/home/agentuser/repo/.git/objects/info/alternates'");
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
@@ -1079,11 +1078,11 @@ class BuildCommandTest {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
         // First call (reference clone) fails, rest succeed
-        when(incus.shellExecInteractiveAsUser(eq("test"), anyString(), anyString()))
-                .thenReturn(1)  // reference clone fails
-                .thenReturn(0)  // cleanup rm -rf
-                .thenReturn(0)  // normal clone
-                .thenReturn(0); // refspec restore
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(FAIL)  // reference clone fails
+                .thenReturn(OK)    // cleanup rm -rf
+                .thenReturn(OK)    // normal clone
+                .thenReturn(OK);   // refspec restore
 
         var repo = new ImageDef.RepoEntry();
         repo.setUrl("https://github.com/owner/repo.git");
@@ -1101,10 +1100,123 @@ class BuildCommandTest {
         cmd.cloneRepos(container, imageDef, false);
 
         // Should fall back to normal clone
-        verify(incus).shellExecInteractiveAsUser("test", "agentuser",
+        verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Reference device still cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
+    }
+
+    @Test
+    void cloneReposClonesMultipleReposInParallel() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+
+        var a = new ImageDef.RepoEntry();
+        a.setUrl("https://github.com/owner/alpha.git");
+        a.setPath("~/alpha");
+        var b = new ImageDef.RepoEntry();
+        b.setUrl("https://github.com/owner/beta.git");
+        b.setPath("~/beta");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(a, b));
+
+        var cmd = new BuildCommand();
+        cmd.cloneRepos(container, imageDef, false);
+
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/alpha.git' '/home/agentuser/alpha'");
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
+        verify(incus).execInContainer("test", "agentuser",
+                "git -C '/home/agentuser/alpha' remote set-branches origin '*'");
+        verify(incus).execInContainer("test", "agentuser",
+                "git -C '/home/agentuser/beta' remote set-branches origin '*'");
+    }
+
+    @Test
+    void cloneReposThrowsWhenCloneFails() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(new IncusClient.ExecResult(128, "", "fatal: repository not found"));
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/missing.git");
+        repo.setPath("~/missing");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = new BuildCommand();
+        var ex = assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> cmd.cloneRepos(container, imageDef, false));
+        assertTrue(ex.getMessage().contains("fatal: repository not found"),
+                "error message should carry the git failure detail");
+    }
+
+    // --- firstGitError / formatStepLine ---
+
+    @Test
+    void firstGitErrorPrefersFatalLine() {
+        var text = "Cloning into 'x'...\nremote: Counting objects\nfatal: could not read Username\nmore noise";
+        assertEquals("fatal: could not read Username", BuildCommand.firstGitError(text));
+    }
+
+    @Test
+    void firstGitErrorFallsBackToLastNonEmptyLine() {
+        assertEquals("some trailing message",
+                BuildCommand.firstGitError("first line\n\nsome trailing message\n"));
+    }
+
+    @Test
+    void firstGitErrorEmptyForBlank() {
+        assertEquals("", BuildCommand.firstGitError(""));
+        assertEquals("", BuildCommand.firstGitError(null));
+    }
+
+    @Test
+    void formatStepLineShowsSpinnerWhileRunning() {
+        var p = BuildCommand.StepProgress.running();
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        assertTrue(stripAnsi(line).contains("Cloning"), "should show running verb");
+        assertTrue(line.contains("alpha"), "should show the label");
+    }
+
+    @Test
+    void formatStepLineShowsCheckmarkAndNoteWhenDone() {
+        var p = BuildCommand.StepProgress.done("via host reference");
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        assertTrue(line.contains("✓"), "should show checkmark");
+        assertTrue(line.contains("Cloned"), "should show done verb");
+        assertTrue(line.contains("via host reference"), "should show the done note");
+    }
+
+    @Test
+    void formatStepLineShowsErrorDetailWhenFailed() {
+        var p = BuildCommand.StepProgress.failed("fatal: nope", null);
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        assertTrue(line.contains("✗"), "should show cross");
+        assertTrue(line.contains("fatal: nope"), "should show the error detail");
+    }
+
+    @Test
+    void formatStepLineAlignsLabelAcrossStates() {
+        var running = stripAnsi(BuildCommand.formatStepLine("alpha", null,
+                BuildCommand.StepProgress.running(), 0, "Cloning", "Cloned"));
+        var done = stripAnsi(BuildCommand.formatStepLine("alpha", null,
+                BuildCommand.StepProgress.done(null), 0, "Cloning", "Cloned"));
+        var failed = stripAnsi(BuildCommand.formatStepLine("alpha", null,
+                BuildCommand.StepProgress.failed(null, null), 0, "Cloning", "Cloned"));
+        assertEquals(running.indexOf("alpha"), done.indexOf("alpha"), "label aligns RUNNING vs DONE");
+        assertEquals(done.indexOf("alpha"), failed.indexOf("alpha"), "label aligns DONE vs FAILED");
+    }
+
+    private static String stripAnsi(String s) {
+        return s.replaceAll("\033\\[[0-9;]*m", "");
     }
 
     @Test

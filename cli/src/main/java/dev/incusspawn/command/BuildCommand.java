@@ -32,6 +32,8 @@ import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.util.CpuInfo;
+import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.RuntimeServices;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -55,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Collectors;
 
 
@@ -2006,81 +2009,286 @@ public class BuildCommand extends BaseCommand {
 
     record RepoReference(String deviceName, String containerPath) {}
 
+    enum StepState { RUNNING, DONE, FAILED }
+
+    /** Progress state for one repo's clone or prime step. {@code note} is a dim
+     *  annotation shown on success; {@code detail} is a concise one-line error for the
+     *  inline display; {@code log} is the full captured command output, printed on
+     *  failure so the diagnostic isn't reduced to the single inline line. */
+    record StepProgress(StepState state, String note, String detail, String log) {
+        static StepProgress running() { return new StepProgress(StepState.RUNNING, null, null, null); }
+        static StepProgress done(String note) { return new StepProgress(StepState.DONE, note, null, null); }
+        static StepProgress failed(String detail, String log) {
+            return new StepProgress(StepState.FAILED, null, detail, log);
+        }
+    }
+
     /**
      * Clone git repos declared in the image definition as agentuser.
-     * When a matching host-side checkout is available (via SpawnConfig host-path/repo-paths),
-     * uses {@code --reference} to speed up cloning from local objects. Dissociation
-     * is deferred to after checkout: a manual {@code repack -a -d} followed by
-     * alternates removal makes the clone self-contained while the reference device
-     * is still mounted.
+     *
+     * <p>Repos are cloned concurrently (bounded to the host's high-performance
+     * core count) with an animated per-repo progress display. Incus config
+     * mutations — mounting/removing the host-reference disk devices — are kept
+     * out of the parallel section (serial phases before and after) because
+     * concurrent instance-config edits can conflict. Each reference stays mounted
+     * across its clone and dissociation, so removal only happens once all clones
+     * are done.
+     *
+     * <p>When a matching host-side checkout is available (via SpawnConfig
+     * host-path/repo-paths), {@code --reference} speeds up cloning from local
+     * objects. Dissociation is deferred to after checkout: a manual
+     * {@code repack -a -d} followed by alternates removal makes the clone
+     * self-contained while the reference device is still mounted.
      */
     void cloneRepos(Container container, ImageDef imageDef, boolean isVm) {
+        var repos = imageDef.getRepos();
+        if (repos.isEmpty()) return;
+
         var config = SpawnConfig.load();
 
-        for (var repo : imageDef.getRepos()) {
-            System.out.println("Cloning " + repo.getUrl() + "...");
+        // Phase 1 (serial): mount all host-reference disk devices up front.
+        var refs = new RepoReference[repos.size()];
+        for (int i = 0; i < repos.size(); i++) {
+            refs[i] = tryMountReference(container, repos.get(i).getUrl(), config, isVm);
+        }
 
-            boolean cloned = false;
-            RepoReference ref = null;
-
-            try {
-                ref = tryMountReference(container, repo.getUrl(), config, isVm);
-                if (ref != null) {
-                    System.out.println("  \033[1;32mUsing local host reference to speed up clone...\033[0m");
+        // Phase 2 (parallel, bounded): clone each repo, dissociate from its
+        // reference, and restore the fetch refspec.
+        var states = new AtomicReferenceArray<StepProgress>(repos.size());
+        for (int i = 0; i < repos.size(); i++) {
+            states.set(i, StepProgress.running());
+        }
+        int concurrency = Math.min(repos.size(), CpuInfo.highPerfCores());
+        try {
+            TerminalProgress.run(repos.size(), concurrency,
+                    idx -> cloneOne(container, repos.get(idx), refs[idx], states, idx),
+                    (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
+                            repos.get(idx).getUrl(), states.get(idx), frame, "Cloning", "Cloned"),
+                    idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Cloned", "clone"),
+                    System.out::println);
+        } finally {
+            // Phase 3 (serial): remove all reference devices.
+            for (int i = 0; i < repos.size(); i++) {
+                if (refs[i] != null) {
                     try {
-                        container.runAsUser("agentuser",
-                                buildCloneCommand(repo, ref.containerPath()),
-                                "Failed to clone " + repo.getUrl() + " with reference");
-                        // Dissociate now that checkout succeeded: repack referenced
-                        // objects locally and drop the alternates entry, so the clone
-                        // is self-contained before the reference device is removed.
-                        var expandedPath = expandHome(repo.getPath());
-                        var clonePath = shellQuote(expandedPath);
-                        container.runAsUser("agentuser",
-                                "git -C " + clonePath + " repack -a -d"
-                                        + " && rm -f -- " + shellQuote(expandedPath + "/.git/objects/info/alternates"),
-                                "Failed to dissociate " + repo.getUrl() + " from reference");
-                        cloned = true;
-                        System.out.println("  Done.");
-                    } catch (Exception e) {
-                        System.out.println("  Reference clone failed, falling back to normal clone...");
-                        container.runAsUser("agentuser",
-                                "rm -rf " + shellQuote(expandHome(repo.getPath())),
-                                "Failed to clean up partial clone");
-                    }
-                }
-            } finally {
-                if (ref != null) {
-                    try {
-                        incus.deviceRemove(container.name(), ref.deviceName());
+                        incus.deviceRemove(container.name(), refs[i].deviceName());
                     } catch (Exception e) {
                         System.err.println("Warning: failed to remove reference device: " + e.getMessage());
                     }
                 }
             }
+        }
 
-            if (!cloned) {
-                container.runAsUser("agentuser",
-                        buildCloneCommand(repo, null),
-                        "Failed to clone " + repo.getUrl());
+        assertNoStepFailures(repos, states, "clone");
+
+        runPrime(container, repos);
+    }
+
+    /** Clone a single repo, recording progress/failure in {@code states[idx]} rather than throwing. */
+    private void cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+                          AtomicReferenceArray<StepProgress> states, int idx) {
+        try {
+            boolean usedReference = false;
+
+            if (ref != null) {
+                var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
+                if (clone.success()) {
+                    // Dissociate now that checkout succeeded: repack referenced
+                    // objects locally and drop the alternates entry, so the clone
+                    // is self-contained before the reference device is removed.
+                    var expandedPath = expandHome(repo.getPath());
+                    var clonePath = shellQuote(expandedPath);
+                    var dissociate = container.shAsUser("agentuser",
+                            "git -C " + clonePath + " repack -a -d"
+                                    + " && rm -f -- " + shellQuote(expandedPath + "/.git/objects/info/alternates"));
+                    if (dissociate.success()) {
+                        usedReference = true;
+                    } else {
+                        // Dissociation failed: discard and fall back to a normal clone.
+                        container.shAsUser("agentuser", "rm -rf " + shellQuote(expandHome(repo.getPath())));
+                    }
+                } else {
+                    // Reference clone failed: clean the partial checkout, fall back.
+                    container.shAsUser("agentuser", "rm -rf " + shellQuote(expandHome(repo.getPath())));
+                }
+            }
+
+            if (!usedReference) {
+                var clone = container.shAsUser("agentuser", buildCloneCommand(repo, null));
+                if (!clone.success()) {
+                    states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
+                    return;
+                }
             }
 
             // Restore full fetch refspec so the clone behaves like a regular clone.
             // --single-branch narrows it to one branch; this undoes that without
             // downloading anything — other branches are fetched lazily on demand.
             var repoPath = shellQuote(expandHome(repo.getPath()));
-            container.runAsUser("agentuser",
-                    "git -C " + repoPath + " remote set-branches origin '*'",
-                    "Failed to restore fetch refspec for " + repo.getUrl());
+            var restore = container.shAsUser("agentuser",
+                    "git -C " + repoPath + " remote set-branches origin '*'");
+            if (!restore.success()) {
+                states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
+                return;
+            }
 
-            if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
-                System.out.println("Priming " + repo.getPath() + "...");
-                var expanded = expandHome(repo.getPath());
-                container.runAsUserPty("agentuser",
-                        "cd " + shellQuote(expanded) + " && " + repo.getPrime(),
-                        "Failed to prime " + repo.getPath());
+            states.set(idx, StepProgress.done(usedReference ? "via host reference" : null));
+        } catch (Exception e) {
+            states.set(idx, StepProgress.failed(e.getMessage(), null));
+        }
+    }
+
+    /** Run declared prime commands concurrently (bounded to high-performance cores). */
+    private void runPrime(Container container, List<ImageDef.RepoEntry> repos) {
+        var toPrime = new ArrayList<ImageDef.RepoEntry>();
+        for (var repo : repos) {
+            if (repo.getPrime() != null && !repo.getPrime().isBlank()) toPrime.add(repo);
+        }
+        if (toPrime.isEmpty()) return;
+
+        var states = new AtomicReferenceArray<StepProgress>(toPrime.size());
+        for (int i = 0; i < toPrime.size(); i++) {
+            states.set(i, StepProgress.running());
+        }
+        int concurrency = Math.min(toPrime.size(), CpuInfo.highPerfCores());
+        TerminalProgress.run(toPrime.size(), concurrency,
+                idx -> primeOne(container, toPrime.get(idx), states, idx),
+                (idx, frame) -> formatStepLine(toPrime.get(idx).getPath(),
+                        null, states.get(idx), frame, "Priming", "Primed"),
+                idx -> plainStepLine(toPrime.get(idx).getPath(), states.get(idx), "Primed", "prime"),
+                System.out::println);
+
+        assertNoStepFailures(toPrime, states, "prime");
+    }
+
+    private void primeOne(Container container, ImageDef.RepoEntry repo,
+                          AtomicReferenceArray<StepProgress> states, int idx) {
+        try {
+            var expanded = expandHome(repo.getPath());
+            var result = container.shAsUser("agentuser",
+                    "cd " + shellQuote(expanded) + " && " + repo.getPrime());
+            if (result.success()) {
+                states.set(idx, StepProgress.done(null));
+            } else {
+                // Prime output is not git, so use the last meaningful line for the
+                // concise inline label; the full log is preserved and printed on failure.
+                var combined = combinedOutput(result);
+                states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
+            }
+        } catch (Exception e) {
+            states.set(idx, StepProgress.failed(e.getMessage(), null));
+        }
+    }
+
+    private static void assertNoStepFailures(List<ImageDef.RepoEntry> repos,
+                                             AtomicReferenceArray<StepProgress> states, String verb) {
+        var errors = new ArrayList<String>();
+        for (int i = 0; i < repos.size(); i++) {
+            var progress = states.get(i);
+            // Require an explicit DONE: a step left RUNNING or unset (e.g. a task that
+            // returned without recording a result) is a failure, not a silent success.
+            if (progress != null && progress.state() == StepState.DONE) continue;
+
+            var name = repoDisplayName(repos.get(i));
+            var detail = progress == null || progress.detail() == null || progress.detail().isEmpty()
+                    ? verb + " failed" : progress.detail();
+            errors.add(name + ": " + detail);
+
+            // Print the full captured output so the diagnostic isn't reduced to the
+            // concise inline line. Done here, after the animated batch, to avoid
+            // interleaving multi-line logs with the live progress display.
+            if (progress != null && progress.log() != null && !progress.log().isBlank()) {
+                System.err.println("\033[1m─── " + verb + " output: " + name + " ───\033[0m");
+                System.err.println(progress.log().strip());
+                System.err.println("\033[1m─── end " + verb + " output: " + name + " ───\033[0m");
             }
         }
+        if (!errors.isEmpty()) {
+            throw new IncusException("Failed to " + verb + " " + errors.size()
+                    + " repo(s):\n  " + String.join("\n  ", errors));
+        }
+    }
+
+    private static String repoDisplayName(ImageDef.RepoEntry repo) {
+        var name = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
+        return name.isEmpty() ? repo.getUrl() : name;
+    }
+
+    /** Render one animated progress line, aligned across running/done/failed states. */
+    static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
+                                 String runningWord, String doneWord) {
+        var sb = new StringBuilder("  ");
+        switch (progress.state()) {
+            case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
+                    .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m ");
+            case DONE    -> sb.append("\033[32m✓\033[0m \033[2m").append(padStatus(doneWord)).append("\033[0m ");
+            case FAILED  -> sb.append("\033[31m✗ ").append(padStatus("Failed")).append("\033[0m ");
+        }
+        sb.append(label);
+        if (dimContext != null && !dimContext.isEmpty()) {
+            sb.append(" \033[2m(").append(dimContext).append(")\033[0m");
+        }
+        if (progress.state() == StepState.DONE && progress.note() != null && !progress.note().isEmpty()) {
+            sb.append(" \033[2m").append(progress.note()).append("\033[0m");
+        }
+        if (progress.state() == StepState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
+            sb.append("  \033[31m").append(progress.detail()).append("\033[0m");
+        }
+        return sb.toString();
+    }
+
+    private static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
+        if (progress.state() == StepState.DONE) {
+            var line = "  " + doneWord + " " + label;
+            if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
+            return line;
+        }
+        var msg = "  Warning: " + verb + " failed for " + label;
+        if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
+        return msg;
+    }
+
+    private static String padStatus(String word) {
+        return word.length() >= 8 ? word : word + " ".repeat(8 - word.length());
+    }
+
+    /** Extract a concise error line from a failed git exec (stderr first, then stdout). */
+    private static String gitError(IncusClient.ExecResult result) {
+        var err = firstGitError(result.stderr());
+        return !err.isEmpty() ? err : firstGitError(result.stdout());
+    }
+
+    /** Full captured output (stdout + stderr) of an exec, for surfacing on failure. */
+    private static String combinedOutput(IncusClient.ExecResult result) {
+        var out = result.stdout() == null ? "" : result.stdout().strip();
+        var err = result.stderr() == null ? "" : result.stderr().strip();
+        if (out.isEmpty()) return err;
+        if (err.isEmpty()) return out;
+        return out + "\n" + err;
+    }
+
+    /** Last non-empty line of some text, or "" if none. */
+    static String lastNonEmptyLine(String text) {
+        if (text == null || text.isEmpty()) return "";
+        String last = "";
+        for (var line : text.split("\n")) {
+            var trimmed = line.strip();
+            if (!trimmed.isEmpty()) last = trimmed;
+        }
+        return last;
+    }
+
+    /** First fatal:/error: line from git output, else the last non-empty line. */
+    static String firstGitError(String text) {
+        if (text == null || text.isEmpty()) return "";
+        String lastNonEmpty = "";
+        for (var line : text.split("\n")) {
+            var trimmed = line.strip();
+            if (trimmed.isEmpty()) continue;
+            if (trimmed.startsWith("fatal:") || trimmed.startsWith("error:")) return trimmed;
+            lastNonEmpty = trimmed;
+        }
+        return lastNonEmpty;
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {

@@ -3,6 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.TerminalProgress;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -10,17 +11,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
-import java.io.PrintStream;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
 
 public final class HostRepoRefresh {
 
     private HostRepoRefresh() {}
-
-    private static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
     enum FetchState { FETCHING, DONE, FAILED }
     record TaskProgress(FetchState state, String detail) {}
@@ -75,129 +71,57 @@ public final class HostRepoRefresh {
     }
 
     private static void fetchInParallel(List<FetchTask> tasks, Consumer<String> output) {
-        if (isAnsiTerminal()) {
-            fetchAnimated(tasks);
-        } else {
-            fetchPlain(tasks, output);
-        }
-    }
-
-    private static boolean isAnsiTerminal() {
-        if (System.console() == null) return false;
-        var term = System.getenv("TERM");
-        return term != null && !term.equals("dumb");
-    }
-
-    private static void fetchAnimated(List<FetchTask> tasks) {
-        var out = System.out;
         var states = new AtomicReferenceArray<TaskProgress>(tasks.size());
-
         for (int i = 0; i < tasks.size(); i++) {
             states.set(i, new TaskProgress(FetchState.FETCHING, null));
-            out.println(formatFetchLine(tasks.get(i), states.get(i), 0));
         }
-        out.flush();
 
-        var lock = new Object();
-        var frame = new int[]{0};
-        Runnable redraw = () -> {
-            synchronized (lock) {
-                redrawLines(tasks, states, out, frame[0]++);
-            }
-        };
-
-        var ticker = Executors.newSingleThreadScheduledExecutor(r -> {
-            var t = new Thread(r, "fetch-progress");
-            t.setDaemon(true);
-            return t;
-        });
-        ticker.scheduleAtFixedRate(redraw, 80, 80, TimeUnit.MILLISECONDS);
-
-        try {
-            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                for (int i = 0; i < tasks.size(); i++) {
-                    int idx = i;
-                    var task = tasks.get(i);
-                    executor.submit(() -> {
-                        try {
-                            var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", "--", task.remoteName);
-                            if (result.success()) {
-                                states.set(idx, new TaskProgress(FetchState.DONE, null));
-                            } else {
-                                states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output())));
-                            }
-                        } catch (Exception e) {
-                            states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
+        // Fetches are lightweight; run them all at once (no concurrency cap).
+        TerminalProgress.run(tasks.size(), tasks.size(),
+                idx -> {
+                    var task = tasks.get(idx);
+                    try {
+                        var result = GitRemoteUtils.hostGitExecResult(task.hostPath(), "fetch", "--", task.remoteName());
+                        if (result.success()) {
+                            states.set(idx, new TaskProgress(FetchState.DONE, null));
+                        } else {
+                            states.set(idx, new TaskProgress(FetchState.FAILED, extractGitError(result.output())));
                         }
-                    });
-                }
-            }
-        } finally {
-            ticker.shutdownNow();
-            try { ticker.awaitTermination(200, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        }
-
-        synchronized (lock) {
-            redrawLines(tasks, states, out, 0);
-        }
-    }
-
-    private static void redrawLines(List<FetchTask> tasks, AtomicReferenceArray<TaskProgress> states,
-                                    PrintStream out, int frame) {
-        var sb = new StringBuilder();
-        sb.append("\033[").append(tasks.size()).append('A');
-        for (int i = 0; i < tasks.size(); i++) {
-            sb.append('\r').append("\033[2K");
-            sb.append(formatFetchLine(tasks.get(i), states.get(i), frame));
-            sb.append('\n');
-        }
-        out.print(sb);
-        out.flush();
+                    } catch (Exception e) {
+                        states.set(idx, new TaskProgress(FetchState.FAILED, e.getMessage()));
+                    }
+                },
+                (idx, frame) -> formatFetchLine(tasks.get(idx), states.get(idx), frame),
+                idx -> plainFetchLine(tasks.get(idx), states.get(idx)),
+                output);
     }
 
     static String formatFetchLine(FetchTask task, TaskProgress progress, int frame) {
         var sb = new StringBuilder("  ");
         switch (progress.state()) {
-            case FETCHING -> sb.append(SPINNER[frame % SPINNER.length]).append(" \033[2mFetching\033[0m ");
+            case FETCHING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
+                    .append(" \033[2mFetching\033[0m ");
             case DONE     -> sb.append("\033[32m✓\033[0m Fetched  ");
             case FAILED   -> sb.append("\033[31m✗\033[0m \033[31mFailed\033[0m   ");
         }
         sb.append(' ');
-        sb.append(task.repoName);
-        sb.append(" \033[2m(").append(task.hostPath).append(")\033[0m");
+        sb.append(task.repoName());
+        sb.append(" \033[2m(").append(task.hostPath()).append(")\033[0m");
         if (progress.state() == FetchState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
             sb.append("  \033[31m").append(progress.detail()).append("\033[0m");
         }
         return sb.toString();
     }
 
-    private static void fetchPlain(List<FetchTask> tasks, Consumer<String> output) {
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var futures = tasks.stream()
-                    .map(task -> executor.submit(() -> {
-                        try {
-                            var result = GitRemoteUtils.hostGitExecResult(task.hostPath, "fetch", "--", task.remoteName);
-                            if (result.success()) {
-                                output.accept("  Fetched " + task.repoName + " (" + task.hostPath + ")");
-                            } else {
-                                var detail = extractGitError(result.output());
-                                var msg = "  Warning: fetch failed for " + task.repoName + " at " + task.hostPath;
-                                if (!detail.isEmpty()) msg += ": " + detail;
-                                output.accept(msg);
-                            }
-                        } catch (Exception e) {
-                            output.accept("  Warning: fetch failed for " + task.repoName + " at " + task.hostPath + ": " + e);
-                        }
-                    }))
-                    .toList();
-            for (var future : futures) {
-                try {
-                    future.get();
-                } catch (Exception e) {
-                    // logged inside the task
-                }
-            }
+    private static String plainFetchLine(FetchTask task, TaskProgress progress) {
+        if (progress.state() == FetchState.DONE) {
+            return "  Fetched " + task.repoName() + " (" + task.hostPath() + ")";
         }
+        var msg = "  Warning: fetch failed for " + task.repoName() + " at " + task.hostPath();
+        if (progress.detail() != null && !progress.detail().isEmpty()) {
+            msg += ": " + progress.detail();
+        }
+        return msg;
     }
 
     private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config,
