@@ -174,17 +174,6 @@ public class IncusClient {
     }
 
     /**
-     * Like {@link #shellExecInteractiveAsUser} but with a PTY so isatty() returns true.
-     * Stdin is not forwarded and cannot receive EOF; the script must not read from stdin.
-     */
-    public int shellExecInteractivePtyAsUser(String container, String user, String script) {
-        var size = IncusApi.terminalSize();
-        return http().execStream(container,
-                List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script),
-                0, 0, null, Map.of(), System.out, null, true, size[0], size[1]);
-    }
-
-    /**
      * Execute a command inside a container as a given user.
      * Uses 'su - user -c "joined cmd"' to replicate the original CLI behaviour,
      * giving the command access to the user's full login environment.
