@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.CpuInfo;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,25 +19,7 @@ public final class ResourceLimits {
      * -R:ActiveProcessorCount in the native image.
      */
     public static int hostProcessorCount() {
-        try {
-            var cpuinfo = Files.readString(Path.of("/proc/cpuinfo"));
-            int count = 0;
-            for (var line : cpuinfo.split("\n")) {
-                if (line.startsWith("processor")) count++;
-            }
-            if (count > 0) return count;
-        } catch (IOException ignored) {}
-        try {
-            var pb = new ProcessBuilder("sysctl", "-n", "hw.logicalcpu");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() == 0 && !output.isBlank()) {
-                int val = Integer.parseInt(output);
-                if (val > 0) return val;
-            }
-        } catch (Exception ignored) {}
-        return Runtime.getRuntime().availableProcessors();
+        return CpuInfo.logicalCores();
     }
 
     public static String adaptiveMemoryLimit() {
