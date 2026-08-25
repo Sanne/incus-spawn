@@ -50,6 +50,8 @@ if [ -b /dev/vdc ]; then
     fi
     mkdir -p /var/lib/incus
     mount -o noatime,commit=300,compress=zstd:1 /dev/vdc /var/lib/incus
+    # Expand btrfs to fill the device (the host image may have been grown by 'isx vm resize')
+    btrfs filesystem resize max /var/lib/incus 2>/dev/null || true
     echo "incus-spawn: data disk mounted ($(ts)s)"
 fi
 

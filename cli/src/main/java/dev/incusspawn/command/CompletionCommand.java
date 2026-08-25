@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -26,12 +27,50 @@ public class CompletionCommand extends BaseCommand {
             printInstallInstructions();
             return CommandResult.SUCCESS;
         }
-        switch (shell) {
-            case zsh  -> System.out.println(ZSH_COMPLETION);
-            case bash -> System.out.println(BASH_COMPLETION);
-            case fish -> System.out.println(FISH_COMPLETION);
+        var script = rawScript(shell);
+        // The `vm` appliance command only exists on macOS (Incus runs natively on Linux), so it is
+        // not registered in the Linux command tree — keep the completion script in step with that.
+        if (!Platform.isMacOS()) {
+            script = stripVmCommand(script, shell);
         }
+        System.out.println(script);
         return CommandResult.SUCCESS;
+    }
+
+    /** The full (macOS) completion script for a shell, before any platform-specific filtering. */
+    static String rawScript(Shell shell) {
+        return switch (shell) {
+            case zsh  -> ZSH_COMPLETION;
+            case bash -> BASH_COMPLETION;
+            case fish -> FISH_COMPLETION;
+        };
+    }
+
+    /**
+     * Remove the macOS-only {@code vm} command from a generated completion script so it is not
+     * offered on Linux, matching the platform-specific command tree in {@code IncusSpawn}.
+     * Removes the top-level {@code vm} suggestion, drops {@code vm} from the recognized
+     * subcommand lists, and deletes the now-unreachable per-{@code vm} dispatch blocks
+     * (the zsh {@code _isx_vm} function and the bash {@code vm)} case) so no dead code remains.
+     */
+    static String stripVmCommand(String script, Shell shell) {
+        return switch (shell) {
+            case zsh -> script
+                    .replaceAll("(?m)^\\s*'vm:manage the incus-spawn VM appliance'\\R", "")
+                    .replaceAll("(?m)^\\s*vm\\)\\s*_isx_vm ;;\\R", "")
+                    // Drop the unreachable _isx_vm() function (ends at the first standalone brace).
+                    .replaceAll("(?sm)^[ \\t]*_isx_vm\\(\\) \\{.*?^[ \\t]*\\}\\R", "");
+            case bash -> script
+                    .replace("instances vm git-remote-helper", "instances git-remote-helper")
+                    .replace("instances|vm|git-remote-helper", "instances|git-remote-helper")
+                    // Drop the unreachable vm) case (ends at the first standalone ";;").
+                    .replaceAll("(?sm)^[ \\t]*vm\\)\\R.*?^[ \\t]*;;\\R", "");
+            case fish -> script
+                    .replace("instances|vm|git-remote-helper", "instances|git-remote-helper")
+                    .replaceAll("(?m)^.*-n __isx_no_subcommand -a vm .*\\R", "")
+                    .replaceAll("(?m)^\\s*# ── vm ─.*\\R", "")
+                    .replaceAll("(?m)^.*__isx_using_subcommand vm.*\\R", "");
+        };
     }
 
     private void printInstallInstructions() {
@@ -275,6 +314,7 @@ public class CompletionCommand extends BaseCommand {
                 'start:start the VM (creates disk image on first run)'
                 'stop:stop the VM (graceful shutdown)'
                 'status:show VM status and system diagnostics'
+                'resize:grow the VM data disk that backs the storage pool'
                 'console:follow VM serial console output'
               )
 
@@ -561,12 +601,12 @@ public class CompletionCommand extends BaseCommand {
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
                 vm)
-                  local vm_subcmds="start stop status console"
+                  local vm_subcmds="start stop status resize console"
                   local vm_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      start|stop|status|console) vm_cmd="${words[j]}"; break ;;
+                      start|stop|status|resize|console) vm_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$vm_cmd" ]]; then
@@ -738,10 +778,11 @@ public class CompletionCommand extends BaseCommand {
 
             # ── vm ──────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
 
             # ── update-base ─────────────────────────────────────────────────────────────
 

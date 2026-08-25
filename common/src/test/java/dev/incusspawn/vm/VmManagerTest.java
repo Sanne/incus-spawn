@@ -149,6 +149,53 @@ class VmManagerTest {
         assertEquals(modifiedFirst, modifiedSecond);
     }
 
+    // --- data disk resize (grow-only) ---
+
+    @Test
+    void dataDiskSizeBytesIsMinusOneWhenAbsent() {
+        assertEquals(-1, VmManager.dataDiskSizeBytes());
+    }
+
+    @Test
+    void dataDiskSizeBytesReflectsCreatedDisk() {
+        VmManager.ensureDataDisk();
+        assertEquals(VmManager.parseDiskSize(VmManager.diskSize()), VmManager.dataDiskSizeBytes());
+    }
+
+    @Test
+    void resizeDataDiskGrowsTheImage() {
+        VmManager.ensureDataDisk();
+        long current = VmManager.dataDiskSizeBytes();
+        long target = current * 2;
+        long targetGiB = target / (1024L * 1024 * 1024);
+        long result = VmManager.resizeDataDisk(targetGiB + "G");
+        assertEquals(targetGiB * 1024 * 1024 * 1024, result);
+        assertEquals(result, VmManager.dataDiskSizeBytes());
+    }
+
+    @Test
+    void resizeDataDiskThrowsWhenAbsent() {
+        var ex = assertThrows(VmException.class, () -> VmManager.resizeDataDisk("100G"));
+        assertTrue(ex.getMessage().contains("No data disk"));
+    }
+
+    @Test
+    void resizeDataDiskRejectsShrink() {
+        VmManager.ensureDataDisk();
+        long currentGiB = VmManager.dataDiskSizeBytes() / (1024L * 1024 * 1024);
+        long smaller = Math.max(1, currentGiB / 2);
+        if (smaller >= currentGiB) return; // disk too small to express a smaller whole-GiB size
+        var ex = assertThrows(VmException.class, () -> VmManager.resizeDataDisk(smaller + "G"));
+        assertTrue(ex.getMessage().contains("larger"));
+    }
+
+    @Test
+    void resizeDataDiskRejectsEqualSize() {
+        VmManager.ensureDataDisk();
+        var ex = assertThrows(VmException.class, () -> VmManager.resizeDataDisk(VmManager.diskSize()));
+        assertTrue(ex.getMessage().contains("larger"));
+    }
+
     // --- recoverReachability orchestration (grace -> forwarder restart -> backstop) ---
 
     @Test
