@@ -5,6 +5,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.Platform;
 
 import java.io.ByteArrayOutputStream;
@@ -64,24 +65,10 @@ public final class VmManager {
             }
         }
         if (Platform.isMacOS()) {
-            int pcores = detectPerformanceCores();
+            int pcores = CpuInfo.performanceCores();
             if (pcores > 0) return pcores;
         }
         return Math.max(1, ResourceLimits.hostProcessorCount() - 2);
-    }
-
-    private static int detectPerformanceCores() {
-        try {
-            var pb = new ProcessBuilder("sysctl", "-n", "hw.perflevel0.logicalcpu");
-            pb.redirectErrorStream(true);
-            var process = pb.start();
-            var output = new String(process.getInputStream().readAllBytes()).strip();
-            if (process.waitFor() == 0 && !output.isBlank()) {
-                return Integer.parseInt(output);
-            }
-        } catch (Exception ignored) {
-        }
-        return 0;
     }
 
     public static int detectMemoryMiB() {
