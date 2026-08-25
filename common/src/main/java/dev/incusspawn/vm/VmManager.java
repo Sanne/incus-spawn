@@ -743,6 +743,61 @@ public final class VmManager {
         }
     }
 
+    /**
+     * Current logical size of the data-disk image in bytes, or -1 if it does not exist.
+     * An I/O error on an <em>existing</em> image is surfaced as a {@link VmException} rather than
+     * folded into -1, so callers can distinguish "no disk yet" from "disk present but unreadable".
+     */
+    public static long dataDiskSizeBytes() {
+        var dataImage = Environment.vmDataImage();
+        if (!Files.exists(dataImage)) return -1;
+        try {
+            return Files.size(dataImage);
+        } catch (IOException e) {
+            throw new VmException("Could not read data disk size at " + dataImage + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Grow the appliance data disk — the sparse raw image at {@link Environment#vmDataImage()}
+     * that the guest exposes as {@code /dev/vdc} and mounts at {@code /var/lib/incus} to back the
+     * btrfs {@code cow} storage pool. Grow-only: {@code newSize} must exceed the current size.
+     *
+     * This only extends the host-side image (a sparse {@code setLength}, so no host blocks are
+     * allocated up front); the guest expands btrfs to fill the larger device on its next boot
+     * (see the appliance rcS "btrfs filesystem resize max /var/lib/incus"). The VM must be
+     * stopped first so it re-reads the device geometry on restart.
+     *
+     * @return the new size in bytes
+     */
+    public static long resizeDataDisk(String newSize) {
+        var dataImage = Environment.vmDataImage();
+        if (!Files.exists(dataImage)) {
+            throw new VmException("No data disk found at " + dataImage
+                    + "\nRun 'isx vm start' once to create it before resizing.");
+        }
+        if (isRunning()) {
+            throw new VmException("VM is running. Stop it ('isx vm stop') before resizing the data disk.");
+        }
+        long target = parseDiskSize(newSize);
+        long current;
+        try {
+            current = Files.size(dataImage);
+        } catch (IOException e) {
+            throw new VmException("Could not read current data disk size: " + e.getMessage());
+        }
+        if (target <= current) {
+            throw new VmException("New size (" + humanSize(target) + ") must be larger than the current size ("
+                    + humanSize(current) + "). Shrinking is not supported.");
+        }
+        try (var raf = new RandomAccessFile(dataImage.toFile(), "rw")) {
+            raf.setLength(target);
+        } catch (IOException e) {
+            throw new VmException("Failed to resize data disk: " + e.getMessage());
+        }
+        return target;
+    }
+
     static void ensureSwap() {
         var swapImage = Environment.vmSwapImage();
         if (Files.exists(swapImage)) return;
@@ -799,7 +854,7 @@ public final class VmManager {
         Files.writeString(versionFile, version);
     }
 
-    static long parseDiskSize(String size) {
+    public static long parseDiskSize(String size) {
         size = size.strip().toUpperCase();
         long multiplier = 1;
         if (size.endsWith("G")) {
@@ -897,7 +952,7 @@ public final class VmManager {
         try { Files.deleteIfExists(Environment.vmAgentSocket()); } catch (IOException ignored) {}
     }
 
-    private static String humanSize(long bytes) {
+    public static String humanSize(long bytes) {
         if (bytes >= 1024 * 1024 * 1024) {
             return String.format("%.1fG", bytes / (1024.0 * 1024 * 1024));
         }

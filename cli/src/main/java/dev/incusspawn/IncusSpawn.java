@@ -16,8 +16,13 @@ public class IncusSpawn implements QuarkusApplication {
             if (args.length == 0) {
                 return launchTui() ? 0 : 1;
             }
+            // The VM appliance only exists on macOS; on Linux Incus runs natively, so the whole
+            // `vm` command group is genuinely absent (not registered) rather than a no-op stub.
+            var topCommand = Platform.isMacOS()
+                    ? IncusSpawnCommand.class
+                    : IncusSpawnLinuxCommand.class;
             var result = AeshRuntimeRunner.builder()
-                    .command(IncusSpawnCommand.class)
+                    .command(topCommand)
                     .args(args)
                     .execute();
             return result != null ? result.getResultValue() : 1;
@@ -33,6 +38,18 @@ public class IncusSpawn implements QuarkusApplication {
         return true;
     }
 
+    static CommandResult runTop(boolean versionRequested) {
+        if (versionRequested) {
+            var info = BuildInfo.instance();
+            System.out.println("incus-spawn " + info.version() + " (" + info.gitSha() + ")");
+            System.out.println("incus client " + info.incusClient() + ", server " + info.incusServer());
+            System.out.println(info.runtime());
+            return CommandResult.SUCCESS;
+        }
+        return launchTui() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+    }
+
+    // macOS variant: includes the `vm` appliance command group.
     @CommandDefinition(name = "incus-spawn",
             description = "Manage isolated Incus development environments",
             groupCommands = {
@@ -48,14 +65,28 @@ public class IncusSpawn implements QuarkusApplication {
         boolean versionRequested;
         @Override
         protected CommandResult doExecute() {
-            if (versionRequested) {
-                var info = BuildInfo.instance();
-                System.out.println("incus-spawn " + info.version() + " (" + info.gitSha() + ")");
-                System.out.println("incus client " + info.incusClient() + ", server " + info.incusServer());
-                System.out.println(info.runtime());
-                return CommandResult.SUCCESS;
-            }
-            return launchTui() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
+            return runTop(versionRequested);
+        }
+    }
+
+    // Linux variant: identical to {@link IncusSpawnCommand} but without the macOS-only `vm` group,
+    // so `isx vm` is an unknown command and never appears in `isx --help` on Linux.
+    @CommandDefinition(name = "incus-spawn",
+            description = "Manage isolated Incus development environments",
+            groupCommands = {
+                InitCommand.class, BuildCommand.class, ProjectCommand.class,
+                BranchCommand.class, ShellCommand.class, RunCommand.class, ListCommand.class,
+                DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
+                CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
+                InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
+                UpdateBaseCommand.class, DoctorCommand.class
+            }, generateHelp = true)
+    public static class IncusSpawnLinuxCommand extends BaseCommand {
+        @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
+        boolean versionRequested;
+        @Override
+        protected CommandResult doExecute() {
+            return runTop(versionRequested);
         }
     }
 }
