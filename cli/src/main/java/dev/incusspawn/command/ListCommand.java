@@ -166,7 +166,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean deferredBuildForBranch;
 
-    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
+    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION, CLEAN_POOL }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
     private String pendingShellCommand;
@@ -200,6 +200,19 @@ public class ListCommand extends BaseCommand {
     private List<Row> tableRows;
     private List<InstanceInfo> rowToEntry;
     private TableState instanceTableState;
+
+    // Storage-pool usage for the top gauge; refreshed in reloadData (not per-frame,
+    // since it costs an API call). Null when no pool usage is available.
+    private IncusClient.PoolUsage poolUsage;
+    // Resolved once and cached: the pool name is constant for a TUI session, so we
+    // avoid re-probing the storage-pool list (an extra HTTP call) on every reload.
+    private String usagePoolName;
+    // Amber/red thresholds for the storage gauge (percent of pool used).
+    private static final int STORAGE_WARN_PERCENT = 75;
+    private static final int STORAGE_CRIT_PERCENT = 90;
+    // Set true once we've shown the low-space warning for the current session,
+    // so the reminder doesn't clobber every other status message on each refresh.
+    private boolean storageWarningShown;
 
     public void executeDirect() {
         try { doExecute(); } catch (Exception e) { System.err.println("Error: " + e.getMessage()); }
@@ -380,15 +393,31 @@ public class ListCommand extends BaseCommand {
                     var result = pendingToolAction.execute(pendingToolActionContext);
                     System.out.println(result.message());
                     if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
-                        System.out.println("\nPress any key to continue...");
-                        try {
-                            System.in.read();
-                        } catch (java.io.IOException ignored) {}
+                        waitForKeypress();
                     }
+                }
+                case CLEAN_POOL -> {
+                    try {
+                        org.aesh.AeshRuntimeRunner.builder()
+                                .command(CleanCommand.class)
+                                .args(new String[]{"pool"})
+                                .execute();
+                    } catch (Exception e) {
+                        statusMessage = "Clean failed: " + e.getMessage();
+                    }
+                    waitForKeypress();
                 }
                 case NONE -> { return; }
             }
         }
+    }
+
+    /** Pause after a suspended-TUI subcommand so its output stays on screen until the user is ready. */
+    private static void waitForKeypress() {
+        System.out.println("\nPress any key to continue...");
+        try {
+            System.in.read();
+        } catch (java.io.IOException ignored) {}
     }
 
     /**
@@ -427,7 +456,8 @@ public class ListCommand extends BaseCommand {
                                     inst.created, inst.runtime, inst.parent, inst.limitsCpu,
                                     inst.limitsMemory, inst.rootSize, inst.ipv4, inst.networkMode,
                                     inst.architecture, inst.buildVersion, inst.definitionSha,
-                                    inst.type, inst.buildSourceJson, "", inst.defaultAction)
+                                    inst.type, inst.buildSourceJson, "", inst.defaultAction,
+                                    inst.diskUsage)
                             : inst)
                     .toList();
         }
@@ -454,10 +484,11 @@ public class ListCommand extends BaseCommand {
             if (match != null) {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
                         match.created.isEmpty() ? "built" : match.created, match.runtime,
-                        match.buildVersion, match.definitionSha, match.pendingOp));
+                        match.buildVersion, match.definitionSha, match.pendingOp,
+                        match.parent, match.diskUsage));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", ""));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1));
             }
         }
         // Add out-of-scope templates (built but not in current definition scope)
@@ -477,7 +508,7 @@ public class ListCommand extends BaseCommand {
 
             templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
                     inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
-                    inst.buildVersion, inst.definitionSha, inst.pendingOp));
+                    inst.buildVersion, inst.definitionSha, inst.pendingOp, inst.parent, inst.diskUsage));
             templateNames.add(inst.name);
             storedNames.add(inst.name);
         }
@@ -501,6 +532,36 @@ public class ListCommand extends BaseCommand {
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
+
+        refreshPoolUsage();
+    }
+
+    /**
+     * Refresh the cached storage-pool usage for the gauge, and raise a one-shot
+     * status warning when the pool crosses the critical threshold. Prefers a CoW
+     * pool but falls back to any usable pool so the gauge also works on dir pools.
+     */
+    private void refreshPoolUsage() {
+        try {
+            if (usagePoolName == null) usagePoolName = incus.findUsablePool();
+            poolUsage = usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName);
+        } catch (Exception e) {
+            poolUsage = null;
+        }
+        if (poolUsage == null || poolUsage.totalBytes() == 0) {
+            storageWarningShown = false;
+            return;
+        }
+        if (poolUsage.percent() >= STORAGE_CRIT_PERCENT) {
+            if (!storageWarningShown && statusMessage == null) {
+                statusMessage = "⚠ Storage " + poolUsage.percent()
+                        + "% full — press C to reclaim space (stale templates, unused images, caches)"
+                        + (Platform.isMacOS() ? ", or grow it with 'isx vm resize'" : "");
+                storageWarningShown = true;
+            }
+        } else {
+            storageWarningShown = false;
+        }
     }
 
     // --- Event handling ---
@@ -561,6 +622,12 @@ public class ListCommand extends BaseCommand {
         }
         if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
             refreshData(tableState);
+            return true;
+        }
+        // Reclaim storage: suspend the TUI and run `isx clean pool`.
+        if (!key.hasCtrl() && key.isCharIgnoreCase('c')) {
+            pendingAction = PendingAction.CLEAN_POOL;
+            tui.quit();
             return true;
         }
         if (key.isChar('/')) {
@@ -1368,11 +1435,12 @@ public class ListCommand extends BaseCommand {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
         int footerHeight = hasStatus ? 3 : 2;
+        int stripHeight = (poolUsage != null && poolUsage.totalBytes() > 0) ? 1 : 0;
         boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
         int legendHeight = showLegend ? 1 : 0;
         int templateIdeal = templateEntries.size() + 3 + legendHeight;
         int instanceIdeal = entries.size() + 3;
-        int available = area.height() - footerHeight;
+        int available = area.height() - footerHeight - stripHeight;
         int templatePanelHeight;
         if (templateIdeal + instanceIdeal <= available) {
             templatePanelHeight = templateIdeal;
@@ -1384,14 +1452,16 @@ public class ListCommand extends BaseCommand {
         }
         var chunks = Layout.vertical()
                 .constraints(
+                        Constraint.length(stripHeight),
                         Constraint.length(templatePanelHeight),
                         Constraint.fill(),
                         Constraint.length(footerHeight))
                 .split(area);
 
-        renderTemplateTable(frame, chunks.get(0));
-        renderInstanceTable(frame, chunks.get(1), tableState);
-        renderToolbar(frame, chunks.get(2), tableState, hasStatus);
+        if (stripHeight > 0) renderStorageStrip(frame, chunks.get(0));
+        renderTemplateTable(frame, chunks.get(1));
+        renderInstanceTable(frame, chunks.get(2), tableState);
+        renderToolbar(frame, chunks.get(3), tableState, hasStatus);
 
         if (mode != Mode.BROWSE) {
             renderModal(frame, area, tableState);
@@ -1401,6 +1471,124 @@ public class ListCommand extends BaseCommand {
         if (progressMessage != null) {
             modal.renderProgressOverlay(frame, area, progressMessage);
         }
+    }
+
+    // Eighth-block glyphs for sub-cell bar fill (index 0 = empty ... 8 = full block).
+    private static final char[] BAR_EIGHTHS = {' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
+
+    /**
+     * Render the frameless, full-width storage gauge above the panels. The fill
+     * colour signals the threshold (green → amber → red) while the segment glyphs
+     * carry the level independently of colour, so it reads on mono terminals too.
+     */
+    private void renderStorageStrip(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        fillBackground(frame, area, theme.contextBg());
+        if (poolUsage == null || poolUsage.totalBytes() == 0 || area.width() < 12) return;
+
+        int percent = poolUsage.percent();
+        Color fillColor = percent >= STORAGE_CRIT_PERCENT ? theme.statusFailure()
+                : percent >= STORAGE_WARN_PERCENT ? theme.statusWarning()
+                : theme.statusRunning();
+        var bg = theme.contextBg();
+
+        var label = (percent >= STORAGE_CRIT_PERCENT ? "  ⚠ Storage " : "  Storage ");
+        long freeBytes = Math.max(0, poolUsage.totalBytes() - poolUsage.usedBytes());
+        var readout = " " + percent + "%  " + gib(poolUsage.usedBytes()) + " / "
+                + gib(poolUsage.totalBytes()) + " · " + gib(freeBytes) + " free  ";
+        var legend = "~ sizes approx; CoW-shared blocks not deducted  ";
+
+        // Layout: [label][bar fills][readout], and an optional dim legend on the far
+        // right when the terminal is wide enough for it.
+        int labelW = label.length();
+        int readoutW = readout.length();
+        int legendW = legend.length();
+        int reserved = labelW + readoutW;
+        boolean showLegend = area.width() - reserved - legendW >= 10;
+        int barW = area.width() - reserved - (showLegend ? legendW : 0);
+        if (barW < 4) { barW = Math.max(0, area.width() - reserved); showLegend = false; }
+
+        var spans = new ArrayList<Span>();
+        spans.add(Span.styled(label, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
+        // Need at least 3 cells: two borders (▕ ▏) plus one fill cell. Below that, drop the
+        // bar entirely rather than overflow the strip width with a 3-cell minimum render.
+        if (barW >= 3) {
+            spans.add(Span.styled("▕", Style.EMPTY.fg(fillColor).bg(bg)));
+            spans.add(Span.styled(bar(percent, barW - 2), Style.EMPTY.fg(fillColor).bg(bg)));
+            spans.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
+        }
+        spans.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
+        if (showLegend) {
+            spans.add(Span.styled(legend, Style.EMPTY.fg(theme.textDim()).bg(bg)));
+        }
+        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    /** Build a fractional-eighths bar string of {@code width} cells at {@code percent}. */
+    static String bar(int percent, int width) {
+        if (width <= 0) return "";
+        int eighths = (int) Math.round(percent / 100.0 * width * 8);
+        eighths = Math.max(0, Math.min(width * 8, eighths));
+        int full = eighths / 8;
+        int rem = eighths % 8;
+        var sb = new StringBuilder();
+        for (int i = 0; i < full && i < width; i++) sb.append('█');
+        if (full < width && rem > 0) sb.append(BAR_EIGHTHS[rem]);
+        while (sb.length() < width) sb.append(' ');
+        return sb.toString();
+    }
+
+    /** Format bytes as GiB with one decimal, e.g. "54.2 GiB". */
+    static String gib(long bytes) {
+        return String.format("%.1f GiB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    /**
+     * Compact per-row disk cell, e.g. "~3.1G", or "-" when usage is unknown
+     * (dir pools / stopped instances report nothing). The leading "~" flags that
+     * the figure is approximate and excludes CoW-shared blocks.
+     */
+    static String diskCell(long bytes) {
+        if (bytes < 0) return "-";
+        if (bytes < 1024) return "~" + bytes + "B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024) return String.format("~%.0fK", kb);
+        double mb = kb / 1024.0;
+        if (mb < 1024) return String.format("~%.0fM", mb);
+        double gb = mb / 1024.0;
+        return String.format("~%.1fG", gb);
+    }
+
+    /**
+     * A copy-on-write caveat appended to a single-target delete confirmation:
+     * because a branch (or a template built from a parent template) shares blocks
+     * with its parent, deleting it may reclaim far less than its reported size.
+     * Searches instances first, then templates. Returns "" when the target isn't a
+     * CoW child we have usage for.
+     */
+    private String cowDeleteNote(String name) {
+        if (name == null) return "";
+        String parent = null;
+        long diskUsage = -1;
+        var pool = allEntries != null ? allEntries : entries;
+        if (pool != null) {
+            for (var inst : pool) {
+                if (inst.name.equals(name)) { parent = inst.parent; diskUsage = inst.diskUsage; break; }
+            }
+        }
+        if (parent == null) {
+            var templates = allTemplateEntries != null ? allTemplateEntries : templateEntries;
+            if (templates != null) {
+                for (var t : templates) {
+                    if (t.name.equals(name)) { parent = t.parent; diskUsage = t.diskUsage; break; }
+                }
+            }
+        }
+        if (parent == null) return "";
+        var hasParent = !parent.isEmpty() && !"-".equals(parent);
+        if (!hasParent || diskUsage < 0) return "";
+        return " Space reclaimed may be less than " + diskCell(diskUsage)
+                + " — blocks shared with " + parent
+                + " stay until the parent is removed.";
     }
 
     private void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
@@ -1455,10 +1643,10 @@ public class ListCommand extends BaseCommand {
         }
 
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "BUILT", "DESCRIPTION")
+                .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
                         .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(templateRows)
-                .widths(Constraint.length(20), Constraint.length(20), Constraint.fill())
+                .widths(Constraint.length(20), Constraint.length(20), Constraint.length(8), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
@@ -1548,12 +1736,12 @@ public class ListCommand extends BaseCommand {
         }
 
         var tableBuilder = Table.builder()
-                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE")
+                .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK")
                         .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(tableRows)
                 .widths(Constraint.fill(), Constraint.length(9),
                         Constraint.length(16), Constraint.length(14),
-                        Constraint.length(12), Constraint.length(10))
+                        Constraint.length(12), Constraint.length(10), Constraint.length(8))
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
@@ -1614,6 +1802,7 @@ public class ListCommand extends BaseCommand {
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
         boolean hasActions = hasInstance && !onTemplates && hasActionsForInstance(selected);
         items.add(makeKey("F9", "Actions", !hasActions));
+        items.add(makeKey("C", "Clean", false));
         items.add(makeKey("F10", "Quit", false));
 
         var contextLine = buildContextLine(template, selected, onTemplates);
@@ -1829,7 +2018,7 @@ public class ListCommand extends BaseCommand {
                         : " Destroy '" + pendingDeleteName + "' ";
                 var message = isAllTemplates ? "This will destroy all built templates."
                         : isAllInstances ? "This will destroy all instances."
-                        : "This action cannot be undone.";
+                        : "This action cannot be undone." + cowDeleteNote(pendingDeleteName);
                 modal.renderConfirmModal(frame, screen, title, message, modal.warn());
             }
             case BUILD_MENU -> renderBuildMenu(frame, screen);
@@ -2501,8 +2690,21 @@ public class ListCommand extends BaseCommand {
                 Span.styled(info.limitsMemory.isEmpty() ? "-" : info.limitsMemory, lineStyle))));
 
         lines.add(Line.from(List.of(
-                Span.styled("  Disk:         ", labelStyle),
+                Span.styled("  Disk limit:   ", labelStyle),
                 Span.styled(info.rootSize.isEmpty() ? "-" : info.rootSize, lineStyle))));
+
+        if (info.diskUsage >= 0) {
+            lines.add(Line.from(List.of(
+                    Span.styled("  Disk used:    ", labelStyle),
+                    Span.styled(gib(info.diskUsage), lineStyle),
+                    Span.styled("  (approx)", dimStyle))));
+            var hasParent = !info.parent.isEmpty() && !"-".equals(info.parent);
+            lines.add(Line.from(List.of(Span.styled(
+                    hasParent
+                        ? "    thin-provisioned; shares blocks with " + info.parent
+                        : "    thin-provisioned; copy-on-write",
+                    dimStyle))));
+        }
 
         lines.add(Line.styled("", lineStyle));
 
@@ -3627,7 +3829,7 @@ public class ListCommand extends BaseCommand {
                 }
             }
 
-            templateRows.add(Row.from(t.name, statusDisplay, desc).style(statusStyle));
+            templateRows.add(Row.from(t.name, statusDisplay, diskCell(t.diskUsage), desc).style(statusStyle));
         }
         templatesDefChanged = defChanged;
         templatesParentRebuilt = parentRebuilt;
@@ -3710,7 +3912,7 @@ public class ListCommand extends BaseCommand {
             }
 
             tableRows.add(Row.from(entry.name, entry.status, entry.ipv4,
-                    parent, entry.runtime, age).style(statusStyle));
+                    parent, entry.runtime, age, diskCell(entry.diskUsage)).style(statusStyle));
             rowToEntry.add(entry);
         }
     }
@@ -3993,6 +4195,8 @@ public class ListCommand extends BaseCommand {
                 var ipv4 = extracted != null ? extracted
                         : configVal(config, Metadata.STATIC_IP, "");
 
+                var diskUsage = sumDiskUsage(node.path("state").path("disk"));
+
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),
                         node.path("status").asText(),
@@ -4013,7 +4217,8 @@ public class ListCommand extends BaseCommand {
                         Metadata.TYPE_BASE.equals(type)
                                 ? configVal(config, Metadata.BUILD_SOURCE, "") : "",
                         configVal(config, Metadata.PENDING_OP, ""),
-                        configVal(config, Metadata.DEFAULT_ACTION, "")));
+                        configVal(config, Metadata.DEFAULT_ACTION, ""),
+                        diskUsage));
             }
             return entryList;
         } catch (IncusException e) {
@@ -4026,6 +4231,27 @@ public class ListCommand extends BaseCommand {
     private static String configVal(JsonNode config, String key, String defaultValue) {
         var val = config.path(key).asText("");
         return val.isEmpty() ? defaultValue : val;
+    }
+
+    /**
+     * Sum the {@code usage} bytes across every disk device in an instance's
+     * {@code state.disk} node (from the recursion=2 listing). Returns -1 when no
+     * usage is reported — btrfs/zfs/lvm pools report per-volume usage, but a
+     * {@code dir} pool does not, and stopped instances may report nothing. A -1
+     * renders as "-" rather than a misleading zero.
+     */
+    static long sumDiskUsage(JsonNode diskNode) {
+        if (diskNode == null || !diskNode.isObject() || diskNode.isEmpty()) return -1;
+        long total = 0;
+        boolean any = false;
+        for (var devices = diskNode.elements(); devices.hasNext(); ) {
+            var usage = devices.next().path("usage").asLong(-1);
+            if (usage >= 0) {
+                total += usage;
+                any = true;
+            }
+        }
+        return any ? total : -1;
     }
 
     private void printPlain(List<InstanceInfo> items) {
@@ -4092,7 +4318,7 @@ public class ListCommand extends BaseCommand {
 
     private record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
-                                String definitionSha, String pendingOp) {}
+                                String definitionSha, String pendingOp, String parent, long diskUsage) {}
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
@@ -4101,5 +4327,5 @@ public class ListCommand extends BaseCommand {
                                 String ipv4, String networkMode, String architecture,
                                 String buildVersion, String definitionSha,
                                 String type, String buildSourceJson, String pendingOp,
-                                String defaultAction) {}
+                                String defaultAction, long diskUsage) {}
 }
