@@ -4,12 +4,30 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
+    private static final String VERSION_URL =
+            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell2-version.txt";
+    private static final String BASE_URL =
+            "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell-";
+    private static final Pattern VERSION_PATTERN = Pattern.compile("^\\d+\\.\\d+\\.\\d+$");
+
+    private final DownloadCache downloadCache;
+
+    public BobSetup() {
+        this(new DownloadCache());
+    }
+
+    BobSetup(DownloadCache downloadCache) {
+        this.downloadCache = downloadCache;
+    }
 
     @Override
     public String name() {
@@ -44,8 +62,28 @@ public class BobSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         System.out.println("Installing Bob Shell...");
-        c.exec("npm", "install", "-g", "bobshell")
-                .assertSuccess("Failed to install Bob Shell");
+
+        try {
+            var version = Files.readString(
+                    downloadCache.download(VERSION_URL, null)).strip();
+            if (!VERSION_PATTERN.matcher(version).matches()) {
+                throw new IOException("Unexpected version format: " + version);
+            }
+            System.out.println("  Latest version: " + version);
+
+            var tarballUrl = BASE_URL + version + ".tgz";
+            var sha256 = Files.readString(
+                    downloadCache.download(tarballUrl + ".sha256", null)).strip();
+            var cached = downloadCache.download(tarballUrl, sha256);
+
+            var containerTarball = "/tmp/bobshell-" + version + ".tgz";
+            c.filePush(cached.toString(), containerTarball);
+            c.exec("npm", "install", "-g", containerTarball)
+                    .assertSuccess("Failed to npm install Bob Shell");
+            c.exec("rm", "-f", containerTarball);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
+        }
     }
 
     private void configureSettings(Container c) {
