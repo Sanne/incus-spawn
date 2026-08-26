@@ -46,15 +46,15 @@ jobs:
           - runner: ubuntu-latest
             os: linux
             arch: amd64
-            graalvm-version: '25.2'
+            graalvm-version: '25.3'
           - runner: ubuntu-24.04-arm
             os: linux
             arch: aarch64
-            graalvm-version: '25.2'
+            graalvm-version: '25.3'
           - runner: macos-14
             os: macos
             arch: aarch64
-            graalvm-version: '25.2'
+            graalvm-version: '25.3'
           - runner: macos-15-intel
             os: macos
             arch: x86_64
