@@ -1165,6 +1165,35 @@ class BuildCommandTest {
     }
 
     @Test
+    void prepareOneSkipsPrimeWhenAnotherRepoAlreadyFailed() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/beta.git");
+        repo.setPath("~/beta");
+        repo.setPrime("build-beta");
+
+        var states = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        states.set(0, BuildCommand.StepProgress.running("Cloning"));
+        // Another repo has already failed → the build will abort.
+        var failureSeen = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+        new BuildCommand().prepareOne(container, repo, null, states, 0, failureSeen);
+
+        // The clone still ran, but priming was skipped rather than doing work the
+        // aborting build will throw away.
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/beta.git' '/home/agentuser/beta'");
+        verify(incus, never()).execInContainer("test", "agentuser",
+                "cd '/home/agentuser/beta' && build-beta");
+        assertEquals(BuildCommand.StepState.DONE, states.get(0).state());
+        assertTrue(states.get(0).note().contains("priming skipped"),
+                "the skipped-prime clone should say so");
+    }
+
+    @Test
     void cloneReposThrowsWhenCloneFails() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
