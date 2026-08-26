@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.proxy.ToolProxyResolver;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -17,6 +18,8 @@ public class ToolDefValidator {
 
     private static final Set<String> VALID_PARAM_TYPES = Set.of(
             "string", "integer", "boolean", "enum");
+    private static final Set<String> VALID_AUTH_TYPES = Set.of(
+            "basic", "bearer", "header");
 
     public static ValidationResult validate(Path file) {
         var errors = new ArrayList<String>();
@@ -62,6 +65,53 @@ public class ToolDefValidator {
                     && param.getMin() > param.getMax()) {
                 warnings.add("parameter '" + name + "' has min (" + param.getMin()
                         + ") greater than max (" + param.getMax() + ")");
+            }
+        }
+
+        var proxyDef = def.getProxy();
+        if (proxyDef != null) {
+            var configMap = proxyDef.getConfiguration();
+
+            for (var ce : configMap.entrySet()) {
+                var config = ce.getValue();
+                if (!config.getConfigPath().isBlank() && !config.getValue().isBlank()) {
+                    errors.add("configuration '" + ce.getKey() + "' in proxy for '"
+                            + def.getName() + "' has both 'config-path' and 'value' — use one or the other");
+                }
+                if (!config.isSelfResolving() && config.getDescription().isBlank()) {
+                    warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
+                            + def.getName() + "' has no description (needed for interactive setup)");
+                }
+            }
+
+            for (var ae : proxyDef.getAuth()) {
+                if (ae.getDomains() == null || ae.getDomains().isEmpty()) {
+                    errors.add("auth entry in proxy for '" + def.getName() + "' is missing 'domains'");
+                    continue;
+                }
+                var authType = ae.getType();
+                if (authType == null || !VALID_AUTH_TYPES.contains(authType)) {
+                    errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                            + "' has invalid auth type '" + authType + "' — must be one of: basic, bearer, header");
+                }
+                if ("header".equals(authType)) {
+                    if (ae.getName() == null || ae.getName().isBlank()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': header auth requires 'name'");
+                    }
+                    if (ae.getValue() == null || ae.getValue().isBlank()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': header auth requires 'value'");
+                    }
+                }
+
+                var refs = ToolProxyResolver.extractReferencedKeys(ae);
+                for (var ref : refs) {
+                    if (!configMap.containsKey(ref)) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "' references '${" + ref + "}' which is not defined in configuration");
+                    }
+                }
             }
         }
     }

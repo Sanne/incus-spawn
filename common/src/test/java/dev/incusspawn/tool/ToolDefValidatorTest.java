@@ -162,4 +162,100 @@ class ToolDefValidatorTest {
             }
         }
     }
+
+    @Test
+    void proxyMissingDomainsIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-proxy
+                proxy:
+                  auth:
+                    - type: bearer
+                      token: "${t}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("missing 'domains'")));
+    }
+
+    @Test
+    void proxyInvalidAuthTypeIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-auth
+                proxy:
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: invalid
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("invalid auth type")));
+    }
+
+    @Test
+    void proxyConfigPathAndValueMutualExclusion() throws Exception {
+        var file = writeTemp("""
+                name: both-set
+                proxy:
+                  configuration:
+                    token:
+                      config-path: "some.path"
+                      value: "literal"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("both 'config-path' and 'value'")));
+    }
+
+    @Test
+    void proxyConfigWithoutDescriptionWarns() throws Exception {
+        var file = writeTemp("""
+                name: no-desc
+                proxy:
+                  configuration:
+                    token:
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors());
+        assertTrue(result.hasWarnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("no description")));
+    }
+
+    @Test
+    void proxyMissingConfigRefIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-ref
+                proxy:
+                  configuration:
+                    user:
+                      value: "admin"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: basic
+                      username: "${user}"
+                      password: "${pass}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("${pass}") && e.contains("not defined")));
+    }
+
+    private static Path writeTemp(String content) throws Exception {
+        var file = Files.createTempFile("tool-test-", ".yaml");
+        file.toFile().deleteOnExit();
+        Files.writeString(file, content);
+        return file;
+    }
 }

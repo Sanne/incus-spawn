@@ -202,4 +202,20 @@ class SpawnConfigTest {
         assertTrue(SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN
                 .startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX));
     }
+
+    @Test
+    void setConfigByPathUpdatesTypedFields() {
+        var config = new SpawnConfig();
+        config.setConfigByPath("bob.apiKey", "test-key");
+        assertEquals("test-key", config.getBob().getApiKey());
+        assertTrue(config.getBob().hasAuth());
+    }
+
+    @Test
+    void setConfigByPathUpdatesExtras() {
+        var config = new SpawnConfig();
+        config.setConfigByPath("myTool.secret", "s3cret");
+        assertEquals("s3cret", config.getExtras().get("myTool")
+                instanceof java.util.Map m ? m.get("secret") : null);
+    }
 }
