@@ -19,7 +19,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), p
 
 ## Quick Start
 
-Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status`. Windows is not yet supported.
+Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status|resize`. Windows is not yet supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
@@ -114,6 +114,8 @@ tpl-java  (stopped template, ~2GB)
 You can install packages, break things, and destroy a branch when done. The template and other branches are completely unaffected. Sudo works without a password, and shell sessions set the terminal title to `isx:<containername>` so you always know which environment you're in.
 
 Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
+
+The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Because branches share blocks via CoW, per-row sizes are approximate (marked `~`) and won't add up to the total. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
 Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills.
 
@@ -817,9 +819,11 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | `isx proxy logs` | View proxy logs |
 | `isx proxy dump` | Run a local pass-through proxy for API traffic capture |
 | `isx doctor` | Diagnose host, proxy, VM, and tunnel health |
+| `isx clean` | Reclaim space: `cache`, `state`, `config`, `pool`, or `all` |
 | `isx vm start` | Start the VM (macOS only) |
 | `isx vm stop` | Stop the VM (macOS only) |
 | `isx vm status` | Show VM status and system diagnostics (macOS only) |
+| `isx vm resize <size>` | Grow the VM data disk that backs the storage pool (macOS only) |
 | `isx vm console` | Follow VM serial console output (macOS only) |
 | `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
 
