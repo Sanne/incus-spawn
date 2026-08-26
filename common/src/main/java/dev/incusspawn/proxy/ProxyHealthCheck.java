@@ -19,7 +19,7 @@ public final class ProxyHealthCheck {
     }
 
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
-                            boolean dnsConfigured) {
+                            String toolProxyFingerprint, boolean dnsConfigured) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
 
@@ -133,13 +133,23 @@ public final class ProxyHealthCheck {
                     textOrEmpty(node, "gitSha"),
                     textOrEmpty(node, "runtime"),
                     textOrEmpty(node, "caFingerprint"),
+                    textOrEmpty(node, "toolProxyFingerprint"),
                     dnsConfigured);
         } catch (Exception e) {
-            return new ProxyInfo("", "", "", "", true);
+            return new ProxyInfo("", "", "", "", "", true);
         }
     }
 
-    public static String checkVersionDrift(ProxyInfo proxyInfo) {
+    public static java.util.List<String> checkDrift(ProxyInfo proxyInfo) {
+        var drifts = new java.util.ArrayList<String>();
+        var version = checkVersionDrift(proxyInfo);
+        if (!version.isEmpty()) drifts.add(version);
+        var tool = checkToolProxyDrift(proxyInfo);
+        if (!tool.isEmpty()) drifts.add(tool);
+        return drifts;
+    }
+
+    static String checkVersionDrift(ProxyInfo proxyInfo) {
         if (proxyInfo == null) return "";
         if (proxyInfo.isLegacy()) {
             return "The proxy is running a pre-versioning build. Restart recommended.";
@@ -151,6 +161,20 @@ public final class ProxyHealthCheck {
                     + ", CLI is " + cliInfo.version() + " (" + shortSha(cliInfo.gitSha()) + ").";
         }
         return "";
+    }
+
+    static String checkToolProxyDrift(ProxyInfo proxyInfo) {
+        if (proxyInfo == null || proxyInfo.isLegacy()) return "";
+        try {
+            var expected = ProxyCredentials.fromConfig(
+                    dev.incusspawn.config.SpawnConfig.load()).toolProxyFingerprint();
+            var running = proxyInfo.toolProxyFingerprint() != null
+                    ? proxyInfo.toolProxyFingerprint() : "";
+            if (expected.equals(running)) return "";
+            return "(config has changed since the proxy started)";
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     public static String formatError(ProxyStatus status) {
@@ -284,18 +308,19 @@ public final class ProxyHealthCheck {
     static void warnIfDrifted(IncusClient incus) {
         try {
             var info = fetchProxyInfo(healthAddress(incus));
-            var drift = checkVersionDrift(info);
-            if (drift.isEmpty()) return;
+            var drifts = checkDrift(info);
+            if (drifts.isEmpty()) return;
+            var drift = String.join(" ", drifts);
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
             if (ProxyService.isActive()) {
                 System.err.println(sep);
-                System.err.println("\033[1;33mProxy version drift detected:\033[0m " + drift);
+                System.err.println("\033[1;33mProxy drift detected:\033[0m " + drift);
                 ProxyService.restart();
                 System.err.println(sep);
             } else {
                 System.err.println(sep);
-                System.err.println("\033[1;33mProxy version drift detected:\033[0m " + drift);
-                System.err.println("Restart the proxy to use the current version:");
+                System.err.println("\033[1;33mProxy drift detected:\033[0m " + drift);
+                System.err.println("Restart the proxy to pick up changes:");
                 System.err.println("  \033[1misx proxy stop && isx proxy start\033[0m");
                 System.err.println(sep);
             }

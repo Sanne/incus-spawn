@@ -36,7 +36,10 @@ import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -63,11 +66,9 @@ public class MitmProxy {
     private static final int BUFFER_SIZE = 64 * 1024;
 
     private static final Set<String> ANTHROPIC_DOMAINS = ProxyConfig.ANTHROPIC_DOMAINS;
-    private static final Set<String> GITHUB_DOMAINS = ProxyConfig.GITHUB_DOMAINS;
     private static final Set<String> REGISTRY_DOMAINS = ProxyConfig.REGISTRY_DOMAINS;
     private static final Set<String> MAVEN_DOMAINS = ProxyConfig.MAVEN_DOMAINS;
     private static final Set<String> GRADLE_DOMAINS = ProxyConfig.GRADLE_DOMAINS;
-    private static final Set<String> OPENAI_DOMAINS = ProxyConfig.OPENAI_DOMAINS;
     private static final Set<String> NPM_DOMAINS = ProxyConfig.NPM_DOMAINS;
 
     // OCI blob URL pattern: /v2/<name>/blobs/sha256:<64-hex-chars>
@@ -163,6 +164,11 @@ public class MitmProxy {
 
     private final String healthBindAddress;
 
+    private Map<String, ResolvedToolProxy> toolProxyByExactDomain = Map.of();
+    private List<Map.Entry<String, ResolvedToolProxy>> toolProxyWildcardSuffixes = List.of();
+    private Set<String> allInterceptedDomains = ProxyConfig.builtinInterceptedDomains();
+    private List<String> wildcardSuffixes = List.of();
+
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
     int upstreamWsPort = 443;
     boolean upstreamWsSsl = true;
@@ -180,6 +186,7 @@ public class MitmProxy {
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
         this.credentials = credentials;
+        applyToolProxies(credentials.toolProxies());
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -194,9 +201,53 @@ public class MitmProxy {
         this.debugLog = debugLog;
     }
 
+    private void applyToolProxies(List<ResolvedToolProxy> proxies) {
+        var exact = new java.util.LinkedHashMap<String, ResolvedToolProxy>();
+        var wildcards = new ArrayList<Map.Entry<String, ResolvedToolProxy>>();
+        var extraDomains = new HashSet<String>();
+        var suffixes = new ArrayList<String>();
+
+        for (var tp : proxies) {
+            if (tp.auth() != null && "anthropic".equals(tp.auth().getType())) continue;
+
+            var domain = tp.domain();
+            if (domain.startsWith("*.")) {
+                var suffix = domain.substring(1); // ".example.com"
+                wildcards.add(Map.entry(suffix, tp));
+                if (!suffixes.contains(suffix)) suffixes.add(suffix);
+                extraDomains.add(domain.substring(2)); // base domain for DNS
+            } else {
+                exact.put(domain, tp);
+                extraDomains.add(domain);
+            }
+        }
+
+        this.toolProxyByExactDomain = Map.copyOf(exact);
+        this.toolProxyWildcardSuffixes = List.copyOf(wildcards);
+        this.wildcardSuffixes = List.copyOf(suffixes);
+        this.allInterceptedDomains = ProxyConfig.interceptedDomains(extraDomains);
+    }
+
+    ResolvedToolProxy findToolProxy(String domain) {
+        var exact = toolProxyByExactDomain.get(domain);
+        if (exact != null) return exact;
+        for (var entry : toolProxyWildcardSuffixes) {
+            if (domain.endsWith(entry.getKey())) return entry.getValue();
+        }
+        return null;
+    }
+
+    public Set<String> allInterceptedDomains() {
+        return allInterceptedDomains;
+    }
+
+    private boolean isInterceptedDomain(String domain) {
+        return ProxyConfig.isInterceptedDomain(domain,
+                toolProxyByExactDomain.keySet(), wildcardSuffixes);
+    }
+
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
-        var config = dev.incusspawn.config.SpawnConfig.load();
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         return new MitmProxy(
                 vertx,
@@ -204,7 +255,7 @@ public class MitmProxy {
                 ProxyConfig.DEFAULT_MITM_PORT,
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
-                ProxyCredentials.fromConfig(config));
+                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()));
     }
 
     // --- Lifecycle ---
@@ -218,7 +269,7 @@ public class MitmProxy {
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
 
-        var allDomains = ProxyConfig.interceptedDomains().stream()
+        var allDomains = allInterceptedDomains.stream()
                 .sorted()
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
@@ -250,8 +301,8 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
-            var config = dev.incusspawn.config.SpawnConfig.load();
-            credentials = ProxyCredentials.fromConfig(config);
+            credentials = ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load());
+            applyToolProxies(credentials.toolProxies());
             invalidateVertexToken();
             var jksBuffer = buildKeyStoreBuffer();
             if (mitmServer != null) {
@@ -375,7 +426,7 @@ public class MitmProxy {
         ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort);
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
-        System.out.println("Intercepted domains: " + ProxyConfig.interceptedDomains());
+        System.out.println("Intercepted domains: " + allInterceptedDomains);
         System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + mavenCacheDir() +
@@ -478,7 +529,7 @@ public class MitmProxy {
                 handleGradleRequest(clientReq, domain);
             } else if (NPM_DOMAINS.contains(domain)) {
                 handleNpmRequest(clientReq, domain);
-            } else if (ProxyConfig.isInterceptedDomain(domain)) {
+            } else if (isInterceptedDomain(domain)) {
                 handleApiRequest(clientReq, domain);
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
@@ -639,33 +690,21 @@ public class MitmProxy {
     }
 
     private void injectWebSocketAuth(WebSocketConnectOptions options, String domain) {
-        if (OPENAI_DOMAINS.contains(domain)) {
-            if (!credentials.openaiApiKey().isBlank()) {
-                options.putHeader("Authorization", "Bearer " + credentials.openaiApiKey());
-            } else {
-                options.removeHeader("Authorization");
-            }
-        } else if (ANTHROPIC_DOMAINS.contains(domain)) {
+        if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (!credentials.oauthToken().isBlank()) {
                 options.putHeader("Authorization", "Bearer " + credentials.oauthToken());
                 options.removeHeader("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
                 options.putHeader("x-api-key", credentials.anthropicApiKey());
             }
-        } else if (GITHUB_DOMAINS.contains(domain)) {
-            if (!credentials.ghToken().isBlank()) {
-                if ("github.com".equals(domain)) {
-                    var basicAuth = "x-access-token:" + credentials.ghToken();
-                    var encoded = java.util.Base64.getEncoder().encodeToString(
-                            basicAuth.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    options.putHeader("Authorization", "Basic " + encoded);
-                } else {
-                    options.putHeader("Authorization", "Bearer " + credentials.ghToken());
+        } else {
+            var tp = findToolProxy(domain);
+            if (tp != null) {
+                var headerName = tp.headerName();
+                var headerValue = tp.computeHeaderValue();
+                if (headerName != null && headerValue != null) {
+                    options.putHeader(headerName, headerValue);
                 }
-            }
-        } else if (ProxyConfig.isBobDomain(domain)) {
-            if (!credentials.bobApiKey().isBlank()) {
-                options.putHeader("Authorization", "Apikey " + credentials.bobApiKey());
             }
         }
     }
@@ -1681,28 +1720,14 @@ public class MitmProxy {
             } else {
                 upReq.headers().remove("x-api-key");
             }
-        } else if (GITHUB_DOMAINS.contains(domain)) {
-            if (!credentials.ghToken().isBlank()) {
-                if ("github.com".equals(domain)) {
-                    // Git HTTP transport requires Basic auth (token as password)
-                    var basicAuth = "x-access-token:" + credentials.ghToken();
-                    var encoded = java.util.Base64.getEncoder().encodeToString(
-                            basicAuth.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    upReq.putHeader("Authorization", "Basic " + encoded);
-                } else {
-                    // API and CDN domains accept Bearer tokens
-                    upReq.putHeader("Authorization", "Bearer " + credentials.ghToken());
+        } else {
+            var tp = findToolProxy(domain);
+            if (tp != null) {
+                var headerName = tp.headerName();
+                var headerValue = tp.computeHeaderValue();
+                if (headerName != null && headerValue != null) {
+                    upReq.putHeader(headerName, headerValue);
                 }
-            }
-        } else if (ProxyConfig.isBobDomain(domain)) {
-            if (!credentials.bobApiKey().isBlank()) {
-                upReq.putHeader("Authorization", "Apikey " + credentials.bobApiKey());
-            }
-        } else if (OPENAI_DOMAINS.contains(domain)) {
-            if (!credentials.openaiApiKey().isBlank()) {
-                upReq.putHeader("Authorization", "Bearer " + credentials.openaiApiKey());
-            } else {
-                upReq.headers().remove("Authorization");
             }
         }
         return true;
@@ -1896,6 +1921,7 @@ public class MitmProxy {
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
                 + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
                 + ",\"caFingerprint\":\"" + caFingerprint + "\""
+                + ",\"toolProxyFingerprint\":\"" + credentials.toolProxyFingerprint() + "\""
                 + ",\"dnsConfigured\":" + dnsConfigured + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")

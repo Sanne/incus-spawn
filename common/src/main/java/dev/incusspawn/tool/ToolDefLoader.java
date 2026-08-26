@@ -8,6 +8,7 @@ import dev.incusspawn.config.YamlErrors;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -38,6 +39,11 @@ public class ToolDefLoader {
             "starship.yaml",
             "tmux.yaml",
             "zmx.yaml"
+    );
+
+    /** CDI tools declared in Java. Proxy entries, build steps, and actions are defined programmatically. */
+    public static final List<ToolSetup> CDI_TOOLS = List.of(
+            new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup()
     );
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
@@ -83,6 +89,19 @@ public class ToolDefLoader {
      */
     public ToolSetup find(String name) {
         return load().defs().get(name);
+    }
+
+    /**
+     * Return all tool setups: CDI tools (lowest priority) merged with YAML tools.
+     * Used by the proxy, init credential menu, and anywhere a complete tool list is needed.
+     */
+    public Map<String, ToolSetup> allToolSetups() {
+        var result = new LinkedHashMap<String, ToolSetup>();
+        for (var cdi : CDI_TOOLS) {
+            result.put(cdi.name(), cdi);
+        }
+        result.putAll(load().defs());
+        return result;
     }
 
     /**

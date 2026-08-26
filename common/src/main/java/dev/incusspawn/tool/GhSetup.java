@@ -7,6 +7,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.util.BuildOutput;
 
 import java.util.List;
+import java.util.Map;
 
 import static dev.incusspawn.incus.Container.shellQuote;
 
@@ -19,6 +20,35 @@ public class GhSetup implements ToolSetup {
     @Override
     public String name() {
         return "gh";
+    }
+
+    @Override
+    public String description() {
+        return "GitHub — PAT for git operations";
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var token = new ToolDef.ConfigEntry();
+        token.setConfigPath("github.token");
+        token.setDescription("GitHub personal access token");
+        token.setSecret(true);
+
+        var basicAuth = new ToolDef.AuthDef();
+        basicAuth.setDomains(List.of("github.com"));
+        basicAuth.setType("basic");
+        basicAuth.setUsername("x-access-token");
+        basicAuth.setPassword("${token}");
+
+        var bearerAuth = new ToolDef.AuthDef();
+        bearerAuth.setDomains(List.of("*.github.com", "*.githubusercontent.com"));
+        bearerAuth.setType("bearer");
+        bearerAuth.setToken("${token}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfiguration(Map.of("token", token));
+        proxy.setAuth(List.of(basicAuth, bearerAuth));
+        return proxy;
     }
 
     @Override
