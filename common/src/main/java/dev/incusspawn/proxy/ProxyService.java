@@ -32,6 +32,34 @@ public final class ProxyService {
     /** The unit directive that makes {@link #EXIT_CONFIG} non-restartable. */
     static final String RESTART_PREVENT_LINE = "RestartPreventExitStatus=" + EXIT_CONFIG;
 
+    /**
+     * Human-readable interpretation of a proxy process exit status: what stopped it and, where the
+     * cause is actionable, what to do about it. Lives here so the meaning of an exit code is defined
+     * once — beside {@link #EXIT_CONFIG} and {@link #failedWithConfigError()} — rather than
+     * re-derived by every caller. On Unix a signal-terminated child is reported as
+     * {@code 128 + signum}.
+     */
+    public static String describeExit(int code) {
+        if (code > 128) {
+            int sig = code - 128;
+            return switch (sig) {
+                case 9 -> "Killed by SIGKILL — likely the OOM killer or an external 'kill -9'.\n"
+                        + "This bypasses the proxy's clean-shutdown path, so its log ends abruptly.\n"
+                        + "Check the kernel log for an OOM kill or suspend/resume around then:\n"
+                        + "  journalctl -k -e | grep -i 'killed process\\|oom'";
+                case 15 -> "Terminated by SIGTERM — asked to stop by the system or another process.";
+                case 2 -> "Interrupted by SIGINT (Ctrl-C).";
+                case 1 -> "Killed by SIGHUP — the controlling terminal/session went away.";
+                default -> "Killed by signal " + sig + ".";
+            };
+        }
+        if (code == EXIT_CONFIG) {
+            return "Exited due to a configuration problem (exit " + EXIT_CONFIG + ").\n"
+                    + "Run 'isx init' to fix the configuration, then start it again.";
+        }
+        return "Exited unexpectedly (exit " + code + ").";
+    }
+
     private ProxyService() {}
 
     /** The systemd unit written by {@link #install()}. Package-private so tests can assert on it. */
