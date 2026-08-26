@@ -1137,6 +1137,34 @@ class BuildCommandTest {
     }
 
     @Test
+    void cloneReposPrimesEachRepoInItsOwnWorker() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+
+        var a = new ImageDef.RepoEntry();
+        a.setUrl("https://github.com/owner/alpha.git");
+        a.setPath("~/alpha");
+        a.setPrime("build-alpha");
+        var b = new ImageDef.RepoEntry();
+        b.setUrl("https://github.com/owner/beta.git");
+        b.setPath("~/beta");
+        b.setPrime("build-beta");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(a, b));
+
+        var cmd = new BuildCommand();
+        cmd.cloneRepos(container, imageDef, false);
+
+        // Each repo's prime runs (pipelined with the other repo's clone), scoped to
+        // its own working directory.
+        verify(incus).execInContainer("test", "agentuser", "cd '/home/agentuser/alpha' && build-alpha");
+        verify(incus).execInContainer("test", "agentuser", "cd '/home/agentuser/beta' && build-beta");
+    }
+
+    @Test
     void cloneReposThrowsWhenCloneFails() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
@@ -1180,8 +1208,8 @@ class BuildCommandTest {
 
     @Test
     void formatStepLineShowsSpinnerWhileRunning() {
-        var p = BuildCommand.StepProgress.running();
-        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        var p = BuildCommand.StepProgress.running("Cloning");
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Ready");
         assertTrue(stripAnsi(line).contains("Cloning"), "should show running verb");
         assertTrue(line.contains("alpha"), "should show the label");
     }
@@ -1189,16 +1217,16 @@ class BuildCommandTest {
     @Test
     void formatStepLineShowsCheckmarkAndNoteWhenDone() {
         var p = BuildCommand.StepProgress.done("via host reference");
-        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Ready");
         assertTrue(line.contains("✓"), "should show checkmark");
-        assertTrue(line.contains("Cloned"), "should show done verb");
+        assertTrue(line.contains("Ready"), "should show done verb");
         assertTrue(line.contains("via host reference"), "should show the done note");
     }
 
     @Test
     void formatStepLineShowsErrorDetailWhenFailed() {
         var p = BuildCommand.StepProgress.failed("fatal: nope", null);
-        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Cloning", "Cloned");
+        var line = BuildCommand.formatStepLine("alpha", "url", p, 0, "Ready");
         assertTrue(line.contains("✗"), "should show cross");
         assertTrue(line.contains("fatal: nope"), "should show the error detail");
     }
@@ -1206,11 +1234,11 @@ class BuildCommandTest {
     @Test
     void formatStepLineAlignsLabelAcrossStates() {
         var running = stripAnsi(BuildCommand.formatStepLine("alpha", null,
-                BuildCommand.StepProgress.running(), 0, "Cloning", "Cloned"));
+                BuildCommand.StepProgress.running("Cloning"), 0, "Ready"));
         var done = stripAnsi(BuildCommand.formatStepLine("alpha", null,
-                BuildCommand.StepProgress.done(null), 0, "Cloning", "Cloned"));
+                BuildCommand.StepProgress.done(null), 0, "Ready"));
         var failed = stripAnsi(BuildCommand.formatStepLine("alpha", null,
-                BuildCommand.StepProgress.failed(null, null), 0, "Cloning", "Cloned"));
+                BuildCommand.StepProgress.failed(null, null), 0, "Ready"));
         assertEquals(running.indexOf("alpha"), done.indexOf("alpha"), "label aligns RUNNING vs DONE");
         assertEquals(done.indexOf("alpha"), failed.indexOf("alpha"), "label aligns DONE vs FAILED");
     }
