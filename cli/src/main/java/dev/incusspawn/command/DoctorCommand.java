@@ -278,10 +278,12 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkCredentials() {
         var config = SpawnConfig.load();
+        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
+        if (unresolved.isEmpty()) return Finding.ok("Credentials", "configured");
         var missing = new ArrayList<String>();
-        if (!config.getClaude().hasAuth()) missing.add("Claude API key/OAuth/Vertex");
-        if (config.getGithub().getToken().isBlank()) missing.add("GitHub token");
-        if (missing.isEmpty()) return Finding.ok("Credentials", "configured");
+        for (var u : unresolved) {
+            missing.add(u.toolName() + " " + u.configKey());
+        }
         return Finding.warn("Missing credentials", "(" + String.join(", ", missing) + ")",
                 new Remediation("Run 'isx init' to configure", false, null));
     }
@@ -679,13 +681,15 @@ public class DoctorCommand extends BaseCommand {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
             if (info == null) return Finding.ok("Proxy version", "(proxy not reachable, skipped)");
             var drift = ProxyHealthCheck.checkVersionDrift(info);
+            if (drift.isEmpty()) drift = ProxyHealthCheck.checkToolProxyDrift(info);
             if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
+            var label = drift.contains("Tool proxy") ? "Proxy config drift" : "Proxy version drift";
             if (ProxyService.isActive()) {
-                return Finding.warn("Proxy version drift", drift,
+                return Finding.warn(label, drift,
                         new Remediation("Restart proxy service to update", false,
                                 () -> ProxyService.reinstallIfChanged(incus)));
             }
-            return Finding.warn("Proxy version drift", drift,
+            return Finding.warn(label, drift,
                     new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
         } catch (Exception e) {
             return Finding.ok("Proxy version", "(could not check)");

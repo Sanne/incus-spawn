@@ -33,6 +33,11 @@ public class ToolDefLoader {
             "tmux.yaml",
             "zmx.yaml"
     );
+
+    /** CDI tools declared in Java. Proxy entries, build steps, and actions are defined programmatically. */
+    public static final List<ToolSetup> CDI_TOOLS = List.of(
+            new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup()
+    );
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
     private List<String> searchPaths;
@@ -57,6 +62,19 @@ public class ToolDefLoader {
      */
     public ToolSetup find(String name) {
         return loadAll().get(name);
+    }
+
+    /**
+     * Return all tool setups: CDI tools (lowest priority) merged with YAML tools.
+     * Used by the proxy, init credential menu, and anywhere a complete tool list is needed.
+     */
+    public Map<String, ToolSetup> allToolSetups() {
+        var result = new LinkedHashMap<String, ToolSetup>();
+        for (var cdi : CDI_TOOLS) {
+            result.put(cdi.name(), cdi);
+        }
+        result.putAll(loadAll());
+        return result;
     }
 
     /**

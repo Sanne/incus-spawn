@@ -5,6 +5,7 @@ import dev.incusspawn.incus.Container;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class CodexSetup implements ToolSetup {
 
@@ -14,8 +15,31 @@ public class CodexSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Codex CLI — OpenAI coding assistant";
+    }
+
+    @Override
     public String feature() {
         return "openai";
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("openai.apiKey");
+        apiKey.setDescription("OpenAI API key");
+        apiKey.setSecret(true);
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("api.openai.com"));
+        auth.setType("bearer");
+        auth.setToken("${api-key}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfiguration(Map.of("api-key", apiKey));
+        proxy.setAuth(List.of(auth));
+        return proxy;
     }
 
     @Override

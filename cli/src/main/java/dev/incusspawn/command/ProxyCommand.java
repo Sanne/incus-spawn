@@ -78,6 +78,7 @@ public class ProxyCommand extends BaseCommand {
                         }
                         System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "active" : "pending"));
                         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
+                        if (drift.isEmpty()) drift = ProxyHealthCheck.checkToolProxyDrift(proxyInfo);
                         if (!drift.isEmpty()) {
                             System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
                         }

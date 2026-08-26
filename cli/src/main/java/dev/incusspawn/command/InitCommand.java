@@ -12,9 +12,12 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -31,9 +34,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -257,12 +262,19 @@ public class InitCommand extends BaseCommand {
         configureFirewall();
         configureMitmProxy();
         setupSshKeyPair();
-        var credentials = selectCredentials();
+        var loader = new ToolDefLoader();
+        var allTools = loader.allToolSetups();
+        var credentials = selectCredentials(allTools);
         totalSteps = 10 + credentials.size();
-        if (credentials.contains("claude")) setupClaudeAuth();
-        if (credentials.contains("github")) setupGitHubAuth();
-        if (credentials.contains("bob")) setupBobAuth();
-        if (credentials.contains("openai")) setupOpenaiAuth();
+        for (var toolName : credentials) {
+            switch (toolName) {
+                case "claude" -> setupClaudeAuth();
+                case "gh" -> setupGitHubAuth();
+                case "bob" -> setupBobAuth();
+                case "codex" -> setupCodexAuth();
+                default -> setupGenericToolCredentials(toolName, allTools.get(toolName));
+            }
+        }
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -319,12 +331,19 @@ public class InitCommand extends BaseCommand {
         }
 
         setupSshKeyPair();
-        var macCredentials = selectCredentials();
+        var macLoader = new ToolDefLoader();
+        var macTools = macLoader.allToolSetups();
+        var macCredentials = selectCredentials(macTools);
         totalSteps = 7 + macCredentials.size();
-        if (macCredentials.contains("claude")) setupClaudeAuth();
-        if (macCredentials.contains("github")) setupGitHubAuth();
-        if (macCredentials.contains("bob")) setupBobAuth();
-        if (macCredentials.contains("openai")) setupOpenaiAuth();
+        for (var toolName : macCredentials) {
+            switch (toolName) {
+                case "claude" -> setupClaudeAuth();
+                case "gh" -> setupGitHubAuth();
+                case "bob" -> setupBobAuth();
+                case "codex" -> setupCodexAuth();
+                default -> setupGenericToolCredentials(toolName, macTools.get(toolName));
+            }
+        }
         closeHttpClient();
         setupSearchPaths();
         setupHostPaths();
@@ -1116,7 +1135,9 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private Set<String> selectCredentials() {
+    private static final List<String> KNOWN_TOOL_ORDER = List.of("claude", "gh", "bob", "codex");
+
+    private List<String> selectCredentials(Map<String, ToolSetup> allTools) {
         startStep("Credential Setup",
                 "Choose which API credentials to configure. Each credential",
                 "stays on your host — containers only hold placeholders, and",
@@ -1124,46 +1145,80 @@ public class InitCommand extends BaseCommand {
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
-            return Set.of();
+            return List.of();
         }
 
-        var claudeTag = config.getClaude().hasAuth() ? " [configured]" : "";
-        var githubTag = !config.getGithub().getToken().isBlank() ? " [configured]" : "";
-        var bobTag = config.getBob().hasAuth() ? " [configured]" : "";
-        var openaiEnabled = config.isFeatureEnabled("openai");
-        var openaiTag = config.getOpenai().hasAuth() ? " [configured]" : "";
+        var configTree = JSON.valueToTree(config);
+
+        var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
+        for (var entry : allTools.entrySet()) {
+            var tool = entry.getValue();
+            if (tool.feature() != null && !config.isFeatureEnabled(tool.feature())) continue;
+            var proxyDef = tool.proxy();
+            if (proxyDef == null || proxyDef.getConfiguration().isEmpty()) continue;
+            toolsWithProxy.add(entry);
+        }
+
+        if (toolsWithProxy.isEmpty()) {
+            System.out.println("  No tools with proxy credentials found.");
+            return List.of();
+        }
+
+        toolsWithProxy.sort(Comparator.<Map.Entry<String, ToolSetup>, Integer>comparing(
+                        e -> {
+                            int idx = KNOWN_TOOL_ORDER.indexOf(e.getKey());
+                            return idx >= 0 ? idx : Integer.MAX_VALUE;
+                        })
+                .thenComparing(Map.Entry::getKey));
 
         System.out.println("  Which credentials do you want to configure?");
-        System.out.println("    1. Claude Code — AI coding assistant" + claudeTag);
-        System.out.println("    2. GitHub — PAT for git operations" + githubTag);
-        System.out.println("    3. Bob Shell — IBM AI coding assistant" + bobTag);
-        if (openaiEnabled) {
-            System.out.println("    4. OpenAI — API key for Codex CLI" + openaiTag);
+        for (int i = 0; i < toolsWithProxy.size(); i++) {
+            var entry = toolsWithProxy.get(i);
+            var toolName = entry.getKey();
+            var tool = entry.getValue();
+            var desc = tool.description().isBlank() ? toolName : tool.description();
+            var tag = isToolConfigured(toolName, tool, config, configTree) ? " [configured]" : "";
+            System.out.println("    " + (i + 1) + ". " + desc + tag);
         }
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
         var input = console.readLine();
         if (input == null || input.isBlank()) {
             System.out.println("  Skipped credential setup.");
-            return Set.of();
+            return List.of();
         }
-        var selected = new LinkedHashSet<String>();
+
+        var selected = new ArrayList<String>();
         if (input.strip().equalsIgnoreCase("all")) {
-            selected.add("claude");
-            selected.add("github");
-            selected.add("bob");
-            if (openaiEnabled) selected.add("openai");
+            for (var entry : toolsWithProxy) selected.add(entry.getKey());
         } else {
             for (var part : input.split(",")) {
-                switch (part.strip()) {
-                    case "1" -> selected.add("claude");
-                    case "2" -> selected.add("github");
-                    case "3" -> selected.add("bob");
-                    case "4" -> { if (openaiEnabled) selected.add("openai"); }
-                }
+                try {
+                    int idx = Integer.parseInt(part.strip()) - 1;
+                    if (idx >= 0 && idx < toolsWithProxy.size()) {
+                        var name = toolsWithProxy.get(idx).getKey();
+                        if (!selected.contains(name)) selected.add(name);
+                    }
+                } catch (NumberFormatException ignored) {}
             }
         }
         return selected;
+    }
+
+    private static boolean isToolConfigured(String toolName, ToolSetup tool,
+            SpawnConfig config, com.fasterxml.jackson.databind.JsonNode configTree) {
+        if ("claude".equals(toolName)) return config.getClaude().hasAuth();
+        var proxyDef = tool.proxy();
+        if (proxyDef == null) return false;
+        for (var entry : proxyDef.getConfiguration().entrySet()) {
+            var configDef = entry.getValue();
+            if (!configDef.getValue().isBlank()) continue;
+            if (!configDef.getConfigPath().isBlank()) {
+                var v = ToolProxyResolver.navigateConfigPath(configTree, configDef.getConfigPath());
+                if (!v.isBlank()) return true;
+            }
+        }
+        return false;
     }
 
     private void setupClaudeAuth() {
@@ -1917,8 +1972,8 @@ public class InitCommand extends BaseCommand {
         System.out.println("  Bob configuration saved.");
     }
 
-    private void setupOpenaiAuth() {
-        startStep("OpenAI Authentication",
+    private void setupCodexAuth() {
+        startStep("Codex CLI Authentication",
                 "Sets up an OpenAI API key so containers can use Codex CLI",
                 "for AI-assisted coding. The real key stays on the host —",
                 "containers only hold a placeholder value, and the MITM",
@@ -1948,13 +2003,73 @@ public class InitCommand extends BaseCommand {
         System.out.print("  OpenAI API key (or press Enter to skip): ");
         var apiKey = readSecret(console.readPassword());
         if (apiKey.isBlank()) {
-            System.out.println("  Skipped OpenAI setup. You can configure it later by re-running 'isx init'.");
+            System.out.println("  Skipped Codex CLI setup. You can configure it later by re-running 'isx init'.");
             return;
         }
 
         config.getOpenai().setApiKey(apiKey);
         config.save();
         System.out.println("  OpenAI configuration saved.");
+    }
+
+    private void setupGenericToolCredentials(String toolName, ToolSetup tool) {
+        var desc = tool.description().isBlank() ? toolName : tool.description();
+        startStep(desc,
+                "Configures credentials for " + desc + ".",
+                "Real credentials stay on your host — containers only hold",
+                "placeholders, and the MITM proxy injects real values.");
+        var config = SpawnConfig.load();
+        var console = System.console();
+        if (console == null) {
+            System.err.println("  Error: no console available for interactive setup.");
+            return;
+        }
+
+        var proxyDef = tool.proxy();
+        if (proxyDef == null) return;
+
+        var configTree = JSON.valueToTree(config);
+        boolean savedAny = false;
+        for (var entry : proxyDef.getConfiguration().entrySet()) {
+            var configKey = entry.getKey();
+            var configDef = entry.getValue();
+            if (!configDef.getValue().isBlank()) continue;
+            if (configDef.getConfigPath().isBlank()) continue;
+
+            var existing = ToolProxyResolver.navigateConfigPath(configTree, configDef.getConfigPath());
+            if (!existing.isBlank()) {
+                System.out.println("  " + configKey + ": " + maskSecret(existing));
+                if (askConfirmation(console, "  Keep current?", true, true)) continue;
+            }
+
+            if (!configDef.getDescription().isBlank()) {
+                System.out.println("  " + configDef.getDescription());
+            }
+
+            String value;
+            if (configDef.isConfirm()) {
+                value = askConfirmation(console, "  " + configKey + "?", false, true) ? "true" : "";
+            } else {
+                System.out.print("  " + configKey + " (or press Enter to skip): ");
+                if (configDef.isSecret()) {
+                    value = readSecret(console.readPassword());
+                } else {
+                    var line = console.readLine();
+                    value = line != null ? line.strip() : "";
+                }
+            }
+            if (!value.isBlank()) {
+                config.setConfigByPath(configDef.getConfigPath(), value);
+                savedAny = true;
+            }
+        }
+
+        if (savedAny) {
+            config.save();
+            System.out.println("  " + desc + " credentials saved.");
+        } else {
+            System.out.println("  Skipped. Configure later with 'isx init'.");
+        }
     }
 
     private void setupPathList(

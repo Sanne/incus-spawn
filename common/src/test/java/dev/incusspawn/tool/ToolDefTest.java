@@ -832,6 +832,172 @@ class ToolDefTest {
         assertNull(def.getFeature());
     }
 
+    @Test
+    void parseProxyEntries() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: test-proxy
+                proxy:
+                  configuration:
+                    api-key:
+                      description: API key for example
+                      secret: true
+                    token:
+                      config-path: "some.config.path"
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${api-key}"
+                    - domains:
+                        - "*.example.com"
+                      type: bearer
+                      token: "${token}"
+                """));
+        var proxy = def.getProxy();
+        assertNotNull(proxy);
+        assertEquals(2, proxy.getAuth().size());
+
+        var first = proxy.getAuth().get(0);
+        assertEquals(List.of("api.example.com"), first.getDomains());
+        assertEquals("bearer", first.getType());
+        assertEquals("${api-key}", first.getToken());
+
+        assertTrue(proxy.getConfiguration().get("api-key").isSecret());
+        assertEquals("API key for example", proxy.getConfiguration().get("api-key").getDescription());
+        assertFalse(proxy.getConfiguration().get("api-key").isSelfResolving());
+
+        assertEquals("some.config.path", proxy.getConfiguration().get("token").getConfigPath());
+        assertTrue(proxy.getConfiguration().get("token").isSelfResolving());
+    }
+
+    @Test
+    void parseProxyBasicAuth() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: basic-auth-tool
+                proxy:
+                  configuration:
+                    password:
+                      config-path: "some.token"
+                      secret: true
+                  auth:
+                    - domains:
+                        - example.com
+                      type: basic
+                      username: "x-access-token"
+                      password: "${password}"
+                """));
+        var proxy = def.getProxy();
+        var ae = proxy.getAuth().get(0);
+        assertEquals("basic", ae.getType());
+        assertEquals("x-access-token", ae.getUsername());
+        assertEquals("${password}", ae.getPassword());
+        assertTrue(proxy.getConfiguration().get("password").isSelfResolving());
+    }
+
+    @Test
+    void parseProxyHeaderAuth() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: header-auth-tool
+                proxy:
+                  configuration:
+                    api-key:
+                      config-path: "ibm.apiKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.ibm.com
+                      type: header
+                      name: Authorization
+                      value: "Apikey ${api-key}"
+                """));
+        var ae = def.getProxy().getAuth().get(0);
+        assertEquals("header", ae.getType());
+        assertEquals("Authorization", ae.getName());
+        assertEquals("Apikey ${api-key}", ae.getValue());
+    }
+
+    @Test
+    void hasBuildStepsReturnsFalseForProxyOnly() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: proxy-only
+                proxy:
+                  configuration:
+                    token:
+                      config-path: "example.token"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """));
+        assertFalse(def.hasBuildSteps());
+    }
+
+    @Test
+    void hasBuildStepsReturnsTrueWhenPackagesPresent() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: build-tool
+                packages:
+                  - curl
+                proxy:
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """));
+        assertTrue(def.hasBuildSteps());
+    }
+
+    @Test
+    void proxyEntriesAffectFingerprint() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                proxy:
+                  auth:
+                    - domains:
+                        - a.example.com
+                      type: bearer
+                      token: "${t}"
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                proxy:
+                  auth:
+                    - domains:
+                        - b.example.com
+                      type: bearer
+                      token: "${t}"
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void parseProxyConfigEntryType() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: confirm-tool
+                proxy:
+                  configuration:
+                    license:
+                      config-path: "tool.licenseAccepted"
+                      type: confirm
+                      description: Accept license terms
+                    api-key:
+                      config-path: "tool.apiKey"
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${api-key}"
+                """));
+        var proxy = def.getProxy();
+        assertTrue(proxy.getConfiguration().get("license").isConfirm());
+        assertFalse(proxy.getConfiguration().get("api-key").isConfirm());
+        assertEquals("string", proxy.getConfiguration().get("api-key").getType());
+    }
+
     private static ByteArrayInputStream toStream(String yaml) {
         return new ByteArrayInputStream(yaml.getBytes(StandardCharsets.UTF_8));
     }

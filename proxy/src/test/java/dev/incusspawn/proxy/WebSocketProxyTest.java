@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.DerEncoder;
+import dev.incusspawn.tool.ToolDef;
 
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
@@ -21,6 +22,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -96,9 +99,14 @@ class WebSocketProxyTest {
         int healthPort = findFreePort();
 
         var credentials = new ProxyCredentials(
-                "", "", "", "", "sk-real-openai-key", false, "", "");
+                "", "", false, "", "");
         proxy = new MitmProxy(serverVertx, "127.0.0.1", mitmPort, healthPort,
                 "127.0.0.1", credentials);
+        var openaiAuth = new ToolDef.AuthDef();
+        openaiAuth.setType("bearer");
+        openaiAuth.setToken("${token}");
+        proxy.setToolProxies(List.of(new ResolvedToolProxy(
+                "codex", "api.openai.com", openaiAuth, Map.of("token", "sk-real-openai-key"))));
         proxy.upstreamWsPort = mockPort;
         proxy.upstreamWsSsl = true;
         proxy.upstreamTrustAll = true;

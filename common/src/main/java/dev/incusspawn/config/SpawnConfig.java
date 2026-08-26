@@ -1,5 +1,7 @@
 package dev.incusspawn.config;
 
+import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,6 +40,7 @@ public class SpawnConfig {
     private String incusBridgeGateway = "";
     @JsonProperty("auto-clone-repos")
     private String autoCloneRepos = "";
+    private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
@@ -146,6 +149,33 @@ public class SpawnConfig {
     public void setIncusBridgeGateway(String incusBridgeGateway) { this.incusBridgeGateway = incusBridgeGateway == null ? "" : incusBridgeGateway; }
     public String getAutoCloneRepos() { return autoCloneRepos; }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
+    @JsonAnySetter
+    public void setExtra(String key, Object value) { extras.put(key, value); }
+
+    @JsonAnyGetter
+    public Map<String, Object> getExtras() { return extras; }
+
+    @SuppressWarnings("unchecked")
+    public void setConfigByPath(String dotPath, String value) {
+        var segments = dotPath.split("\\.");
+        if (segments.length == 0) return;
+        if (segments.length == 1) {
+            extras.put(segments[0], value);
+            return;
+        }
+        Map<String, Object> current = extras;
+        for (int i = 0; i < segments.length - 1; i++) {
+            var next = current.get(segments[i]);
+            if (next instanceof Map) {
+                current = (Map<String, Object>) next;
+            } else {
+                var newMap = new java.util.LinkedHashMap<String, Object>();
+                current.put(segments[i], newMap);
+                current = newMap;
+            }
+        }
+        current.put(segments[segments.length - 1], value);
+    }
 
     public static Path configDir() {
         return Environment.configDir();

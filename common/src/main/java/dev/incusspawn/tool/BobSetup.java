@@ -35,6 +35,36 @@ public class BobSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Bob Shell — IBM AI coding assistant";
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("bob.apiKey");
+        apiKey.setDescription("IBM Bob API key");
+        apiKey.setSecret(true);
+
+        var license = new ToolDef.ConfigEntry();
+        license.setConfigPath("bob.licenseAccepted");
+        license.setType("confirm");
+        license.setDescription("Accept IBM license terms");
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("bob.ibm.com", "*.bob.ibm.com",
+                "us-east.bob.ibm.com", "eu-de.bob.ibm.com", "jp-tok.bob.ibm.com"));
+        auth.setType("header");
+        auth.setName("Authorization");
+        auth.setValue("Apikey ${api-key}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfiguration(Map.of("api-key", apiKey, "license", license));
+        proxy.setAuth(List.of(auth));
+        return proxy;
+    }
+
+    @Override
     public List<String> packages() {
         return List.of("nodejs");
     }
