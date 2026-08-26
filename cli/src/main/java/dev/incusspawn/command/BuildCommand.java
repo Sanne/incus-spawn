@@ -57,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Collectors;
 
@@ -2065,9 +2066,10 @@ public class BuildCommand extends BaseCommand {
             states.set(i, StepProgress.running("Cloning"));
         }
         int concurrency = Math.min(repos.size(), CpuInfo.highPerfCores());
+        var failureSeen = new AtomicBoolean(false);
         try {
             TerminalProgress.run(repos.size(), concurrency,
-                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx),
+                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen),
                     (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
                             repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
                     idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
@@ -2089,16 +2091,33 @@ public class BuildCommand extends BaseCommand {
     }
 
     /** Clone a repo and, on success, immediately prime it — recording progress/failure
-     *  in {@code states[idx]} rather than throwing. */
-    private void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
-                            AtomicReferenceArray<StepProgress> states, int idx) {
+     *  in {@code states[idx]} rather than throwing. {@code failureSeen} is a shared
+     *  best-effort fail-fast flag: once any repo has failed the build will abort, so a
+     *  clone that finishes afterwards skips its (potentially expensive) prime rather
+     *  than doing work that will be thrown away. Primes already in flight run to
+     *  completion — this only gates launching new ones. */
+    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+                    AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen) {
         var clone = cloneOne(container, repo, ref, states, idx);
-        if (!clone.success()) return; // failure already recorded in states[idx]
+        if (!clone.success()) {
+            failureSeen.set(true);
+            return; // failure already recorded in states[idx]
+        }
 
         String note = clone.usedReference() ? "via host reference" : null;
         if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+            if (failureSeen.get()) {
+                // Another repo already failed; don't start priming a build that's
+                // going to abort. The clone itself succeeded, so say so.
+                states.set(idx, StepProgress.done(note == null ? "priming skipped"
+                        : note + "; priming skipped"));
+                return;
+            }
             states.set(idx, StepProgress.running("Priming"));
-            if (!primeOne(container, repo, states, idx)) return; // failure recorded
+            if (!primeOne(container, repo, states, idx)) {
+                failureSeen.set(true);
+                return; // failure recorded
+            }
         }
         states.set(idx, StepProgress.done(note));
     }
