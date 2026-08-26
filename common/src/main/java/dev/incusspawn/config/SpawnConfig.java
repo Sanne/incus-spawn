@@ -41,7 +41,9 @@ public class SpawnConfig {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ClaudeConfig {
-        public static final String PLACEHOLDER_OAUTH_TOKEN = "sk-ant-oat01-placeholder";
+        /** Prefix of tokens minted by 'claude setup-token'. */
+        public static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
+        public static final String PLACEHOLDER_OAUTH_TOKEN = OAUTH_TOKEN_PREFIX + "placeholder";
 
         private boolean useVertex;
         private String cloudMlRegion = "";
@@ -52,13 +54,13 @@ public class SpawnConfig {
         public boolean isUseVertex() { return useVertex; }
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
         public String getCloudMlRegion() { return cloudMlRegion; }
-        public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion; }
+        public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion.strip(); }
         public String getVertexProjectId() { return vertexProjectId; }
-        public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId; }
+        public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId.strip(); }
         public String getApiKey() { return apiKey; }
-        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
         public String getOauthToken() { return oauthToken; }
-        public void setOauthToken(String oauthToken) { this.oauthToken = oauthToken == null ? "" : oauthToken; }
+        public void setOauthToken(String oauthToken) { this.oauthToken = oauthToken == null ? "" : oauthToken.strip(); }
 
         public boolean hasAuth() { return useVertex || !oauthToken.isBlank() || !apiKey.isBlank(); }
 
@@ -80,7 +82,7 @@ public class SpawnConfig {
         private String email = "";
 
         public String getToken() { return token; }
-        public void setToken(String token) { this.token = token == null ? "" : token; }
+        public void setToken(String token) { this.token = token == null ? "" : token.strip(); }
         public String getEmail() { return email; }
         public void setEmail(String email) { this.email = email == null ? "" : email; }
     }
@@ -91,7 +93,7 @@ public class SpawnConfig {
         private boolean licenseConsent;
 
         public String getApiKey() { return apiKey; }
-        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
         public boolean hasAuth() { return !apiKey.isBlank(); }
         public boolean isLicenseConsent() { return licenseConsent; }
         public void setLicenseConsent(boolean licenseConsent) { this.licenseConsent = licenseConsent; }
@@ -102,7 +104,7 @@ public class SpawnConfig {
         private String apiKey = "";
 
         public String getApiKey() { return apiKey; }
-        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
         public boolean hasAuth() { return !apiKey.isBlank(); }
     }
 
