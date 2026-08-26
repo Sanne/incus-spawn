@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.ImageDef;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -265,8 +266,8 @@ public class UpdateBaseCommand extends BaseCommand {
 
     private static HttpRequest.Builder githubRequest(String url) {
         var builder = HttpRequest.newBuilder(URI.create(url)).GET();
-        var token = System.getenv("GITHUB_TOKEN");
-        if (token != null && !token.isBlank()) {
+        var token = Environment.strippedEnv("GITHUB_TOKEN");
+        if (!token.isBlank()) {
             builder.header("Authorization", "Bearer " + token);
         }
         return builder;

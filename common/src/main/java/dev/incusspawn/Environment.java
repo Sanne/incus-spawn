@@ -17,6 +17,17 @@ import java.util.List;
 public final class Environment {
     private Environment() {}
 
+    /**
+     * An environment variable, stripped. Credentials arrive from shells, CI files and
+     * copy-paste with stray whitespace attached; a padded token concatenated into an
+     * {@code Authorization} header is rejected as if it were the wrong credential.
+     * Returns "" when unset, so callers need only an {@code isBlank()} check.
+     */
+    public static String strippedEnv(String name) {
+        var value = System.getenv(name);
+        return value == null ? "" : value.strip();
+    }
+
     public static Path home() {
         return Path.of(System.getProperty("user.home"));
     }

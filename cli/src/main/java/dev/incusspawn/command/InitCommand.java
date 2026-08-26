@@ -1182,12 +1182,12 @@ public class InitCommand extends BaseCommand {
 
         // Detect existing env vars
         var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
-        var envApiKey = strippedEnv("ANTHROPIC_API_KEY");
-        var envOauthToken = strippedEnv("CLAUDE_CODE_OAUTH_TOKEN");
+        var envApiKey = Environment.strippedEnv("ANTHROPIC_API_KEY");
+        var envOauthToken = Environment.strippedEnv("CLAUDE_CODE_OAUTH_TOKEN");
 
         if ("1".equals(envVertex)) {
-            var region = strippedEnv("CLOUD_ML_REGION");
-            var projectId = strippedEnv("ANTHROPIC_VERTEX_PROJECT_ID");
+            var region = Environment.strippedEnv("CLOUD_ML_REGION");
+            var projectId = Environment.strippedEnv("ANTHROPIC_VERTEX_PROJECT_ID");
             System.out.println("  Detected Vertex AI configuration from environment:");
             System.out.println("    Region:  " + (region.isBlank() ? "(not set)" : region));
             System.out.println("    Project: " + (projectId.isBlank() ? "(not set)" : projectId));
@@ -1380,12 +1380,6 @@ public class InitCommand extends BaseCommand {
             case "s" -> VerificationFailureAction.SAVE_UNVERIFIED;
             default -> null;
         };
-    }
-
-    /** Environment variable, stripped like every other credential this class reads. */
-    private static String strippedEnv(String name) {
-        var value = System.getenv(name);
-        return value == null ? "" : value.strip();
     }
 
     /**

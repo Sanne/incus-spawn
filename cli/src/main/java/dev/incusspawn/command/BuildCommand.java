@@ -1842,11 +1842,11 @@ public class BuildCommand extends BaseCommand {
         for (var branch : List.of("main", "master")) {
             var treeUrl = "https://api.github.com/repos/" + ownerRepo + "/git/trees/"
                     + branch + "?recursive=1";
-            var token = System.getenv("GITHUB_TOKEN");
+            var token = Environment.strippedEnv("GITHUB_TOKEN");
             var reqBuilder = HttpRequest.newBuilder(URI.create(treeUrl))
                     .timeout(Duration.ofSeconds(15))
                     .header("Accept", "application/vnd.github+json");
-            if (token != null && !token.isBlank()) {
+            if (!token.isBlank()) {
                 reqBuilder.header("Authorization", "Bearer " + token);
             }
             var response = http.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
