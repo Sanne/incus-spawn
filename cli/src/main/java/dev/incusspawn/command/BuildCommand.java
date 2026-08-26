@@ -2011,15 +2011,16 @@ public class BuildCommand extends BaseCommand {
 
     enum StepState { RUNNING, DONE, FAILED }
 
-    /** Progress state for one repo's clone or prime step. {@code note} is a dim
-     *  annotation shown on success; {@code detail} is a concise one-line error for the
-     *  inline display; {@code log} is the full captured command output, printed on
-     *  failure so the diagnostic isn't reduced to the single inline line. */
-    record StepProgress(StepState state, String note, String detail, String log) {
-        static StepProgress running() { return new StepProgress(StepState.RUNNING, null, null, null); }
-        static StepProgress done(String note) { return new StepProgress(StepState.DONE, note, null, null); }
+    /** Progress state for one repo's clone→prime pipeline. {@code activity} is the
+     *  live verb shown while RUNNING (e.g. "Cloning", then "Priming"); {@code note}
+     *  is a dim annotation shown on success; {@code detail} is a concise one-line
+     *  error for the inline display; {@code log} is the full captured command output,
+     *  printed on failure so the diagnostic isn't reduced to the single inline line. */
+    record StepProgress(StepState state, String activity, String note, String detail, String log) {
+        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, null, null); }
+        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, null, null); }
         static StepProgress failed(String detail, String log) {
-            return new StepProgress(StepState.FAILED, null, detail, log);
+            return new StepProgress(StepState.FAILED, null, null, detail, log);
         }
     }
 
@@ -2027,7 +2028,10 @@ public class BuildCommand extends BaseCommand {
      * Clone git repos declared in the image definition as agentuser.
      *
      * <p>Repos are cloned concurrently (bounded to the host's high-performance
-     * core count) with an animated per-repo progress display. Incus config
+     * core count) with an animated per-repo progress display. Each repo's
+     * declared {@code prime} command runs in the same worker as soon as that
+     * repo's clone finishes, so priming pipelines with the remaining clones
+     * instead of waiting for the whole clone batch to complete. Incus config
      * mutations — mounting/removing the host-reference disk devices — are kept
      * out of the parallel section (serial phases before and after) because
      * concurrent instance-config edits can conflict. Each reference stays mounted
@@ -2053,18 +2057,20 @@ public class BuildCommand extends BaseCommand {
         }
 
         // Phase 2 (parallel, bounded): clone each repo, dissociate from its
-        // reference, and restore the fetch refspec.
+        // reference, restore the fetch refspec, then prime it — all in one worker
+        // so priming starts as soon as that repo's clone finishes rather than
+        // waiting at a barrier for the whole clone batch.
         var states = new AtomicReferenceArray<StepProgress>(repos.size());
         for (int i = 0; i < repos.size(); i++) {
-            states.set(i, StepProgress.running());
+            states.set(i, StepProgress.running("Cloning"));
         }
         int concurrency = Math.min(repos.size(), CpuInfo.highPerfCores());
         try {
             TerminalProgress.run(repos.size(), concurrency,
-                    idx -> cloneOne(container, repos.get(idx), refs[idx], states, idx),
+                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx),
                     (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
-                            repos.get(idx).getUrl(), states.get(idx), frame, "Cloning", "Cloned"),
-                    idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Cloned", "clone"),
+                            repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
+                    idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
                     System.out::println);
         } finally {
             // Phase 3 (serial): remove all reference devices.
@@ -2079,14 +2085,33 @@ public class BuildCommand extends BaseCommand {
             }
         }
 
-        assertNoStepFailures(repos, states, "clone");
-
-        runPrime(container, repos);
+        assertNoStepFailures(repos, states, "prepare");
     }
 
-    /** Clone a single repo, recording progress/failure in {@code states[idx]} rather than throwing. */
-    private void cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
-                          AtomicReferenceArray<StepProgress> states, int idx) {
+    /** Clone a repo and, on success, immediately prime it — recording progress/failure
+     *  in {@code states[idx]} rather than throwing. */
+    private void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+                            AtomicReferenceArray<StepProgress> states, int idx) {
+        var clone = cloneOne(container, repo, ref, states, idx);
+        if (!clone.success()) return; // failure already recorded in states[idx]
+
+        String note = clone.usedReference() ? "via host reference" : null;
+        if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+            states.set(idx, StepProgress.running("Priming"));
+            if (!primeOne(container, repo, states, idx)) return; // failure recorded
+        }
+        states.set(idx, StepProgress.done(note));
+    }
+
+    private record CloneResult(boolean success, boolean usedReference) {
+        static final CloneResult FAILED = new CloneResult(false, false);
+    }
+
+    /** Clone a single repo. On failure records it in {@code states[idx]} and returns
+     *  {@link CloneResult#FAILED}; on success returns without setting a terminal state
+     *  (the caller finalizes it once priming, if any, is done). */
+    private CloneResult cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+                                 AtomicReferenceArray<StepProgress> states, int idx) {
         try {
             boolean usedReference = false;
 
@@ -2117,7 +2142,7 @@ public class BuildCommand extends BaseCommand {
                 var clone = container.shAsUser("agentuser", buildCloneCommand(repo, null));
                 if (!clone.success()) {
                     states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
-                    return;
+                    return CloneResult.FAILED;
                 }
             }
 
@@ -2129,54 +2154,33 @@ public class BuildCommand extends BaseCommand {
                     "git -C " + repoPath + " remote set-branches origin '*'");
             if (!restore.success()) {
                 states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
-                return;
+                return CloneResult.FAILED;
             }
 
-            states.set(idx, StepProgress.done(usedReference ? "via host reference" : null));
+            return new CloneResult(true, usedReference);
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));
+            return CloneResult.FAILED;
         }
     }
 
-    /** Run declared prime commands concurrently (bounded to high-performance cores). */
-    private void runPrime(Container container, List<ImageDef.RepoEntry> repos) {
-        var toPrime = new ArrayList<ImageDef.RepoEntry>();
-        for (var repo : repos) {
-            if (repo.getPrime() != null && !repo.getPrime().isBlank()) toPrime.add(repo);
-        }
-        if (toPrime.isEmpty()) return;
-
-        var states = new AtomicReferenceArray<StepProgress>(toPrime.size());
-        for (int i = 0; i < toPrime.size(); i++) {
-            states.set(i, StepProgress.running());
-        }
-        int concurrency = Math.min(toPrime.size(), CpuInfo.highPerfCores());
-        TerminalProgress.run(toPrime.size(), concurrency,
-                idx -> primeOne(container, toPrime.get(idx), states, idx),
-                (idx, frame) -> formatStepLine(toPrime.get(idx).getPath(),
-                        null, states.get(idx), frame, "Priming", "Primed"),
-                idx -> plainStepLine(toPrime.get(idx).getPath(), states.get(idx), "Primed", "prime"),
-                System.out::println);
-
-        assertNoStepFailures(toPrime, states, "prime");
-    }
-
-    private void primeOne(Container container, ImageDef.RepoEntry repo,
-                          AtomicReferenceArray<StepProgress> states, int idx) {
+    /** Run a repo's prime command. Returns true on success; on failure records it in
+     *  {@code states[idx]} and returns false. */
+    private boolean primeOne(Container container, ImageDef.RepoEntry repo,
+                             AtomicReferenceArray<StepProgress> states, int idx) {
         try {
             var expanded = expandHome(repo.getPath());
             var result = container.shAsUser("agentuser",
                     "cd " + shellQuote(expanded) + " && " + repo.getPrime());
-            if (result.success()) {
-                states.set(idx, StepProgress.done(null));
-            } else {
-                // Prime output is not git, so use the last meaningful line for the
-                // concise inline label; the full log is preserved and printed on failure.
-                var combined = combinedOutput(result);
-                states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
-            }
+            if (result.success()) return true;
+            // Prime output is not git, so use the last meaningful line for the
+            // concise inline label; the full log is preserved and printed on failure.
+            var combined = combinedOutput(result);
+            states.set(idx, StepProgress.failed(lastNonEmptyLine(combined), combined));
+            return false;
         } catch (Exception e) {
             states.set(idx, StepProgress.failed(e.getMessage(), null));
+            return false;
         }
     }
 
@@ -2214,9 +2218,12 @@ public class BuildCommand extends BaseCommand {
         return name.isEmpty() ? repo.getUrl() : name;
     }
 
-    /** Render one animated progress line, aligned across running/done/failed states. */
+    /** Render one animated progress line, aligned across running/done/failed states.
+     *  The running verb comes from the live state ({@code activity}) so a task can
+     *  advance through phases (e.g. Cloning → Priming) within one line. */
     static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
-                                 String runningWord, String doneWord) {
+                                 String doneWord) {
+        var runningWord = progress.activity() != null ? progress.activity() : "Working";
         var sb = new StringBuilder("  ");
         switch (progress.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
