@@ -175,4 +175,31 @@ class SpawnConfigTest {
         assertEquals("~/my-templates", paths.get(0));
         assertEquals("/absolute/path", paths.get(1));
     }
+
+    @Test
+    void credentialSettersStripWhitespace() {
+        var config = new SpawnConfig();
+        config.getClaude().setOauthToken("  sk-ant-oat01-abc\n");
+        config.getGithub().setToken("\tghp_abc ");
+        assertEquals("sk-ant-oat01-abc", config.getClaude().getOauthToken());
+        assertEquals("ghp_abc", config.getGithub().getToken());
+    }
+
+    @Test
+    void deserializeRepairsPaddedCredential() throws Exception {
+        // A config.yaml written by an isx that did not trim pasted secrets is healed on load,
+        // so the proxy never injects a credential with stray whitespace.
+        var yaml = """
+                claude:
+                  oauthToken: "sk-ant-oat01-abc "
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertEquals("sk-ant-oat01-abc", config.getClaude().getOauthToken());
+    }
+
+    @Test
+    void placeholderOauthTokenCarriesThePrefix() {
+        assertTrue(SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN
+                .startsWith(SpawnConfig.ClaudeConfig.OAUTH_TOKEN_PREFIX));
+    }
 }

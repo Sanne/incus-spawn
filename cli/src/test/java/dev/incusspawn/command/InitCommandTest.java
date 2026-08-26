@@ -376,24 +376,15 @@ class InitCommandTest {
                 java.util.List.of("/home/user/other-templates", "/home/user/incus-spawn-templates")));
     }
 
-    // --- pasted-secret handling -------------------------------------------
+    // --- pasted secrets ---
 
     @Test
-    void normalizeSecretTrimsSurroundingWhitespace() {
-        assertEquals("sk-ant-oat01-abc", InitCommand.normalizeSecret("  sk-ant-oat01-abc\t".toCharArray()));
+    void readSecretStripsSurroundingWhitespaceAndToleratesNull() {
+        assertEquals("sk-ant-oat01-abc", InitCommand.readSecret("  sk-ant-oat01-abc\t".toCharArray()));
+        assertEquals("", InitCommand.readSecret(null));
     }
 
-    @Test
-    void normalizeSecretPreservesInteriorCharacters() {
-        assertEquals("sk-ant-oat01-a_b-c", InitCommand.normalizeSecret("sk-ant-oat01-a_b-c".toCharArray()));
-    }
-
-    @Test
-    void normalizeSecretHandlesNullInput() {
-        assertEquals("", InitCommand.normalizeSecret(null));
-    }
-
-    // --- OAuth token shape check ------------------------------------------
+    // --- OAuth token shape check ---
 
     private static String oauthToken(int length) {
         var prefix = "sk-ant-oat01-";
@@ -426,39 +417,39 @@ class InitCommandTest {
         assertTrue(InitCommand.oauthTokenShapeWarning(null).isEmpty());
     }
 
-    // --- API error detail extraction --------------------------------------
+    // --- API error detail ---
 
     @Test
-    void apiErrorDetailExtractsMessage() {
-        assertEquals("model: Field required", InitCommand.apiErrorDetail(
+    void apiErrorSuffixExtractsMessage() {
+        assertEquals(" API said: model: Field required", InitCommand.apiErrorSuffix(
                 "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
-                        + "\"message\":\"model: Field required\"}}").orElseThrow());
+                        + "\"message\":\"model: Field required\"}}"));
     }
 
     @Test
-    void apiErrorDetailCollapsesWhitespaceToOneLine() {
-        assertEquals("first second", InitCommand.apiErrorDetail(
-                "{\"error\":{\"message\":\"first\\n  second\"}}").orElseThrow());
+    void apiErrorSuffixCollapsesWhitespaceToOneLine() {
+        assertEquals(" API said: first second", InitCommand.apiErrorSuffix(
+                "{\"error\":{\"message\":\"first\\n  second\"}}"));
     }
 
     @Test
-    void apiErrorDetailTruncatesOverlongMessage() {
-        var detail = InitCommand.apiErrorDetail(
-                "{\"error\":{\"message\":\"" + "x".repeat(500) + "\"}}").orElseThrow();
-        assertEquals(201, detail.length());
-        assertTrue(detail.endsWith("\u2026"), detail);
+    void apiErrorSuffixTruncatesOverlongMessage() {
+        var suffix = InitCommand.apiErrorSuffix(
+                "{\"error\":{\"message\":\"" + "x".repeat(500) + "\"}}");
+        assertTrue(suffix.endsWith("\u2026"), suffix);
+        assertEquals(" API said: ".length() + 201, suffix.length());
     }
 
     @Test
-    void apiErrorDetailIgnoresMalformedBody() {
-        assertTrue(InitCommand.apiErrorDetail("not json at all").isEmpty());
-        assertTrue(InitCommand.apiErrorDetail("").isEmpty());
-        assertTrue(InitCommand.apiErrorDetail(null).isEmpty());
+    void apiErrorSuffixIgnoresMalformedBody() {
+        assertEquals("", InitCommand.apiErrorSuffix("not json at all"));
+        assertEquals("", InitCommand.apiErrorSuffix(""));
+        assertEquals("", InitCommand.apiErrorSuffix(null));
     }
 
     @Test
-    void apiErrorDetailIgnoresNonTextualMessage() {
-        assertTrue(InitCommand.apiErrorDetail("{\"error\":{\"message\":{\"nested\":1}}}").isEmpty());
-        assertTrue(InitCommand.apiErrorDetail("{\"error\":{\"message\":\"  \"}}").isEmpty());
+    void apiErrorSuffixIgnoresNonTextualMessage() {
+        assertEquals("", InitCommand.apiErrorSuffix("{\"error\":{\"message\":{\"nested\":1}}}"));
+        assertEquals("", InitCommand.apiErrorSuffix("{\"error\":{\"message\":\"  \"}}"));
     }
 }
