@@ -375,4 +375,90 @@ class InitCommandTest {
         assertTrue(InitCommand.hasExistingTemplatesSearchPath(
                 java.util.List.of("/home/user/other-templates", "/home/user/incus-spawn-templates")));
     }
+
+    // --- pasted-secret handling -------------------------------------------
+
+    @Test
+    void normalizeSecretTrimsSurroundingWhitespace() {
+        assertEquals("sk-ant-oat01-abc", InitCommand.normalizeSecret("  sk-ant-oat01-abc\t".toCharArray()));
+    }
+
+    @Test
+    void normalizeSecretPreservesInteriorCharacters() {
+        assertEquals("sk-ant-oat01-a_b-c", InitCommand.normalizeSecret("sk-ant-oat01-a_b-c".toCharArray()));
+    }
+
+    @Test
+    void normalizeSecretHandlesNullInput() {
+        assertEquals("", InitCommand.normalizeSecret(null));
+    }
+
+    // --- OAuth token shape check ------------------------------------------
+
+    private static String oauthToken(int length) {
+        var prefix = "sk-ant-oat01-";
+        return prefix + "a".repeat(length - prefix.length());
+    }
+
+    @Test
+    void wellFormedOauthTokenProducesNoWarning() {
+        assertTrue(InitCommand.oauthTokenShapeWarning(oauthToken(108)).isEmpty());
+    }
+
+    @Test
+    void truncatedOauthTokenWarnsWithItsLength() {
+        var warning = InitCommand.oauthTokenShapeWarning(oauthToken(73));
+        assertTrue(warning.isPresent());
+        assertTrue(warning.get().contains("73"), warning.get());
+        assertTrue(warning.get().contains("wrapped"), warning.get());
+    }
+
+    @Test
+    void unexpectedPrefixWarns() {
+        var warning = InitCommand.oauthTokenShapeWarning("sk-ant-api03-" + "a".repeat(95));
+        assertTrue(warning.isPresent());
+        assertTrue(warning.get().contains("sk-ant-oat01-"), warning.get());
+    }
+
+    @Test
+    void blankOauthTokenProducesNoWarning() {
+        assertTrue(InitCommand.oauthTokenShapeWarning("   ").isEmpty());
+        assertTrue(InitCommand.oauthTokenShapeWarning(null).isEmpty());
+    }
+
+    // --- API error detail extraction --------------------------------------
+
+    @Test
+    void apiErrorDetailExtractsMessage() {
+        assertEquals("model: Field required", InitCommand.apiErrorDetail(
+                "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+                        + "\"message\":\"model: Field required\"}}").orElseThrow());
+    }
+
+    @Test
+    void apiErrorDetailCollapsesWhitespaceToOneLine() {
+        assertEquals("first second", InitCommand.apiErrorDetail(
+                "{\"error\":{\"message\":\"first\\n  second\"}}").orElseThrow());
+    }
+
+    @Test
+    void apiErrorDetailTruncatesOverlongMessage() {
+        var detail = InitCommand.apiErrorDetail(
+                "{\"error\":{\"message\":\"" + "x".repeat(500) + "\"}}").orElseThrow();
+        assertEquals(201, detail.length());
+        assertTrue(detail.endsWith("\u2026"), detail);
+    }
+
+    @Test
+    void apiErrorDetailIgnoresMalformedBody() {
+        assertTrue(InitCommand.apiErrorDetail("not json at all").isEmpty());
+        assertTrue(InitCommand.apiErrorDetail("").isEmpty());
+        assertTrue(InitCommand.apiErrorDetail(null).isEmpty());
+    }
+
+    @Test
+    void apiErrorDetailIgnoresNonTextualMessage() {
+        assertTrue(InitCommand.apiErrorDetail("{\"error\":{\"message\":{\"nested\":1}}}").isEmpty());
+        assertTrue(InitCommand.apiErrorDetail("{\"error\":{\"message\":\"  \"}}").isEmpty());
+    }
 }
