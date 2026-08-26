@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -1179,8 +1180,8 @@ public class InitCommand extends BaseCommand {
 
         // Detect existing env vars
         var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
-        var envApiKey = System.getenv("ANTHROPIC_API_KEY");
-        var envOauthToken = System.getenv("CLAUDE_CODE_OAUTH_TOKEN");
+        var envApiKey = strippedEnv("ANTHROPIC_API_KEY");
+        var envOauthToken = strippedEnv("CLAUDE_CODE_OAUTH_TOKEN");
 
         if ("1".equals(envVertex)) {
             var region = System.getenv().getOrDefault("CLOUD_ML_REGION", "");
@@ -1319,7 +1320,7 @@ public class InitCommand extends BaseCommand {
         } else if (authChoice.equals("1")) {
             while (true) {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
-                var key = new String(console.readPassword());
+                var key = readSecret(console);
                 if (key.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     break;
@@ -1379,6 +1380,81 @@ public class InitCommand extends BaseCommand {
         };
     }
 
+    /**
+     * Read a secret from the console, trimming surrounding whitespace.
+     *
+     * Every {@code readLine()} prompt in this class strips its input; secrets must do
+     * the same or a paste that picks up a stray leading/trailing space silently becomes
+     * a different credential and is reported as rejected by the remote API.
+     */
+    private static String strippedEnv(String name) {
+        var value = System.getenv(name);
+        return value == null ? null : value.strip();
+    }
+
+    private static String readSecret(Console console) {
+        return normalizeSecret(console.readPassword());
+    }
+
+    /** {@link #readSecret} without the console, so the trimming is testable. */
+    static String normalizeSecret(char[] chars) {
+        return chars == null ? "" : new String(chars).strip();
+    }
+
+    private static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
+
+    /**
+     * Tokens from 'claude setup-token' run to about 108 characters. Anything much
+     * shorter is almost always a paste truncated where the terminal wrapped the line
+     * (readPassword() stops at the first newline), which is worth naming rather than
+     * letting the API report it as an expired credential.
+     */
+    private static final int OAUTH_TOKEN_MIN_PLAUSIBLE_LENGTH = 90;
+
+    /**
+     * Non-fatal sanity check on a pasted OAuth token. Anthropic may change the format
+     * at any time, so a mismatch only warns — verification against the API remains the
+     * authority.
+     */
+    static Optional<String> oauthTokenShapeWarning(String token) {
+        if (token == null || token.isBlank()) {
+            return Optional.empty();
+        }
+        if (!token.startsWith(OAUTH_TOKEN_PREFIX)) {
+            return Optional.of("Note: token does not start with '" + OAUTH_TOKEN_PREFIX
+                    + "' (unexpected format for 'claude setup-token' output).");
+        }
+        if (token.length() < OAUTH_TOKEN_MIN_PLAUSIBLE_LENGTH) {
+            return Optional.of("Note: token is " + token.length() + " characters, shorter than expected."
+                    + " If your terminal wrapped the token, the paste may have been cut short.");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Extract {@code error.message} from an Anthropic error body so a failure says what
+     * the API objected to. Remote input: a malformed, empty, or oversized body must
+     * yield no detail rather than throwing or flooding the terminal.
+     */
+    static Optional<String> apiErrorDetail(String body) {
+        if (body == null || body.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            var message = new ObjectMapper().readTree(body).path("error").path("message");
+            if (!message.isTextual()) {
+                return Optional.empty();
+            }
+            var text = message.asText().replaceAll("\\s+", " ").strip();
+            if (text.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.of(text.length() > 200 ? text.substring(0, 200) + "\u2026" : text);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
     private static final String[] KNOWN_PREFIXES = {"github_pat_", "sk-ant-", "ghp_"};
 
     static String maskSecret(String secret) {
@@ -1423,6 +1499,7 @@ public class InitCommand extends BaseCommand {
     }
 
     private AuthResult verifyOauthToken(String token) {
+        oauthTokenShapeWarning(token).ifPresent(warning -> System.out.println("  " + warning));
         return verifyAnthropicCredential("Authorization", "Bearer " + token, "OAuth token");
     }
 
@@ -1438,12 +1515,13 @@ public class InitCommand extends BaseCommand {
                     .POST(HttpRequest.BodyPublishers.ofString("{}"))
                     .build();
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            var detail = apiErrorDetail(response.body()).map(d -> " API said: " + d).orElse("");
 
             return switch (response.statusCode()) {
                 case 400 -> new AuthResult(true, label + " verified.");
-                case 401 -> new AuthResult(false, label + " rejected (HTTP 401). It may be expired or invalid.");
+                case 401 -> new AuthResult(false, label + " rejected (HTTP 401). It may be expired or invalid." + detail);
                 case 403 -> new AuthResult(true, label + " accepted (HTTP 403). It may have restricted permissions.");
-                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The " + label.toLowerCase() + " may be invalid.");
+                default -> new AuthResult(false, "Unexpected response (HTTP " + response.statusCode() + "). The " + label.toLowerCase() + " may be invalid." + detail);
             };
         } catch (Exception e) {
             return new AuthResult(false, "Could not reach api.anthropic.com: " + e.getMessage());
@@ -1477,7 +1555,7 @@ public class InitCommand extends BaseCommand {
 
         while (true) {
             System.out.print("  Paste your OAuth token (or press Enter to skip): ");
-            var token = new String(console.readPassword());
+            var token = readSecret(console);
             if (token.isBlank()) {
                 System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                 break;
@@ -1601,7 +1679,7 @@ public class InitCommand extends BaseCommand {
 
         while (true) {
             System.out.print("  GitHub PAT (or press Enter to skip): ");
-            var token = new String(console.readPassword());
+            var token = readSecret(console);
             if (token.isBlank()) {
                 System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                 break;
@@ -1630,7 +1708,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("      " + patSettingsUrl(token));
             System.out.println("    • Or make your email public at https://github.com/settings/profile");
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
-            var newToken = new String(console.readPassword());
+            var newToken = readSecret(console);
             if (newToken.isBlank()) {
                 config.getGithub().setToken(token);
                 config.save();
@@ -1822,8 +1900,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("    4. Copy the generated key");
         System.out.println();
         System.out.print("  Bob API key (or press Enter to skip): ");
-        var passwordChars = console.readPassword();
-        var apiKey = passwordChars != null ? new String(passwordChars) : "";
+        var apiKey = readSecret(console);
         if (apiKey.isBlank()) {
             System.out.println("  Skipped Bob setup. You can configure it later by re-running 'isx init'.");
             return;
@@ -1874,8 +1951,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  Add credits at https://platform.openai.com/settings/organization/billing");
         System.out.println();
         System.out.print("  OpenAI API key (or press Enter to skip): ");
-        var passwordChars = console.readPassword();
-        var apiKey = passwordChars != null ? new String(passwordChars) : "";
+        var apiKey = readSecret(console);
         if (apiKey.isBlank()) {
             System.out.println("  Skipped OpenAI setup. You can configure it later by re-running 'isx init'.");
             return;
