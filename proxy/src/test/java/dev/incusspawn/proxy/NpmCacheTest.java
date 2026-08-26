@@ -15,9 +15,9 @@ class NpmCacheTest {
     @Test
     void npmDomainsAreIntercepted() {
         for (var domain : ProxyConfig.NPM_DOMAINS) {
-            assertTrue(ProxyConfig.isInterceptedDomain(domain),
+            assertTrue(ProxyConfig.isInterceptedDomain(domain, ProxyConfig.builtinInterceptedDomains(), java.util.List.of()),
                     domain + " should be intercepted");
-            assertTrue(ProxyConfig.interceptedDomains().contains(domain),
+            assertTrue(ProxyConfig.builtinInterceptedDomains().contains(domain),
                     domain + " should be in interceptedDomains()");
         }
     }

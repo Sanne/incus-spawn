@@ -287,10 +287,12 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkCredentials() {
         var config = SpawnConfig.load();
+        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
+        if (unresolved.isEmpty()) return Finding.ok("Credentials", "configured");
         var missing = new ArrayList<String>();
-        if (!config.getClaude().hasAuth()) missing.add("Claude API key/OAuth/Vertex");
-        if (config.getGithub().getToken().isBlank()) missing.add("GitHub token");
-        if (missing.isEmpty()) return Finding.ok("Credentials", "configured");
+        for (var u : unresolved) {
+            missing.add(u.toolName() + " " + u.configKey());
+        }
         return Finding.warn("Missing credentials", "(" + String.join(", ", missing) + ")",
                 new Remediation("Run 'isx init' to configure", false, null));
     }
@@ -799,13 +801,13 @@ public class DoctorCommand extends BaseCommand {
         var incus = RuntimeServices.incus();
         var findings = new ArrayList<Finding>();
         findings.add(checkProxyRunning(incus));
+        findings.addAll(checkProxyDrift(incus));
         ProxyHealthCheck.ProxyInfo info;
         try {
             info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
         } catch (Exception e) {
             info = null;
         }
-        findings.add(checkProxyVersionDrift(info));
         var authFinding = checkProxyAuth(info);
         if (authFinding != null) findings.add(authFinding);
         return findings;
@@ -829,18 +831,27 @@ public class DoctorCommand extends BaseCommand {
         };
     }
 
-    private Finding checkProxyVersionDrift(ProxyHealthCheck.ProxyInfo info) {
-        if (info == null) return Finding.ok("Proxy version", "(proxy not reachable, skipped)");
-        var drift = ProxyHealthCheck.checkVersionDrift(info);
-        if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
-        if (ProxyService.isActive()) {
-            var incus = RuntimeServices.incus();
-            return Finding.warn("Proxy version drift", drift,
-                    new Remediation("Restart proxy service to update", false,
-                            () -> ProxyService.reinstallIfChanged(incus)));
+    private List<Finding> checkProxyDrift(IncusClient incus) {
+        try {
+            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+            if (info == null) return List.of(Finding.ok("Proxy version", "(proxy not reachable, skipped)"));
+            var drifts = ProxyHealthCheck.checkDrift(info);
+            if (drifts.isEmpty()) {
+                return List.of(Finding.ok("Proxy version", "matches CLI"));
+            }
+            Remediation restart = ProxyService.isActive()
+                    ? new Remediation("Restart proxy service to update", false,
+                            () -> ProxyService.reinstallIfChanged(incus))
+                    : new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null);
+            var findings = new ArrayList<Finding>();
+            for (var drift : drifts) {
+                findings.add(Finding.warn("Proxy drift", drift,
+                        findings.isEmpty() ? restart : null));
+            }
+            return findings;
+        } catch (Exception e) {
+            return List.of(Finding.ok("Proxy version", "(could not check)"));
         }
-        return Finding.warn("Proxy version drift", drift,
-                new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
     }
 
     private Finding checkProxyAuth(ProxyHealthCheck.ProxyInfo info) {

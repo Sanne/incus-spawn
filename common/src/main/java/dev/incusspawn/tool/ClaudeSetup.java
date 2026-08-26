@@ -33,6 +33,33 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Claude Code — AI coding assistant";
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("claude.apiKey");
+        apiKey.setDescription("Anthropic API key");
+        apiKey.setSecret(true);
+
+        var oauthToken = new ToolDef.ConfigEntry();
+        oauthToken.setConfigPath("claude.oauthToken");
+        oauthToken.setDescription("Claude Pro/Max OAuth token");
+        oauthToken.setSecret(true);
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("api.anthropic.com"));
+        auth.setType("anthropic");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfiguration(Map.of("api-key", apiKey, "oauth-token", oauthToken));
+        proxy.setAuth(List.of(auth));
+        return proxy;
+    }
+
+    @Override
     public List<ToolDef.ActionEntry> actions() {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Claude Code");

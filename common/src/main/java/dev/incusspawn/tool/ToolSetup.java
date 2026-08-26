@@ -13,6 +13,12 @@ public interface ToolSetup {
     /** Short name for display during build (e.g. "podman", "gh", "claude"). */
     String name();
 
+    /** Human-readable description shown in menus (e.g. "GitHub — PAT for git operations"). */
+    default String description() { return ""; }
+
+    /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
+    default ToolDef.ProxyDef proxy() { return null; }
+
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
     default String feature() { return null; }
 

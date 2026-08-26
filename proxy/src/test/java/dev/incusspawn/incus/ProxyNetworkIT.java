@@ -58,7 +58,8 @@ class ProxyNetworkIT {
 
         vertx = Vertx.vertx();
         proxy = new MitmProxy(vertx, proxyAddress, 18443, 18080, proxyAddress,
-                new dev.incusspawn.proxy.ProxyCredentials(DUMMY_API_KEY, "", "", "", "", false, "", ""));
+                new dev.incusspawn.proxy.ProxyCredentials(DUMMY_API_KEY, "", false, "", "",
+                        java.util.List.of(), ""));
 
         Thread.ofPlatform().daemon().start(() -> {
             try {

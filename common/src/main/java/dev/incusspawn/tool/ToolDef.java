@@ -58,6 +58,7 @@ public class ToolDef {
     private List<ImageDef.PackageRepo> packageRepos = List.of();
     private Map<String, ParameterDef> parameters = Map.of();
     private String feature;
+    private ProxyDef proxy;
 
     private transient volatile String cachedFingerprint;
 
@@ -93,6 +94,8 @@ public class ToolDef {
     }
     public String getFeature() { return feature; }
     public void setFeature(String feature) { this.feature = feature != null && feature.isBlank() ? null : feature; }
+    public ProxyDef getProxy() { return proxy; }
+    public void setProxy(ProxyDef proxy) { this.proxy = proxy; }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DownloadEntry {
@@ -324,6 +327,79 @@ public class ToolDef {
         public void setReconfigurable(boolean reconfigurable) { this.reconfigurable = reconfigurable; }
     }
 
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ProxyDef {
+        private Map<String, ConfigEntry> configuration = Map.of();
+        private List<AuthDef> auth = List.of();
+
+        public Map<String, ConfigEntry> getConfiguration() { return configuration; }
+        public void setConfiguration(Map<String, ConfigEntry> configuration) {
+            this.configuration = configuration != null ? configuration : Map.of();
+        }
+        public List<AuthDef> getAuth() { return auth; }
+        public void setAuth(List<AuthDef> auth) { this.auth = auth != null ? auth : List.of(); }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ConfigEntry {
+        private String type = "string"; // "string" or "confirm"
+        private String description = "";
+        private boolean secret = false;
+        @JsonProperty("config-path")
+        private String configPath = "";
+        private String value = "";
+        private List<String> help = List.of();
+
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type != null ? type : "string"; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description != null ? description : ""; }
+        public boolean isSecret() { return secret; }
+        public void setSecret(boolean secret) { this.secret = secret; }
+        public String getConfigPath() { return configPath; }
+        public void setConfigPath(String configPath) { this.configPath = configPath != null ? configPath : ""; }
+        public String getValue() { return value; }
+        public void setValue(String value) { this.value = value != null ? value : ""; }
+        public List<String> getHelp() { return help; }
+        public void setHelp(List<String> help) { this.help = help != null ? help : List.of(); }
+        public boolean isSelfResolving() { return !configPath.isBlank() || !this.value.isBlank(); }
+        public boolean isConfirm() { return "confirm".equals(type); }
+    }
+
+    @RegisterForReflection
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AuthDef {
+        private List<String> domains = List.of();
+        private String type;       // "basic", "bearer", "header", "anthropic"
+        private String username;   // for basic: literal or ${configKey} template
+        private String password;   // for basic: literal or ${configKey} template
+        private String token;      // for bearer: literal or ${configKey} template
+        private String name;       // for header: the header name
+        private String value;      // for header: template with ${configKey} substitution
+
+        public List<String> getDomains() { return domains; }
+        public void setDomains(List<String> domains) { this.domains = domains != null ? domains : List.of(); }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+        public String getPassword() { return password; }
+        public void setPassword(String password) { this.password = password; }
+        public String getToken() { return token; }
+        public void setToken(String token) { this.token = token; }
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getValue() { return value; }
+        public void setValue(String value) { this.value = value; }
+    }
+
+    public boolean hasBuildSteps() {
+        return !packages.isEmpty() || !downloads.isEmpty() || !run.isEmpty()
+            || !runAsUser.isEmpty() || !files.isEmpty() || !packageRepos.isEmpty();
+    }
+
     public String contentFingerprint() {
         var result = cachedFingerprint;
         if (result != null) return result;
@@ -359,6 +435,17 @@ public class ToolDef {
                     .forEach(e -> sb.append(',').append(e.getKey()).append('=').append(e.getValue()));
             }
             sb.append('\n');
+        }
+        if (proxy != null) {
+            proxy.configuration.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                    .forEach(e -> sb.append("config=").append(e.getKey())
+                            .append(':').append(e.getValue().configPath)
+                            .append(':').append(e.getValue().value).append('\n'));
+            for (var ae : proxy.auth) {
+                sb.append("auth=");
+                ae.domains.stream().sorted().forEach(d -> sb.append(d).append(','));
+                sb.append(ae.type != null ? ae.type : "").append('\n');
+            }
         }
         if (verify != null) sb.append("verify=").append(verify).append('\n');
         parameters.entrySet().stream()
@@ -427,7 +514,7 @@ public class ToolDef {
         }
     }
 
-    static ToolDef loadFromStream(InputStream is) throws IOException {
+    public static ToolDef loadFromStream(InputStream is) throws IOException {
         return YAML.readValue(is, ToolDef.class);
     }
 }

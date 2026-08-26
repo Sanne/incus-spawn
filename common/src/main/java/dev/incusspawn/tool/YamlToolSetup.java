@@ -34,6 +34,16 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return def.getDescription();
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        return def.getProxy();
+    }
+
+    @Override
     public String feature() {
         return def.getFeature();
     }
