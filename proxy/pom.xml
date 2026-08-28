@@ -160,12 +160,15 @@
           native image cannot use AES-NI/GHASH intrinsics and TLS bulk encryption
           falls back to software AES. Since every byte through this proxy is
           AES-GCM encrypted on both legs, that costs ~5x: measured 65 MB/s at v3
-          vs 351 MB/s at skylake serving a cached Maven artifact.
+          vs 363 MB/s at skylake serving a cached Maven artifact.
 
-          skylake is v3 + AES + CLMUL + ADX. AES-NI shipped in 2010, three years
-          before the AVX2/BMI2 that v3 already requires, so this excludes nothing
-          v3 did not; ADX (Broadwell, 2014) is the only real narrowing. Chosen
-          over haswell as a deliberately stable floor we do not want to revisit.
+          skylake is v3 + AES + CLMUL + ADX. The AES and CLMUL half costs no reach
+          at all: AES-NI shipped in 2010, three years before the AVX2/BMI2 that v3
+          already requires. ADX does narrow the baseline — it arrives with Broadwell
+          (2014) and AMD Zen (2017), so Intel Haswell (2013-14) and AMD Excavator
+          run v3 code but not this. That narrowing is accepted deliberately, as a
+          stable floor we do not want to revisit; haswell would avoid it and
+          measures ~4% slower (349 MB/s).
 
           Do NOT "upgrade" this to x86-64-v4: the numbered levels never include
           AES, so v4 measures identically to v3 (65 MB/s) while dropping all
