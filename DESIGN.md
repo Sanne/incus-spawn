@@ -38,7 +38,7 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a bean index so Quarkus discovers its CDI beans from dependent modules.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized).
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized). When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=skylake` — see "Native image CPU baseline" below. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
 
 ## Architecture
 
@@ -492,6 +492,45 @@ The removal is stateless — rather than tracking which remotes were added, we s
 **Protocol-lenient URL matching**
 
 Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repos use HTTPS (`https://github.com/org/repo.git`). The URL matcher normalizes both formats by stripping the scheme, `user@` prefix, SSH `:` separator, trailing `.git`, `www.` prefix, and lowercasing. The result is a canonical form like `github.com/org/repo` that matches regardless of protocol.
+
+### Native image CPU baseline
+
+The proxy is built with `-march=skylake` on x86_64, set by arch-gated Maven profiles in
+`proxy/pom.xml` so aarch64 builds (Linux arm64, Apple Silicon) pass no `-march` at all —
+an x86 value there is a hard build failure.
+
+GraalVM's default is `-march=x86-64-v3`, and the numbered psABI levels **do not include AES
+or CLMUL**. Without those the image cannot emit AES-NI/GHASH intrinsics, so TLS bulk
+encryption runs as software AES. Every byte through this proxy is AES-GCM encrypted on both
+legs — once to the client on a cache hit, twice on a miss (decrypt from upstream, re-encrypt
+to the client) — so that fallback dominates. Serving a cached 642 KB Maven artifact,
+measured on one host, same commit, Oracle GraalVM 25.3:
+
+| `-march` | Throughput | Note |
+|---|---|---|
+| `x86-64-v3` (GraalVM default) | 65 MB/s | no AES/CLMUL |
+| `x86-64-v4` | 65 MB/s | AVX-512 but still no AES — a trap |
+| `haswell` | 349 MB/s | v3 + AES + CLMUL |
+| **`skylake`** | **363 MB/s** | + ADX; what we ship |
+| `skylake-avx512` | 363 MB/s | no gain, +524 KB, excludes Zen 1–3 |
+| `native` | 383 MB/s | not portable |
+
+`skylake` costs almost nothing in reach: AES-NI shipped in 2010, three years *before* the
+AVX2/BMI2 that `x86-64-v3` already demands, so requiring it excludes no CPU that could run
+the previous binary. ADX (Broadwell, 2014) is the only real narrowing. Binary size is
+unchanged. It is chosen as a deliberately stable floor rather than something to revisit each
+release.
+
+Two things that look like they should help and do not, both measured:
+
+- **`-H:RuntimeCheckedCPUFeatures` does not cover the crypto intrinsics.** Adding
+  `AES,CLMUL` to a v3 build left throughput at 65 MB/s, and adding `AVX512_VAES` to a
+  skylake build changed nothing. The AES-GCM intrinsic is selected at build time from
+  `-march`; runtime dispatch applies to a narrower set of operations. The ~5% that `native`
+  holds over `skylake` therefore cannot be captured portably.
+- **Raising to `x86-64-v4`** buys nothing and costs all non-AVX-512 hardware.
+
+Reproduce with `bench/run.sh --load=maven`.
 
 ## Testing
 

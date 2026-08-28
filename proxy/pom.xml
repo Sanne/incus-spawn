@@ -15,6 +15,8 @@
         <proxy.native.gc>serial</proxy.native.gc>
 <!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
         <svm.target.name.args/>
+<!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->
+        <native.march.args/>
     </properties>
 
     <dependencies>
@@ -153,6 +155,41 @@
         </plugins>
     </build>
     <profiles>
+        <!--
+          GraalVM's default -march=x86-64-v3 does NOT include AES or CLMUL, so the
+          native image cannot use AES-NI/GHASH intrinsics and TLS bulk encryption
+          falls back to software AES. Since every byte through this proxy is
+          AES-GCM encrypted on both legs, that costs ~5x: measured 65 MB/s at v3
+          vs 351 MB/s at skylake serving a cached Maven artifact.
+
+          skylake is v3 + AES + CLMUL + ADX. AES-NI shipped in 2010, three years
+          before the AVX2/BMI2 that v3 already requires, so this excludes nothing
+          v3 did not; ADX (Broadwell, 2014) is the only real narrowing. Chosen
+          over haswell as a deliberately stable floor we do not want to revisit.
+
+          Do NOT "upgrade" this to x86-64-v4: the numbered levels never include
+          AES, so v4 measures identically to v3 (65 MB/s) while dropping all
+          non-AVX-512 hardware.
+        -->
+        <profile>
+            <id>x86-march-amd64</id>
+            <activation>
+                <os><arch>amd64</arch></os>
+            </activation>
+            <properties>
+                <native.march.args>,-march=skylake</native.march.args>
+            </properties>
+        </profile>
+        <profile>
+            <!-- Same, for JVMs reporting os.arch as x86_64 (macOS Intel). -->
+            <id>x86-march-x86_64</id>
+            <activation>
+                <os><arch>x86_64</arch></os>
+            </activation>
+            <properties>
+                <native.march.args>,-march=skylake</native.march.args>
+            </properties>
+        </profile>
         <profile>
             <id>linux-g1</id>
             <activation>
