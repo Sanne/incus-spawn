@@ -17,6 +17,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -4066,8 +4067,11 @@ public class ListCommand extends BaseCommand {
             throw new RuntimeException("an instance named '" + name + "' already exists.");
         }
 
-        System.out.println("Branching '" + name + "' from '" + source + "'...");
+        BuildOutput.branchHeader(name, source);
+
+        BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name);
+        BuildOutput.stepDone();
 
         String cpu, memory, disk;
         if (vm) {
@@ -4080,8 +4084,8 @@ public class ListCommand extends BaseCommand {
             memory = ResourceLimits.adaptiveMemoryLimit();
             disk = ResourceLimits.defaultDiskLimit();
         }
-        System.out.println("Applying resource limits: " +
-                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk");
+        BuildOutput.step("Resource limits: " +
+                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
@@ -4114,17 +4118,20 @@ public class ListCommand extends BaseCommand {
             InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
             InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         }
+        BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
         incus.start(name);
+        BuildOutput.stepDone();
         if (isVm) {
+            BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name);
+            BuildOutput.stepDone();
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
         }
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
 
-        System.out.println("Branch '" + name + "' is ready.");
-        System.out.println("Connecting to " + name + "...\n");
+        BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
         var defaultCmd = resolveDefaultCommandFromTemplate(source);
         if (defaultCmd != null) {

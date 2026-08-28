@@ -69,7 +69,7 @@ public class YamlToolSetup implements ToolSetup {
     @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
-        System.out.println("Installing " + label + "...");
+        dev.incusspawn.util.BuildOutput.step("Installing " + label + "...");
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
@@ -114,9 +114,9 @@ public class YamlToolSetup implements ToolSetup {
             var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
             var result = container.exec(substituted.split("\\s+"));
             if (result.success()) {
-                System.out.println("  " + result.stdout().lines().findFirst().orElse(""));
+                dev.incusspawn.util.BuildOutput.step("  " + result.stdout().lines().findFirst().orElse(""));
             } else {
-                System.err.println("  Warning: verification failed for " + def.getName());
+                System.err.println(dev.incusspawn.util.BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
             }
         }
     }

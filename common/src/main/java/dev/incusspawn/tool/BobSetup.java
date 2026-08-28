@@ -61,7 +61,7 @@ public class BobSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        System.out.println("Installing Bob Shell...");
+        dev.incusspawn.util.BuildOutput.step("Installing Bob Shell...");
 
         try {
             var version = Files.readString(
@@ -69,7 +69,7 @@ public class BobSetup implements ToolSetup {
             if (!VERSION_PATTERN.matcher(version).matches()) {
                 throw new IOException("Unexpected version format: " + version);
             }
-            System.out.println("  Latest version: " + version);
+            dev.incusspawn.util.BuildOutput.step("  Latest version: " + version);
 
             var tarballUrl = BASE_URL + version + ".tgz";
             var sha256 = Files.readString(

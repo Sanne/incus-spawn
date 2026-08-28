@@ -32,6 +32,7 @@ import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.tool.YamlToolSetup;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.RuntimeServices;
@@ -122,7 +123,24 @@ public class BuildCommand extends BaseCommand {
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
     static final String REBUILDING_SUFFIX = "-rebuilding";
 
+    static final String STEP_INDENT = BuildOutput.STEP_INDENT;
+
+    private int buildIndex;
+    private int buildTotal;
+
     private volatile String[] activeBuild;
+
+    private void printBuildHeader(String name) {
+        BuildOutput.buildHeader(name, buildIndex, buildTotal);
+    }
+
+    private void buildStep(String msg) {
+        BuildOutput.step(msg);
+    }
+
+    private void buildDone(String name) {
+        BuildOutput.success(name + " built successfully.");
+    }
 
     @Override
     protected CommandResult doExecute() throws Exception {
@@ -130,6 +148,8 @@ public class BuildCommand extends BaseCommand {
         this.toolDefLoader = RuntimeServices.toolDefLoader();
         this.toolSetups = RuntimeServices.toolSetups();
         if (!InitCommand.requireInit()) return CommandResult.valueOf(1);
+        buildTotal = 1;
+        buildIndex = 1;
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             var build = activeBuild;
@@ -286,9 +306,11 @@ public class BuildCommand extends BaseCommand {
      */
     private void rebuildAll(List<String> templates, Map<String, ImageDef> defs) {
         var failedBuilds = new HashSet<String>();
+        buildTotal = templates.size();
+        buildIndex = 0;
 
-        System.out.println();
         for (var templateName : templates) {
+            buildIndex++;
             var imageDef = defs.get(templateName);
             if (imageDef == null) {
                 System.err.println("Template definition not found: " + templateName);
@@ -296,14 +318,14 @@ public class BuildCommand extends BaseCommand {
                 continue;
             }
             if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
-                System.out.println("Skipping " + templateName + " (parent failed to build)");
+                printBuildHeader(templateName);
+                buildStep("Skipped — parent failed to build.");
                 failedBuilds.add(templateName);
                 continue;
             }
 
             try {
                 buildSingleImage(imageDef, defs);
-                System.out.println();
             } catch (BuildFailedException e) {
                 failedBuilds.add(templateName);
             }
@@ -486,12 +508,11 @@ public class BuildCommand extends BaseCommand {
 
                 if (needsRebuild) {
                     if (parentMissing) {
-                        System.out.println("Parent image '" + parentName + "' not found, building it first...\n");
+                        BuildOutput.note("Parent '" + parentName + "' not found, building first.");
                     } else {
-                        System.out.println("Parent image '" + parentName + "' is outdated, rebuilding it first...\n");
+                        BuildOutput.note("Parent '" + parentName + "' is outdated, rebuilding first.");
                     }
                     buildChain(parentDef, defs);
-                    System.out.println();
                 }
             }
         }
@@ -508,12 +529,11 @@ public class BuildCommand extends BaseCommand {
         var canonicalName = imageDef.getName();
         var tempName = canonicalName + REBUILDING_SUFFIX;
 
-        System.out.println("Building image: " + canonicalName);
+        printBuildHeader(canonicalName);
 
         if (incus.exists(canonicalName)) {
             if (!yes) {
-                System.out.println("Image '" + canonicalName + "' already exists.");
-                System.out.println("It will be replaced if the build succeeds.");
+                buildStep("Image already exists. It will be replaced if the build succeeds.");
             }
             warnDroppedTools(canonicalName, imageDef, defs);
             if (!confirm("Rebuild?")) return;
@@ -552,11 +572,11 @@ public class BuildCommand extends BaseCommand {
         var oldSourceJson = incus.configGet(existingImage, Metadata.BUILD_SOURCE);
         var removed = findDroppedTools(oldSourceJson, imageDef, defs);
         if (!removed.isEmpty()) {
-            System.out.println("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
+            buildStep("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
             for (var tool : removed) {
-                System.out.println("  - " + tool);
+                buildStep("  - " + tool);
             }
-            System.out.println("  Add to your template's tools: list if you still need them.");
+            buildStep("  Add to your template's tools: list if you still need them.");
         }
     }
 
@@ -727,7 +747,7 @@ public class BuildCommand extends BaseCommand {
         var parentCanonical = imageDef.getParent();
         var effectiveVm = effectiveVm(imageDef);
 
-        System.out.println("Deriving from parent image '" + parentCanonical + "'...");
+        BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
         incus.copy(parentSource, buildName);
         if (!effectiveVm) {
             incus.configSet(buildName, "security.idmap.size", "165536");
@@ -748,6 +768,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         incus.waitForSystemd(buildName);
+        BuildOutput.stepDone();
 
         if (!effectiveVm) {
             waitForIpv4(container);
@@ -759,11 +780,8 @@ public class BuildCommand extends BaseCommand {
                 "printf '%s' '" + ProxyConfig.resolvConfContent(incus) + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to fix DNS after copy");
 
-        // The copy carries the parent's trust store, which may predate a CA re-issue
-        // (only buildFromScratch installs the anchor). Refresh it before the first
-        // proxied request, or every TLS fetch in this build talks to a stale anchor.
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
-            System.out.println("Refreshed MITM proxy CA certificate from parent image...");
+            buildStep("Refreshed MITM proxy CA certificate.");
         }
 
         waitForNetwork(buildName);
@@ -772,8 +790,9 @@ public class BuildCommand extends BaseCommand {
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
-            System.out.println("Applying host-resources...");
+            BuildOutput.stepStart("Applying host resources...");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
+            BuildOutput.stepDone();
         }
 
         removePackages(container, imageDef);
@@ -801,10 +820,11 @@ public class BuildCommand extends BaseCommand {
 
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
 
-        System.out.println("Stopping image...");
+        BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
+        BuildOutput.stepDone();
 
-        System.out.println("Image " + canonicalName + " built successfully.");
+        buildDone(canonicalName);
     }
 
     private boolean effectiveVm(ImageDef imageDef) {
@@ -850,7 +870,7 @@ public class BuildCommand extends BaseCommand {
                         if (os != null && release != null) {
                             image = "images:" + os.toLowerCase() + "/" + release;
                             prebaked = false;
-                            System.out.println("Base image is container-only, using " + image + " for VM build.");
+                            buildStep("Base image is container-only, using " + image + " for VM build.");
                         } else {
                             throw new RuntimeException(
                                     "Cannot build VM from container image '" + rootDef.getImage() + "'. "
@@ -863,10 +883,11 @@ public class BuildCommand extends BaseCommand {
 
         // Create instance — for VMs, expand the disk before first boot so
         // cloud-init's growpart module handles partition + filesystem resize.
-        System.out.println("Launching " + image + (effectiveVm ? " (VM)..." : "..."));
+        BuildOutput.stepStart("Launching " + image + (effectiveVm ? " (VM)..." : "..."));
         try {
             incus.create(image, buildName, effectiveVm);
         } catch (IncusException e) {
+            BuildOutput.stepBreak();
             if (incus.exists(buildName)) {
                 var log = incus.getLog(buildName);
                 if (log.contains("Exec format error")) {
@@ -885,12 +906,11 @@ public class BuildCommand extends BaseCommand {
         }
         incus.start(buildName);
         waitForReady(buildName);
+        BuildOutput.stepDone();
 
         var container = new Container(incus, buildName);
 
-        // Install CA cert before security configs — update-ca-trust triggers
-        // setxattr calls that conflict with security.syscalls.intercept.
-        System.out.println("Installing MITM proxy CA certificate...");
+        BuildOutput.stepStart("Installing MITM proxy CA certificate...");
         var ca = CertificateAuthority.loadOrCreate();
         container.sh(
                 "cat > /etc/pki/ca-trust/source/anchors/incus-spawn-mitm.crt << 'CERTEOF'\n" +
@@ -899,6 +919,7 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to install MITM CA certificate");
         container.exec("update-ca-trust")
                 .assertSuccess("Failed to update CA trust");
+        BuildOutput.stepDone();
 
         // Container-only security tweaks: UID mapping, nesting, capability
         // retention, and setxattr interception. VMs run a full kernel and
@@ -913,21 +934,23 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
             prepareContainerForPackageInstall(container);
 
-            System.out.println("Restarting container with updated security config...");
+            BuildOutput.stepStart("Restarting container...");
             incus.stop(buildName);
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
             incus.start(buildName);
             incus.waitForSystemd(buildName);
+            BuildOutput.stepDone();
             waitForIpv4(container);
         }
 
-        System.out.println("Configuring DNS...");
+        BuildOutput.stepStart("Configuring DNS...");
         container.sh(
                 "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf; " +
                 "rm -f /etc/resolv.conf; " +
                 "printf '%s' '" + ProxyConfig.resolvConfContent(incus) + "' > /etc/resolv.conf")
                 .assertSuccess("Failed to configure DNS");
+        BuildOutput.stepDone();
 
         waitForNetwork(buildName);
 
@@ -950,26 +973,25 @@ public class BuildCommand extends BaseCommand {
                     dnfCommand("-y", "upgrade"));
 
             if (effectiveVm) {
-                System.out.println("Regenerating initramfs for VM...");
+                BuildOutput.stepStart("Regenerating initramfs for VM...");
                 container.runInteractive("Failed to regenerate initramfs",
                         "dracut", "--force", "--regenerate-all");
+                BuildOutput.stepDone();
             }
 
-            // Disable systemd-resolved AFTER dnf upgrade — the upgrade can re-enable
-            // it. Masking prevents package scripts from restarting it. Also remove
-            // 'resolve' from nsswitch.conf so .local domains use dnsmasq, not mDNS.
-            System.out.println("Finalizing DNS configuration...");
+            BuildOutput.stepStart("Finalizing DNS configuration...");
             container.sh(
                     "systemctl disable --now systemd-resolved 2>/dev/null; " +
                     "systemctl mask systemd-resolved 2>/dev/null; " +
                     "sed -i 's/resolve \\[!UNAVAIL=return\\] //' /etc/nsswitch.conf")
                     .assertSuccess("Failed to finalize DNS configuration");
+            BuildOutput.stepDone();
 
             maskServices(container, imageDef);
         }
 
         if (!prebaked || !container.exec("id", "agentuser").success()) {
-            System.out.println("Creating agentuser...");
+            BuildOutput.stepStart("Creating agentuser...");
             container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
                     .assertSuccess("Failed to create agentuser");
             container.exec("chown", "-R", "agentuser:agentuser", "/home/agentuser")
@@ -979,6 +1001,7 @@ public class BuildCommand extends BaseCommand {
             container.sh(
                     "echo 'agentuser ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agentuser")
                     .assertSuccess("Failed to configure passwordless sudo");
+            BuildOutput.stepDone();
         }
         container.sh(
                 "echo 'agentuser:100000:65536' > /etc/subuid && " +
@@ -1002,8 +1025,9 @@ public class BuildCommand extends BaseCommand {
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
-            System.out.println("Applying host-resources...");
+            BuildOutput.stepStart("Applying host resources...");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
+            BuildOutput.stepDone();
         }
 
         // Build the full ancestor chain (root first) so that each layer's
@@ -1018,7 +1042,7 @@ public class BuildCommand extends BaseCommand {
         var allTools = new ArrayList<ResolvedTool>();
         for (var layer : chain) {
             if (chain.size() > 1) {
-                System.out.println("\nApplying layer: " + layer.getName());
+                BuildOutput.note("Applying layer: " + layer.getName());
             }
             removePackages(container, layer);
             var toolResolution = collectEffectiveTools(layer, defs);
@@ -1044,10 +1068,11 @@ public class BuildCommand extends BaseCommand {
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
         tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
 
-        System.out.println("Stopping image...");
+        BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
+        BuildOutput.stepDone();
 
-        System.out.println("Image " + canonicalName + " built successfully.");
+        buildDone(canonicalName);
     }
 
     private void checkPinnedWarning(ImageDef imageDef) {
@@ -1057,7 +1082,7 @@ public class BuildCommand extends BaseCommand {
         var pinnedTag = imageDef.getImageTag();
         var builtinTag = builtin.getImageTag();
         if (pinnedTag != null && builtinTag.compareTo(pinnedTag) > 0) {
-            System.out.println("Warning: base image is pinned to " + pinnedTag
+            buildStep("Warning: base image is pinned to " + pinnedTag
                     + ", but " + builtinTag + " is available."
                     + " Run 'isx update-base --latest' to update.");
         }
@@ -1084,10 +1109,10 @@ public class BuildCommand extends BaseCommand {
         if (existingFingerprint != null) {
             var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
             if (tag != null && tag.equals(installedTag)) {
-                System.out.println("Base image '" + localAlias + "' is up to date (" + tag + ").");
+                buildStep("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
-            System.out.println("Base image '" + localAlias + "' is outdated"
+            buildStep("Base image '" + localAlias + "' is outdated"
                     + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
                     + ", replacing...");
             incus.deleteImageAlias(localAlias);
@@ -1098,23 +1123,20 @@ public class BuildCommand extends BaseCommand {
             resolvedUrl = resolvedUrl.replace("{tag}", tag);
         }
 
-        System.out.println("Downloading base image from " + resolvedUrl + "...");
+        BuildOutput.stepStart("Downloading base image...");
 
         try {
             var cache = new DownloadCache();
             var cached = cache.download(resolvedUrl, expectedSha256);
 
-            System.out.println("Importing image into Incus...");
             var fingerprint = incus.importImage(cached);
 
-            System.out.println("Creating alias '" + localAlias + "' -> "
-                    + fingerprint.substring(0, Math.min(12, fingerprint.length())) + "...");
             if (tag != null) {
                 incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
             }
             incus.createImageAlias(localAlias, fingerprint);
 
-            System.out.println("Base image ready.");
+            BuildOutput.stepDone();
         } catch (IOException e) {
             throw new RuntimeException(
                     "Failed to download base image from " + resolvedUrl + ": " + e.getMessage(), e);
@@ -1281,7 +1303,7 @@ public class BuildCommand extends BaseCommand {
     private void removePackages(Container container, ImageDef imageDef) {
         var pkgs = imageDef.getRemovePackages();
         if (pkgs.isEmpty()) return;
-        System.out.println("Removing unnecessary packages...");
+        buildStep("Removing unnecessary packages...");
         container.sh(
                 "dnf remove -y --setopt=clean_requirements_on_remove=True " +
                 String.join(" ", pkgs) + " 2>/dev/null; true");
@@ -1290,7 +1312,7 @@ public class BuildCommand extends BaseCommand {
     private void maskServices(Container container, ImageDef imageDef) {
         var services = imageDef.getMaskServices();
         if (services.isEmpty()) return;
-        System.out.println("Masking unnecessary services...");
+        buildStep("Masking unnecessary services...");
         container.sh(
                 "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
     }
@@ -1324,11 +1346,11 @@ public class BuildCommand extends BaseCommand {
         allPackages.removeAll(ancestorPackages);
 
         if (allPackages.isEmpty()) {
-            System.out.println("All " + totalCount + " packages already installed.");
+            buildStep("All " + totalCount + " packages already installed.");
             return;
         }
 
-        System.out.println("Installing " + allPackages.size() + " packages (" +
+        buildStep("Installing " + allPackages.size() + " packages (" +
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages));
         var rest = new ArrayList<String>(List.of("install", "-y"));
@@ -1578,9 +1600,9 @@ public class BuildCommand extends BaseCommand {
         return body.replaceFirst("-\\d+:.*$", "");
     }
 
-    /** Render the dnf spinner line: {@code  ⠋ <label>  <dim live detail>}. */
+    /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}. */
     static String formatDnfLine(String label, StepProgress p, int frame) {
-        var sb = new StringBuilder("  ");
+        var sb = new StringBuilder(STEP_INDENT);
         switch (p.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(' ').append(label);
@@ -1602,10 +1624,10 @@ public class BuildCommand extends BaseCommand {
     /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
     private static String plainDnfLine(String label, StepProgress p) {
         if (p.state() == StepState.DONE) {
-            return p.note() != null && !p.note().isEmpty() ? "  " + label + " (" + p.note() + ")"
-                    : "  " + label;
+            return p.note() != null && !p.note().isEmpty() ? STEP_INDENT + label + " (" + p.note() + ")"
+                    : STEP_INDENT + label;
         }
-        var msg = "  Warning: " + label + " failed";
+        var msg = STEP_INDENT + "Warning: " + label + " failed";
         if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
         return msg;
     }
@@ -1676,13 +1698,14 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void cleanCaches(String container) {
-        System.out.println("Cleaning up caches...");
+        BuildOutput.stepStart("Cleaning up caches...");
         incus.shellExec(container, "sh", "-c",
                 "dnf clean all; rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*; true");
+        BuildOutput.stepDone();
     }
 
     private void waitForIpv4(Container container) {
-        System.out.println("Waiting for network...");
+        BuildOutput.stepStart("Waiting for network...");
         var result = container.sh(
                 "systemctl start systemd-networkd 2>/dev/null; " +
                 "for i in $(seq 1 30); do " +
@@ -1690,9 +1713,10 @@ public class BuildCommand extends BaseCommand {
                 "  sleep 0.5; " +
                 "done; exit 1");
         if (result.success()) {
-            System.out.println("  Network ready.");
+            BuildOutput.stepDone();
             return;
         }
+        BuildOutput.stepBreak();
         var diag = container.sh(
                 "echo '--- systemd-networkd status ---'; " +
                 "systemctl status systemd-networkd 2>&1 || true; " +
@@ -1708,15 +1732,16 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void waitForNetwork(String container) {
-        System.out.println("Verifying DNS resolution...");
+        BuildOutput.stepStart("Verifying DNS resolution...");
         for (int attempt = 0; attempt < 10; attempt++) {
             var dnsCheck = incus.shellExec(container, "sh", "-c",
                     "curl -4 -s -o /dev/null -w '%{http_code}' https://mirrors.fedoraproject.org");
             if (dnsCheck.success() && dnsCheck.stdout().strip().contains("302")) {
-                System.out.println("  DNS working.");
+                BuildOutput.stepDone();
                 return;
             }
             if (attempt == 9) {
+                BuildOutput.stepBreak();
                 var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
                 var fwDiagnostic = FirewallDetector.detectDiagnostic();
                 var message = "DNS resolution is not working. Check your network setup.";
@@ -1729,7 +1754,6 @@ public class BuildCommand extends BaseCommand {
                 throw new RuntimeException(message);
             }
             try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
-            System.out.println("  Waiting for DNS... (attempt " + (attempt + 2) + "/10)");
         }
     }
 
@@ -1983,7 +2007,7 @@ public class BuildCommand extends BaseCommand {
                 System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in your image definition.");
                 throw new BuildFailedException();
             }
-            System.out.println("Installing skill: " + resolved + "...");
+            BuildOutput.stepStart("Installing skill: " + resolved + "...");
             try {
                 var skills = fetchSkills(resolved, http, cache);
                 for (var skill : skills) {
@@ -1991,7 +2015,9 @@ public class BuildCommand extends BaseCommand {
                     container.exec("mkdir", "-p", skillDir);
                     container.writeFile(skillDir + "/SKILL.md", skill.content());
                 }
+                BuildOutput.stepDone();
             } catch (IOException | InterruptedException e) {
+                BuildOutput.stepBreak();
                 System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
                 throw new BuildFailedException();
             }
@@ -2258,6 +2284,8 @@ public class BuildCommand extends BaseCommand {
         var repos = imageDef.getRepos();
         if (repos.isEmpty()) return;
 
+        buildStep("Preparing " + repos.size() + (repos.size() == 1 ? " repository:" : " repositories:"));
+
         var config = SpawnConfig.load();
 
         // Phase 1 (serial): mount all host-reference disk devices up front.
@@ -2462,7 +2490,7 @@ public class BuildCommand extends BaseCommand {
     static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
                                  String doneWord) {
         var runningWord = progress.activity() != null ? progress.activity() : "Working";
-        var sb = new StringBuilder("  ");
+        var sb = new StringBuilder(STEP_INDENT);
         switch (progress.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m ");
@@ -2484,11 +2512,11 @@ public class BuildCommand extends BaseCommand {
 
     private static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
         if (progress.state() == StepState.DONE) {
-            var line = "  " + doneWord + " " + label;
+            var line = STEP_INDENT + doneWord + " " + label;
             if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
             return line;
         }
-        var msg = "  Warning: " + verb + " failed for " + label;
+        var msg = STEP_INDENT + "Warning: " + verb + " failed for " + label;
         if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
         return msg;
     }
@@ -2562,16 +2590,16 @@ public class BuildCommand extends BaseCommand {
             var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             if (hostPath == null) return null;
             if (!Files.isDirectory(hostPath)) {
-                System.out.println("  Host repo path " + hostPath + " not found, skipping reference clone");
+                BuildOutput.note("Host repo path " + hostPath + " not found, skipping reference clone.");
                 return null;
             }
             if (!GitRemoteUtils.isGitRepo(hostPath)) {
-                System.out.println("  Host path " + hostPath + " is not a git repo, skipping reference clone");
+                BuildOutput.note("Host path " + hostPath + " is not a git repo, skipping reference clone.");
                 return null;
             }
 
             if (!GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
-                System.out.println("  No remote in " + hostPath + " matches " + cloneUrl + ", skipping reference clone");
+                BuildOutput.note("No remote in " + hostPath + " matches " + cloneUrl + ", skipping reference clone.");
                 return null;
             }
 
