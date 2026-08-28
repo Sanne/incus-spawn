@@ -5,66 +5,87 @@ Add to it whenever a benchmark produces a number worth quoting. Every figure her
 be reproducible with `bench/run.sh` and carry the conditions it was measured under —
 a marketing claim we cannot re-measure on demand is a liability, not an asset.
 
-## Read this before quoting any number below
+## Which number describes what
 
-**The load test hits `/health` over plain HTTP on port 18080. It does not exercise TLS
-termination, certificate minting, credential injection, or upstream forwarding.** What it
-characterises is the proxy's Vert.x HTTP server path — the floor under everything else, not
-the MITM work itself. "The proxy sustains 166k req/s" is therefore true of the server
-core and *not* a statement about intercepted HTTPS throughput, which nobody has measured
-yet. See "Open questions" below.
+The harness has three load profiles, and they measure genuinely different things. Quoting
+one as if it were the other is the easiest way to publish something false.
 
-Latency figures are also load-dependent by construction: a closed-loop benchmark trades
-latency for concurrency, so p50 at 256 concurrent (1.5 ms) and p50 at 16 concurrent (90 µs)
-describe the same server at the same throughput. Quote the pair, never the flattering half.
+| Profile | Path exercised | Result |
+|---|---|---|
+| `--load=constant` | `/health`, plain HTTP | 5,000 req/s tripwire; ~3% of that endpoint's capacity |
+| `--load=saturate` | `/health`, plain HTTP | ~166,000 req/s — **HTTP server core only** |
+| `--load=maven` | intercepted HTTPS, TLS + cached 642 KB artifact | **~116 req/s, ~73 MB/s** |
+
+**`--load=maven` is the one that describes the product.** It terminates TLS with a minted
+per-domain cert, routes by SNI, classifies the domain, hits the artifact cache and streams a
+real body back — the work a container build actually causes. The `/health` figures describe
+the Vert.x server underneath and must never be quoted as "the proxy's throughput".
 
 ## Headline figures
 
-Measured 2026-08-28 on commit `fbb10d9`, Linux x86_64, 32 logical cores, quiet host.
-Oracle GraalVM 25.3.4.1, native image, `-O3` + G1 (the release configuration).
+Measured 2026-08-28, Linux x86_64, 32 logical cores, quiet host. Oracle GraalVM 25.3.4.1,
+native image, `-O3` + G1 (the release configuration).
 
 | What | Figure | Conditions |
 |---|---|---|
-| Proxy HTTP capacity | **~166,000 req/s** | closed-loop, 16–256 concurrent, 100% 2xx |
-| Latency at capacity | **90 µs p50**, 184 µs p99 | 16 concurrent, saturated |
-| Latency at realistic load | **15 µs p50**, 33 µs p99 | 5,000 req/s (3% of capacity) |
+| Cached artifact serving | **~73 MB/s** (116 req/s × 642 KB) | 8–64 concurrent, 100% 2xx |
+| Cached artifact latency | **~11 ms** single client | 642 KB over TLS, cache hit |
+| Cold artifact (upstream) | **~177 ms** | first fetch, network-bound |
+| HTTP server core | ~166,000 req/s, 90 µs p50 | `/health`, no TLS, no body |
 | Proxy idle memory | **~82 MB RSS** | after 2s settle |
 | Proxy startup | **~514 ms** | to first healthy `/health` |
 | CLI startup | **~3.8 ms** | median of 20 `isx --help` |
 | CLI binary | **30.1 MB** | `-Os`, serial GC |
 | Proxy binary | **85.8 MB** | `-O3`, G1 |
 
-The capacity number is worth understanding before it gets used: the proxy is deliberately
-confined to **2 Vert.x event loops** (`quarkus.vertx.event-loops-pool-size=2`,
-`-R:ActiveProcessorCount=4`). It reaches ~166k req/s on two event loops while the other 30
-cores on the box run the load generator. The honest framing is efficiency-per-core, not raw
-throughput — it is a background service for a handful of agent containers that costs almost
-nothing to keep running.
+The cache-hit story is the strongest honest claim available today: **a 642 KB dependency
+served in ~11 ms from local cache instead of ~177 ms from Maven Central** — a 16× latency
+improvement on repeat builds, which is what agent containers do constantly.
 
-## Behaviour above capacity
+The proxy is also deliberately confined to **2 Vert.x event loops**
+(`quarkus.vertx.event-loops-pool-size=2`, `-R:ActiveProcessorCount=4`), so all of the above
+is achieved on two cores of a 32-core box. Efficiency-per-core is the framing, not raw
+throughput.
 
-Driven open-loop at 200,000 req/s (25.3 proxy):
+## Known bottleneck: cached artifact throughput caps at ~70 MB/s
 
-- delivered 168,360 req/s — the ceiling, reproduced by a second, independent load model
-- **100% 2xx** — nothing failed
-- p50 collapsed to 21.5 ms, p99 to 167.8 ms, max 220.2 ms
+Confirmed three independent ways, all flat across concurrency:
 
-The proxy degrades by queueing, not by shedding. Latency is the early-warning signal;
-errors never appear. Useful for an honest "what happens under overload" section.
+- single `curl`: 58 MB/s
+- parallel `curl` (OpenSSL), 8 and 32 concurrent: 65 MB/s — **identical at both**
+- Hyperfoil, 8/32/64 concurrent: 73 / 72 / 72 MB/s
+
+Throughput stays pinned while latency scales linearly (p50 60 ms at 8 concurrent → 545 ms at
+64), which is the signature of a hard serialisation point. For AES-GCM on hardware with
+AES-NI this is roughly an order of magnitude low, and the load generator is ruled out (curl
+with OpenSSL hits the same wall). The suspect is how `serveCachedFile` streams from disk.
+
+Practical impact: a build pulling 500 MB of cached dependencies spends ~7 s minimum on proxy
+egress. Worth its own issue; not a #590 concern.
 
 ## GraalVM 25.2 → 25.3 (issue #590)
 
 Same commit, same host, both toolchains from the release builder images.
 
-- **Throughput: 25.3 ahead in 8/8 rungs across two counterbalanced rounds, +0.6% to +3.8%.**
-  Direction is credible; magnitude is soft. Roughly +1–2%.
-- **Binary size: proxy −1.0%, CLI −2.6%** under 25.3.
-- **Startup: flat** (515 ms → 514 ms).
-- **RSS: no signal.** −5.2% in round 1, +21% in round 2. G1's adaptive sizing under a
-  10-second burst is not a stable measurement. Do not quote RSS deltas between toolchains.
+**On the real path (`--load=maven`): no measurable difference.** Four runs with the order
+counterbalanced, 100% 2xx throughout:
 
-Not a marketing story on its own — a ~1–2% throughput drift is invisible next to the
-efficiency-per-core framing above. Recorded so the next upgrade has a baseline.
+| Rung | 25.2 | 25.2b | 25.3 | 25.3b |
+|---|---|---|---|---|
+| 8 | 116 | 116 | 116 | 116 |
+| 32 | 115 | 115 | 114 | 116 |
+| 64 | 114 | 114 | 114 | 114 |
+
+Differences of 0–2 req/s, under 1%. Expected, given the ~70 MB/s bottleneck above: the path
+is not bound by compiled-code speed, so a better inliner has nothing to bite on.
+
+**On `/health` (`--load=saturate`): 25.3 ahead in 8/8 rungs, +0.6% to +3.8%.** Real for that
+path, but it does not transfer to the workload above. Treat as a curiosity.
+
+**Binary size: proxy −1.0%, CLI −2.6%** under 25.3. **Startup: flat** (515 → 514 ms).
+
+**RSS: no signal.** −5.2% in one round, +21% in the next. G1's adaptive sizing under a
+10-second burst is not a stable measurement. Do not quote RSS deltas between toolchains.
 
 ## CLI `-Os` vs `-O3` (GraalVM 25.3)
 
@@ -87,16 +108,18 @@ perceive 216 µs, and 41 MB is a real download and disk cost for users.
   only interleaved A/B within one session is trustworthy.
 - **Single-run RSS and tail latency are noise.** Anything under ~5% needs repetition with
   the run order counterbalanced.
+- **Closed-loop latency is a function of concurrency.** p50 at 64 concurrent and p50 at 8
+  concurrent describe the same server at the same throughput. Quote the pair, never the
+  flattering half.
 
 ## Open questions before a landing page
 
-1. **Throughput through the actual MITM path** — TLS termination + credential injection +
-   upstream forward. This is the number a landing page would really want, and it does not
-   exist yet. It needs a benchmark with an upstream stub, not `/health`.
-2. **Cache effectiveness** — the OCI blob / Maven artifact / npm tarball caches are a
-   strong story (bandwidth and latency saved on repeat container builds) and are entirely
-   unmeasured.
-3. **Container branch time** — CoW branching is a headline feature; "new environment in
-   N seconds" would be the most compelling figure on the page, and it is not measured here.
-4. **Comparison baseline** — every figure above is absolute. A landing page needs a
-   reference point (a plain HTTPS forward proxy? no proxy at all?) for any of it to land.
+1. **Credential injection overhead** — the Anthropic/OpenAI paths rewrite headers and, for
+   Vertex, translate request bodies. Unmeasured, and closer to the product's core claim than
+   artifact caching is.
+2. **Cache effectiveness in aggregate** — the 16× per-artifact figure is good; bandwidth and
+   wall-clock saved across a realistic full build would be better.
+3. **Container branch time** — CoW branching is a headline feature; "new environment in N
+   seconds" would likely be the most compelling number on the page, and it is not measured.
+4. **Comparison baseline** — every figure here is absolute. A landing page needs a reference
+   point (a plain forward proxy? no proxy at all?) for any of it to land.

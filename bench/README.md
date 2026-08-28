@@ -39,17 +39,36 @@ bench/run.sh --label "after"
 
 ## Load Profiles
 
-`--load=constant` (the default) drives 5,000 req/s at the proxy. That is about **3% of
-capacity**, which makes it a cheap regression tripwire but structurally blind to throughput:
-both a faster and a slower proxy will report ~5,000 req/s at 100% success.
+Three profiles, measuring genuinely different things. Picking the wrong one is how you get a
+confident number that answers no question you actually had.
 
-`--load=saturate` runs a closed-loop concurrency ladder (16/64/128/256) that drives the proxy
-to its actual ceiling. Throughput plateaus while latency grows linearly with concurrency —
-that plateau is the capacity figure, and it is what to compare across builds or toolchains.
+| Mode | Endpoint | What it tells you |
+|---|---|---|
+| `constant` (default) | `/health`, plain HTTP | Regression tripwire at 5,000 req/s |
+| `saturate` | `/health`, plain HTTP | HTTP server ceiling — no TLS, no body, no cache |
+| `maven` | intercepted HTTPS, cached artifact | **The workload containers actually generate** |
+
+`constant` drives 5,000 req/s, roughly 3% of what `/health` can serve. Cheap, but structurally
+blind to throughput: a faster and a slower proxy both report ~5,000 req/s at 100% success.
+
+`saturate` runs a closed-loop concurrency ladder (16/64/128/256) until throughput plateaus
+while latency grows linearly. That plateau is the ceiling of the Vert.x HTTP server — useful,
+but **it is not "the proxy's throughput"**, because `/health` returns a couple of hundred
+plaintext bytes and touches neither TLS nor the cache.
+
+`maven` fetches a real cached artifact over the intercepted HTTPS path: TLS terminated with a
+minted per-domain cert, SNI routing, domain classification, cache lookup, and a 642 KB body
+streamed back. This is the profile to use when comparing builds or toolchains, and the only
+one whose numbers describe the product.
 
 ```shell
-bench/run.sh --load=saturate --label=my-change
+bench/run.sh --load=maven --label=my-change
 ```
+
+It needs no extra setup — the harness builds a truststore from your isx CA, points
+`repo1.maven.org` at the gateway inside the Hyperfoil container, and warms the artifact cache
+before measuring so that every recorded request is a cache hit. Results carry `mbPerSec`
+alongside `meanReqPerSec`, computed from the artifact size actually fetched.
 
 Results record `loadMode`, and the delta table only ever compares runs of the same mode.
 
@@ -95,8 +114,9 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 | Startup time | Wall-clock to first healthy `/health` response | Native startup regression |
 | Idle RSS | `/proc/<pid>/status` VmRSS after 2s settle | Memory footprint at rest |
 | Peak RSS | VmRSS after the load test | Memory under pressure |
-| Throughput | Hyperfoil constant-rate at 5000 req/s | HTTP server efficiency |
-| Latency p50/p99/max | Hyperfoil steady phase stats | Per-request overhead |
+| Throughput | Hyperfoil, per `--load` profile | Best rung is the headline; all rungs in `ladder` |
+| MB/s | Throughput × artifact size (`maven` only) | The figure that describes cache serving |
+| Latency p50/p99/max | Hyperfoil phase stats | Per-request overhead |
 
 ## How It Works
 
@@ -106,9 +126,11 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 4. Measures startup time (polling `/health` at 250ms intervals)
 5. Records idle RSS after a 2-second settle period
 6. Starts a Hyperfoil controller in a Podman container (`--network=host`)
-7. Uploads `bench/proxy-health.hf.yaml` via the Hyperfoil REST API
-8. Runs a 5-second warmup at 1000 req/s (results discarded)
-9. Runs a 15-second steady-state benchmark at 5000 req/s with 50 connections
+7. Uploads the selected profile's YAML via the Hyperfoil REST API (and, for `maven`, warms
+   the artifact cache first so every measured request is a cache hit)
+8. Runs a warmup phase (results discarded)
+9. Runs the measured phase(s) — one steady phase for `constant`, a concurrency ladder for
+   `saturate` and `maven`
 10. Records peak RSS after load
 11. Saves results as JSON to `bench/results/<git-sha>-<timestamp>.json`
 12. Prints summary and comparison with the previous run
@@ -175,7 +197,8 @@ Result files are git-ignored.
 bench/
   run.sh                  # Main benchmark script
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
-  proxy-saturate.hf.yaml  # Closed-loop capacity ladder (--load=saturate)
+  proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
+  proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
   README.md               # This file
   results/                # JSON result files (git-ignored)
 ```

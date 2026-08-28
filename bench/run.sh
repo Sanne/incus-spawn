@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
         --load=*) LOAD_MODE="${1#--load=}" ;;
         --load) shift; LOAD_MODE="${1:-}" ;;
         --help|-h)
-            echo "Usage: bench/run.sh [--skip-build] [--label=NAME] [--graalvm=DIR|--builder-image=TAG]"
+            echo "Usage: bench/run.sh [--skip-build] [--label=NAME] [--load=MODE] [--graalvm=DIR|--builder-image=TAG]"
             echo ""
             echo "Benchmarks the native image build of the MITM proxy."
             echo "Measures: binary size, startup time, memory (RSS), throughput, latency."
@@ -45,10 +45,13 @@ while [ $# -gt 0 ]; do
             echo "Options:"
             echo "  --skip-build    Reuse existing native binaries in cli/target and proxy/target"
             echo "  --label=NAME    Tag results with a label (e.g. 'baseline')"
-            echo "  --load=MODE     constant (default): 5000 req/s, ~3% of capacity — a"
-            echo "                  regression tripwire, blind to throughput changes."
-            echo "                  saturate: closed-loop concurrency ladder that drives the"
-            echo "                  proxy to its actual ceiling. Use this to compare toolchains."
+            echo "  --load=MODE     constant (default): 5000 req/s at /health. ~3% of that"
+            echo "                  endpoint's capacity — a regression tripwire only."
+            echo "                  saturate: concurrency ladder against /health. Finds the"
+            echo "                  HTTP server ceiling; no TLS, no body, no cache."
+            echo "                  maven: fetches a real cached artifact over the intercepted"
+            echo "                  HTTPS path. The workload containers actually generate —"
+            echo "                  use this to compare builds or toolchains."
             echo "  --graalvm=DIR   Build with this GraalVM instead of whatever is on PATH."
             echo "  --builder-image=TAG"
             echo "                  Build in this container image — the path Linux releases"
@@ -157,7 +160,8 @@ fi
 case "$LOAD_MODE" in
     constant) BENCHMARK_YAML="$SCRIPT_DIR/proxy-health.hf.yaml" ;;
     saturate) BENCHMARK_YAML="$SCRIPT_DIR/proxy-saturate.hf.yaml" ;;
-    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate)" ;;
+    maven)    BENCHMARK_YAML="$SCRIPT_DIR/proxy-maven.hf.yaml" ;;
+    *) die "Unknown --load mode '$LOAD_MODE' (expected: constant, saturate, maven)" ;;
 esac
 
 # Check benchmark definition
@@ -170,6 +174,15 @@ fi
 BENCHMARK_NAME=$(awk '/^name:/ { print $2; exit }' "$BENCHMARK_YAML")
 [ -n "$BENCHMARK_NAME" ] || die "No 'name:' in $BENCHMARK_YAML"
 echo "Load:     $LOAD_MODE ($BENCHMARK_NAME)"
+
+if [ "$LOAD_MODE" = maven ]; then
+    # e.g. "host: https://repo1.maven.org:18443" -> repo1.maven.org
+    MAVEN_HOST=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -E 's#^https?://##; s#:[0-9]+$##')
+    MAVEN_PORT=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -nE 's#.*:([0-9]+)$#\1#p')
+    MAVEN_PATH=$(awk '/GET:/ { print $2; exit }' "$BENCHMARK_YAML")
+    [ -n "$MAVEN_HOST" ] && [ -n "$MAVEN_PATH" ] || die "Could not parse host/GET path from $BENCHMARK_YAML"
+    echo "Artifact: $MAVEN_HOST$MAVEN_PATH"
+fi
 
 # Resolve gateway IP from Incus bridge
 GATEWAY_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
@@ -282,6 +295,19 @@ sleep 2
 IDLE_RSS=$(get_rss_kb "$PROXY_PID")
 echo "Idle RSS:    ${IDLE_RSS} KB"
 
+ARTIFACT_BYTES=0
+if [ "$LOAD_MODE" = maven ]; then
+    # Prime the on-disk cache and prove the intercepted path works before handing
+    # it to the load generator; a cold first request would otherwise be measured
+    # as an upstream fetch and skew the whole run.
+    WARM=$(curl -s -o /dev/null -w "%{http_code}:%{size_download}" \
+        --resolve "$MAVEN_HOST:$MAVEN_PORT:$GATEWAY_IP" --cacert "$ISX_CONFIG_DIR/ca.crt" \
+        "https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH") || die "Artifact fetch through the proxy failed"
+    [ "${WARM%%:*}" = "200" ] || die "Artifact fetch returned HTTP ${WARM%%:*} (expected 200)"
+    ARTIFACT_BYTES="${WARM##*:}"
+    echo "Cache warm:  $ARTIFACT_BYTES bytes"
+fi
+
 # ── 6. Start Hyperfoil ──────────────────────────────────────────────────────
 
 echo ""
@@ -295,8 +321,28 @@ fi
 # Remove any leftover container from a previous run
 podman rm -f "$HYPERFOIL_CONTAINER" 2>/dev/null || true
 
+HF_RUN_ARGS=(-d --name "$HYPERFOIL_CONTAINER" --network=host)
+
+# The maven profile talks HTTPS to the proxy's MITM port as a real client would,
+# so the generator needs (a) repo1.maven.org pointed at the gateway instead of
+# the internet and (b) trust in the leaf cert the proxy mints, which is signed by
+# our own CA. Without the truststore every request fails the handshake.
+if [ "$LOAD_MODE" = maven ]; then
+    command -v keytool &>/dev/null || die "keytool not found; needed to build a truststore for --load=maven"
+    TRUSTSTORE="$(mktemp -d)/isx-truststore.p12"
+    keytool -importcert -noprompt -trustcacerts -alias isx-ca \
+        -file "$ISX_CONFIG_DIR/ca.crt" \
+        -keystore "$TRUSTSTORE" -storetype PKCS12 -storepass changeit &>/dev/null \
+        || die "Failed to build truststore from $ISX_CONFIG_DIR/ca.crt"
+    HF_RUN_ARGS+=(
+        --add-host "$MAVEN_HOST:$GATEWAY_IP"
+        -v "$TRUSTSTORE:/ca/truststore.p12:ro,Z"
+        -e JAVA_OPTS="-Djavax.net.ssl.trustStore=/ca/truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
+    )
+fi
+
 echo "Starting Hyperfoil controller..."
-podman run -d --name "$HYPERFOIL_CONTAINER" --network=host "$HYPERFOIL_IMAGE" standalone >/dev/null 2>&1
+podman run "${HF_RUN_ARGS[@]}" "$HYPERFOIL_IMAGE" standalone >/dev/null 2>&1
 
 # Wait for controller to be ready
 HF_READY=false
@@ -327,7 +373,12 @@ curl -sf -X POST "http://localhost:$HYPERFOIL_PORT/benchmark" \
 TARGET_URL="http://$GATEWAY_IP:18080"
 
 # Start the benchmark run
-RESPONSE=$(curl -sf "http://localhost:$HYPERFOIL_PORT/benchmark/$BENCHMARK_NAME/start?templateParam=TARGET=$TARGET_URL")
+if grep -q '!param TARGET' "$BENCHMARK_YAML"; then
+    START_URL="http://localhost:$HYPERFOIL_PORT/benchmark/$BENCHMARK_NAME/start?templateParam=TARGET=$TARGET_URL"
+else
+    START_URL="http://localhost:$HYPERFOIL_PORT/benchmark/$BENCHMARK_NAME/start"
+fi
+RESPONSE=$(curl -sf "$START_URL")
 RUN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 echo "Run started: $RUN_ID"
 
@@ -354,7 +405,9 @@ STATS=$(curl -sf "http://localhost:$HYPERFOIL_PORT/run/$RUN_ID/stats/total")
 echo "$STATS" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-print(f\"  {'phase':<8}{'req/s':>10}{'2xx%':>8}{'p50us':>9}{'p99us':>10}{'p99.9us':>10}{'maxus':>10}\")
+artifact_bytes = $ARTIFACT_BYTES
+hdr = f\"  {'phase':<8}{'req/s':>10}{'2xx%':>8}{'p50us':>9}{'p99us':>10}{'p99.9us':>10}{'maxus':>10}\"
+print(hdr + (f\"{'MB/s':>9}\" if artifact_bytes else ''))
 for s in data.get('statistics', []):
     name = s.get('phase') or s.get('name', '?')
     if s.get('isWarmup', False) or 'warmup' in name:
@@ -365,9 +418,12 @@ for s in data.get('statistics', []):
     dur = (summary['endTime'] - summary['startTime']) / 1000
     rate = summary['requestCount'] / dur if dur else 0
     ok = http.get('status_2xx', 0) / max(summary['requestCount'], 1) * 100
-    print(f\"  {name:<8}{rate:>10.0f}{ok:>8.1f}{pct.get('50.0',0)/1000:>9.1f}\"
-          f\"{pct.get('99.0',0)/1000:>10.1f}{pct.get('99.9',0)/1000:>10.1f}\"
-          f\"{summary['maxResponseTime']/1000:>10.1f}\")
+    row = (f\"  {name:<8}{rate:>10.0f}{ok:>8.1f}{pct.get('50.0',0)/1000:>9.1f}\"
+           f\"{pct.get('99.0',0)/1000:>10.1f}{pct.get('99.9',0)/1000:>10.1f}\"
+           f\"{summary['maxResponseTime']/1000:>10.1f}\")
+    if artifact_bytes:
+        row += f\"{rate * artifact_bytes / 1048576:>9.1f}\"
+    print(row)
 "
 
 # ── 8. Peak RSS ─────────────────────────────────────────────────────────────
@@ -405,6 +461,7 @@ for s in data.get('statistics', []):
         'p50Us': round(pct.get('50.0', 0) / 1000.0, 1),
         'p99Us': round(pct.get('99.0', 0) / 1000.0, 1),
         'p999Us': round(pct.get('99.9', 0) / 1000.0, 1),
+        'mbPerSec': round(summary['requestCount'] / duration_s * $ARTIFACT_BYTES / 1048576, 1) if duration_s and $ARTIFACT_BYTES else None,
     })
 # The headline is the best rung: under a saturating ladder that is the plateau,
 # i.e. the proxy's actual ceiling. Under the constant-rate profile there is only

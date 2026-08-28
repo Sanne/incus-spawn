@@ -1,0 +1,41 @@
+name: proxy-maven
+http:
+  host: https://repo1.maven.org:18443
+  sharedConnections: 64
+phases:
+- warmup:
+    always:
+      users: 8
+      duration: 5s
+      isWarmup: true
+      scenario:
+      - fetch:
+        - httpRequest:
+            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+- c008:
+    always:
+      users: 8
+      duration: 10s
+      startAfter: warmup
+      scenario:
+      - fetch:
+        - httpRequest:
+            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+- c032:
+    always:
+      users: 32
+      duration: 10s
+      startAfter: c008
+      scenario:
+      - fetch:
+        - httpRequest:
+            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+- c064:
+    always:
+      users: 64
+      duration: 10s
+      startAfter: c032
+      scenario:
+      - fetch:
+        - httpRequest:
+            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
