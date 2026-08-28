@@ -115,7 +115,7 @@ You can install packages, break things, and destroy a branch when done. The temp
 
 Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
 
-The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Because branches share blocks via CoW, per-row sizes are approximate (marked `~`) and won't add up to the total. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
+The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Sizes are approximate (marked `~`): the base template carries the shared base image, while CoW branches show only the data unique to them. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
 Templates pre-install your baseline tools and repos, and integrations plug in through the same tool system: VS Code Remote, JetBrains Gateway, shell completions, and Claude Code skills.
 
