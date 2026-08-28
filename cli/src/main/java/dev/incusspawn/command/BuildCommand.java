@@ -844,9 +844,8 @@ public class BuildCommand extends BaseCommand {
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
-            BuildOutput.stepStart("Applying host resources...");
+            BuildOutput.step("Applying host resources.");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
-            BuildOutput.stepDone();
         }
 
         removePackages(container, imageDef);
@@ -1079,9 +1078,8 @@ public class BuildCommand extends BaseCommand {
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
-            BuildOutput.stepStart("Applying host resources...");
+            BuildOutput.step("Applying host resources.");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
-            BuildOutput.stepDone();
         }
 
         // Build the full ancestor chain (root first) so that each layer's

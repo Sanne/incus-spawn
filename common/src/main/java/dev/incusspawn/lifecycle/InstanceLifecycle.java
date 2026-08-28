@@ -273,13 +273,12 @@ public final class InstanceLifecycle {
         var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
         var hostResources = HostResourceSetup.deserialize(hrJson);
         if (!hostResources.isEmpty()) {
-            BuildOutput.stepStart("Applying host resources...");
+            BuildOutput.step("Applying host resources.");
             HostResourceSetup.applyForInstance(incus, name, hostResources, incus.isVm(name));
-            BuildOutput.stepDone();
         }
 
         if (instanceType == InstanceType.INSTANCE) {
-            AutoRemoteService.addRemotes(incus, name);
+            AutoRemoteService.addRemotes(incus, name, BuildOutput::step);
 
             var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
             if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {

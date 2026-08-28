@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,7 +25,7 @@ public final class KvmPassthrough {
             return false;
         }
 
-        System.out.println("Enabling KVM passthrough...");
+        BuildOutput.step("Enabling KVM passthrough.");
         incus.devicesRemoveAll(name, List.of("kvm", "vhost-vsock"));
         incus.deviceAdd(name, "kvm", "unix-char",
                 "source=/dev/kvm",

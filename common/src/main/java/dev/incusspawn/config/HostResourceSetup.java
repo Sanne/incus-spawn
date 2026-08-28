@@ -8,6 +8,7 @@ import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Platform;
 
 import java.io.IOException;
@@ -223,7 +224,7 @@ public final class HostResourceSetup {
         if (!isVm || "copy".equals(hr.getMode())) return hr.getMode();
         var expandedSource = expandHostTilde(hr.getSource());
         if (Files.exists(Path.of(expandedSource)) && !Files.isDirectory(Path.of(expandedSource))) {
-            System.out.println("  VM: falling back to copy mode for file " + hr.getSource());
+            BuildOutput.note("VM: falling back to copy mode for file " + hr.getSource());
             return "copy";
         }
         return hr.getMode();
@@ -244,7 +245,7 @@ public final class HostResourceSetup {
                 container.exec("mkdir", "-p", parentDir);
                 container.filePush(downloaded.toString(), containerPath);
                 container.chown(containerPath, "agentuser:agentuser");
-                System.out.println("  Copied " + hr.getSource() + " -> " + containerPath);
+                BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
             } catch (IOException e) {
                 System.err.println("Warning: failed to download " + hr.getSource() + ": " + e.getMessage());
             }
@@ -262,7 +263,7 @@ public final class HostResourceSetup {
                 container.filePush(expandedSource, containerPath);
             }
             container.chown(containerPath, "agentuser:agentuser");
-            System.out.println("  Copied " + hr.getSource() + " -> " + containerPath);
+            BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
         }
     }
 
@@ -280,7 +281,7 @@ public final class HostResourceSetup {
                 "readonly=true"));
         addShiftIfSupported(args, isVm);
         incus.deviceAdd(container, devName, "disk", args.toArray(String[]::new));
-        System.out.println("  Mounted " + hr.getSource() + " -> " + containerPath + " (readonly)");
+        BuildOutput.note("Mounted " + hr.getSource() + " -> " + containerPath + " (readonly)");
     }
 
     private static void applyOverlay(IncusClient incus, Container container, ImageDef.HostResource hr, boolean isVm) {
@@ -328,7 +329,7 @@ public final class HostResourceSetup {
             return;
         }
 
-        System.out.println("  Mounted " + hr.getSource() + " -> " + containerPath + " (overlay)");
+        BuildOutput.note("Mounted " + hr.getSource() + " -> " + containerPath + " (overlay)");
     }
 
     private static void applyOverlayDevice(IncusClient incus, String container, ImageDef.HostResource hr,
