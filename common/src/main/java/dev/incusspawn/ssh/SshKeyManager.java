@@ -1,6 +1,7 @@
 package dev.incusspawn.ssh;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -71,7 +72,7 @@ public final class SshKeyManager {
             Files.setPosixFilePermissions(Environment.sshPubKeyFile(),
                     PosixFilePermissions.fromString("rw-r--r--"));
 
-            System.out.println("  SSH key pair generated at " + Environment.sshDir());
+            BuildOutput.note("SSH key pair generated at " + Environment.sshDir());
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException("Failed to generate SSH key pair: " + e.getMessage(), e);
         }
@@ -97,7 +98,7 @@ public final class SshKeyManager {
             Files.writeString(Environment.sshPubKeyFile(), pubKey + "\n");
             Files.setPosixFilePermissions(Environment.sshPubKeyFile(),
                     PosixFilePermissions.fromString("rw-r--r--"));
-            System.out.println("  SSH public key recovered from existing private key.");
+            BuildOutput.note("SSH public key recovered from existing private key.");
             return true;
         } catch (Exception e) {
             return false;

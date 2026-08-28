@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -56,7 +57,7 @@ public final class GuiPassthrough {
             return false;
         }
 
-        System.out.println("Enabling GUI passthrough...");
+        BuildOutput.step("Enabling GUI passthrough.");
         // Remove first in case the source already had these devices (incus copy carries them over).
         incus.devicesRemoveAll(name, java.util.List.of("gpu", "xdg-runtime"));
         incus.deviceAdd(name, "gpu", "gpu");
