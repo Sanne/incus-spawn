@@ -1594,6 +1594,13 @@ public class ListCommand extends BaseCommand {
                     gauge.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
                 }
                 gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
+                if (percent >= STORAGE_WARN_PERCENT) {
+                    var hint = "  C:clean";
+                    if (avail - gaugeW >= hint.length()) {
+                        gauge.add(Span.styled(hint, Style.EMPTY.fg(theme.textDim()).bg(bg)));
+                        gaugeW += hint.length();
+                    }
+                }
             }
         }
 
@@ -1945,7 +1952,6 @@ public class ListCommand extends BaseCommand {
         items.add(makeKey("F8", "Destroy\u2026", onTemplates ? !isBuilt : !hasInstance));
         boolean hasActions = hasInstance && !onTemplates && hasActionsForInstance(selected);
         items.add(makeKey("F9", "Actions", !hasActions));
-        items.add(makeKey("C", "Clean", false));
         items.add(makeKey("F10", "Quit", false));
 
         var contextLine = buildContextLine(template, selected, onTemplates);
@@ -2582,6 +2588,7 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
+                shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("n", "New template…", null, null),
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
