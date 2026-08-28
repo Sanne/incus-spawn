@@ -13,10 +13,18 @@ public final class BuildOutput {
 
     private BuildOutput() {}
 
-    private static final String BOLD = "\u001B[1m";
-    private static final String DIM  = "\u001B[2m";
-    private static final String GREEN = "\u001B[32m";
-    private static final String RESET = "\u001B[0m";
+    private static final String BOLD = "[1m";
+    private static final String DIM  = "[2m";
+    private static final String GREEN = "[32m";
+    private static final String RESET = "[0m";
+
+    private static final java.util.regex.Pattern ANSI_PATTERN =
+            java.util.regex.Pattern.compile("\\[[0-9;]*m");
+
+    /** Strip ANSI escape sequences from a string. */
+    public static String stripAnsi(String s) {
+        return ANSI_PATTERN.matcher(s).replaceAll("");
+    }
 
     public static final String STEP_INDENT = "    ";
 

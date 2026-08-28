@@ -214,9 +214,8 @@ public class ListCommand extends BaseCommand {
     // The root template the shared base weight was folded into this reload (see
     // foldBaseWeightIntoRootTemplate), or null when it couldn't be attributed.
     private String baseTemplateName;
-    // Amber/red thresholds for the storage gauge (percent of pool used).
+    // Amber threshold for the storage gauge (percent of pool used).
     private static final int STORAGE_WARN_PERCENT = 75;
-    private static final int STORAGE_CRIT_PERCENT = 90;
     // Set true once we've shown the low-space warning for the current session,
     // so the reminder doesn't clobber every other status message on each refresh.
     private boolean storageWarningShown;
@@ -573,7 +572,7 @@ public class ListCommand extends BaseCommand {
             storageWarningShown = false;
             return;
         }
-        if (poolUsage.percent() >= STORAGE_CRIT_PERCENT) {
+        if (poolUsage.percent() >= IncusClient.PoolUsage.CRIT_PERCENT) {
             if (!storageWarningShown && statusMessage == null) {
                 statusMessage = "⚠ Storage " + poolUsage.percent()
                         + "% full — press C to reclaim space (stale templates, unused images, caches)"
@@ -1571,10 +1570,10 @@ public class ListCommand extends BaseCommand {
         int gaugeW = 0;
         if (poolUsage != null && poolUsage.totalBytes() > 0) {
             int percent = poolUsage.percent();
-            Color fillColor = percent >= STORAGE_CRIT_PERCENT ? theme.statusFailure()
+            Color fillColor = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? theme.statusFailure()
                     : percent >= STORAGE_WARN_PERCENT ? theme.statusWarning()
                     : theme.statusRunning();
-            var glabel = percent >= STORAGE_CRIT_PERCENT ? "⚠ Storage " : "Storage ";
+            var glabel = percent >= IncusClient.PoolUsage.CRIT_PERCENT ? "⚠ Storage " : "Storage ";
             var readout = "  " + percent + "%  " + gibShort(poolUsage.usedBytes())
                     + "/" + gibShort(poolUsage.totalBytes());
 
@@ -2686,7 +2685,7 @@ public class ListCommand extends BaseCommand {
         } else {
             return success ? "Built " + firstArg + " successfully"
                     : "Failed to build " + firstArg
-                            + ". Check instance '" + firstArg + "-failed-build' for inspection.";
+                            + ". Check '" + firstArg + "-failed-build' — see ~/inbox/BUILD_FAILURE.txt for details.";
         }
     }
 
