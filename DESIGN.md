@@ -515,11 +515,18 @@ measured on one host, same commit, Oracle GraalVM 25.3:
 | `skylake-avx512` | 363 MB/s | no gain, +524 KB, excludes Zen 1–3 |
 | `native` | 383 MB/s | not portable |
 
-`skylake` costs almost nothing in reach: AES-NI shipped in 2010, three years *before* the
-AVX2/BMI2 that `x86-64-v3` already demands, so requiring it excludes no CPU that could run
-the previous binary. ADX (Broadwell, 2014) is the only real narrowing. Binary size is
-unchanged. It is chosen as a deliberately stable floor rather than something to revisit each
-release.
+`skylake` is `x86-64-v3` + AES + CLMUL + ADX, and the two halves differ in what they cost:
+
+- **AES and CLMUL cost no reach at all.** AES-NI shipped in 2010, three years *before* the
+  AVX2/BMI2 that `x86-64-v3` already demands, so every CPU able to run the previous binary
+  already has them.
+- **ADX does narrow the baseline.** It arrives with Intel Broadwell (2014) and AMD Zen
+  (2017), so Intel Haswell (2013-14) and AMD Excavator can run `x86-64-v3` code but not
+  this build.
+
+That narrowing is accepted deliberately, as a stable floor rather than something to
+re-evaluate each release. `haswell` would avoid it entirely and measures ~4% slower
+(349 MB/s vs 363 MB/s). Binary size is unchanged either way.
 
 Two things that look like they should help and do not, both measured:
 

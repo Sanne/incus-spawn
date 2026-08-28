@@ -39,7 +39,8 @@ Three Maven modules under a parent POM:
 - **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized, enables ML-inferred PGO), and on x86_64 `-march=skylake`.
   The `-march` value is set by arch-gated Maven profiles in `proxy/pom.xml` (empty on aarch64, where an x86 `-march` would fail the build).
   GraalVM's default `-march=x86-64-v3` omits AES and CLMUL, so the image cannot use AES-NI/GHASH intrinsics and TLS falls back to software AES —
-  measured 65 MB/s vs 363 MB/s serving a cached Maven artifact. Do not "upgrade" this to `x86-64-v4`: the numbered levels never include AES,
+  measured 65 MB/s vs 363 MB/s serving a cached Maven artifact. AES/CLMUL cost no reach (AES-NI predates v3 by three years); ADX does move the
+  floor to Broadwell (2014) / Zen (2017), which is accepted deliberately. Do not "upgrade" this to `x86-64-v4`: the numbered levels never include AES,
   so v4 measures identically to v3 while dropping non-AVX-512 hardware.
 
 Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
