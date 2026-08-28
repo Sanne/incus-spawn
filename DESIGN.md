@@ -199,6 +199,38 @@ The TUI branch modal supports:
 - Inbox mount (read-only host directory for sharing files into the container)
 - VM resource limits (CPU, memory, disk)
 
+### Terminal Output Visual Language
+
+Build and branch output follows a consistent visual language, centralized in
+`BuildOutput` (`common/.../util/BuildOutput.java`). All output helpers live
+there; individual commands should not define their own ANSI constants or
+formatting patterns.
+
+**Structure:**
+
+- **Header** (bold bullet): `  ● Building tpl-dev  [1/3]` or `  ● my-branch  ← tpl-dev`.
+  Identifies the top-level operation. Preceded by a blank line.
+- **Step** (4-space indent): `    Configuring network...` — a complete line for
+  fast or informational actions.
+- **Step-start / step-done** (inline completion): `    Starting container... done.`
+  — for slow operations, `stepStart` prints without a newline, work runs, then
+  `stepDone` appends ` done.\n`. On error, `stepBreak` closes the line before
+  the error message.
+- **Note** (dim, 4-space indent): informational messages that should be visible
+  but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.`
+  Uses ANSI dim (`\e[2m`).
+- **Success** (green checkmark): `    ✓ my-branch is ready.` — final confirmation,
+  preceded by a blank line.
+
+**Warnings and errors** go to stderr. Notes (dim) are for expected conditions the
+user may want to know about (skipped steps, cache hits). Warnings (`System.err`)
+are for conditions that may need action. The distinction: a note is "this is fine,
+FYI"; a warning is "you should look at this."
+
+**Adding new output:** use `BuildOutput.step()` for quick actions,
+`stepStart()`/`stepDone()` for slow ones, `note()` for informational dim
+messages. Do not add raw `System.out.println()` with inline ANSI escapes.
+
 ### Resource Limits (Adaptive)
 
 Detected at branch time from host resources:

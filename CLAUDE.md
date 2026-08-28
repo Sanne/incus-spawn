@@ -84,6 +84,10 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 `HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container. VM-specific: virtiofs disk devices are mounted asynchronously by the incus-agent, so overlay mounts poll `mountpoint -q` for up to 15s before overlaying. File-level resources (not directories) fall back to `copy` mode on VMs since disk devices only support directories.
 
+### Terminal Output
+
+Build and branch commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for all terminal output formatting. This centralizes ANSI constants and step patterns — individual commands should not define their own. Key helpers: `buildHeader()`/`branchHeader()` for bold bullet headers, `step()` for complete lines, `stepStart()`/`stepDone()` for inline completion on slow operations, `note()` for dim informational messages, `success()` for green checkmark lines. See DESIGN.md "Terminal Output Visual Language" for the full spec.
+
 ### Tool System
 
 `ToolSetup` interface with two implementations:

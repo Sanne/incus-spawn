@@ -11,6 +11,7 @@ import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.ssh.SshKeyManager;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,14 +44,16 @@ public final class InstanceLifecycle {
         switch (mode) {
             case FULL -> {}
             case PROXY_ONLY -> {
-                System.out.println("Configuring proxy-only network...");
+                BuildOutput.stepStart("Configuring proxy-only network...");
                 var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
                 incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
                 incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
+                BuildOutput.stepDone();
             }
             case AIRGAP -> {
-                System.out.println("Enabling network airgap...");
+                BuildOutput.stepStart("Enabling network airgap...");
                 incus.networkDetach(name, "incusbr0");
+                BuildOutput.stepDone();
             }
         }
     }
@@ -71,7 +74,7 @@ public final class InstanceLifecycle {
         var gateway = ProxyConfig.resolveGatewayIp(incus);
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
 
-        System.out.println("Assigning static IP " + ip + " (device: " + nicDevice + ")");
+        BuildOutput.step("Assigning static IP " + ip + ".");
         incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
         incus.configSetAll(name, Map.of(
                 Metadata.STATIC_IP, ip,
@@ -108,7 +111,7 @@ public final class InstanceLifecycle {
                 Files.deleteIfExists(tmp);
             }
         } catch (IOException | RuntimeException e) {
-            System.err.println("  Warning: failed to push static network config: " + e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to push static network config: " + e.getMessage());
         }
     }
 
@@ -159,7 +162,7 @@ public final class InstanceLifecycle {
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
         var prefixLen = bridgePrefixLen(incus);
 
-        System.out.println("  Reassigning " + name + ": " + storedIp + " → " + newIp);
+        BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + newIp);
         incus.deviceConfigSet(name, nicDevice, "ipv4.address", newIp);
 
         var updates = new HashMap<String, String>();
@@ -270,8 +273,9 @@ public final class InstanceLifecycle {
         var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
         var hostResources = HostResourceSetup.deserialize(hrJson);
         if (!hostResources.isEmpty()) {
-            System.out.println("Applying host-resource devices...");
+            BuildOutput.stepStart("Applying host resources...");
             HostResourceSetup.applyForInstance(incus, name, hostResources, incus.isVm(name));
+            BuildOutput.stepDone();
         }
 
         if (instanceType == InstanceType.INSTANCE) {
@@ -361,15 +365,14 @@ public final class InstanceLifecycle {
 
         if (inboxPath != null) {
             if (java.nio.file.Files.isDirectory(inboxPath)) {
-                System.out.println("Mounting inbox: " + inboxPath.toAbsolutePath() +
-                        " -> /home/agentuser/inbox (read-only)");
+                BuildOutput.step("Mounting inbox: " + inboxPath.toAbsolutePath() + ".");
                 incus.deviceAdd(name, "inbox", "disk",
                         "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(
                                 inboxPath.toAbsolutePath().toString()),
                         "path=/home/agentuser/inbox",
                         "readonly=true");
             } else {
-                System.err.println("Warning: inbox path '" + inboxPath +
+                System.err.println(BuildOutput.STEP_INDENT + "Warning: inbox path '" + inboxPath +
                         "' is not a directory, skipping.");
             }
         }
@@ -381,9 +384,12 @@ public final class InstanceLifecycle {
         var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
                 : incus.configGet(name, Metadata.BUILD_SOURCE);
         var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode);
-        System.out.println("Waiting for container...");
+        BuildOutput.stepStart("Waiting for container...");
         if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
-            System.err.println("Warning: container setup may not be complete.");
+            BuildOutput.stepBreak();
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: container setup may not be complete.");
+        } else {
+            BuildOutput.stepDone();
         }
 
         boolean sshCapable;
@@ -392,7 +398,6 @@ public final class InstanceLifecycle {
         } else {
             sshCapable = hasSshCapability(incus, name);
             if (sshCapable) {
-                System.out.println("Configuring SSH access...");
                 injectSshKeyIfAvailable(incus, name, null);
             }
         }
@@ -419,7 +424,7 @@ public final class InstanceLifecycle {
         var mitmPort = ProxyConfig.CONTAINER_FACING_PORT;
         var healthPort = ProxyConfig.DEFAULT_HEALTH_PORT;
 
-        System.out.println("Applying proxy-only firewall rules...");
+        BuildOutput.stepStart("Applying proxy-only firewall rules...");
 
         incus.shellExec(name, "sh", "-c", String.join(" && ",
                 "iptables -A OUTPUT -o lo -j ACCEPT",
@@ -433,8 +438,7 @@ public final class InstanceLifecycle {
                 "iptables -A OUTPUT -d " + gatewayIp + " -p icmp --icmp-type echo-request -j ACCEPT",
                 "iptables -P OUTPUT DROP"));
 
-        System.out.println("  Outbound traffic restricted to " + gatewayIp +
-                " ports " + mitmPort + " (MITM), " + healthPort + " (health), 53 (DNS), ICMP");
+        BuildOutput.stepDone();
     }
 
     public static void awaitToolReadiness(IncusClient incus, String name, String buildSourceJson) {
@@ -444,9 +448,12 @@ public final class InstanceLifecycle {
         for (var tool : buildSource.getTools().values()) {
             if (tool.getReady() == null || tool.getReady().isBlank()) continue;
             var toolName = tool.getName();
-            System.out.println("Waiting for " + toolName + "...");
+            BuildOutput.stepStart("Waiting for " + toolName + "...");
             if (!incus.pollUntilReady(name, 15, "sh", "-c", tool.getReady())) {
-                System.err.println("Warning: " + toolName + " did not become ready in time.");
+                BuildOutput.stepBreak();
+                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + toolName + " did not become ready in time.");
+            } else {
+                BuildOutput.stepDone();
             }
         }
     }
@@ -526,8 +533,7 @@ public final class InstanceLifecycle {
         }
 
         if (keys.isEmpty()) {
-            System.out.println("  SSH is available but no public key found");
-            System.out.println("  Add your key manually: ssh-copy-id agentuser@<container-ip>");
+            BuildOutput.step("SSH is available but no public key found.");
             return;
         }
 
@@ -543,11 +549,9 @@ public final class InstanceLifecycle {
                 Files.deleteIfExists(tmpKey);
             }
         } catch (IOException e) {
-            System.err.println("  Warning: failed to inject SSH key: " + e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to inject SSH key: " + e.getMessage());
             return;
         }
-
-        System.out.println("  SSH keys injected.");
     }
 
     /**
@@ -568,15 +572,15 @@ public final class InstanceLifecycle {
             var ipv4 = incus.getContainerIpv4(name);
             hostConfigured = SshKeyManager.addHostEntry(name, ipv4);
         } catch (Exception e) {
-            System.err.println("  Warning: failed to configure SSH host entry: " + e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to configure SSH host entry: " + e.getMessage());
         }
 
         if (hostConfigured && includeConfigured) {
-            System.out.println("  SSH access: ssh " + name);
+            BuildOutput.step("SSH access: ssh " + name);
         } else if (hostConfigured) {
-            System.out.println("  SSH access: ssh -F ~/.config/incus-spawn/ssh/config " + name);
+            BuildOutput.step("SSH access: ssh -F ~/.config/incus-spawn/ssh/config " + name);
         } else {
-            System.out.println("  SSH is available — connect with: isx shell " + name);
+            BuildOutput.step("SSH is available — connect with: isx shell " + name);
         }
     }
 

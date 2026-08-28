@@ -13,6 +13,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
@@ -99,8 +100,11 @@ public class BranchCommand extends BaseCommand {
             }
         }
 
-        System.out.println("Branching '" + name + "' from '" + resolvedSource + "'...");
+        BuildOutput.branchHeader(name, resolvedSource);
+
+        BuildOutput.stepStart("Copying from template...");
         incus.copy(resolvedSource, name);
+        BuildOutput.stepDone();
 
         String cpu;
         if (cpuLimit != null) {
@@ -113,8 +117,8 @@ public class BranchCommand extends BaseCommand {
         var memory = memoryLimit != null ? memoryLimit : ResourceLimits.adaptiveMemoryLimit();
         var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
 
-        System.out.println("Applying resource limits: " +
-                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk");
+        BuildOutput.step("Resource limits: " +
+                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
         InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
@@ -145,7 +149,7 @@ public class BranchCommand extends BaseCommand {
         }
 
         if (noStart) {
-            System.out.println("Branch '" + name + "' created (not started).");
+            BuildOutput.success(name + " is ready.");
             return CommandResult.SUCCESS;
         }
 
@@ -158,18 +162,19 @@ public class BranchCommand extends BaseCommand {
         // access). VMs require the incus-agent, so these are deferred to after start.
         if (!isVm) {
             if (prefetched.hasSshKeys()) {
-                System.out.println("Configuring SSH access...");
                 InstanceLifecycle.injectSshKeyIfAvailable(incus, name, true);
             }
             InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         }
 
-        System.out.println(isVm ? "Starting VM..." : "Starting container...");
+        BuildOutput.stepStart((isVm ? "Starting VM..." : "Starting container..."));
         incus.start(name);
+        BuildOutput.stepDone();
 
         if (isVm) {
-            System.out.println("Waiting for VM agent...");
+            BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name);
+            BuildOutput.stepDone();
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
         }
 
@@ -180,7 +185,7 @@ public class BranchCommand extends BaseCommand {
             ProxyConfig.fixResolvConfIfNeeded(incus, name);
         }
 
-        System.out.println("Branch '" + name + "' is ready.\n");
+        BuildOutput.success(name + " is ready.");
         incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
         return CommandResult.SUCCESS;
     }

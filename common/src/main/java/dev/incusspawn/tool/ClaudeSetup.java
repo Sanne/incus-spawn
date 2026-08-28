@@ -128,14 +128,14 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        System.out.println("Installing Claude Code...");
+        dev.incusspawn.util.BuildOutput.step("Installing Claude Code...");
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
                 "chown -R agentuser:agentuser /home/agentuser/.local");
 
         try {
             var version = Files.readString(
                     downloadCache.download(DOWNLOAD_BASE_URL + "/latest", null)).strip();
-            System.out.println("  Latest version: " + version);
+            dev.incusspawn.util.BuildOutput.step("  Latest version: " + version);
 
             var platform = detectPlatform(c.getArchitecture());
             var manifestJson = Files.readString(
@@ -219,7 +219,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig, Map<String, String> params) {
-        System.out.println("Configuring Claude Code for agent use...");
+        dev.incusspawn.util.BuildOutput.step("Configuring Claude Code for agent use...");
         var managedSettingsJson = """
                 {
                   "permissions": {

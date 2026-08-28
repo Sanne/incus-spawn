@@ -31,7 +31,7 @@ public class GhSetup implements ToolSetup {
 
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
-        System.out.println("Installing GitHub CLI...");
+        dev.incusspawn.util.BuildOutput.step("Installing GitHub CLI...");
         configureGit(c);
     }
 
@@ -63,7 +63,7 @@ public class GhSetup implements ToolSetup {
                     Thread.currentThread().interrupt();
                     throw new IncusException("Interrupted while determining git identity from GitHub", e);
                 }
-                System.out.println("  GitHub identity lookup failed; retrying...");
+                dev.incusspawn.util.BuildOutput.step("  GitHub identity lookup failed; retrying...");
                 result = c.sh(command);
             }
         }
@@ -73,13 +73,13 @@ public class GhSetup implements ToolSetup {
             if (tokenConfigured) {
                 throw new IncusException(message + "; refusing to create a template without git identity");
             }
-            System.out.println("  " + message + " — skipping user.name/email.");
+            dev.incusspawn.util.BuildOutput.step("  " + message + " — skipping user.name/email.");
             return;
         }
 
         var parts = result.stdout().lines().findFirst().orElse("").split("\t", -1);
         if (parts[0].isEmpty()) {
-            System.out.println("  Unexpected GitHub API response — skipping user.name/email.");
+            dev.incusspawn.util.BuildOutput.step("  Unexpected GitHub API response — skipping user.name/email.");
             return;
         }
 
