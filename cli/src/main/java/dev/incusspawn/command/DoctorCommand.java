@@ -6,6 +6,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
@@ -848,7 +849,15 @@ public class DoctorCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var caTrust = CertificateAuthority.CaTrust.snapshot();
             var currentVersion = BuildInfo.instance().version();
-            var allDefs = ImageDef.loadAll();
+            var loaded = ImageDef.loadAllWithConflicts();
+            var allDefs = loaded.defs();
+
+            // Same-directory collisions are always a mistake and make builds ambiguous;
+            // cross-layer overrides are intentional but surfacing them explains the
+            // "built image doesn't match the file I'm editing" confusion.
+            addDefinitionFindings(findings, loaded.conflicts(), loaded.overrides());
+            var toolLoader = RuntimeServices.toolDefLoader();
+            addDefinitionFindings(findings, toolLoader.conflicts(), toolLoader.overrides());
 
             int builtCount = 0;
             for (var name : allDefs.keySet()) {
@@ -881,6 +890,24 @@ public class DoctorCommand extends BaseCommand {
             findings.add(Finding.warn("Templates", "(could not check: " + e.getMessage() + ")", null));
         }
         return findings;
+    }
+
+    /** Turn definition-loading diagnostics (image or tool) into doctor findings. */
+    private static void addDefinitionFindings(List<Finding> findings,
+            List<LayeredDefinitions.NameConflict> conflicts,
+            List<LayeredDefinitions.LayerOverride> overrides) {
+        for (var conflict : conflicts) {
+            findings.add(Finding.warn(capitalize(conflict.kind()) + " name conflict: " + conflict.name(),
+                    conflict.shortMessage(), null));
+        }
+        for (var override : overrides) {
+            findings.add(Finding.ok(capitalize(override.kind()) + " override: " + override.name(),
+                    override.overridingSource() + " overrides " + override.overriddenSource()));
+        }
+    }
+
+    private static String capitalize(String s) {
+        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     // ---- Layer 7: Per-instance (--deep) ----

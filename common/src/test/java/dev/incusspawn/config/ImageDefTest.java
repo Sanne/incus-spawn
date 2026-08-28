@@ -300,6 +300,100 @@ class ImageDefTest {
     }
 
     @Test
+    void sameDirectoryDuplicateNameIsConflict(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Two files in ONE directory both claim tpl-quarkus — a copy-paste mistake.
+        Files.writeString(imagesDir.resolve("quarkus.yaml"), """
+                name: tpl-quarkus
+                description: Current
+                parent: tpl-java
+                """);
+        Files.writeString(imagesDir.resolve("quarkus-old.yaml"), """
+                name: tpl-quarkus
+                description: Stale copy
+                parent: tpl-java
+                """);
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), msg -> {});
+
+        assertEquals(1, result.conflicts().size(), "same-directory duplicate should be one conflict");
+        var conflict = result.conflicts().get(0);
+        assertEquals("tpl-quarkus", conflict.name());
+        assertEquals(2, conflict.files().size());
+        assertTrue(conflict.files().stream().anyMatch(p -> p.getFileName().toString().equals("quarkus.yaml")));
+        assertTrue(conflict.files().stream().anyMatch(p -> p.getFileName().toString().equals("quarkus-old.yaml")));
+        // A same-directory collision is not a cross-layer override.
+        assertTrue(result.overrides().stream().noneMatch(o -> o.name().equals("tpl-quarkus")));
+    }
+
+    @Test
+    void threeFilesSameNameReportedTogether(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        for (var suffix : List.of("a", "b", "c")) {
+            Files.writeString(imagesDir.resolve("dup-" + suffix + ".yaml"), """
+                    name: tpl-dup
+                    description: copy %s
+                    parent: tpl-java
+                    """.formatted(suffix));
+        }
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), msg -> {});
+
+        assertEquals(1, result.conflicts().size(), "one conflict listing all three files");
+        assertEquals(3, result.conflicts().get(0).files().size());
+    }
+
+    @Test
+    void crossLayerOverrideIsNotConflict(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        Files.writeString(imagesDir.resolve("java.yaml"), """
+                name: tpl-java
+                description: Custom Java override
+                parent: tpl-dev
+                packages:
+                  - java-25-openjdk-devel
+                """);
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), msg -> {});
+
+        // Override wins, and it is reported as an override, not a conflict.
+        assertEquals("Custom Java override", result.defs().get("tpl-java").getDescription());
+        assertTrue(result.conflicts().isEmpty(), "cross-layer override must not be a conflict");
+        assertTrue(result.overrides().stream().anyMatch(o -> o.name().equals("tpl-java")),
+                "cross-layer override should be recorded");
+    }
+
+    @Test
+    void sameDirectoryDuplicateOfBuiltinIsOnlyConflict(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Two files in ONE directory both re-declare a built-in name (tpl-java).
+        // The first would shadow the built-in (an override), but because a second
+        // file in the same directory collides, this is a mistake, not an override:
+        // it must be reported as a conflict only, never as both.
+        Files.writeString(imagesDir.resolve("java.yaml"), """
+                name: tpl-java
+                description: Custom
+                parent: tpl-dev
+                """);
+        Files.writeString(imagesDir.resolve("java-old.yaml"), """
+                name: tpl-java
+                description: Stale copy
+                parent: tpl-dev
+                """);
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), msg -> {});
+
+        assertTrue(result.conflicts().stream().anyMatch(c -> c.name().equals("tpl-java")),
+                "same-directory duplicate should be a conflict");
+        assertTrue(result.overrides().stream().noneMatch(o -> o.name().equals("tpl-java")),
+                "a same-directory collision must not also be recorded as an override");
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

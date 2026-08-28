@@ -22,7 +22,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -33,6 +32,12 @@ import java.util.function.Consumer;
  * Resolution order: built-in (classpath) → user ({@code ~/.config/incus-spawn/images/})
  * → project-local ({@code .incus-spawn/images/}). Later definitions with the
  * same name override earlier ones.
+ * <p>
+ * Overriding across layers is intentional and supported. Two files that declare
+ * the same {@code name:} <em>within a single directory</em>, however, are always a
+ * mistake (usually a copy-paste that forgot to update {@code name:}); those are
+ * reported as {@link NameConflict}s by {@link #loadAllWithConflicts()} so callers
+ * can refuse to build and insist the user disambiguate.
  */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -452,15 +457,34 @@ public class ImageDef {
     }
 
     static Map<String, ImageDef> loadAll(List<String> searchPaths, Consumer<String> warnings) {
-        var defs = new LinkedHashMap<String, ImageDef>();
+        var result = loadAllWithConflicts(searchPaths, warnings);
+        for (var conflict : result.conflicts()) {
+            warnings.accept(conflict.shortMessage());
+        }
+        return result.defs();
+    }
+
+    /**
+     * Load all image definitions, additionally reporting same-directory name
+     * collisions and cross-layer overrides (see {@link LayeredDefinitions}).
+     * Unlike {@link #loadAll()}, this does <em>not</em> emit conflict messages via the
+     * warnings consumer — the caller decides how to react (e.g. {@code isx build}
+     * aborts on a conflict; the TUI shows a warning but still lists templates).
+     */
+    public static LayeredDefinitions<ImageDef> loadAllWithConflicts() {
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), msg -> System.err.println(msg));
+    }
+
+    static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {
+        var defs = new LayeredDefinitions<ImageDef>("image");
         loadBuiltins(defs, warnings);
-        loadUserDefined(defs, warnings);
+        loadFromDirectory(userImagesDir(), defs, warnings);
         for (var searchPath : searchPaths) {
             var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
             loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings);
         }
         loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings);
-        inheritTypes(defs);
+        inheritTypes(defs.defs());
         return defs;
     }
 
@@ -493,42 +517,44 @@ public class ImageDef {
         return defs.get(name);
     }
 
-    private static void loadBuiltins(Map<String, ImageDef> defs, Consumer<String> warnings) {
+    private static void loadBuiltins(LayeredDefinitions<ImageDef> defs, Consumer<String> warnings) {
+        // Built-ins are the first layer and their names are unique by construction
+        // (hardcoded BUILTIN_FILES), so no conflict/override tracking is needed here.
         for (var filename : BUILTIN_FILES) {
             var def = loadResource(RESOURCE_DIR + filename, warnings);
             if (def != null) {
                 def.setSource("built-in");
                 validate(def, filename, warnings);
-                defs.put(def.getName(), def);
+                defs.putBuiltin(def.getName(), def);
             }
         }
     }
 
-    private static void loadUserDefined(Map<String, ImageDef> defs, Consumer<String> warnings) {
-        loadFromDirectory(userImagesDir(), defs, warnings);
-    }
-
-    private static void loadFromDirectory(Path dir, Map<String, ImageDef> defs, Consumer<String> warnings) {
+    private static void loadFromDirectory(Path dir, LayeredDefinitions<ImageDef> defs, Consumer<String> warnings) {
         if (!Files.isDirectory(dir)) return;
+        defs.beginDirectory();
         try (var stream = Files.list(dir)) {
-            stream.filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
+            var paths = stream
+                    .filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
                     .sorted()
-                    .forEach(path -> {
-                        try (var is = Files.newInputStream(path)) {
-                            var def = YAML.readValue(is, ImageDef.class);
-                            if (def.getName() != null) {
-                                def.setSource(path.toAbsolutePath().normalize().toString());
-                                validate(def, path.getFileName().toString(), warnings);
-                                defs.put(def.getName(), def);
-                            }
-                        } catch (IOException e) {
-                            warnings.accept(YamlErrors.friendly(
-                                    path.getFileName().toString(), e));
-                        }
-                    });
+                    .toList();
+            for (var path : paths) {
+                try (var is = Files.newInputStream(path)) {
+                    var def = YAML.readValue(is, ImageDef.class);
+                    if (def.getName() != null) {
+                        var source = path.toAbsolutePath().normalize();
+                        def.setSource(source.toString());
+                        validate(def, path.getFileName().toString(), warnings);
+                        defs.put(def.getName(), def, source);
+                    }
+                } catch (IOException e) {
+                    warnings.accept(YamlErrors.friendly(path.getFileName().toString(), e));
+                }
+            }
         } catch (IOException e) {
             warnings.accept("Warning: failed to scan " + dir + ": " + e.getMessage());
         }
+        defs.endDirectory();
     }
 
     private static void validate(ImageDef def, String source, Consumer<String> warnings) {

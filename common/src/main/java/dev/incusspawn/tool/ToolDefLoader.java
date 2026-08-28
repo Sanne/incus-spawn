@@ -1,13 +1,13 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.YamlErrors;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +18,12 @@ import java.util.Map;
  * Resolution order: built-in (classpath) → user ({@code ~/.config/incus-spawn/tools/})
  * → project-local ({@code .incus-spawn/tools/}). Later definitions with the
  * same name override earlier ones.
+ * <p>
+ * Overriding across layers is intentional and supported. Two files that declare
+ * the same {@code name:} <em>within a single directory</em>, however, are always a
+ * mistake; those are reported via {@link #conflicts()} so callers (e.g. {@code isx
+ * build}) can refuse to build and insist the user disambiguate. See
+ * {@link LayeredDefinitions} for the shared collision/override bookkeeping.
  */
 public class ToolDefLoader {
 
@@ -37,18 +43,28 @@ public class ToolDefLoader {
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
     private List<String> searchPaths;
 
-    private Map<String, YamlToolSetup> tools;
+    private LayeredDefinitions<YamlToolSetup> defs;
 
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
         this.projectToolsDir = dir;
-        this.tools = null; // force reload
+        this.defs = null; // force reload
     }
 
     /** Override the search paths (for testing). */
     void setSearchPaths(List<String> searchPaths) {
         this.searchPaths = searchPaths;
-        this.tools = null; // force reload
+        this.defs = null; // force reload
+    }
+
+    /** Same-directory name collisions found during the last load (always a mistake). */
+    public List<LayeredDefinitions.NameConflict> conflicts() {
+        return load().conflicts();
+    }
+
+    /** Cross-layer overrides found during the last load (intentional; for diagnostics). */
+    public List<LayeredDefinitions.LayerOverride> overrides() {
+        return load().overrides();
     }
 
     /**
@@ -56,7 +72,7 @@ public class ToolDefLoader {
      * Checks user-defined tools first, then built-in YAML tools.
      */
     public ToolSetup find(String name) {
-        return loadAll().get(name);
+        return load().defs().get(name);
     }
 
     /**
@@ -65,7 +81,7 @@ public class ToolDefLoader {
      */
     public void addFallbacks(Map<String, ToolDef> fallbacks) {
         if (fallbacks == null || fallbacks.isEmpty()) return;
-        var map = loadAll();
+        var map = load().defs();
         for (var entry : fallbacks.entrySet()) {
             if (entry.getKey() == null || entry.getValue() == null) continue;
             if (!map.containsKey(entry.getKey())) {
@@ -74,9 +90,9 @@ public class ToolDefLoader {
         }
     }
 
-    private Map<String, YamlToolSetup> loadAll() {
-        if (tools == null) {
-            tools = new LinkedHashMap<>();
+    private LayeredDefinitions<YamlToolSetup> load() {
+        if (defs == null) {
+            defs = new LayeredDefinitions<>("tool");
             loadBuiltins();
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
@@ -86,16 +102,18 @@ public class ToolDefLoader {
             }
             loadFromDirectory(projectToolsDir);
         }
-        return tools;
+        return defs;
     }
 
     private void loadBuiltins() {
+        // Built-ins are the first layer with unique names by construction, so no
+        // conflict/override tracking is needed here.
         for (var filename : BUILTIN_TOOLS) {
             try (var is = getClass().getClassLoader().getResourceAsStream(RESOURCE_DIR + filename)) {
                 if (is == null) continue;
                 var def = ToolDef.loadFromStream(is);
                 if (def.getName() != null) {
-                    tools.put(def.getName(), new YamlToolSetup(def));
+                    defs.putBuiltin(def.getName(), new YamlToolSetup(def));
                 }
             } catch (IOException e) {
                 System.err.println("Warning: " + YamlErrors.friendly(filename, e));
@@ -105,22 +123,27 @@ public class ToolDefLoader {
 
     private void loadFromDirectory(Path dir) {
         if (!Files.isDirectory(dir)) return;
+        defs.beginDirectory();
         try (var stream = Files.list(dir)) {
-            stream.filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
+            var paths = stream
+                    .filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
                     .sorted()
-                    .forEach(path -> {
-                        try (var is = Files.newInputStream(path)) {
-                            var def = ToolDef.loadFromStream(is);
-                            if (def.getName() != null) {
-                                tools.put(def.getName(), new YamlToolSetup(def));
-                            }
-                        } catch (IOException e) {
-                            System.err.println("Warning: " + YamlErrors.friendly(
-                                    path.getFileName().toString(), e));
-                        }
-                    });
+                    .toList();
+            for (var path : paths) {
+                try (var is = Files.newInputStream(path)) {
+                    var def = ToolDef.loadFromStream(is);
+                    if (def.getName() != null) {
+                        var source = path.toAbsolutePath().normalize();
+                        defs.put(def.getName(), new YamlToolSetup(def), source);
+                    }
+                } catch (IOException e) {
+                    System.err.println("Warning: " + YamlErrors.friendly(
+                            path.getFileName().toString(), e));
+                }
+            }
         } catch (IOException e) {
             System.err.println("Warning: failed to scan " + dir + ": " + e.getMessage());
         }
+        defs.endDirectory();
     }
 }

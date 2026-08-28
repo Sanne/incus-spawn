@@ -260,6 +260,48 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void sameDirectoryDuplicateNameIsConflict(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("gradle.yaml"), """
+                name: gradle
+                description: Current
+                run:
+                  - echo a
+                """);
+        Files.writeString(tempDir.resolve("gradle-old.yaml"), """
+                name: gradle
+                description: Stale copy
+                run:
+                  - echo b
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        var conflicts = loader.conflicts();
+        assertEquals(1, conflicts.size(), "same-directory duplicate should be one conflict");
+        assertEquals("gradle", conflicts.get(0).name());
+        assertEquals(2, conflicts.get(0).files().size());
+        assertTrue(loader.overrides().stream().noneMatch(o -> o.name().equals("gradle")));
+    }
+
+    @Test
+    void crossLayerOverrideIsNotConflict(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("podman.yaml"), """
+                name: podman
+                description: Custom podman override
+                run:
+                  - echo custom
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        assertTrue(loader.conflicts().isEmpty(), "cross-layer override must not be a conflict");
+        assertTrue(loader.overrides().stream().anyMatch(o -> o.name().equals("podman")),
+                "override of built-in podman should be recorded");
+    }
+
+    @Test
     void searchPathExpandsTilde() {
         var originalHome = System.getProperty("user.home");
         try {
