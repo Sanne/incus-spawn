@@ -495,9 +495,9 @@ Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repo
 
 ### Native image CPU baseline
 
-The proxy is built with `-march=haswell` on x86_64, set by arch-gated Maven profiles in
-`proxy/pom.xml` so aarch64 builds (Linux arm64, Apple Silicon) pass no `-march` at all —
-an x86 value there is a hard build failure.
+Both binaries are built with `-march=haswell` on x86_64, set by arch-gated Maven profiles in
+`proxy/pom.xml` and `cli/pom.xml` so aarch64 builds (Linux arm64, Apple Silicon) pass no
+`-march` at all — an x86 value there is a hard build failure.
 
 GraalVM's default is `-march=x86-64-v3`, and the numbered psABI levels **do not include AES
 or CLMUL**. Without those the image cannot emit AES-NI/GHASH intrinsics, so TLS bulk
@@ -532,6 +532,21 @@ Two things that look like they should help and do not, both measured:
   operations, and its AMD64 default is already `AVX,AVX2`. Note the option *replaces* that
   default rather than extending it, so anything added must re-state `AVX,AVX2`.
 - **Raising to `x86-64-v4`** buys nothing and costs all non-AVX-512 hardware.
+
+### Why the CLI takes the same flag
+
+The CLI downloads tool tarballs and VM images over HTTPS (`DownloadCache`, `SkillsCache`,
+`VmManager`), all through the JDK's `HttpClient`, so it pays the same software-AES cost.
+Measured directly on AES-256-GCM in a native image from this toolchain: **79 MB/s at
+`x86-64-v3` vs ~3100 MB/s at `haswell`** — a 39x difference. At 79 MB/s a 384 MB tool tarball
+costs ~4.9s of CPU on crypto alone, so any link faster than ~630 Mbit/s makes the CLI
+crypto-bound rather than network-bound.
+
+The CLI's build is tuned for size and startup (`-Os`, serial GC), which is why `-O3` was
+rejected there at +131% size. `-march=haswell` costs neither: the binary is **byte-identical**
+(32,115,704 B either way) and startup is ~11% *faster* (median 3489 vs 3924 us over three
+interleaved rounds of 40 runs). The startup gain is unexplained; `haswell` adds CLMUL over
+`x86-64-v3` alongside AES, which backs the CRC32 intrinsic, but that is a hypothesis.
 
 Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell loop of
 `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
