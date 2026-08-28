@@ -11,6 +11,11 @@
     <name>incus-spawn</name>
     <description>CLI tool for managing isolated Incus development environments</description>
 
+    <properties>
+<!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->
+        <native.march.args/>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>dev.incusspawn</groupId>
@@ -162,6 +167,34 @@
     </build>
 
     <profiles>
+        <!--
+          GraalVM's default -march=x86-64-v3 omits AES and CLMUL, so the image cannot
+          use AES-NI/GHASH intrinsics: measured 79 MB/s vs ~3100 MB/s for AES-256-GCM
+          in a native image built by the same toolchain. The CLI downloads tool
+          tarballs and VM images over HTTPS (DownloadCache, SkillsCache, VmManager),
+          so that is a real cost on any link faster than ~630 Mbit/s. Binary size and
+          startup are unaffected, which is why this is worth taking on a build
+          otherwise tuned for size (-Os). See DESIGN.md "Native image CPU baseline".
+        -->
+        <profile>
+            <id>x86-march-amd64</id>
+            <activation>
+                <os><arch>amd64</arch></os>
+            </activation>
+            <properties>
+                <native.march.args>,-march=haswell</native.march.args>
+            </properties>
+        </profile>
+        <profile>
+            <!-- Same, for JVMs reporting os.arch as x86_64 (macOS Intel). -->
+            <id>x86-march-x86_64</id>
+            <activation>
+                <os><arch>x86_64</arch></os>
+            </activation>
+            <properties>
+                <native.march.args>,-march=haswell</native.march.args>
+            </properties>
+        </profile>
         <profile>
             <id>macos-native</id>
             <activation>
@@ -170,7 +203,7 @@
                 </property>
             </activation>
             <properties>
-                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial,--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-H:-JNIExportSymbols,-H:-AllowVMInternalThreads,-R:MaxRAM=128m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist},--features=dev.incusspawn.graal.SyscallReachabilityFeature</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial${native.march.args},--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-H:-JNIExportSymbols,-H:-AllowVMInternalThreads,-R:MaxRAM=128m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist},--features=dev.incusspawn.graal.SyscallReachabilityFeature</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>
