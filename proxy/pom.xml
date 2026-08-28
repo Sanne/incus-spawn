@@ -159,19 +159,20 @@
           GraalVM's default -march=x86-64-v3 does NOT include AES or CLMUL, so the
           native image cannot use AES-NI/GHASH intrinsics and TLS bulk encryption
           falls back to software AES. Since every byte through this proxy is
-          AES-GCM encrypted on both legs, that costs ~5x: measured 65 MB/s at v3
-          vs 363 MB/s at skylake serving a cached Maven artifact.
+          AES-GCM encrypted on both legs, that costs ~13x: measured 73 MB/s at v3
+          vs 960 MB/s at haswell serving a cached Maven artifact.
 
-          skylake is v3 + AES + CLMUL + ADX. The AES and CLMUL half costs no reach
-          at all: AES-NI shipped in 2010, three years before the AVX2/BMI2 that v3
-          already requires. ADX does narrow the baseline — it arrives with Broadwell
-          (2014) and AMD Zen (2017), so Intel Haswell (2013-14) and AMD Excavator
-          run v3 code but not this. That narrowing is accepted deliberately, as a
-          stable floor we do not want to revisit; haswell would avoid it and
-          measures ~4% slower (349 MB/s).
+          haswell is v3 + AES + CLMUL, and costs no reach at all: AES-NI shipped in
+          2010, three years before the AVX2/BMI2 that v3 already requires, so every
+          CPU able to run a v3 build already has it.
+
+          skylake (haswell + ADX) was measured and is indistinguishable — 1530 vs
+          1514 req/s over three interleaved rounds, with the ordering reversing
+          between rounds. ADX buys nothing here, so there is no reason to pay its
+          narrowing (it would drop Intel Haswell 2013-14 and AMD Excavator).
 
           Do NOT "upgrade" this to x86-64-v4: the numbered levels never include
-          AES, so v4 measures identically to v3 (65 MB/s) while dropping all
+          AES, so v4 measures identically to v3 (73 MB/s) while dropping all
           non-AVX-512 hardware.
         -->
         <profile>
@@ -180,7 +181,7 @@
                 <os><arch>amd64</arch></os>
             </activation>
             <properties>
-                <native.march.args>,-march=skylake</native.march.args>
+                <native.march.args>,-march=haswell</native.march.args>
             </properties>
         </profile>
         <profile>
@@ -190,7 +191,7 @@
                 <os><arch>x86_64</arch></os>
             </activation>
             <properties>
-                <native.march.args>,-march=skylake</native.march.args>
+                <native.march.args>,-march=haswell</native.march.args>
             </properties>
         </profile>
         <profile>

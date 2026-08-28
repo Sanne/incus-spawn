@@ -38,7 +38,7 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a bean index so Quarkus discovers its CDI beans from dependent modules.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized).
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=skylake` — see "Native image CPU baseline" below. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" below. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
 
 ## Architecture
 
@@ -495,7 +495,7 @@ Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repo
 
 ### Native image CPU baseline
 
-The proxy is built with `-march=skylake` on x86_64, set by arch-gated Maven profiles in
+The proxy is built with `-march=haswell` on x86_64, set by arch-gated Maven profiles in
 `proxy/pom.xml` so aarch64 builds (Linux arm64, Apple Silicon) pass no `-march` at all —
 an x86 value there is a hard build failure.
 
@@ -503,41 +503,39 @@ GraalVM's default is `-march=x86-64-v3`, and the numbered psABI levels **do not 
 or CLMUL**. Without those the image cannot emit AES-NI/GHASH intrinsics, so TLS bulk
 encryption runs as software AES. Every byte through this proxy is AES-GCM encrypted on both
 legs — once to the client on a cache hit, twice on a miss (decrypt from upstream, re-encrypt
-to the client) — so that fallback dominates. Serving a cached 642 KB Maven artifact,
-measured on one host, same commit, Oracle GraalVM 25.3:
+to the client) — so that fallback dominates. Serving a cached 642 KB Maven artifact, measured
+with `bench/run.sh --load=maven`, same commit and host, Oracle GraalVM 25.3:
 
 | `-march` | Throughput | Note |
 |---|---|---|
-| `x86-64-v3` (GraalVM default) | 65 MB/s | no AES/CLMUL |
-| `x86-64-v4` | 65 MB/s | AVX-512 but still no AES — a trap |
-| `haswell` | 349 MB/s | v3 + AES + CLMUL |
-| **`skylake`** | **363 MB/s** | + ADX; what we ship |
-| `skylake-avx512` | 363 MB/s | no gain, +524 KB, excludes Zen 1–3 |
-| `native` | 383 MB/s | not portable |
+| `x86-64-v3` (GraalVM default) | 73 MB/s | no AES/CLMUL |
+| `x86-64-v4` | 73 MB/s | AVX-512 but still no AES — a trap |
+| **`haswell`** | **960 MB/s** | v3 + AES + CLMUL; what we ship |
+| `skylake` | 950 MB/s | + ADX; indistinguishable from haswell |
+| `native` | 1067 MB/s | not portable |
 
-`skylake` is `x86-64-v3` + AES + CLMUL + ADX, and the two halves differ in what they cost:
+That is a **~13x** difference, and `haswell` costs no hardware support whatsoever: AES-NI
+shipped in 2010, three years *before* the AVX2/BMI2 that `x86-64-v3` already demands, so
+every CPU able to run a v3 build already has it. Binary size is unchanged.
 
-- **AES and CLMUL cost no reach at all.** AES-NI shipped in 2010, three years *before* the
-  AVX2/BMI2 that `x86-64-v3` already demands, so every CPU able to run the previous binary
-  already has them.
-- **ADX does narrow the baseline.** It arrives with Intel Broadwell (2014) and AMD Zen
-  (2017), so Intel Haswell (2013-14) and AMD Excavator can run `x86-64-v3` code but not
-  this build.
-
-That narrowing is accepted deliberately, as a stable floor rather than something to
-re-evaluate each release. `haswell` would avoid it entirely and measures ~4% slower
-(349 MB/s vs 363 MB/s). Binary size is unchanged either way.
+`skylake` (haswell + ADX) was measured over three interleaved rounds and came out
+indistinguishable — 1530 vs 1514 req/s, with the ordering reversing between rounds. ADX buys
+nothing on this path, so there is no reason to accept its narrowing (it would drop Intel
+Haswell 2013-14 and AMD Excavator, which run v3 code).
 
 Two things that look like they should help and do not, both measured:
 
 - **`-H:RuntimeCheckedCPUFeatures` does not cover the crypto intrinsics.** Adding
-  `AES,CLMUL` to a v3 build left throughput at 65 MB/s, and adding `AVX512_VAES` to a
-  skylake build changed nothing. The AES-GCM intrinsic is selected at build time from
-  `-march`; runtime dispatch applies to a narrower set of operations. The ~5% that `native`
-  holds over `skylake` therefore cannot be captured portably.
+  `AES,CLMUL` to a v3 build left throughput unchanged, and adding the AVX-512 set to a
+  build with AES recovered only ~1 of the ~11 points `native` holds. The AES-GCM intrinsic
+  is selected at build time from `-march`; runtime dispatch applies to a narrower set of
+  operations, and its AMD64 default is already `AVX,AVX2`. Note the option *replaces* that
+  default rather than extending it, so anything added must re-state `AVX,AVX2`.
 - **Raising to `x86-64-v4`** buys nothing and costs all non-AVX-512 hardware.
 
-Reproduce with `bench/run.sh --load=maven`.
+Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell loop of
+`curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
+build faster than v3 to the same wrong number and hides the differences between them.
 
 ## Testing
 

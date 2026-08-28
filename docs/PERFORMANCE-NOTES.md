@@ -14,7 +14,7 @@ one as if it were the other is the easiest way to publish something false.
 |---|---|---|
 | `--load=constant` | `/health`, plain HTTP | 5,000 req/s tripwire; ~3% of that endpoint's capacity |
 | `--load=saturate` | `/health`, plain HTTP | ~166,000 req/s — **HTTP server core only** |
-| `--load=maven` | intercepted HTTPS, TLS + cached 642 KB artifact | **~116 req/s, ~73 MB/s** |
+| `--load=maven` | intercepted HTTPS, TLS + cached 642 KB artifact | **~1,530 req/s, ~960 MB/s** |
 
 **`--load=maven` is the one that describes the product.** It terminates TLS with a minted
 per-domain cert, routes by SNI, classifies the domain, hits the artifact cache and streams a
@@ -28,8 +28,8 @@ native image, `-O3` + G1 (the release configuration).
 
 | What | Figure | Conditions |
 |---|---|---|
-| Cached artifact serving | **~73 MB/s** (116 req/s × 642 KB) | 8–64 concurrent, 100% 2xx |
-| Cached artifact latency | **~11 ms** single client | 642 KB over TLS, cache hit |
+| Cached artifact serving | **~960 MB/s** (1,530 req/s × 642 KB) | 8–64 concurrent, 100% 2xx |
+| Cached artifact latency | **~2.8 ms** single client | 642 KB over TLS, cache hit (2.0 ms of it handshake) |
 | Cold artifact (upstream) | **~177 ms** | first fetch, network-bound |
 | HTTP server core | ~166,000 req/s, 90 µs p50 | `/health`, no TLS, no body |
 | Proxy idle memory | **~82 MB RSS** | after 2s settle |
@@ -39,36 +39,37 @@ native image, `-O3` + G1 (the release configuration).
 | Proxy binary | **85.8 MB** | `-O3`, G1 |
 
 The cache-hit story is the strongest honest claim available today: **a 642 KB dependency
-served in ~11 ms from local cache instead of ~177 ms from Maven Central** — a 16× latency
-improvement on repeat builds, which is what agent containers do constantly.
+served in ~2.8 ms from local cache instead of ~177 ms from Maven Central** — a ~60× latency
+improvement on repeat builds, which is what agent containers do constantly. Note ~2.0 ms of
+that 2.8 ms is the TLS handshake, so a client reusing its connection does better still.
 
 The proxy is also deliberately confined to **2 Vert.x event loops**
 (`quarkus.vertx.event-loops-pool-size=2`, `-R:ActiveProcessorCount=4`), so all of the above
 is achieved on two cores of a 32-core box. Efficiency-per-core is the framing, not raw
 throughput.
 
-## Known bottleneck: cached artifact throughput caps at ~70 MB/s
+## Resolved: the ~70 MB/s ceiling was software AES
 
-Confirmed three independent ways, all flat across concurrency:
+Earlier notes recorded cached artifact serving as capping at ~70 MB/s regardless of
+concurrency, and guessed at `serveCachedFile`'s disk streaming. That was wrong. The native
+image was built with GraalVM's default `-march=x86-64-v3`, which excludes AES and CLMUL, so
+TLS bulk encryption ran as software AES. Building with `-march=haswell` took the same code
+from 73 MB/s to 960 MB/s — see DESIGN.md "Native image CPU baseline".
 
-- single `curl`: 58 MB/s
-- parallel `curl` (OpenSSL), 8 and 32 concurrent: 65 MB/s — **identical at both**
-- Hyperfoil, 8/32/64 concurrent: 73 / 72 / 72 MB/s
-
-Throughput stays pinned while latency scales linearly (p50 60 ms at 8 concurrent → 545 ms at
-64), which is the signature of a hard serialisation point. For AES-GCM on hardware with
-AES-NI this is roughly an order of magnitude low, and the load generator is ruled out (curl
-with OpenSSL hits the same wall). The suspect is how `serveCachedFile` streams from disk.
-
-Practical impact: a build pulling 500 MB of cached dependencies spends ~7 s minimum on proxy
-egress. Worth its own issue; not a #590 concern.
+A profile of the fixed build shows nothing left to chase on this path: the single event loop
+is idle more than half the time while serving over 1 GB/s, and its working time is socket
+writes plus TLS encryption, both irreducible. The blocking pool is idle during serving
+entirely (its only samples are one-time keystore construction at startup).
 
 ## GraalVM 25.2 → 25.3 (issue #590)
 
 Same commit, same host, both toolchains from the release builder images.
 
 **On the real path (`--load=maven`): no measurable difference.** Four runs with the order
-counterbalanced, 100% 2xx throughout:
+counterbalanced, 100% 2xx throughout. Note these were taken *before* the `-march` fix, so
+software AES was saturating the event loop throughout — which is itself why there was nothing
+for a better inliner to improve. Worth re-running on a build where crypto is not the
+bottleneck:
 
 | Rung | 25.2 | 25.2b | 25.3 | 25.3b |
 |---|---|---|---|---|
@@ -108,6 +109,11 @@ perceive 216 µs, and 41 MB is a real download and disk cost for users.
   only interleaved A/B within one session is trustworthy.
 - **Single-run RSS and tail latency are noise.** Anything under ~5% needs repetition with
   the run order counterbalanced.
+- **Do not measure with a shell loop of `curl`.** One process spawn per request caps such a
+  loop near 550 req/s. Against a slow server it agrees with a real load generator, which
+  makes it look trustworthy; against a fast one it silently pins every build to the same
+  number and hides the differences between them. Every figure on this page that was once
+  wrong was wrong for this reason. Use `bench/run.sh`.
 - **Closed-loop latency is a function of concurrency.** p50 at 64 concurrent and p50 at 8
   concurrent describe the same server at the same throughput. Quote the pair, never the
   flattering half.
