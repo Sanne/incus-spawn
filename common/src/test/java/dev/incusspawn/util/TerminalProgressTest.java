@@ -60,4 +60,39 @@ class TerminalProgressTest {
                 i -> i == 1 ? "only one" : null, lines::add);
         assertEquals(List.of("only one"), lines);
     }
+
+    @Test
+    void truncateToWidthLeavesShortStringsAlone() {
+        assertEquals("hello", TerminalProgress.truncateToWidth("hello", 80));
+    }
+
+    @Test
+    void truncateToWidthTruncatesLongPlainText() {
+        var result = TerminalProgress.truncateToWidth("abcdefghij", 5);
+        assertEquals("abcde\033[0m", result);
+    }
+
+    @Test
+    void truncateToWidthPreservesAnsiEscapes() {
+        var input = "\033[32m✓\033[0m \033[2mReady\033[0m label (https://example.com/very-long-url)";
+        var result = TerminalProgress.truncateToWidth(input, 20);
+        // ANSI escapes should not count toward visible width
+        assertTrue(result.contains("\033[32m✓\033[0m"));
+        assertTrue(result.endsWith("\033[0m"));
+        // Visible content should be at most 20 chars
+        var stripped = result.replaceAll("\033\\[[0-9;]*[A-Za-z]", "");
+        assertTrue(stripped.length() <= 20, "visible length " + stripped.length() + " > 20");
+    }
+
+    @Test
+    void truncateToWidthDoesNotTruncateExactFit() {
+        var input = "12345";
+        assertEquals("12345", TerminalProgress.truncateToWidth(input, 5));
+    }
+
+    @Test
+    void truncateToWidthHandlesOnlyAnsiCodes() {
+        var input = "\033[2m\033[0m";
+        assertEquals(input, TerminalProgress.truncateToWidth(input, 5));
+    }
 }
