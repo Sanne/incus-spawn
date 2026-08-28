@@ -82,6 +82,7 @@ cleanup() {
     echo "Cleaning up..."
     [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null && wait "$PROXY_PID" 2>/dev/null || true
     podman stop "$HYPERFOIL_CONTAINER" 2>/dev/null && podman rm "$HYPERFOIL_CONTAINER" 2>/dev/null || true
+    [ -n "${TRUSTSTORE_DIR:-}" ] && rm -rf "$TRUSTSTORE_DIR" || true
 }
 trap cleanup EXIT
 
@@ -98,6 +99,14 @@ epoch_ms() {
 
 echo "=== Benchmark: native image proxy ==="
 echo ""
+
+# The two toolchain flags are mutually exclusive: a container build ignores the
+# local GRAALVM_HOME entirely, so accepting both would silently measure the
+# builder image while the run is labelled with the --graalvm one. That is the
+# exact class of mislabelled A/B this harness exists to prevent.
+if [ -n "$GRAALVM_DIR" ] && [ -n "$BUILDER_IMAGE" ]; then
+    die "--graalvm and --builder-image are mutually exclusive: a container build ignores the local GraalVM, so the result would not reflect --graalvm. Pick one."
+fi
 
 # Pin a toolchain if asked. Quarkus picks native-image up from GRAALVM_HOME/JAVA_HOME
 # or PATH, so set all three: that is what makes a 25.2-vs-25.3 A/B on one host possible.
@@ -181,7 +190,8 @@ if [ "$LOAD_MODE" = maven ]; then
     MAVEN_PORT=$(awk '/^  host:/ { print $2; exit }' "$BENCHMARK_YAML" | sed -nE 's#.*:([0-9]+)$#\1#p')
     MAVEN_PATH=$(awk '/GET:/ { print $2; exit }' "$BENCHMARK_YAML")
     [ -n "$MAVEN_HOST" ] && [ -n "$MAVEN_PATH" ] || die "Could not parse host/GET path from $BENCHMARK_YAML"
-    echo "Artifact: $MAVEN_HOST$MAVEN_PATH"
+    MAVEN_URL="https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH"
+    echo "Artifact: $MAVEN_URL"
 fi
 
 # Resolve gateway IP from Incus bridge
@@ -302,7 +312,7 @@ if [ "$LOAD_MODE" = maven ]; then
     # as an upstream fetch and skew the whole run.
     WARM=$(curl -s -o /dev/null -w "%{http_code}:%{size_download}" \
         --resolve "$MAVEN_HOST:$MAVEN_PORT:$GATEWAY_IP" --cacert "$ISX_CONFIG_DIR/ca.crt" \
-        "https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH") || die "Artifact fetch through the proxy failed"
+        "$MAVEN_URL") || die "Artifact fetch through the proxy failed"
     [ "${WARM%%:*}" = "200" ] || die "Artifact fetch returned HTTP ${WARM%%:*} (expected 200)"
     ARTIFACT_BYTES="${WARM##*:}"
     echo "Cache warm:  $ARTIFACT_BYTES bytes"
@@ -329,7 +339,8 @@ HF_RUN_ARGS=(-d --name "$HYPERFOIL_CONTAINER" --network=host)
 # our own CA. Without the truststore every request fails the handshake.
 if [ "$LOAD_MODE" = maven ]; then
     command -v keytool &>/dev/null || die "keytool not found; needed to build a truststore for --load=maven"
-    TRUSTSTORE="$(mktemp -d)/isx-truststore.p12"
+    TRUSTSTORE_DIR="$(mktemp -d)"
+    TRUSTSTORE="$TRUSTSTORE_DIR/isx-truststore.p12"
     keytool -importcert -noprompt -trustcacerts -alias isx-ca \
         -file "$ISX_CONFIG_DIR/ca.crt" \
         -keystore "$TRUSTSTORE" -storetype PKCS12 -storepass changeit &>/dev/null \
