@@ -66,6 +66,35 @@ class ListCommandDiskTest {
         assertEquals("0.0 GiB", ListCommand.gib(0));
     }
 
+    // --- gibShort: compact GiB readout for the header gauge ---
+
+    @Test
+    void gibShortIsCompact() {
+        assertEquals("8.7G", ListCommand.gibShort((long) (8.7 * 1024 * 1024 * 1024)));
+        assertEquals("14G", ListCommand.gibShort(14L * 1024 * 1024 * 1024));
+        assertEquals("0.0G", ListCommand.gibShort(0));
+    }
+
+    // --- runningSummary: the header's "N running" badge, split by instance type ---
+
+    @Test
+    void runningSummaryEmptyWhenNothingRuns() {
+        assertEquals("", ListCommand.runningSummary(0, 0));
+    }
+
+    @Test
+    void runningSummaryPluralizesEachKind() {
+        assertEquals("1 container running", ListCommand.runningSummary(1, 0));
+        assertEquals("2 containers running", ListCommand.runningSummary(2, 0));
+        assertEquals("1 VM running", ListCommand.runningSummary(0, 1));
+        assertEquals("3 VMs running", ListCommand.runningSummary(0, 3));
+    }
+
+    @Test
+    void runningSummaryCombinesBothKinds() {
+        assertEquals("2 containers, 1 VM running", ListCommand.runningSummary(2, 1));
+    }
+
     // --- sumDiskUsage: parse state.disk.<dev>.usage from recursion=2 payload ---
 
     @Test
