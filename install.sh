@@ -1,10 +1,52 @@
 #!/bin/bash
 # Build and install incus-spawn as 'isx'
-set -e
+# -E so the ERR trap also fires for failures inside the helper functions.
+set -eE
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="isx"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Say which step died. Without this a mid-install failure just stops, leaving
+# some binaries updated and some not, with nothing naming the culprit.
+trap 'echo "Error: install.sh failed at line $LINENO: $BASH_COMMAND" >&2' ERR
+
+# Path of a staged (not yet renamed) file, so we don't litter $INSTALL_DIR
+# with half-written copies when a build or copy dies partway.
+STAGED=""
+trap '[ -n "$STAGED" ] && rm -f "$STAGED"; :' EXIT
+
+# Install a file by staging it beside the target and renaming over it.
+#
+# rename(2) is atomic and swaps the *directory entry*, not the inode, which
+# matters twice over. A running isx/isx-proxy keeps executing the old image
+# instead of making the write fail with ETXTBSY ("Text file busy") -- the
+# systemd proxy service in particular is usually running during an upgrade.
+# And bash reads a script lazily, so truncating a running wrapper or
+# git-remote-isx in place can make it execute garbage mid-run. A failed or
+# short copy also leaves the previous working version in place rather than a
+# truncated stump, and there is never a window where the binary is missing.
+atomic_install() {
+    local src="$1" dest="$2"
+    STAGED="$(mktemp "$dest.XXXXXX")"
+    cp "$src" "$STAGED"
+    chmod 755 "$STAGED"
+    mv -f "$STAGED" "$dest"
+    STAGED=""
+}
+
+# Same, for the generated JVM launcher scripts.
+install_wrapper() {
+    local dest="$1" jar="$2"
+    STAGED="$(mktemp "$dest.XXXXXX")"
+    cat > "$STAGED" <<WRAPPER
+#!/bin/bash
+exec "$JAVA_BIN" -jar "$jar" "\$@"
+WRAPPER
+    chmod 755 "$STAGED"
+    mv -f "$STAGED" "$dest"
+    STAGED=""
+}
 
 NATIVE=false
 COMPLETIONS_SHELL=""
@@ -21,6 +63,14 @@ if [ -n "$COMPLETIONS_SHELL" ]; then
         bash|zsh|fish) ;;
         *) echo "Error: unsupported shell '$COMPLETIONS_SHELL'. Use bash, zsh, or fish."; exit 1 ;;
     esac
+fi
+
+# Check we can install the result *before* spending minutes on a native build.
+mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
+    echo "Error: $INSTALL_DIR is not a writable directory."
+    echo "  Point INSTALL_DIR elsewhere, e.g. INSTALL_DIR=~/bin $0 $*"
+    exit 1
 fi
 
 if $NATIVE; then
@@ -66,19 +116,15 @@ if $NATIVE; then
     fi
     "$SCRIPT_DIR/mvnw" package $NATIVE_ARGS
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
-    mkdir -p "$INSTALL_DIR"
     RUNNER=$(ls -t "$SCRIPT_DIR"/cli/target/incus-spawn-*-runner 2>/dev/null | head -1)
-    if [ -z "$RUNNER" ]; then
+    if [ -z "$RUNNER" ] || [ ! -f "$RUNNER" ]; then
         echo "Error: no native runner found in cli/target/"
         exit 1
     fi
-    rm -f "$INSTALL_DIR/$BINARY_NAME"
-    cp "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
-    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    atomic_install "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
     PROXY_RUNNER=$(ls -t "$SCRIPT_DIR"/proxy/target/incus-spawn-proxy-*-runner 2>/dev/null | head -1)
-    if [ -n "$PROXY_RUNNER" ]; then
-        cp "$PROXY_RUNNER" "$INSTALL_DIR/isx-proxy"
-        chmod +x "$INSTALL_DIR/isx-proxy"
+    if [ -n "$PROXY_RUNNER" ] && [ -f "$PROXY_RUNNER" ]; then
+        atomic_install "$PROXY_RUNNER" "$INSTALL_DIR/isx-proxy"
     fi
 else
     # Resolve the Java binary so the wrapper always uses the JDK it was built with,
@@ -106,26 +152,16 @@ else
     echo "Building JVM package..."
     "$SCRIPT_DIR/mvnw" package -DskipTests -q
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
-    mkdir -p "$INSTALL_DIR"
     # Create a wrapper script that runs the quarkus app jar
     JARFILE=$(ls "$SCRIPT_DIR"/cli/target/quarkus-app/quarkus-run.jar 2>/dev/null)
     if [ -z "$JARFILE" ]; then
         echo "Error: quarkus-run.jar not found in cli/target/quarkus-app/"
         exit 1
     fi
-    rm -f "$INSTALL_DIR/$BINARY_NAME"
-    cat > "$INSTALL_DIR/$BINARY_NAME" <<WRAPPER
-#!/bin/bash
-exec "$JAVA_BIN" -jar "$JARFILE" "\$@"
-WRAPPER
-    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    install_wrapper "$INSTALL_DIR/$BINARY_NAME" "$JARFILE"
     PROXY_JAR=$(ls "$SCRIPT_DIR"/proxy/target/quarkus-app/quarkus-run.jar 2>/dev/null)
     if [ -n "$PROXY_JAR" ]; then
-        cat > "$INSTALL_DIR/isx-proxy" <<WRAPPER
-#!/bin/bash
-exec "$JAVA_BIN" -jar "$PROXY_JAR" "\$@"
-WRAPPER
-        chmod +x "$INSTALL_DIR/isx-proxy"
+        install_wrapper "$INSTALL_DIR/isx-proxy" "$PROXY_JAR"
     fi
 fi
 
@@ -147,12 +183,23 @@ if [ -n "$COMPLETIONS_SHELL" ]; then
     esac
     echo "Installing $COMPLETIONS_SHELL completions to $COMP_FILE..."
     mkdir -p "$COMP_DIR"
-    "$INSTALL_DIR/$BINARY_NAME" completion "$COMPLETIONS_SHELL" > "$COMP_FILE"
-    echo "Completions installed. Restart your shell or source the file to activate."
+    # Generate to a staging file: a failure here must not abort the rest of the
+    # install, nor leave a truncated completion script that breaks shell startup.
+    STAGED="$(mktemp "$COMP_FILE.XXXXXX")"
+    if "$INSTALL_DIR/$BINARY_NAME" completion "$COMPLETIONS_SHELL" > "$STAGED"; then
+        chmod 644 "$STAGED"
+        mv -f "$STAGED" "$COMP_FILE"
+        STAGED=""
+        echo "Completions installed. Restart your shell or source the file to activate."
+    else
+        rm -f "$STAGED"
+        STAGED=""
+        echo "Warning: could not generate $COMPLETIONS_SHELL completions; leaving $COMP_FILE alone." >&2
+    fi
 fi
 
 # Install git remote helper shim for isx:// URLs
-install -m 755 "$SCRIPT_DIR/common/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
+atomic_install "$SCRIPT_DIR/common/src/main/resources/git-remote-isx" "$INSTALL_DIR/git-remote-isx"
 
 # ── Override a Homebrew installation if present ───────────────────────────
 # The brew prefix bin (e.g. /opt/homebrew/bin) usually sorts ahead of
@@ -172,12 +219,33 @@ if command -v brew >/dev/null 2>&1 \
     done
 fi
 
+# Don't claim success for a binary that dies on first launch (a native image
+# built against mismatched glibc, a wrapper pointing at a since-removed JDK).
+# --version is self-contained and doesn't need a running Incus daemon.
+if ! "$INSTALL_DIR/$BINARY_NAME" --version >/dev/null 2>&1; then
+    echo "Error: $INSTALL_DIR/$BINARY_NAME was installed but '$BINARY_NAME --version' failed." >&2
+    "$INSTALL_DIR/$BINARY_NAME" --version || true
+    exit 1
+fi
+
+case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ;;
+    *) echo "Note: $INSTALL_DIR is not on your PATH; add it to run '$BINARY_NAME' by name." ;;
+esac
+
 echo "Installed. Run 'isx' to get started."
 
 # ── Post-upgrade: restart services if running ────────────────────────────
-if systemctl --user is-active --quiet incus-spawn-proxy 2>/dev/null; then
-    "$INSTALL_DIR/$BINARY_NAME" proxy install
+# A failed unit counts as "was meant to be running" -- e.g. a previous install
+# that died partway and left the proxy stopped. `proxy install` is idempotent:
+# it restarts an active service and installs a missing one. Never fatal, the
+# binaries are already in place by this point.
+if systemctl --user is-active --quiet incus-spawn-proxy 2>/dev/null \
+    || systemctl --user is-failed --quiet incus-spawn-proxy 2>/dev/null; then
+    "$INSTALL_DIR/$BINARY_NAME" proxy install \
+        || echo "Warning: could not restart the proxy service; run '$BINARY_NAME proxy install' by hand." >&2
 elif [ "$(uname -s)" = "Darwin" ] && launchctl print "gui/$(id -u)/dev.incusspawn.proxy" &>/dev/null; then
     echo "Updating macOS proxy service..."
-    "$INSTALL_DIR/$BINARY_NAME" proxy install
+    "$INSTALL_DIR/$BINARY_NAME" proxy install \
+        || echo "Warning: could not restart the proxy service; run '$BINARY_NAME proxy install' by hand." >&2
 fi
