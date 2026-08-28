@@ -1058,7 +1058,7 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
         doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
         cmd.cloneRepos(container, imageDef, false);
@@ -1100,7 +1100,7 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
         doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
         cmd.cloneRepos(container, imageDef, false);
@@ -1129,7 +1129,7 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
         doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
         cmd.cloneRepos(container, imageDef, false);
@@ -1170,7 +1170,7 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
         doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
 
         cmd.cloneRepos(container, imageDef, false);
@@ -1441,9 +1441,9 @@ class BuildCommandTest {
     }
 
     @Test
-    void formatDnfLineShowsCheckmarkWhenDone() {
+    void formatDnfLineShowsDoneWhenComplete() {
         var line = BuildCommand.formatDnfLine("Installing base packages", BuildCommand.StepProgress.done(null), 0);
-        assertTrue(line.contains("✓"), "should show checkmark when done");
+        assertTrue(line.contains("done."), "should show 'done.' when complete");
         assertTrue(line.contains("Installing base packages"));
     }
 

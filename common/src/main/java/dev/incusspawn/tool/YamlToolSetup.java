@@ -2,6 +2,7 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -69,7 +70,7 @@ public class YamlToolSetup implements ToolSetup {
     @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
-        dev.incusspawn.util.BuildOutput.stepStart("Installing " + label + "...");
+        BuildOutput.stepStart("Installing " + label + "...");
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
@@ -109,18 +110,18 @@ public class YamlToolSetup implements ToolSetup {
         // 5. Environment variables are collected centrally by BuildCommand
         // and written to /etc/profile.d/isx-env.sh — see envEntries().
 
+        BuildOutput.stepDone();
+
         // 6. Verification (with parameter substitution)
         if (def.getVerify() != null && !def.getVerify().isBlank()) {
             var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
             var result = container.exec(substituted.split("\\s+"));
             if (result.success()) {
-                dev.incusspawn.util.BuildOutput.stepDone();
-                dev.incusspawn.util.BuildOutput.note(result.stdout().lines().findFirst().orElse(""));
-                return;
+                BuildOutput.note(result.stdout().lines().findFirst().orElse(""));
+            } else {
+                System.err.println(BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
             }
-            System.err.println(dev.incusspawn.util.BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
         }
-        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
     static String canonicalArch(String arch) {

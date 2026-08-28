@@ -1,9 +1,10 @@
 package dev.incusspawn.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.util.BuildOutput;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -128,7 +129,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.stepStart("Installing Claude Code...");
+        BuildOutput.stepStart("Installing Claude Code...");
         c.sh("mkdir -p /home/agentuser/.local/bin && " +
                 "chown -R agentuser:agentuser /home/agentuser/.local");
 
@@ -155,8 +156,8 @@ public class ClaudeSetup implements ToolSetup {
                     + " /home/agentuser/.local/share"
                     + " /home/agentuser/.local/state"
                     + " /home/agentuser/.cache");
-            dev.incusspawn.util.BuildOutput.stepDone();
-            dev.incusspawn.util.BuildOutput.note("Claude Code " + version);
+            BuildOutput.stepDone();
+            BuildOutput.note("Claude Code " + version);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
         }
@@ -220,7 +221,7 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig, Map<String, String> params) {
-        dev.incusspawn.util.BuildOutput.stepStart("Configuring Claude Code...");
+        BuildOutput.stepStart("Configuring Claude Code...");
         var managedSettingsJson = """
                 {
                   "permissions": {
@@ -287,7 +288,7 @@ public class ClaudeSetup implements ToolSetup {
         c.writeFile("/home/agentuser/.claude.json", claudeJson);
         c.chown("/home/agentuser/.claude", "agentuser:agentuser");
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
-        dev.incusspawn.util.BuildOutput.stepDone();
+        BuildOutput.stepDone();
     }
 
     static String buildUserSettings(Map<String, String> params) {

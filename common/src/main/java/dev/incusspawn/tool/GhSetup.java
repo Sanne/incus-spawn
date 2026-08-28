@@ -4,9 +4,11 @@ import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusException;
-import static dev.incusspawn.incus.Container.shellQuote;
+import dev.incusspawn.util.BuildOutput;
 
 import java.util.List;
+
+import static dev.incusspawn.incus.Container.shellQuote;
 
 public class GhSetup implements ToolSetup {
 
@@ -31,9 +33,9 @@ public class GhSetup implements ToolSetup {
 
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
-        dev.incusspawn.util.BuildOutput.stepStart("Installing GitHub CLI...");
+        BuildOutput.stepStart("Installing GitHub CLI...");
         configureGit(c);
-        dev.incusspawn.util.BuildOutput.stepDone();
+        BuildOutput.stepDone();
     }
 
     private void configureGit(Container c) {

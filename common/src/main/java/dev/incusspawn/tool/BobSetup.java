@@ -3,6 +3,7 @@ package dev.incusspawn.tool;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -61,7 +62,7 @@ public class BobSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.stepStart("Installing Bob Shell...");
+        BuildOutput.stepStart("Installing Bob Shell...");
 
         try {
             var version = Files.readString(
@@ -80,8 +81,8 @@ public class BobSetup implements ToolSetup {
             c.exec("npm", "install", "-g", containerTarball)
                     .assertSuccess("Failed to npm install Bob Shell");
             c.exec("rm", "-f", containerTarball);
-            dev.incusspawn.util.BuildOutput.stepDone();
-            dev.incusspawn.util.BuildOutput.note("Bob Shell " + version);
+            BuildOutput.stepDone();
+            BuildOutput.note("Bob Shell " + version);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
         }
