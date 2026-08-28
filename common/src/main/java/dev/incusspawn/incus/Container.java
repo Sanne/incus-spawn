@@ -61,6 +61,16 @@ public class Container {
         }
     }
 
+    /** Run a command as root, suppressing output. On failure, prints captured output to stderr before throwing. */
+    public void runQuiet(String failureMessage, String... command) {
+        var result = incus.shellExec(name, command);
+        if (!result.success()) {
+            if (!result.stdout().isBlank()) System.err.print(result.stdout());
+            if (!result.stderr().isBlank()) System.err.print(result.stderr());
+            throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
+        }
+    }
+
     /**
      * Run a command as root, streaming each output line (stdout and stderr) to
      * {@code lineSink} instead of the terminal. Returns the exit code. The sink is
@@ -83,6 +93,16 @@ public class Container {
         int exitCode = incus.shellExecInteractiveAsUser(name, user, script);
         if (exitCode != 0) {
             throw new IncusException(failureMessage + " (exit code " + exitCode + ")");
+        }
+    }
+
+    /** Run a shell snippet as a specific user, suppressing output. On failure, prints captured output to stderr. */
+    public void runAsUserQuiet(String user, String script, String failureMessage) {
+        var result = incus.execInContainer(name, user, script);
+        if (!result.success()) {
+            if (!result.stdout().isBlank()) System.err.print(result.stdout());
+            if (!result.stderr().isBlank()) System.err.print(result.stderr());
+            throw new IncusException(failureMessage + " (exit code " + result.exitCode() + ")");
         }
     }
 

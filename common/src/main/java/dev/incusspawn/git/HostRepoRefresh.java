@@ -3,6 +3,7 @@ package dev.incusspawn.git;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.TerminalProgress;
 
 import java.nio.file.Files;
@@ -39,7 +40,7 @@ public final class HostRepoRefresh {
             try {
                 hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             } catch (IllegalStateException e) {
-                output.accept("Warning: " + e.getMessage());
+                System.err.println(BuildOutput.STEP_INDENT + "Warning: " + e.getMessage());
                 continue;
             }
 
@@ -48,7 +49,7 @@ public final class HostRepoRefresh {
                 if (remoteName != null) {
                     toFetch.add(new FetchTask(repoName, hostPath, remoteName));
                 } else {
-                    output.accept("  Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping refresh");
+                    BuildOutput.note("Host repo " + hostPath + " has no remote matching " + repo.getUrl() + ", skipping.");
                 }
             } else if (cloneMissing) {
                 var targetDir = resolveCloneTarget(repoName, config);
@@ -61,12 +62,12 @@ public final class HostRepoRefresh {
         if (toFetch.isEmpty() && toClone.isEmpty()) return;
 
         if (!toFetch.isEmpty()) {
-            output.accept("Refreshing " + toFetch.size() + " host repo(s)...");
+            BuildOutput.step("Refreshing " + toFetch.size() + " host " + (toFetch.size() == 1 ? "repo:" : "repos:"));
             fetchInParallel(toFetch, output);
         }
 
         if (!toClone.isEmpty()) {
-            cloneSequentially(toClone, config, autoConfirm, output);
+            cloneSequentially(toClone, config, autoConfirm);
         }
     }
 
@@ -97,7 +98,7 @@ public final class HostRepoRefresh {
     }
 
     static String formatFetchLine(FetchTask task, TaskProgress progress, int frame) {
-        var sb = new StringBuilder("  ");
+        var sb = new StringBuilder(BuildOutput.STEP_INDENT);
         switch (progress.state()) {
             case FETCHING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(" \033[2mFetching\033[0m ");
@@ -115,9 +116,9 @@ public final class HostRepoRefresh {
 
     private static String plainFetchLine(FetchTask task, TaskProgress progress) {
         if (progress.state() == FetchState.DONE) {
-            return "  Fetched " + task.repoName() + " (" + task.hostPath() + ")";
+            return BuildOutput.STEP_INDENT + "Fetched " + task.repoName() + " (" + task.hostPath() + ")";
         }
-        var msg = "  Warning: fetch failed for " + task.repoName() + " at " + task.hostPath();
+        var msg = BuildOutput.STEP_INDENT + "Warning: fetch failed for " + task.repoName() + " at " + task.hostPath();
         if (progress.detail() != null && !progress.detail().isEmpty()) {
             msg += ": " + progress.detail();
         }
@@ -125,11 +126,11 @@ public final class HostRepoRefresh {
     }
 
     private static void cloneSequentially(List<CloneTask> tasks, SpawnConfig config,
-                                          boolean autoConfirm, Consumer<String> output) {
+                                          boolean autoConfirm) {
         var policy = resolvePolicy(config);
 
         if (policy == ClonePolicy.ASK && (autoConfirm || System.console() == null)) {
-            output.accept("  Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically");
+            BuildOutput.note("Skipping clone of " + tasks.size() + " repo(s) — set auto-clone-repos: always in config.yaml to clone automatically.");
             return;
         }
 
@@ -147,28 +148,29 @@ public final class HostRepoRefresh {
                         policy = ClonePolicy.ALWAYS;
                         config.setAutoCloneRepos("always");
                         config.save();
-                        output.accept("  Saved preference: auto-clone-repos: always");
+                        BuildOutput.note("Saved preference: auto-clone-repos: always");
                     }
                     case NEVER -> {
                         policy = ClonePolicy.NEVER;
                         config.setAutoCloneRepos("never");
                         config.save();
-                        output.accept("  Saved preference: auto-clone-repos: never");
+                        BuildOutput.note("Saved preference: auto-clone-repos: never");
                         continue;
                     }
                 }
             }
 
-            output.accept("  Cloning " + task.url + " into " + task.targetDir + "...");
+            BuildOutput.stepStart("Cloning " + task.repoName + "...");
             var result = GitRemoteUtils.hostGitExecResult(task.targetDir.getParent(),
                     "clone", "--", task.url, task.targetDir.getFileName().toString());
             if (result.success()) {
-                output.accept("  Cloned " + task.repoName);
+                BuildOutput.stepDone();
             } else {
+                BuildOutput.stepBreak();
                 var detail = extractGitError(result.output());
-                var msg = "  Warning: clone failed for " + task.url;
+                var msg = "Warning: clone failed for " + task.url;
                 if (!detail.isEmpty()) msg += ": " + detail;
-                output.accept(msg);
+                System.err.println(BuildOutput.STEP_INDENT + msg);
             }
         }
     }

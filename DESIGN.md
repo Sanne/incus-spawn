@@ -227,6 +227,12 @@ user may want to know about (skipped steps, cache hits). Warnings (`System.err`)
 are for conditions that may need action. The distinction: a note is "this is fine,
 FYI"; a warning is "you should look at this."
 
+**Container commands during build:** tool `run:` and `run_as_user:` scripts
+use `Container.runQuiet()`/`runAsUserQuiet()`, which capture output and only
+print it on failure. This prevents leaked output (e.g. systemd's "Created
+symlink" lines) from breaking alignment. `runInteractive` is reserved for
+commands that genuinely need live terminal output (e.g. interactive shells).
+
 **Adding new output:** use `BuildOutput.step()` for quick actions,
 `stepStart()`/`stepDone()` for slow ones, `note()` for informational dim
 messages. Do not add raw `System.out.println()` with inline ANSI escapes.

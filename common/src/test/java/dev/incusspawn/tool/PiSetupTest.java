@@ -56,19 +56,17 @@ class PiSetupTest {
     @Test
     void installRunsNpmInstallGlobal() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());
 
-        verify(incus).shellExecInteractive(eq(CONTAINER),
+        verify(incus).shellExec(eq(CONTAINER),
                 eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@earendil-works/pi-coding-agent"));
     }
 
     @Test
     void installWritesSettingsJson() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new PiSetup().install(new Container(incus, CONTAINER), java.util.Map.of());

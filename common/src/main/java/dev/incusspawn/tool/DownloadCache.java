@@ -55,7 +55,6 @@ public class DownloadCache {
             }
         }
 
-        dev.incusspawn.util.BuildOutput.step("  Downloading " + url + "...");
         var tmp = Files.createTempFile(cacheDir, "download-", ".tmp");
         try {
             if (url.startsWith("file://")) {

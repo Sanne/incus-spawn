@@ -61,7 +61,7 @@ public class BobSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.step("Installing Bob Shell...");
+        dev.incusspawn.util.BuildOutput.stepStart("Installing Bob Shell...");
 
         try {
             var version = Files.readString(
@@ -69,7 +69,6 @@ public class BobSetup implements ToolSetup {
             if (!VERSION_PATTERN.matcher(version).matches()) {
                 throw new IOException("Unexpected version format: " + version);
             }
-            dev.incusspawn.util.BuildOutput.step("  Latest version: " + version);
 
             var tarballUrl = BASE_URL + version + ".tgz";
             var sha256 = Files.readString(
@@ -81,6 +80,8 @@ public class BobSetup implements ToolSetup {
             c.exec("npm", "install", "-g", containerTarball)
                     .assertSuccess("Failed to npm install Bob Shell");
             c.exec("rm", "-f", containerTarball);
+            dev.incusspawn.util.BuildOutput.stepDone();
+            dev.incusspawn.util.BuildOutput.note("Bob Shell " + version);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
         }

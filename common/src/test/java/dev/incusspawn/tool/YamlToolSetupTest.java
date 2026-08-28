@@ -41,9 +41,8 @@ class YamlToolSetupTest {
     @Test
     void executesAllStepsInOrder() {
         var incus = mockIncusWithArch();
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
-        when(incus.shellExecInteractiveAsUser(anyString(), anyString(), anyString())).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), anyString())).thenReturn(OK);
 
         var def = new ToolDef();
         def.setName("full-tool");
@@ -66,12 +65,12 @@ class YamlToolSetupTest {
 
         // Packages are installed in bulk by BuildCommand, not by install().
 
-        // 1. run -> runInteractive -> shellExecInteractive with sh -c
-        order.verify(incus).shellExecInteractive(eq(CONTAINER),
+        // 1. run -> runQuiet -> shellExec with sh -c
+        order.verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), eq("echo root-step"));
 
-        // 2. run_as_user -> shellExecInteractiveAsUser with the script directly (su - user -c)
-        order.verify(incus).shellExecInteractiveAsUser(eq(CONTAINER),
+        // 2. run_as_user -> runAsUserQuiet -> execInContainer (su - user -c)
+        order.verify(incus).execInContainer(eq(CONTAINER),
                 eq("agentuser"), eq("echo user-step"));
 
         // 3. writeFile -> shellExec with sh -c (heredoc)
@@ -123,7 +122,6 @@ class YamlToolSetupTest {
     @Test
     void downloadsExecuteBeforeRunCommands(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         // Create a fake archive (just a file to make the extraction step work)
@@ -163,7 +161,6 @@ class YamlToolSetupTest {
     @Test
     void extractInContainerPushesArchiveAndExtractsInsideContainer(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var fakeArchive = tempDir.resolve("idea.tar.gz");
@@ -191,8 +188,8 @@ class YamlToolSetupTest {
         order.verify(incus).shellExec(eq(CONTAINER), eq("mkdir"), eq("-p"), eq("/opt"));
         // 2. push archive into container
         order.verify(incus).filePush(eq(fakeArchive.toString()), eq(CONTAINER), eq("/tmp/idea.tar.gz"));
-        // 3. extract inside container
-        order.verify(incus).shellExecInteractive(eq(CONTAINER),
+        // 3. extract inside container (quiet — captured exec)
+        order.verify(incus).shellExec(eq(CONTAINER),
                 eq("tar"), eq("xf"), eq("/tmp/idea.tar.gz"), eq("-C"), eq("/opt"));
         // 4. clean up archive
         order.verify(incus).shellExec(eq(CONTAINER), eq("rm"), eq("-f"), eq("/tmp/idea.tar.gz"));

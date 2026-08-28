@@ -51,13 +51,14 @@ public class PiSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.step("Installing Pi coding agent...");
-        c.runInteractive("Failed to install Pi coding agent",
+        dev.incusspawn.util.BuildOutput.stepStart("Installing Pi coding agent...");
+        c.runQuiet("Failed to install Pi coding agent",
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@earendil-works/pi-coding-agent");
+        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
     private void configureSettings(Container c) {
-        dev.incusspawn.util.BuildOutput.step("Configuring Pi for agent use...");
+        dev.incusspawn.util.BuildOutput.stepStart("Configuring Pi...");
         var settingsJson = """
                 {
                   "enableInstallTelemetry": false,
@@ -70,6 +71,7 @@ public class PiSetup implements ToolSetup {
         c.sh("mkdir -p /home/agentuser/.pi/agent");
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
         c.chown("/home/agentuser/.pi", "agentuser:agentuser");
+        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
 }
