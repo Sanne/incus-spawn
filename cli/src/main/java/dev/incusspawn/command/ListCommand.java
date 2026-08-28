@@ -1493,12 +1493,14 @@ public class ListCommand extends BaseCommand {
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
         int footerHeight = hasStatus ? 3 : 2;
-        int stripHeight = (poolUsage != null && poolUsage.totalBytes() > 0) ? 1 : 0;
+        // The header band is always present — it anchors the app identity (brand chip) and
+        // carries the storage gauge on the right when pool usage is available.
+        int headerHeight = 1;
         boolean showLegend = anyTemplateOutdated || anyDefinitionChanged || anyParentRebuilt;
         int legendHeight = showLegend ? 1 : 0;
         int templateIdeal = templateEntries.size() + 3 + legendHeight;
         int instanceIdeal = entries.size() + 3;
-        int available = area.height() - footerHeight - stripHeight;
+        int available = area.height() - footerHeight - headerHeight;
         int templatePanelHeight;
         if (templateIdeal + instanceIdeal <= available) {
             templatePanelHeight = templateIdeal;
@@ -1510,13 +1512,13 @@ public class ListCommand extends BaseCommand {
         }
         var chunks = Layout.vertical()
                 .constraints(
-                        Constraint.length(stripHeight),
+                        Constraint.length(headerHeight),
                         Constraint.length(templatePanelHeight),
                         Constraint.fill(),
                         Constraint.length(footerHeight))
                 .split(area);
 
-        if (stripHeight > 0) renderStorageStrip(frame, chunks.get(0));
+        renderHeader(frame, chunks.get(0));
         renderTemplateTable(frame, chunks.get(1));
         renderInstanceTable(frame, chunks.get(2), tableState);
         renderToolbar(frame, chunks.get(3), tableState, hasStatus);
@@ -1534,51 +1536,118 @@ public class ListCommand extends BaseCommand {
     // Eighth-block glyphs for sub-cell bar fill (index 0 = empty ... 8 = full block).
     private static final char[] BAR_EIGHTHS = {' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
 
-    /**
-     * Render the frameless, full-width storage gauge above the panels. The fill
-     * colour signals the threshold (green → amber → red) while the segment glyphs
-     * carry the level independently of colour, so it reads on mono terminals too.
-     */
-    private void renderStorageStrip(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
-        fillBackground(frame, area, theme.contextBg());
-        if (poolUsage == null || poolUsage.totalBytes() == 0 || area.width() < 12) return;
+    // Compact storage gauge width targets for the header's right-hand side.
+    private static final int HEADER_BAR_MIN = 10;  // floor for the bar fill (excl. borders)
+    private static final int HEADER_BAR_MAX = 32;  // cap so the bar stays a gauge, not a ruler
 
-        int percent = poolUsage.percent();
-        Color fillColor = percent >= STORAGE_CRIT_PERCENT ? theme.statusFailure()
-                : percent >= STORAGE_WARN_PERCENT ? theme.statusWarning()
-                : theme.statusRunning();
+    /**
+     * Render the always-present header band above the panels: a bold accent "brand chip" on the
+     * left for app identity, and — when pool usage is available — a compact storage gauge
+     * right-aligned on the same row. The gauge's fill colour signals the threshold
+     * (green → amber → red) while the segment glyphs carry the level independently of colour, so
+     * it reads on mono terminals too. Both the gauge and (last) its bar drop out on narrow
+     * terminals so the brand always survives.
+     */
+    private void renderHeader(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
+        fillBackground(frame, area, theme.contextBg());
+        if (area.width() <= 0) return;
         var bg = theme.contextBg();
 
-        var label = (percent >= STORAGE_CRIT_PERCENT ? "  ⚠ Storage " : "  Storage ");
-        long freeBytes = Math.max(0, poolUsage.totalBytes() - poolUsage.usedBytes());
-        var readout = " " + percent + "%  " + gib(poolUsage.usedBytes()) + " / "
-                + gib(poolUsage.totalBytes()) + " · " + gib(freeBytes) + " free  ";
-        var legend = "~ approx; base template holds the shared image  ";
-
-        // Layout: [label][bar fills][readout], and an optional dim legend on the far
-        // right when the terminal is wide enough for it.
-        int labelW = label.length();
-        int readoutW = readout.length();
-        int legendW = legend.length();
-        int reserved = labelW + readoutW;
-        boolean showLegend = area.width() - reserved - legendW >= 10;
-        int barW = area.width() - reserved - (showLegend ? legendW : 0);
-        if (barW < 4) { barW = Math.max(0, area.width() - reserved); showLegend = false; }
-
-        var spans = new ArrayList<Span>();
-        spans.add(Span.styled(label, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
-        // Need at least 3 cells: two borders (▕ ▏) plus one fill cell. Below that, drop the
-        // bar entirely rather than overflow the strip width with a 3-cell minimum render.
-        if (barW >= 3) {
-            spans.add(Span.styled("▕", Style.EMPTY.fg(fillColor).bg(bg)));
-            spans.add(Span.styled(bar(percent, barW - 2), Style.EMPTY.fg(fillColor).bg(bg)));
-            spans.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
+        // Left: brand chip (reverse-video accent tag) + dim version. Stands out, ~5 cells.
+        var left = new ArrayList<Span>();
+        left.add(Span.styled(" isx ", Style.EMPTY.bold().fg(bg).bg(theme.contextAccentFg())));
+        int leftW = 5;
+        var version = BuildInfo.instance().version();
+        if (version != null && !version.isBlank()) {
+            var vtext = "  " + version;
+            left.add(Span.styled(vtext, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+            leftW += vtext.length();
         }
-        spans.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
-        if (showLegend) {
-            spans.add(Span.styled(legend, Style.EMPTY.fg(theme.textDim()).bg(bg)));
+
+        // Right: compact storage gauge, only when we have pool usage and room for it. Built first
+        // so the centre badge can claim the leftover gap without ever evicting the gauge.
+        var gauge = new ArrayList<Span>();
+        int gaugeW = 0;
+        if (poolUsage != null && poolUsage.totalBytes() > 0) {
+            int percent = poolUsage.percent();
+            Color fillColor = percent >= STORAGE_CRIT_PERCENT ? theme.statusFailure()
+                    : percent >= STORAGE_WARN_PERCENT ? theme.statusWarning()
+                    : theme.statusRunning();
+            var glabel = percent >= STORAGE_CRIT_PERCENT ? "⚠ Storage " : "Storage ";
+            var readout = "  " + percent + "%  " + gibShort(poolUsage.usedBytes())
+                    + "/" + gibShort(poolUsage.totalBytes());
+
+            int fixed = glabel.length() + readout.length();       // gauge text, sans bar/borders
+            int avail = area.width() - leftW - 1;                 // -1 keeps at least one filler cell
+            // Grow the bar with the terminal (up to HEADER_BAR_MAX) so it stays substantial on wide
+            // screens and the whole gauge sits closer to centre instead of hugging the far edge.
+            int idealBar = Math.max(HEADER_BAR_MIN, Math.min(HEADER_BAR_MAX, area.width() / 5));
+            int barInner = Math.min(idealBar, avail - fixed - 2 /*borders*/);
+            int candidateW = fixed + (barInner >= 1 ? barInner + 2 : 0);
+
+            if (avail - candidateW >= 0) {                        // gauge (maybe sans bar) fits
+                gaugeW = candidateW;
+                gauge.add(Span.styled(glabel, Style.EMPTY.bold().fg(theme.contextPrimaryFg()).bg(bg)));
+                if (barInner >= 1) {
+                    gauge.add(Span.styled("▕", Style.EMPTY.fg(fillColor).bg(bg)));
+                    gauge.add(Span.styled(bar(percent, barInner), Style.EMPTY.fg(fillColor).bg(bg)));
+                    gauge.add(Span.styled("▏", Style.EMPTY.fg(fillColor).bg(bg)));
+                }
+                gauge.add(Span.styled(readout, Style.EMPTY.fg(fillColor).bg(bg)));
+            }
         }
+
+        // Centre: a quiet "N running" badge, split by instance type, filling the gap between the
+        // version and the gauge. Lower priority than the gauge — shown only if it fits the leftover.
+        var centre = new ArrayList<Span>();
+        int centreW = 0;
+        var badge = runningSummary(runningCounts(BadgeKind.CONTAINER), runningCounts(BadgeKind.VM));
+        if (!badge.isEmpty()) {
+            int need = 4 + badge.length();                        // "  ● " prefix + text
+            if (area.width() - leftW - gaugeW - need >= 1) {      // keep >=1 filler cell
+                centre.add(Span.styled("  ● ", Style.EMPTY.fg(theme.statusRunning()).bg(bg)));
+                centre.add(Span.styled(badge, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+                centreW = need;
+            }
+        }
+
+        // Assemble left → centre → filler → gauge.
+        var spans = new ArrayList<Span>(left);
+        spans.addAll(centre);
+        int fillerW = area.width() - leftW - centreW - gaugeW;
+        if (fillerW > 0) spans.add(Span.styled(" ".repeat(fillerW), Style.EMPTY.bg(bg)));
+        spans.addAll(gauge);
         frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+    }
+
+    private enum BadgeKind { CONTAINER, VM }
+
+    /** Count running instances of one kind, across the unfiltered set. */
+    private int runningCounts(BadgeKind kind) {
+        var pool = allEntries != null ? allEntries : entries;
+        if (pool == null) return 0;
+        int n = 0;
+        for (var e : pool) {
+            if (!isRunning(e)) continue;
+            boolean vm = "virtual-machine".equals(e.runtime());
+            if ((kind == BadgeKind.VM) == vm) n++;
+        }
+        return n;
+    }
+
+    /** Compact "N running" badge split by instance type; empty when nothing is running. */
+    static String runningSummary(int containers, int vms) {
+        if (containers <= 0 && vms <= 0) return "";
+        var parts = new ArrayList<String>();
+        if (containers > 0) parts.add(containers + (containers == 1 ? " container" : " containers"));
+        if (vms > 0) parts.add(vms + (vms == 1 ? " VM" : " VMs"));
+        return String.join(", ", parts) + " running";
+    }
+
+    /** Compact GiB readout for the header, e.g. "8.7G" (&lt;10) or "14G" (&ge;10). */
+    static String gibShort(long bytes) {
+        double g = bytes / (1024.0 * 1024 * 1024);
+        return g < 10 ? String.format("%.1fG", g) : String.format("%.0fG", g);
     }
 
     /** Build a fractional-eighths bar string of {@code width} cells at {@code percent}. */
