@@ -207,6 +207,12 @@ public class ListCommand extends BaseCommand {
     // Resolved once and cached: the pool name is constant for a TUI session, so we
     // avoid re-probing the storage-pool list (an extra HTTP call) on every reload.
     private String usagePoolName;
+    // Whether the resolved pool is the CoW (btrfs/zfs) pool. Only then do per-row usage
+    // figures mean "exclusive bytes" and the shared base fold below make sense.
+    private boolean usagePoolIsCow;
+    // The root template the shared base weight was folded into this reload (see
+    // foldBaseWeightIntoRootTemplate), or null when it couldn't be attributed.
+    private String baseTemplateName;
     // Amber/red thresholds for the storage gauge (percent of pool used).
     private static final int STORAGE_WARN_PERCENT = 75;
     private static final int STORAGE_CRIT_PERCENT = 90;
@@ -529,11 +535,14 @@ public class ListCommand extends BaseCommand {
             }
         }
 
+        // Pool usage first, so the shared base weight can be attributed to the root template
+        // before the row lists are snapshotted for rendering.
+        refreshPoolUsage();
+        foldBaseWeightIntoRootTemplate();
+
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
-
-        refreshPoolUsage();
     }
 
     /**
@@ -543,7 +552,11 @@ public class ListCommand extends BaseCommand {
      */
     private void refreshPoolUsage() {
         try {
-            if (usagePoolName == null) usagePoolName = incus.findUsablePool();
+            if (usagePoolName == null) {
+                var cow = incus.findCowPool();
+                usagePoolName = cow != null ? cow : incus.findUsablePool();
+                usagePoolIsCow = cow != null;
+            }
             poolUsage = usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName);
         } catch (Exception e) {
             poolUsage = null;
@@ -562,6 +575,44 @@ public class ListCommand extends BaseCommand {
         } else {
             storageWarningShown = false;
         }
+    }
+
+    /**
+     * Attribute the pool's shared base weight to the root template. btrfs reports each row's usage
+     * as <em>exclusive</em> (blocks unique to that one subvolume), so the imported base image and
+     * every block shared down a CoW chain belong to no row — they surface only in the pool total.
+     * We fold that remainder ({@code pool.used} minus the sum of every row's unique usage) into the
+     * single root template (the built template with no parent), so the base reads at its real weight
+     * and the rows roughly reconcile with the gauge. Only for CoW pools; skipped when usage is
+     * unknown or the root is ambiguous (zero or several templates with no parent), rather than
+     * misattributing the bytes to the wrong row.
+     */
+    private void foldBaseWeightIntoRootTemplate() {
+        baseTemplateName = null;
+        if (!usagePoolIsCow || poolUsage == null || poolUsage.usedBytes() <= 0) return;
+
+        long unique = 0;
+        for (var t : templateEntries) if (t.diskUsage() > 0) unique += t.diskUsage();
+        for (var e : entries) if (e.diskUsage > 0) unique += e.diskUsage;
+        long base = sharedBaseBytes(poolUsage.usedBytes(), unique);
+        if (base <= 0) return;
+
+        int rootIdx = -1;
+        for (int i = 0; i < templateEntries.size(); i++) {
+            var t = templateEntries.get(i);
+            if (t.diskUsage() < 0) continue;                            // not built — no subvolume yet
+            var p = t.parent();
+            if (p != null && !p.isEmpty() && !"-".equals(p)) continue;  // derived — not a root
+            if (rootIdx >= 0) return;                                   // ambiguous: >1 root, don't guess
+            rootIdx = i;
+        }
+        if (rootIdx < 0) return;
+
+        var r = templateEntries.get(rootIdx);
+        long folded = (r.diskUsage() < 0 ? 0 : r.diskUsage()) + base;
+        templateEntries.set(rootIdx, new TemplateInfo(r.name(), r.description(), r.buildStatus(),
+                r.runtime(), r.buildVersion(), r.definitionSha(), r.pendingOp(), r.parent(), folded));
+        baseTemplateName = r.name();
     }
 
     // --- Event handling ---
@@ -1495,7 +1546,7 @@ public class ListCommand extends BaseCommand {
         long freeBytes = Math.max(0, poolUsage.totalBytes() - poolUsage.usedBytes());
         var readout = " " + percent + "%  " + gib(poolUsage.usedBytes()) + " / "
                 + gib(poolUsage.totalBytes()) + " · " + gib(freeBytes) + " free  ";
-        var legend = "~ sizes approx; CoW-shared blocks not deducted  ";
+        var legend = "~ approx; base template holds the shared image  ";
 
         // Layout: [label][bar fills][readout], and an optional dim legend on the far
         // right when the terminal is wide enough for it.
@@ -1547,6 +1598,16 @@ public class ListCommand extends BaseCommand {
      * (dir pools / stopped instances report nothing). The leading "~" flags that
      * the figure is approximate and excludes CoW-shared blocks.
      */
+    /**
+     * Bytes that live in the pool but in no single row: the imported base image plus every
+     * CoW-shared block. btrfs reports per-row usage as <em>exclusive</em>, so shared blocks are
+     * counted in the pool total yet belong to no row. Clamped at 0 (rounding / metadata slack can
+     * make the row sum momentarily exceed the reported pool usage).
+     */
+    static long sharedBaseBytes(long poolUsedBytes, long sumRowUnique) {
+        return Math.max(0, poolUsedBytes - sumRowUnique);
+    }
+
     static String diskCell(long bytes) {
         if (bytes < 0) return "-";
         if (bytes < 1024) return "~" + bytes + "B";
@@ -1567,6 +1628,12 @@ public class ListCommand extends BaseCommand {
      */
     private String cowDeleteNote(String name) {
         if (name == null) return "";
+        // The root template carries the folded shared base image (see foldBaseWeightIntoRootTemplate):
+        // most of its reported size is shared with everything derived from it and won't come back.
+        if (name.equals(baseTemplateName)) {
+            return " Most of this is the shared base image; deleting frees little while instances"
+                    + " or templates derived from it remain.";
+        }
         String parent = null;
         long diskUsage = -1;
         var pool = allEntries != null ? allEntries : entries;

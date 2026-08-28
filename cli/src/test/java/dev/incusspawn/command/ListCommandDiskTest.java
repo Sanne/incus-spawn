@@ -86,4 +86,20 @@ class ListCommandDiskTest {
         assertEquals(-1, ListCommand.sumDiskUsage(JSON.readTree("{}")));
         assertEquals(-1, ListCommand.sumDiskUsage(JSON.nullNode()));
     }
+
+    // --- sharedBaseBytes: the base image + CoW-shared blocks folded into the root template ---
+
+    @Test
+    void sharedBaseBytesIsPoolUsedMinusRowUnique() {
+        // 14 GiB used, rows account for ~0.5 GiB unique -> ~13.5 GiB belongs to the shared base.
+        long used = 14L * 1024 * 1024 * 1024;
+        long unique = 512L * 1024 * 1024;
+        assertEquals(used - unique, ListCommand.sharedBaseBytes(used, unique));
+    }
+
+    @Test
+    void sharedBaseBytesClampsAtZero() {
+        // Rounding / metadata slack can make the row sum momentarily exceed reported pool usage.
+        assertEquals(0, ListCommand.sharedBaseBytes(1000, 1200));
+    }
 }
