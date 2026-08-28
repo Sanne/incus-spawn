@@ -2244,14 +2244,15 @@ public class BuildCommand extends BaseCommand {
      * mutations — mounting/removing the host-reference disk devices — are kept
      * out of the parallel section (serial phases before and after) because
      * concurrent instance-config edits can conflict. Each reference stays mounted
-     * across its clone and dissociation, so removal only happens once all clones
+     * across its clone and URL fixup, so removal only happens once all clones
      * are done.
      *
      * <p>When a matching host-side checkout is available (via SpawnConfig
-     * host-path/repo-paths), {@code --reference} speeds up cloning from local
-     * objects. Dissociation is deferred to after checkout: a manual
-     * {@code repack -a -d} followed by alternates removal makes the clone
-     * self-contained while the reference device is still mounted.
+     * host-path/repo-paths), the clone runs locally from the mounted reference
+     * ({@code git clone --no-hardlinks}) instead of fetching from the remote.
+     * This copies pack files directly — no repack or dissociation needed.  After
+     * the local clone, the remote URL is fixed to the real origin and a
+     * {@code git fetch} picks up any commits added since the last host refresh.
      */
     void cloneRepos(Container container, ImageDef imageDef, boolean isVm) {
         var repos = imageDef.getRepos();
@@ -2265,10 +2266,10 @@ public class BuildCommand extends BaseCommand {
             refs[i] = tryMountReference(container, repos.get(i).getUrl(), config, isVm);
         }
 
-        // Phase 2 (parallel, bounded): clone each repo, dissociate from its
-        // reference, restore the fetch refspec, then prime it — all in one worker
-        // so priming starts as soon as that repo's clone finishes rather than
-        // waiting at a barrier for the whole clone batch.
+        // Phase 2 (parallel, bounded): clone each repo from its reference (local)
+        // or the remote (fallback), restore the fetch refspec, then prime it —
+        // all in one worker so priming starts as soon as that repo's clone
+        // finishes rather than waiting at a barrier for the whole clone batch.
         var states = new AtomicReferenceArray<StepProgress>(repos.size());
         for (int i = 0; i < repos.size(); i++) {
             states.set(i, StepProgress.running("Cloning"));
@@ -2343,25 +2344,35 @@ public class BuildCommand extends BaseCommand {
             boolean usedReference = false;
 
             if (ref != null) {
+                var expandedPath = expandHome(repo.getPath());
                 var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
                 if (clone.success()) {
-                    // Dissociate now that checkout succeeded: repack referenced
-                    // objects locally and drop the alternates entry, so the clone
-                    // is self-contained before the reference device is removed.
-                    var expandedPath = expandHome(repo.getPath());
+                    // Point origin at the real remote, fetch current refs, and
+                    // detect the remote's default branch.  Objects are already
+                    // local (copied from the reference's pack files), so only ref
+                    // advertisements travel the network.  set-head --auto is needed
+                    // because the local clone inherits HEAD from the host checkout,
+                    // which may be on a different branch than the remote's default.
                     var clonePath = shellQuote(expandedPath);
-                    var dissociate = container.shAsUser("agentuser",
-                            "git -C " + clonePath + " repack -a -d"
-                                    + " && rm -f -- " + shellQuote(expandedPath + "/.git/objects/info/alternates"));
-                    if (dissociate.success()) {
-                        usedReference = true;
-                    } else {
-                        // Dissociation failed: discard and fall back to a normal clone.
-                        container.shAsUser("agentuser", "rm -rf " + shellQuote(expandHome(repo.getPath())));
+                    var fixup = container.shAsUser("agentuser",
+                            "git -C " + clonePath + " remote set-url origin " + shellQuote(repo.getUrl())
+                                    + " && git -C " + clonePath + " fetch --quiet origin"
+                                    + " && git -C " + clonePath + " remote set-head origin --auto");
+                    if (fixup.success()) {
+                        String branchArg;
+                        if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
+                            branchArg = shellQuote(repo.getBranch());
+                        } else {
+                            branchArg = "\"$(git -C " + clonePath
+                                    + " symbolic-ref --short refs/remotes/origin/HEAD)\"";
+                        }
+                        var checkout = container.shAsUser("agentuser",
+                                "git -C " + clonePath + " checkout " + branchArg);
+                        usedReference = checkout.success();
                     }
-                } else {
-                    // Reference clone failed: clean the partial checkout, fall back.
-                    container.shAsUser("agentuser", "rm -rf " + shellQuote(expandHome(repo.getPath())));
+                }
+                if (!usedReference) {
+                    container.shAsUser("agentuser", "rm -rf " + shellQuote(expandedPath));
                 }
             }
 
@@ -2371,17 +2382,17 @@ public class BuildCommand extends BaseCommand {
                     states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
                     return CloneResult.FAILED;
                 }
-            }
 
-            // Restore full fetch refspec so the clone behaves like a regular clone.
-            // --single-branch narrows it to one branch; this undoes that without
-            // downloading anything — other branches are fetched lazily on demand.
-            var repoPath = shellQuote(expandHome(repo.getPath()));
-            var restore = container.shAsUser("agentuser",
-                    "git -C " + repoPath + " remote set-branches origin '*'");
-            if (!restore.success()) {
-                states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
-                return CloneResult.FAILED;
+                // Widen the fetch refspec that --single-branch narrowed, so the
+                // clone behaves like a regular one.  The local-clone path doesn't
+                // use --single-branch, so it skips this.
+                var repoPath = shellQuote(expandHome(repo.getPath()));
+                var restore = container.shAsUser("agentuser",
+                        "git -C " + repoPath + " remote set-branches origin '*'");
+                if (!restore.success()) {
+                    states.set(idx, StepProgress.failed(gitError(restore), combinedOutput(restore)));
+                    return CloneResult.FAILED;
+                }
             }
 
             return new CloneResult(true, usedReference);
@@ -2526,14 +2537,19 @@ public class BuildCommand extends BaseCommand {
     }
 
     private static String buildCloneCommand(ImageDef.RepoEntry repo, String referencePath) {
-        var cmd = new StringBuilder("git clone --single-branch");
+        var cmd = new StringBuilder("git clone");
         if (referencePath != null) {
-            cmd.append(" --reference ").append(shellQuote(referencePath));
+            // Local clone from mounted host reference — copies pack files
+            // directly.  Branch checkout is handled separately after the
+            // remote URL is fixed up and a fetch supplies current refs.
+            cmd.append(" --no-hardlinks");
+        } else {
+            cmd.append(" --single-branch");
+            if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
+                cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
+            }
         }
-        if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-            cmd.append(" --branch ").append(shellQuote(repo.getBranch()));
-        }
-        cmd.append(" -- ").append(shellQuote(repo.getUrl()));
+        cmd.append(" -- ").append(shellQuote(referencePath != null ? referencePath : repo.getUrl()));
         cmd.append(" ").append(shellQuote(expandHome(repo.getPath())));
         return cmd.toString();
     }
