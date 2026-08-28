@@ -59,6 +59,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 
@@ -932,20 +934,20 @@ public class BuildCommand extends BaseCommand {
         mountDnfCache(buildName, effectiveVm);
 
         if (effectiveVm) {
-            System.out.println("Expanding VM root filesystem...");
-            container.runInteractive("Failed to expand VM root filesystem",
-                    "sh", "-c",
-                    "dnf install -y -q cloud-utils-growpart e2fsprogs xfsprogs && " +
-                    "growpart /dev/sda 2 && " +
-                    "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi");
+            var installDeps = String.join(" ",
+                    dnfCommand("install", "-y", "-q", "cloud-utils-growpart", "e2fsprogs", "xfsprogs"));
+            runWithSpinner("Expanding", "VM root filesystem", "Failed to expand VM root filesystem",
+                    state -> state.set(0, stepFrom(container.sh(
+                            installDeps + " && " +
+                            "growpart /dev/sda 2 && " +
+                            "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi"))));
         }
 
         if (!prebaked) {
             removePackages(container, imageDef);
 
-            System.out.println("Updating system packages...");
-            runDnf(container, "Failed to update system packages",
-                    "dnf", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs", "upgrade");
+            runDnf(container, "Updating system packages", "Failed to update system packages",
+                    dnfCommand("-y", "upgrade"));
 
             if (effectiveVm) {
                 System.out.println("Regenerating initramfs for VM...");
@@ -994,10 +996,8 @@ public class BuildCommand extends BaseCommand {
             container.appendToProfile("  . /usr/share/bash-completion/bash_completion");
             container.appendToProfile("fi");
 
-            System.out.println("Installing base packages...");
-            runDnf(container, "Failed to install base packages",
-                    "dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs",
-                    "git", "curl", "which", "procps-ng", "findutils");
+            runDnf(container, "Installing base packages", "Failed to install base packages",
+                    dnfCommand("install", "-y", "git", "curl", "which", "procps-ng", "findutils"));
         }
 
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
@@ -1330,11 +1330,15 @@ public class BuildCommand extends BaseCommand {
 
         System.out.println("Installing " + allPackages.size() + " packages (" +
                 (totalCount - allPackages.size()) + " already installed): " +
-                String.join(", ", allPackages) + "...");
-        var args = new ArrayList<String>();
-        args.addAll(List.of("dnf", "install", "-y", "--setopt=keepcache=true", "--setopt=metadata_expire=3600", "--setopt=tsflags=nodocs"));
-        args.addAll(allPackages);
-        runDnf(container, "Failed to install packages", args.toArray(String[]::new));
+                String.join(", ", allPackages));
+        var rest = new ArrayList<String>(List.of("install", "-y"));
+        rest.addAll(allPackages);
+        // Label carries no count: the println above states the requested packages, while
+        // dnf's own N/M in the spinner detail counts the fully-resolved transaction
+        // (requested packages + their dependencies, one step per action phase), so a count
+        // here would look like it should match dnf's much larger N when it never will.
+        runDnf(container, "Installing packages and dependencies", "Failed to install packages",
+                dnfCommand(rest.toArray(String[]::new)));
     }
 
     /**
@@ -1378,11 +1382,10 @@ public class BuildCommand extends BaseCommand {
 
         for (var key : allRepos) {
             switch (key.type()) {
-                case "copr" -> {
-                    System.out.println("Enabling COPR repo " + key.name() + "...");
-                    container.runInteractive("Failed to enable COPR repo " + key.name(),
-                            "dnf", "copr", "enable", "-y", key.name());
-                }
+                case "copr" -> runWithSpinner("Enabling", "COPR repo " + key.name(),
+                        "Failed to enable COPR repo " + key.name(),
+                        state -> state.set(0, stepFrom(
+                                container.exec("dnf", "copr", "enable", "-y", key.name()))));
                 default -> System.err.println("Warning: unknown package_repos type '" + key.type()
                         + "' for '" + key.name() + "', skipping.");
             }
@@ -1471,16 +1474,205 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
-    private void runDnf(Container container, String failureMessage, String... args) {
+    /**
+     * Shared dnf options: keep the download cache, cap metadata refresh, skip
+     * docs, and parallelize downloads. {@code max_parallel_downloads} is bounded
+     * to dnf's practical ceiling (20) and scaled to the host's logical cores so
+     * beefier machines fetch more concurrently — the download phase is the only
+     * parallelizable part; the rpm transaction itself is serial.
+     */
+    private static final String[] DNF_BASE_OPTS = {
+            "--setopt=keepcache=true",
+            "--setopt=metadata_expire=3600",
+            "--setopt=tsflags=nodocs",
+            "--setopt=max_parallel_downloads=" + Math.min(20, Math.max(8, CpuInfo.logicalCores())),
+    };
+
+    /** Build a full {@code dnf} command line: {@code dnf <shared opts> <rest>}. */
+    private static String[] dnfCommand(String... rest) {
+        var cmd = new ArrayList<String>();
+        cmd.add("dnf");
+        cmd.addAll(List.of(DNF_BASE_OPTS));
+        cmd.addAll(List.of(rest));
+        return cmd.toArray(String[]::new);
+    }
+
+    /** dnf5's non-TTY per-step progress line, e.g.
+     *  {@code [3/6] Installing setup-0:2.15.0-28.fc  100% | 26 MiB/s | ...} or a
+     *  download line {@code [1/2] filesystem-0:3.18-52.fc44.aarch64  100% | ...}.
+     *  Group 1/2 are the counters, group 3 is the action+package (dnf truncates it
+     *  to its assumed 80-col width). */
+    private static final Pattern DNF_STEP = Pattern.compile("^\\[(\\d+)/(\\d+)]\\s+(.*)$");
+
+    /**
+     * Run a dnf command behind an animated one-line spinner. dnf's verbose output
+     * is streamed through a parser (not echoed to the terminal) so the spinner can
+     * show live "N/M — current package" feedback from dnf's own progress lines,
+     * keeping isx's warnings visible instead of buried in a flood. On failure it
+     * clears metadata and retries once with {@code --refresh}; if that also fails
+     * the full captured output is printed and {@code failureMessage} thrown.
+     *
+     * @param label the full phrase for the spinner line (e.g. "Installing base packages")
+     */
+    private void runDnf(Container container, String label, String failureMessage, String... args) {
+        var state = new AtomicReferenceArray<StepProgress>(1);
+        state.set(0, StepProgress.running("", "starting"));
+        TerminalProgress.run(1, 1,
+                idx -> dnfWork(container, args, state),
+                (idx, frame) -> formatDnfLine(label, state.get(0), frame),
+                idx -> plainDnfLine(label, state.get(0)),
+                System.out::println);
+        finishSpinner(label, failureMessage, state);
+    }
+
+    /** The install/retry work for {@link #runDnf}, recording progress in {@code state[0]}.
+     *  A thrown exception (e.g. an Incus transport error) is recorded as a failed state
+     *  rather than propagated, since {@code TerminalProgress} swallows task exceptions —
+     *  an uncaught one would leave the step stuck RUNNING and lose the real cause. */
+    private void dnfWork(Container container, String[] args, AtomicReferenceArray<StepProgress> state) {
         try {
-            container.runInteractive(failureMessage, args);
-        } catch (IncusException e) {
-            System.out.println("DNF failed, clearing metadata and retrying with --refresh...");
+            var log = new StringBuilder();
+            int code = container.execLines(line -> onDnfLine(line, log, state), args);
+            if (code == 0) {
+                state.set(0, StepProgress.done(null));
+                return;
+            }
+            // Metadata may be stale — clear it and retry once with --refresh.
+            state.set(0, StepProgress.running("", "retrying with --refresh"));
             container.sh("dnf clean metadata");
             var retryArgs = new ArrayList<>(List.of(args));
             retryArgs.add(1, "--refresh");
-            container.runInteractive(failureMessage, retryArgs.toArray(String[]::new));
+            var retryLog = new StringBuilder();
+            int retryCode = container.execLines(line -> onDnfLine(line, retryLog, state),
+                    retryArgs.toArray(String[]::new));
+            if (retryCode == 0) {
+                state.set(0, StepProgress.done("succeeded after refresh"));
+            } else {
+                var out = retryLog.toString();
+                state.set(0, StepProgress.failed(lastNonEmptyLine(out), out));
+            }
+        } catch (RuntimeException e) {
+            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
         }
+    }
+
+    /** Accumulate a streamed dnf line into {@code log} and, if it's a progress line,
+     *  update the spinner's live detail to "N/M — package". */
+    static void onDnfLine(String line, StringBuilder log, AtomicReferenceArray<StepProgress> state) {
+        synchronized (log) { log.append(line).append('\n'); }
+        var m = DNF_STEP.matcher(line.strip());
+        if (!m.matches()) return;
+        // Drop the trailing "100% | rate | size | time" progress bar. dnf truncates
+        // the action/package to a fixed column, so there may be only a single space
+        // before the percentage — key off the "<n>% |" shape, not the spacing.
+        var body = m.group(3).replaceAll("\\s+\\d+%\\s*\\|.*$", "").strip();
+        if (body.isEmpty() || body.equals("Total")) return; // skip the download subtotal line
+        state.set(0, StepProgress.running("", m.group(1) + "/" + m.group(2) + "  " + shortenNevra(body)));
+    }
+
+    /** dnf's non-TTY column truncates the version/arch tail off each NEVRA anyway, and the
+     *  version is just noise in a live progress line, so reduce {@code name-epoch:ver-rel.arch}
+     *  to its bare package name (everything before the {@code -<epoch>:} marker). Action-only
+     *  lines ("Verify package files") and names truncated before the epoch are left untouched. */
+    static String shortenNevra(String body) {
+        return body.replaceFirst("-\\d+:.*$", "");
+    }
+
+    /** Render the dnf spinner line: {@code  ⠋ <label>  <dim live detail>}. */
+    static String formatDnfLine(String label, StepProgress p, int frame) {
+        var sb = new StringBuilder("  ");
+        switch (p.state()) {
+            case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
+                    .append(' ').append(label);
+            case DONE    -> sb.append("\033[32m✓\033[0m ").append(label);
+            case FAILED  -> sb.append("\033[31m✗\033[0m ").append(label);
+        }
+        if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
+            sb.append("  \033[2m").append(p.detail()).append("\033[0m");
+        }
+        if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
+            sb.append(" \033[2m").append(p.note()).append("\033[0m");
+        }
+        if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
+            sb.append("  \033[31m").append(p.detail()).append("\033[0m");
+        }
+        return sb.toString();
+    }
+
+    /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
+    private static String plainDnfLine(String label, StepProgress p) {
+        if (p.state() == StepState.DONE) {
+            return p.note() != null && !p.note().isEmpty() ? "  " + label + " (" + p.note() + ")"
+                    : "  " + label;
+        }
+        var msg = "  Warning: " + label + " failed";
+        if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
+        return msg;
+    }
+
+    /**
+     * Run a single operation behind an animated one-line spinner (mirroring the
+     * clone/prime display) instead of streaming its output. {@code work} performs
+     * the operation with captured exec and records the terminal {@link StepProgress}
+     * in {@code state[0]}; it may set an intermediate {@code running(...)} to advance
+     * the verb mid-flight. On a non-DONE result the captured log is printed to
+     * stderr and {@code failureMessage} thrown.
+     */
+    private void runWithSpinner(String activity, String label, String failureMessage,
+                                Consumer<AtomicReferenceArray<StepProgress>> work) {
+        var state = new AtomicReferenceArray<StepProgress>(1);
+        state.set(0, StepProgress.running(activity));
+        TerminalProgress.run(1, 1,
+                idx -> runSpinnerWork(work, state),
+                (idx, frame) -> formatStepLine(label, null, state.get(0), frame, "Done"),
+                idx -> plainStepLine(label, state.get(0), "Done", activity.toLowerCase()),
+                System.out::println);
+        finishSpinner(label, failureMessage, state);
+    }
+
+    /** Run a {@link #runWithSpinner} task, converting a thrown exception into a recorded
+     *  failed state. {@code TerminalProgress} swallows task exceptions, so without this the
+     *  step would stay RUNNING and {@code finishSpinner} would throw the generic failure
+     *  message with no captured cause. */
+    static void runSpinnerWork(Consumer<AtomicReferenceArray<StepProgress>> work,
+                                       AtomicReferenceArray<StepProgress> state) {
+        try {
+            work.accept(state);
+        } catch (RuntimeException e) {
+            state.set(0, StepProgress.failed(e.getMessage(), stackTrace(e)));
+        }
+    }
+
+    /** Render a throwable's stack trace to a string for a failed step's captured log. */
+    private static String stackTrace(Throwable t) {
+        var sw = new java.io.StringWriter();
+        t.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
+    }
+
+    /** After a one-task spinner completes, surface a non-DONE result: print the full
+     *  captured log (if any) to stderr — after the animated line, so it doesn't
+     *  interleave with the live display — and throw {@code failureMessage}. */
+    private static void finishSpinner(String label, String failureMessage,
+                                      AtomicReferenceArray<StepProgress> state) {
+        var progress = state.get(0);
+        if (progress != null && progress.state() == StepState.DONE) return;
+
+        if (progress != null && progress.log() != null && !progress.log().isBlank()) {
+            System.err.println("\033[1m─── output: " + label + " ───\033[0m");
+            System.err.println(progress.log().strip());
+            System.err.println("\033[1m─── end output: " + label + " ───\033[0m");
+        }
+        var detail = progress != null && progress.detail() != null && !progress.detail().isEmpty()
+                ? ": " + progress.detail() : "";
+        throw new IncusException(failureMessage + detail);
+    }
+
+    /** Turn a captured exec result into a terminal {@link StepProgress}. */
+    private static StepProgress stepFrom(IncusClient.ExecResult result) {
+        if (result.success()) return StepProgress.done(null);
+        var combined = combinedOutput(result);
+        return StepProgress.failed(lastNonEmptyLine(combined), combined);
     }
 
     private void cleanCaches(String container) {
@@ -2033,6 +2225,8 @@ public class BuildCommand extends BaseCommand {
      *  printed on failure so the diagnostic isn't reduced to the single inline line. */
     record StepProgress(StepState state, String activity, String note, String detail, String log) {
         static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, null, null); }
+        /** Running with a live {@code detail} sub-line (e.g. dnf's current "N/M package"). */
+        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, detail, null); }
         static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, null, null); }
         static StepProgress failed(String detail, String log) {
             return new StepProgress(StepState.FAILED, null, null, detail, log);

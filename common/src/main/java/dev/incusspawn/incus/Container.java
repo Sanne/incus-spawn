@@ -61,6 +61,18 @@ public class Container {
         }
     }
 
+    /**
+     * Run a command as root, streaming each output line (stdout and stderr) to
+     * {@code lineSink} instead of the terminal. Returns the exit code. The sink is
+     * invoked from the exec reader thread(s), so it must be thread-safe.
+     */
+    public int execLines(java.util.function.Consumer<String> lineSink, String... command) {
+        try (var out = new dev.incusspawn.util.LineOutputStream(lineSink);
+             var err = new dev.incusspawn.util.LineOutputStream(lineSink)) {
+            return incus.shellExecStreaming(name, out, err, command);
+        }
+    }
+
     /** Run a shell snippet as a specific user with a login shell. Returns the result for inspection. */
     public IncusClient.ExecResult shAsUser(String user, String script) {
         return incus.execInContainer(name, user, script);
