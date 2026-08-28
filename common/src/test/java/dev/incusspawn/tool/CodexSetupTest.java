@@ -50,19 +50,17 @@ class CodexSetupTest {
     @Test
     void installRunsNpmInstallGlobal() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
-        verify(incus).shellExecInteractive(eq(CONTAINER),
+        verify(incus).shellExec(eq(CONTAINER),
                 eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@openai/codex"));
     }
 
     @Test
     void installWritesConfigToml() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
@@ -83,7 +81,6 @@ class CodexSetupTest {
     @Test
     void installWritesAuthJson() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExecInteractive(anyString(), any(String[].class))).thenReturn(0);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());

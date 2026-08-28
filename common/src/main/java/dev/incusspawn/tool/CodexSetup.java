@@ -47,16 +47,17 @@ public class CodexSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.step("Installing Codex CLI...");
-        c.runInteractive("Failed to install Codex CLI",
+        dev.incusspawn.util.BuildOutput.stepStart("Installing Codex CLI...");
+        c.runQuiet("Failed to install Codex CLI",
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
+        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
     private void configureSettings(Container c) {
-        dev.incusspawn.util.BuildOutput.step("Configuring Codex CLI...");
+        dev.incusspawn.util.BuildOutput.stepStart("Configuring Codex CLI...");
         var configToml = """
                 model = "o4-mini"
                 approval_policy = "never"
@@ -83,6 +84,7 @@ public class CodexSetup implements ToolSetup {
         c.writeFile(CONFIG_PATH, configToml);
         c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
+        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
 }

@@ -285,12 +285,12 @@ public class BuildCommand extends BaseCommand {
         collectTemplatesToRebuild(leaves, defs, templatesToRebuild, seen, incus, toolDefLoader, outdatedOnly);
 
         if (templatesToRebuild.isEmpty()) {
-            System.out.println("All templates are up to date.");
+            BuildOutput.step("All templates are up to date.");
             return;
         }
 
         // Confirm with user
-        System.out.println((outdatedOnly ? "Templates to rebuild: " : "This will rebuild all templates: ")
+        BuildOutput.step((outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ")
                 + String.join(", ", templatesToRebuild));
         if (!confirm(outdatedOnly ? "Rebuild?" : "Continue?")) return;
 
@@ -453,7 +453,7 @@ public class BuildCommand extends BaseCommand {
         var seen = new LinkedHashSet<String>();
         collectAllRecursive(imageDef, defs, chain, seen);
 
-        System.out.println("This will rebuild: " + String.join(", ", chain));
+        BuildOutput.step("This will rebuild: " + String.join(", ", chain));
         if (!confirm("Continue?")) return;
 
         rebuildAll(chain, defs);
@@ -469,7 +469,7 @@ public class BuildCommand extends BaseCommand {
         seen.add(imageDef.getName());
         collectDescendants(imageDef.getName(), defs, chain, seen);
 
-        System.out.println("This will rebuild: " + String.join(", ", chain));
+        BuildOutput.step("This will rebuild: " + String.join(", ", chain));
         if (!confirm("Continue?")) return;
 
         rebuildAll(chain, defs);
@@ -974,7 +974,7 @@ public class BuildCommand extends BaseCommand {
 
             if (effectiveVm) {
                 BuildOutput.stepStart("Regenerating initramfs for VM...");
-                container.runInteractive("Failed to regenerate initramfs",
+                container.runQuiet("Failed to regenerate initramfs",
                         "dracut", "--force", "--regenerate-all");
                 BuildOutput.stepDone();
             }
@@ -1283,14 +1283,14 @@ public class BuildCommand extends BaseCommand {
         if (tool instanceof dev.incusspawn.tool.YamlToolSetup yts) {
             for (var depRef : yts.toolDef().getRequires()) {
                 if (!quiet && !explicit.contains(depRef.getName())) {
-                    System.out.println("  Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
+                    BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
                 }
                 resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, toolDefLoader, cdiTools, quiet);
             }
         } else {
             for (var dep : tool.requires()) {
                 if (!quiet && !explicit.contains(dep)) {
-                    System.out.println("  Auto-adding dependency: " + dep + " (required by " + name + ")");
+                    BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
                 }
                 resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, toolDefLoader, cdiTools, quiet);
             }

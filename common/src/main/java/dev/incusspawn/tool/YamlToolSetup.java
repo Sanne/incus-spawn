@@ -69,7 +69,7 @@ public class YamlToolSetup implements ToolSetup {
     @Override
     public void install(Container container, java.util.Map<String, String> resolvedParams) {
         var label = def.getDescription().isEmpty() ? def.getName() : def.getDescription();
-        dev.incusspawn.util.BuildOutput.step("Installing " + label + "...");
+        dev.incusspawn.util.BuildOutput.stepStart("Installing " + label + "...");
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
@@ -85,14 +85,14 @@ public class YamlToolSetup implements ToolSetup {
         // 2. Shell commands as root (with parameter substitution)
         for (var script : def.getRun()) {
             var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
-            container.runInteractive("Failed to run setup for " + def.getName(),
+            container.runQuiet("Failed to run setup for " + def.getName(),
                     "sh", "-c", substituted);
         }
 
         // 3. Shell commands as agentuser (with parameter substitution)
         for (var script : def.getRunAsUser()) {
             var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
-            container.runAsUser("agentuser", substituted,
+            container.runAsUserQuiet("agentuser", substituted,
                     "Failed to run user setup for " + def.getName());
         }
 
@@ -114,11 +114,13 @@ public class YamlToolSetup implements ToolSetup {
             var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
             var result = container.exec(substituted.split("\\s+"));
             if (result.success()) {
-                dev.incusspawn.util.BuildOutput.step("  " + result.stdout().lines().findFirst().orElse(""));
-            } else {
-                System.err.println(dev.incusspawn.util.BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
+                dev.incusspawn.util.BuildOutput.stepDone();
+                dev.incusspawn.util.BuildOutput.note(result.stdout().lines().findFirst().orElse(""));
+                return;
             }
+            System.err.println(dev.incusspawn.util.BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
         }
+        dev.incusspawn.util.BuildOutput.stepDone();
     }
 
     static String canonicalArch(String arch) {
@@ -155,7 +157,7 @@ public class YamlToolSetup implements ToolSetup {
 
         container.exec("mkdir", "-p", dl.getExtract());
         container.filePush(cached.toString(), containerArchive);
-        container.runInteractive("Failed to extract " + filename + " in container",
+        container.runQuiet("Failed to extract " + filename + " in container",
                 "tar", "xf", containerArchive, "-C", dl.getExtract());
         container.exec("rm", "-f", containerArchive);
         container.exec("chmod", "-R", "a+rX", dl.getExtract());
@@ -180,7 +182,7 @@ public class YamlToolSetup implements ToolSetup {
             container.addDiskDevice(deviceName, extractDir.toString(), mountPath, true);
             container.waitForPath(mountPath);
             container.exec("mkdir", "-p", dl.getExtract());
-            container.runInteractive("Failed to copy download for " + def.getName(),
+            container.runQuiet("Failed to copy download for " + def.getName(),
                     "cp", "-a", mountPath + "/.", dl.getExtract());
             container.exec("chmod", "-R", "a+rX", dl.getExtract());
 
