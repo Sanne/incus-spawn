@@ -40,7 +40,9 @@ public final class Environment {
         return configDir().resolve(".init-complete");
     }
 
-    public static final int INIT_VERSION = 3;
+    // v4: install a scoped NOPASSWD sudoers rule (Linux) so the non-root TUI can read btrfs
+    // referenced sizes for per-template disk accounting (see InitCommand.configureBtrfsUsageAccess).
+    public static final int INIT_VERSION = 4;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();

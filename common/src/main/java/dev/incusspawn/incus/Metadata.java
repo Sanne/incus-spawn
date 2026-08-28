@@ -33,6 +33,11 @@ public final class Metadata {
     public static final String PENDING_OP = PREFIX + "pending-op";
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
+    // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
+    // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
+    // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part
+    // of contentFingerprint(), so stamping it never triggers a rebuild.
+    public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";

@@ -10,8 +10,11 @@
 # and nothing else (the agent's own socat uses EXEC:, not UNIX-CONNECT).
 FORWARDER_MATCH='UNIX-CONNECT:/var/lib/incus/unix.socket'
 INCUS_VSOCK_PORT=8443
+POOL_MOUNT_PREFIX=/var/lib/incus/storage-pools
 
-read -r verb || exit 0
+# One line per connection: "<verb> [arg]". arg is optional and only consumed by verbs
+# that declare one (currently btrfs-usage); it is always validated before use.
+read -r verb arg || exit 0
 
 case "$verb" in
     ping)
@@ -41,6 +44,26 @@ case "$verb" in
         sleep 1
         setsid /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" </dev/null >/dev/null 2>&1 &
         echo restarted
+        ;;
+    btrfs-usage)
+        # Per-subvolume referenced/exclusive sizes for a btrfs pool. Runs here because the pool
+        # lives in the VM and only root can read /var/lib/incus/storage-pools (0700). Both outputs
+        # are read-only introspection; the host joins them (see BtrfsUsage.parse). The pool name is
+        # interpolated into a path, so reject anything that isn't a plain pool name — this is a
+        # separate trust boundary, so it validates independently of the host (mirrors
+        # BtrfsUsage.isSafePoolName; the "---ISX-SUBVOL---" delimiter mirrors
+        # BtrfsUsage.AGENT_SECTION_MARKER — keep both in sync if either is renamed).
+        case "$arg" in
+            ''|*[!A-Za-z0-9._-]*)
+                echo "error: bad pool name"
+                ;;
+            *)
+                mount="$POOL_MOUNT_PREFIX/$arg"
+                btrfs qgroup show -re --raw "$mount" 2>/dev/null || true
+                echo "---ISX-SUBVOL---"
+                btrfs subvolume list "$mount" 2>/dev/null || true
+                ;;
+        esac
         ;;
     *)
         echo "error: unknown verb"

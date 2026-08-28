@@ -79,4 +79,15 @@ public final class VmAgentClient {
     public static boolean ping() {
         return send("ping").map("ok"::equals).orElse(false);
     }
+
+    /**
+     * Raw {@code btrfs qgroup show}/{@code subvolume list} output for a pool inside the VM (macOS),
+     * where the pool lives and only the root agent can read it. The reply concatenates both command
+     * outputs separated by {@code BtrfsUsage.AGENT_SECTION_MARKER}; empty if unavailable. The pool
+     * name is validated here and again in the agent before it touches a path.
+     */
+    public static Optional<String> btrfsUsage(String poolName) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        return send("btrfs-usage " + poolName);
+    }
 }

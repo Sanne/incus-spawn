@@ -112,6 +112,7 @@ public class ListCommand extends BaseCommand {
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
+    private String pendingDeleteNote = "";      // computed once when the confirm dialog opens
     // Build menu state (computed once when F5 opens the menu)
     private record BuildMenuOption(String label, String description, String badge, String[] buildArgs, boolean enabled) {}
     private java.util.List<BuildMenuOption> buildMenuOptions;
@@ -211,8 +212,12 @@ public class ListCommand extends BaseCommand {
     // Whether the resolved pool is the CoW (btrfs/zfs) pool. Only then do per-row usage
     // figures mean "exclusive bytes" and the shared base fold below make sense.
     private boolean usagePoolIsCow;
-    // The root template the shared base weight was folded into this reload (see
-    // foldBaseWeightIntoRootTemplate), or null when it couldn't be attributed.
+    // Whether the resolved pool is specifically btrfs. Only btrfs exposes per-subvolume referenced
+    // (rfer) accounting, so the referenced-delta model is gated on this (see canUseReferencedModel).
+    private boolean usagePoolIsBtrfs;
+    // The root template that owns the base-image weight this reload — either folded into it
+    // (foldBaseWeightIntoRootTemplate) or attributed via its own rfer (applyReferencedTemplateDeltas),
+    // or null when it couldn't be attributed. Drives the CoW delete note and the ~ marker.
     private String baseTemplateName;
     // Amber threshold for the storage gauge (percent of pool used).
     private static final int STORAGE_WARN_PERCENT = 75;
@@ -463,7 +468,7 @@ public class ListCommand extends BaseCommand {
                                     inst.limitsMemory, inst.rootSize, inst.ipv4, inst.networkMode,
                                     inst.architecture, inst.buildVersion, inst.definitionSha,
                                     inst.type, inst.buildSourceJson, "", inst.defaultAction,
-                                    inst.diskUsage)
+                                    inst.diskUsage, inst.referencedBytes)
                             : inst)
                     .toList();
         }
@@ -498,10 +503,10 @@ public class ListCommand extends BaseCommand {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
                         match.created.isEmpty() ? "built" : match.created, match.runtime,
                         match.buildVersion, match.definitionSha, match.pendingOp,
-                        match.parent, match.diskUsage));
+                        match.parent, match.diskUsage, match.referencedBytes));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1));
             }
         }
         // Add out-of-scope templates (built but not in current definition scope)
@@ -521,7 +526,8 @@ public class ListCommand extends BaseCommand {
 
             templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
                     inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
-                    inst.buildVersion, inst.definitionSha, inst.pendingOp, inst.parent, inst.diskUsage));
+                    inst.buildVersion, inst.definitionSha, inst.pendingOp, inst.parent, inst.diskUsage,
+                    inst.referencedBytes));
             templateNames.add(inst.name);
             storedNames.add(inst.name);
         }
@@ -542,10 +548,16 @@ public class ListCommand extends BaseCommand {
             }
         }
 
-        // Pool usage first, so the shared base weight can be attributed to the root template
-        // before the row lists are snapshotted for rendering.
+        // Pool usage first, so the base-image weight can be attributed to the root template before
+        // the row lists are snapshotted for rendering. Prefer the referenced-size model (accurate
+        // per-template deltas from stamped rfer); fall back to the shared-base fold when any built
+        // template predates the stamp or the pool isn't btrfs.
         refreshPoolUsage();
-        foldBaseWeightIntoRootTemplate();
+        if (canUseReferencedModel()) {
+            applyReferencedTemplateDeltas();
+        } else {
+            foldBaseWeightIntoRootTemplate();
+        }
 
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
@@ -560,9 +572,11 @@ public class ListCommand extends BaseCommand {
     private void refreshPoolUsage() {
         try {
             if (usagePoolName == null) {
-                var cow = incus.findCowPool();
+                var probe = incus.probeCowPool();
+                var cow = probe.poolName();
                 usagePoolName = cow != null ? cow : incus.findUsablePool();
                 usagePoolIsCow = cow != null;
+                usagePoolIsBtrfs = probe.isBtrfs();
             }
             poolUsage = usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName);
         } catch (Exception e) {
@@ -617,9 +631,95 @@ public class ListCommand extends BaseCommand {
 
         var r = templateEntries.get(rootIdx);
         long folded = (r.diskUsage() < 0 ? 0 : r.diskUsage()) + base;
-        templateEntries.set(rootIdx, new TemplateInfo(r.name(), r.description(), r.buildStatus(),
-                r.runtime(), r.buildVersion(), r.definitionSha(), r.pendingOp(), r.parent(), folded));
+        templateEntries.set(rootIdx, r.withDiskUsage(folded));
         baseTemplateName = r.name();
+    }
+
+    /**
+     * Attribute disk weight using each template's stamped btrfs <em>referenced</em> size (rfer),
+     * shown as a delta from its parent: {@code delta = rfer(node) − rfer(parent)}, and for the root
+     * template (no template parent) the delta is its own rfer — which is the base-image weight, so
+     * the base reads at its real size and derived templates show only what they added (e.g. a tools
+     * layer). Unlike {@link #foldBaseWeightIntoRootTemplate}, no shared remainder is dumped onto the
+     * root: rfer already distributes it correctly down the chain. Instances are left on their
+     * exclusive usage — for a branch with no descendants that already equals its delta from the
+     * template, and it comes free from the Incus API.
+     *
+     * <p>Only used when every built template carries the {@link Metadata#DISK_REFERENCED} stamp (see
+     * {@link #canUseReferencedModel}); otherwise the fold fallback runs. Sets {@link #baseTemplateName}
+     * to the root template so the CoW delete note and {@code ~} marker still apply.
+     */
+    private void applyReferencedTemplateDeltas() {
+        baseTemplateName = null;
+        var rferOf = new java.util.HashMap<String, Long>();
+        for (var t : templateEntries) if (t.referencedBytes() >= 0) rferOf.put(t.name(), t.referencedBytes());
+
+        // Definitional parent links (from on-disk YAML) survive template deletion, unlike the built
+        // rows: if an intermediate template is deleted, its immediate parent row is gone but the chain
+        // is still walkable, so we can subtract the nearest *surviving* ancestor instead of over-
+        // subtracting a phantom parent. See nearestStampedAncestorRfer.
+        var defParentOf = new java.util.HashMap<String, String>();
+        if (imageDefs != null) {
+            for (var e : imageDefs.entrySet()) defParentOf.put(e.getKey(), e.getValue().getParent());
+        }
+
+        String rootName = null;
+        boolean rootAmbiguous = false;
+        for (int i = 0; i < templateEntries.size(); i++) {
+            var t = templateEntries.get(i);
+            if (t.referencedBytes() < 0) continue;                      // not built / not stamped
+            var p = t.parent();
+            boolean isRoot = p == null || p.isEmpty() || "-".equals(p);
+            if (isRoot) {
+                if (rootName != null) rootAmbiguous = true;
+                rootName = t.name();
+            }
+            Long parentRfer = isRoot ? null : nearestStampedAncestorRfer(p, rferOf, defParentOf);
+            long delta = referencedDelta(t.referencedBytes(), parentRfer, isRoot);
+            templateEntries.set(i, t.withDiskUsage(delta));
+        }
+        if (!rootAmbiguous) baseTemplateName = rootName;
+    }
+
+    /**
+     * The rfer of the nearest ancestor that still exists <em>and</em> is stamped, starting at
+     * {@code parent} and climbing the definitional chain. When an intermediate template is deleted its
+     * row (and rfer) vanish, but the YAML chain remains — so we skip the missing link and subtract the
+     * next surviving ancestor, keeping each derived row a delta rather than double-counting the shared
+     * base. Returns {@code null} when no ancestor survives (the whole chain above was deleted), so the
+     * caller falls back to showing full rfer — which correctly re-absorbs the now-unattributed base.
+     * A {@code seen} guard makes a cyclic/self-referential YAML parent terminate instead of looping.
+     */
+    static Long nearestStampedAncestorRfer(String parent, Map<String, Long> rferOf,
+                                           Map<String, String> defParentOf) {
+        var seen = new java.util.HashSet<String>();
+        String name = parent;
+        while (name != null && !name.isEmpty() && !"-".equals(name) && seen.add(name)) {
+            Long r = rferOf.get(name);
+            if (r != null) return r;                    // present and stamped
+            name = defParentOf.get(name);               // deleted -> climb toward the base
+        }
+        return null;
+    }
+
+    /**
+     * Whether the referenced-size (rfer) model can be used this refresh: a btrfs CoW pool, and every
+     * <em>built</em> template carries the {@link Metadata#DISK_REFERENCED} stamp. All-or-nothing so
+     * the display stays coherent — mixing rfer deltas with the fold's global redistribution would
+     * not. Templates built before this feature lack the stamp, so an install shows the fold fallback
+     * until its templates are rebuilt (cache-only, no backfill).
+     */
+    private boolean canUseReferencedModel() {
+        // usagePoolIsBtrfs already implies a named CoW pool (it's set from probe.isBtrfs()).
+        if (!usagePoolIsBtrfs) return false;
+        boolean anyBuilt = false;
+        for (var t : templateEntries) {
+            boolean built = !"not built".equals(t.buildStatus());
+            if (!built) continue;
+            anyBuilt = true;
+            if (t.referencedBytes() < 0) return false;                 // a built template is missing its stamp
+        }
+        return anyBuilt;
     }
 
     // --- Event handling ---
@@ -772,8 +872,7 @@ public class ListCommand extends BaseCommand {
                 statusMessage = "No templates are built.";
                 return true;
             }
-            pendingDeleteName = "--all";
-            mode = Mode.CONFIRM_DELETE;
+            openDeleteConfirm("--all");
             return true;
         }
 
@@ -783,8 +882,7 @@ public class ListCommand extends BaseCommand {
                 statusMessage = "Template is not built.";
                 return true;
             }
-            pendingDeleteName = template.name;
-            mode = Mode.CONFIRM_DELETE;
+            openDeleteConfirm(template.name);
             return true;
         }
 
@@ -822,8 +920,7 @@ public class ListCommand extends BaseCommand {
                 statusMessage = "No instances to destroy.";
                 return true;
             }
-            pendingDeleteName = "--all-instances";
-            mode = Mode.CONFIRM_DELETE;
+            openDeleteConfirm("--all-instances");
             return true;
         }
         // Block actions that mutate the selected instance if there's a pending operation
@@ -834,8 +931,7 @@ public class ListCommand extends BaseCommand {
 
         // F8 or Delete: Destroy instance
         if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
-            pendingDeleteName = selected.name;
-            mode = Mode.CONFIRM_DELETE;
+            openDeleteConfirm(selected.name);
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
@@ -1691,6 +1787,17 @@ public class ListCommand extends BaseCommand {
         return Math.max(0, poolUsedBytes - sumRowUnique);
     }
 
+    /**
+     * A template's displayed disk weight under the referenced-size model: its own referenced bytes
+     * for a root template (that's the base-image weight), otherwise the delta over its parent's
+     * referenced bytes (what this layer added), clamped at zero. When the parent's rfer is unknown
+     * (out of scope or unstamped) we show the full rfer rather than over-subtracting.
+     */
+    static long referencedDelta(long rfer, Long parentRfer, boolean isRoot) {
+        if (isRoot || parentRfer == null) return rfer;
+        return Math.max(0, rfer - parentRfer);
+    }
+
     static String diskCell(long bytes) {
         if (bytes < 0) return "-";
         if (bytes < 1024) return "~" + bytes + "B";
@@ -1709,6 +1816,17 @@ public class ListCommand extends BaseCommand {
      * Searches instances first, then templates. Returns "" when the target isn't a
      * CoW child we have usage for.
      */
+    /**
+     * Open the delete-confirmation modal for {@code name}, computing the CoW caveat note once now
+     * rather than on every frame the modal is rendered (it depends only on {@code name} and the row
+     * data, both fixed while the dialog is up).
+     */
+    private void openDeleteConfirm(String name) {
+        pendingDeleteName = name;
+        pendingDeleteNote = cowDeleteNote(name);
+        mode = Mode.CONFIRM_DELETE;
+    }
+
     private String cowDeleteNote(String name) {
         if (name == null) return "";
         // The root template carries the folded shared base image (see foldBaseWeightIntoRootTemplate):
@@ -1716,6 +1834,16 @@ public class ListCommand extends BaseCommand {
         if (name.equals(baseTemplateName)) {
             return " Most of this is the shared base image; deleting frees little while instances"
                     + " or templates derived from it remain.";
+        }
+        // The target has its own CoW descendants — e.g. another instance was branched from this
+        // instance. Its exclusive usage reads ~0 because the shared blocks live in the descendants,
+        // so deleting it now reclaims little; the space comes back only once they are gone too.
+        // (Deletion is still safe: the survivors read live exclusive usage, so their rows absorb
+        // these blocks on the next reload.) Checked before the parent note because being depended
+        // upon is the more consequential caveat when deleting.
+        if (hasDescendant(name, rowParentNames())) {
+            return " Branches were derived from " + name + "; deleting it frees little now —"
+                    + " those blocks are reclaimed only once the derived instances or templates are gone.";
         }
         String parent = null;
         long diskUsage = -1;
@@ -1739,6 +1867,26 @@ public class ListCommand extends BaseCommand {
         return " Space reclaimed may be less than " + diskCell(diskUsage)
                 + " — blocks shared with " + parent
                 + " stay until the parent is removed.";
+    }
+
+    /** The recorded parent name of every currently-listed instance and template (blanks included). */
+    private java.util.List<String> rowParentNames() {
+        var parents = new java.util.ArrayList<String>();
+        var insts = allEntries != null ? allEntries : entries;
+        if (insts != null) for (var i : insts) parents.add(i.parent);
+        var tpls = allTemplateEntries != null ? allTemplateEntries : templateEntries;
+        if (tpls != null) for (var t : tpls) parents.add(t.parent());
+        return parents;
+    }
+
+    /**
+     * Whether {@code name} is the recorded parent of any listed row — i.e. an instance or template
+     * was branched or derived from it and still exists. Package-private and pure for testing.
+     */
+    static boolean hasDescendant(String name, java.util.Collection<String> rowParents) {
+        if (name == null || name.isEmpty()) return false;
+        for (var p : rowParents) if (name.equals(p)) return true;
+        return false;
     }
 
     private void renderTemplateTable(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
@@ -2167,7 +2315,7 @@ public class ListCommand extends BaseCommand {
                         : " Destroy '" + pendingDeleteName + "' ";
                 var message = isAllTemplates ? "This will destroy all built templates."
                         : isAllInstances ? "This will destroy all instances."
-                        : "This action cannot be undone." + cowDeleteNote(pendingDeleteName);
+                        : "This action cannot be undone." + pendingDeleteNote;
                 modal.renderConfirmModal(frame, screen, title, message, modal.warn());
             }
             case BUILD_MENU -> renderBuildMenu(frame, screen);
@@ -4353,6 +4501,13 @@ public class ListCommand extends BaseCommand {
 
                 var diskUsage = sumDiskUsage(node.path("state").path("disk"));
 
+                long referencedBytes = -1;
+                var referencedStr = configVal(config, Metadata.DISK_REFERENCED, "");
+                if (!referencedStr.isEmpty()) {
+                    try { referencedBytes = Long.parseLong(referencedStr); }
+                    catch (NumberFormatException ignored) {}
+                }
+
                 entryList.add(new InstanceInfo(
                         node.path("name").asText(),
                         node.path("status").asText(),
@@ -4374,7 +4529,7 @@ public class ListCommand extends BaseCommand {
                                 ? configVal(config, Metadata.BUILD_SOURCE, "") : "",
                         configVal(config, Metadata.PENDING_OP, ""),
                         configVal(config, Metadata.DEFAULT_ACTION, ""),
-                        diskUsage));
+                        diskUsage, referencedBytes));
             }
             return entryList;
         } catch (IncusException e) {
@@ -4474,7 +4629,14 @@ public class ListCommand extends BaseCommand {
 
     private record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
-                                String definitionSha, String pendingOp, String parent, long diskUsage) {}
+                                String definitionSha, String pendingOp, String parent, long diskUsage,
+                                long referencedBytes) {
+        /** Copy with a substituted disk weight — used by the two disk-attribution models. */
+        TemplateInfo withDiskUsage(long newDiskUsage) {
+            return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
+                    definitionSha, pendingOp, parent, newDiskUsage, referencedBytes);
+        }
+    }
 
     private record InstanceInfo(String name, String status,
                                 String project, String profile, String created,
@@ -4483,5 +4645,5 @@ public class ListCommand extends BaseCommand {
                                 String ipv4, String networkMode, String architecture,
                                 String buildVersion, String definitionSha,
                                 String type, String buildSourceJson, String pendingOp,
-                                String defaultAction, long diskUsage) {}
+                                String defaultAction, long diskUsage, long referencedBytes) {}
 }

@@ -557,6 +557,29 @@ public class BuildCommand extends BaseCommand {
         incus.deleteIfExists(canonicalName);
         incus.rename(tempName, canonicalName);
         activeBuild = null;
+
+        stampReferencedSize(canonicalName);
+    }
+
+    /**
+     * Record the just-built template's btrfs referenced (rfer) size as metadata. Templates are
+     * immutable and rfer is stable, so this one-time measurement stays correct and lets the TUI show
+     * each template as a delta from its parent without shelling out to btrfs on every refresh (see
+     * {@link dev.incusspawn.incus.BtrfsUsage}). Best-effort and btrfs-only: on any failure the stamp
+     * is simply absent and the TUI falls back to exclusive-usage display. Must run after the rename
+     * to the canonical name (the subvolume path btrfs reports) and after the instance is stopped.
+     */
+    private void stampReferencedSize(String canonicalName) {
+        try {
+            var probe = incus.probeCowPool();
+            if (probe.poolName() == null || !probe.isBtrfs()) return;
+            var rfer = dev.incusspawn.incus.BtrfsUsage.probe(probe.poolName()).get(canonicalName);
+            if (rfer != null && rfer > 0) {
+                incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(rfer));
+            }
+        } catch (Exception ignored) {
+            // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
+        }
     }
 
     private void warnDroppedTools(String existingImage, ImageDef imageDef, Map<String, ImageDef> defs) {
