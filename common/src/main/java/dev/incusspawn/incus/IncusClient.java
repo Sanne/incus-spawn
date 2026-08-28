@@ -532,20 +532,20 @@ public class IncusClient {
      */
     public String getStoragePoolUsage(String poolName) {
         if (poolName == null) return "";
-        var resp = http().get("/1.0/storage-pools/" + poolName + "/resources");
-        if (!resp.isSuccess()) return "(could not query pool resources)";
-        var space = resp.body().path("metadata").path("space");
-        long total = space.path("total").asLong(0);
-        long used = space.path("used").asLong(0);
-        if (total == 0) return "(no space info)";
-        return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
-                poolName, used / (1024 * 1024), total / (1024 * 1024),
-                used * 100 / total);
+        var usage = getPoolUsageBytes(poolName);
+        if (usage == null) return "(could not query pool resources)";
+        if (usage.totalBytes() == 0) return "(no space info)";
+        return usage.format(poolName);
     }
 
     public record PoolUsage(long usedBytes, long totalBytes) {
+        public static final int CRIT_PERCENT = 90;
         public int percent() {
             return totalBytes == 0 ? 0 : (int) (usedBytes * 100 / totalBytes);
+        }
+        public String format(String poolName) {
+            return "%s pool: %dMiB used / %dMiB total (%d%% full)".formatted(
+                    poolName, usedBytes / (1024 * 1024), totalBytes / (1024 * 1024), percent());
         }
     }
 

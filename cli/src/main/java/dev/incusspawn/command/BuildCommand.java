@@ -125,6 +125,7 @@ public class BuildCommand extends BaseCommand {
 
     private int buildIndex;
     private int buildTotal;
+    private volatile boolean savedFailureSummary;
 
     private volatile String[] activeBuild;
 
@@ -144,6 +145,7 @@ public class BuildCommand extends BaseCommand {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             var build = activeBuild;
             if (build != null) {
+                reportBuildFailure(build[0], build[1], "Build interrupted for " + build[1]);
                 promoteToFailedInstance(build[0], build[1]);
             }
         }));
@@ -541,9 +543,8 @@ public class BuildCommand extends BaseCommand {
                 buildFromParent(imageDef, defs, tempName, imageDef.getParent());
             }
         } catch (Exception e) {
-            System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
-            System.err.println("\033[1mBuild failed for " + canonicalName + ": " + e.getMessage() + "\033[0m");
-            printBuildDiagnostics(tempName);
+            reportBuildFailure(tempName, canonicalName,
+                    "Build failed for " + canonicalName + ": " + e.getMessage());
             try {
                 var failedHostResources = HostResourceSetup.collectEffective(imageDef, defs);
                 HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
@@ -627,49 +628,73 @@ public class BuildCommand extends BaseCommand {
         return false;
     }
 
-    private void printBuildDiagnostics(String buildName) {
+    private String printBuildDiagnostics(String buildName) {
+        var diag = new StringBuilder();
         try {
             var status = incus.getInstanceStatus(buildName);
-            System.err.println("  Container status: " + (status.isEmpty() ? "(unknown)" : status));
+            appendDiag(diag, "  Container status: " + (status.isEmpty() ? "(unknown)" : status));
 
             var log = incus.getLog(buildName);
             if (!log.isBlank()) {
-                var lines = log.lines().toList();
-                var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
-                System.err.println("  LXC log (last " + tail.size() + " lines):");
-                tail.forEach(l -> System.err.println("    " + l));
+                var lines = log.lines()
+                        .filter(l -> !l.contains("No security context received"))
+                        .toList();
+                if (lines.isEmpty()) {
+                    appendDiag(diag, "  LXC log: (no actionable entries)");
+                } else {
+                    var tail = lines.subList(Math.max(0, lines.size() - 20), lines.size());
+                    appendDiag(diag, "  LXC log (last " + tail.size() + " lines):");
+                    tail.forEach(l -> appendDiag(diag, "    " + l));
+                }
             }
 
             var pool = incus.findCowPool();
             if (pool != null) {
-                System.err.println("  " + incus.getStoragePoolUsage(pool));
+                var poolUsage = incus.getPoolUsageBytes(pool);
+                if (poolUsage != null) {
+                    appendDiag(diag, "  " + poolUsage.format(pool));
+                    if (poolUsage.percent() >= IncusClient.PoolUsage.CRIT_PERCENT) {
+                        var hint = Platform.isMacOS()
+                                ? " or 'isx vm resize' to grow the appliance disk"
+                                : "";
+                        appendDiag(diag, "  \033[1mLikely cause: storage pool is "
+                                + poolUsage.percent() + "% full"
+                                + " — run 'isx clean pool' to reclaim space" + hint + "\033[0m");
+                    }
+                }
             }
 
             var mem = incus.getServerMemoryUsage();
             if (!mem.isEmpty()) {
-                System.err.println("  " + mem);
+                appendDiag(diag, "  " + mem);
             }
 
             if ("Error".equals(status) || "Stopped".equals(status)) {
                 var cause = diagnoseInotifyExhaustion(incus);
                 if (cause != null) {
-                    System.err.println("  Cause: " + cause);
+                    appendDiag(diag, "  Cause: " + cause);
                 }
                 if ("Error".equals(status)) {
                     var dmesg = incus.queryDmesgForContainer(buildName);
                     if (!dmesg.isEmpty()) {
                         var dmesgCause = diagnoseCrashCause(dmesg);
                         if (dmesgCause != null && cause == null) {
-                            System.err.println("  Cause: " + dmesgCause);
+                            appendDiag(diag, "  Cause: " + dmesgCause);
                         }
-                        System.err.println("  Kernel log (dmesg):");
-                        dmesg.lines().forEach(l -> System.err.println("    " + l));
+                        appendDiag(diag, "  Kernel log (dmesg):");
+                        dmesg.lines().forEach(l -> appendDiag(diag, "    " + l));
                     }
                 }
             }
-        } catch (Exception diag) {
-            System.err.println("  (could not collect diagnostics: " + diag.getMessage() + ")");
+        } catch (Exception e) {
+            appendDiag(diag, "  (could not collect diagnostics: " + e.getMessage() + ")");
         }
+        return diag.toString();
+    }
+
+    private static void appendDiag(StringBuilder diag, String line) {
+        System.err.println(line);
+        diag.append(BuildOutput.stripAnsi(line)).append('\n');
     }
 
     static String diagnoseCrashCause(String dmesg) {
@@ -716,14 +741,30 @@ public class BuildCommand extends BaseCommand {
                 incus.forceStop(buildName);
             }
             incus.rename(buildName, promotedName);
-            incus.configSet(promotedName, Metadata.TYPE, Metadata.TYPE_FAILED_BUILD);
-            incus.configSet(promotedName, Metadata.PARENT, canonicalName);
-            incus.configSet(promotedName, Metadata.CREATED, Metadata.now());
-            System.err.println("\033[1mContainer promoted to instance '" + promotedName + "' for inspection.\033[0m");
+            incus.configSetAll(promotedName, Map.of(
+                    Metadata.TYPE, Metadata.TYPE_FAILED_BUILD,
+                    Metadata.PARENT, canonicalName,
+                    Metadata.CREATED, Metadata.now()));
+            var hint = savedFailureSummary ? " (see ~/inbox/BUILD_FAILURE.txt)" : "";
+            System.err.println("\033[1mContainer promoted to instance '" + promotedName
+                    + "' for inspection" + hint + ".\033[0m");
         } catch (Exception promoteError) {
             System.err.println("Failed to promote container: " + promoteError.getMessage());
             System.err.println("Container '" + buildName + "' may still exist for manual cleanup.");
         }
+    }
+
+    private void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
+        System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
+        System.err.println("\033[1m" + errorLine + "\033[0m");
+        var diagnostics = printBuildDiagnostics(buildName);
+        savedFailureSummary = false;
+        try {
+            new Container(incus, buildName)
+                    .writeFile("/home/agentuser/inbox/BUILD_FAILURE.txt",
+                            errorLine + "\n\n" + diagnostics);
+            savedFailureSummary = true;
+        } catch (Exception ignored) {}
     }
 
     /**
