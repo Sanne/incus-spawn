@@ -2704,7 +2704,8 @@ public class ListCommand extends BaseCommand {
                         Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))));
         var kernelInfo = info.kernelInfo();
         if (!kernelInfo.isEmpty()) {
-            lines.add(Line.styled("VM     " + kernelInfo,
+            var kernelLabel = Platform.isMacOS() ? "VM     " : "Host   ";
+            lines.add(Line.styled(kernelLabel + kernelInfo,
                     Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
         }
         lines.addAll(List.of(
