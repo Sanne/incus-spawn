@@ -110,7 +110,12 @@ public final class LayeredDefinitions<T> {
         currentDir = null;
     }
 
+    /** Mutable resolved map (callers such as tool fallbacks add to it deliberately). */
     public Map<String, T> defs() { return defs; }
-    public List<NameConflict> conflicts() { return conflicts; }
-    public List<LayerOverride> overrides() { return overrides; }
+
+    /** Immutable snapshot of same-directory conflicts (read-only diagnostics). */
+    public List<NameConflict> conflicts() { return List.copyOf(conflicts); }
+
+    /** Immutable snapshot of cross-layer overrides (read-only diagnostics). */
+    public List<LayerOverride> overrides() { return List.copyOf(overrides); }
 }
