@@ -123,20 +123,10 @@ public class BuildCommand extends BaseCommand {
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
     static final String REBUILDING_SUFFIX = "-rebuilding";
 
-    static final String STEP_INDENT = BuildOutput.STEP_INDENT;
-
     private int buildIndex;
     private int buildTotal;
 
     private volatile String[] activeBuild;
-
-    private void printBuildHeader(String name) {
-        BuildOutput.buildHeader(name, buildIndex, buildTotal);
-    }
-
-    private void buildStep(String msg) {
-        BuildOutput.step(msg);
-    }
 
     private void buildDone(String name) {
         BuildOutput.success(name + " built successfully.");
@@ -318,8 +308,8 @@ public class BuildCommand extends BaseCommand {
                 continue;
             }
             if (shouldSkipDueToFailedParent(imageDef, defs, failedBuilds)) {
-                printBuildHeader(templateName);
-                buildStep("Skipped — parent failed to build.");
+                BuildOutput.buildHeader(templateName, buildIndex, buildTotal);
+                BuildOutput.step("Skipped — parent failed to build.");
                 failedBuilds.add(templateName);
                 continue;
             }
@@ -529,11 +519,11 @@ public class BuildCommand extends BaseCommand {
         var canonicalName = imageDef.getName();
         var tempName = canonicalName + REBUILDING_SUFFIX;
 
-        printBuildHeader(canonicalName);
+        BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
 
         if (incus.exists(canonicalName)) {
             if (!yes) {
-                buildStep("Image already exists. It will be replaced if the build succeeds.");
+                BuildOutput.step("Image already exists. It will be replaced if the build succeeds.");
             }
             warnDroppedTools(canonicalName, imageDef, defs);
             if (!confirm("Rebuild?")) return;
@@ -572,11 +562,11 @@ public class BuildCommand extends BaseCommand {
         var oldSourceJson = incus.configGet(existingImage, Metadata.BUILD_SOURCE);
         var removed = findDroppedTools(oldSourceJson, imageDef, defs);
         if (!removed.isEmpty()) {
-            buildStep("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
+            BuildOutput.step("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
             for (var tool : removed) {
-                buildStep("  - " + tool);
+                BuildOutput.step("  - " + tool);
             }
-            buildStep("  Add to your template's tools: list if you still need them.");
+            BuildOutput.step("  Add to your template's tools: list if you still need them.");
         }
     }
 
@@ -781,7 +771,7 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to fix DNS after copy");
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, buildName)) {
-            buildStep("Refreshed MITM proxy CA certificate.");
+            BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
 
         waitForNetwork(buildName);
@@ -870,7 +860,7 @@ public class BuildCommand extends BaseCommand {
                         if (os != null && release != null) {
                             image = "images:" + os.toLowerCase() + "/" + release;
                             prebaked = false;
-                            buildStep("Base image is container-only, using " + image + " for VM build.");
+                            BuildOutput.step("Base image is container-only, using " + image + " for VM build.");
                         } else {
                             throw new RuntimeException(
                                     "Cannot build VM from container image '" + rootDef.getImage() + "'. "
@@ -1082,7 +1072,7 @@ public class BuildCommand extends BaseCommand {
         var pinnedTag = imageDef.getImageTag();
         var builtinTag = builtin.getImageTag();
         if (pinnedTag != null && builtinTag.compareTo(pinnedTag) > 0) {
-            buildStep("Warning: base image is pinned to " + pinnedTag
+            BuildOutput.step("Warning: base image is pinned to " + pinnedTag
                     + ", but " + builtinTag + " is available."
                     + " Run 'isx update-base --latest' to update.");
         }
@@ -1109,10 +1099,10 @@ public class BuildCommand extends BaseCommand {
         if (existingFingerprint != null) {
             var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
             if (tag != null && tag.equals(installedTag)) {
-                buildStep("Base image '" + localAlias + "' is up to date (" + tag + ").");
+                BuildOutput.step("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
-            buildStep("Base image '" + localAlias + "' is outdated"
+            BuildOutput.step("Base image '" + localAlias + "' is outdated"
                     + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
                     + ", replacing...");
             incus.deleteImageAlias(localAlias);
@@ -1303,7 +1293,7 @@ public class BuildCommand extends BaseCommand {
     private void removePackages(Container container, ImageDef imageDef) {
         var pkgs = imageDef.getRemovePackages();
         if (pkgs.isEmpty()) return;
-        buildStep("Removing unnecessary packages...");
+        BuildOutput.step("Removing unnecessary packages...");
         container.sh(
                 "dnf remove -y --setopt=clean_requirements_on_remove=True " +
                 String.join(" ", pkgs) + " 2>/dev/null; true");
@@ -1312,7 +1302,7 @@ public class BuildCommand extends BaseCommand {
     private void maskServices(Container container, ImageDef imageDef) {
         var services = imageDef.getMaskServices();
         if (services.isEmpty()) return;
-        buildStep("Masking unnecessary services...");
+        BuildOutput.step("Masking unnecessary services...");
         container.sh(
                 "systemctl mask " + String.join(" ", services) + " 2>/dev/null; true");
     }
@@ -1346,11 +1336,11 @@ public class BuildCommand extends BaseCommand {
         allPackages.removeAll(ancestorPackages);
 
         if (allPackages.isEmpty()) {
-            buildStep("All " + totalCount + " packages already installed.");
+            BuildOutput.step("All " + totalCount + " packages already installed.");
             return;
         }
 
-        buildStep("Installing " + allPackages.size() + " packages (" +
+        BuildOutput.step("Installing " + allPackages.size() + " packages (" +
                 (totalCount - allPackages.size()) + " already installed): " +
                 String.join(", ", allPackages));
         var rest = new ArrayList<String>(List.of("install", "-y"));
@@ -1418,12 +1408,24 @@ public class BuildCommand extends BaseCommand {
      * Run the non-package setup steps for each tool (scripts, files, env, verify).
      */
     private void runToolSetup(Container container, List<ResolvedTool> tools) {
+        var installable = tools.stream().filter(t -> !t.reconfigureOnly()).toList();
+        if (!installable.isEmpty()) {
+            var names = installable.stream().map(ResolvedTool::name).toList();
+            BuildOutput.step("Setting up " + names.size() + " tool"
+                    + (names.size() == 1 ? "" : "s") + ": " + String.join(", ", names));
+        }
+
         for (var resolved : tools) {
             if (resolved.reconfigureOnly()) {
                 resolved.setup().reconfigure(container, resolved.parameters());
             } else {
                 resolved.setup().install(container, resolved.parameters());
             }
+        }
+
+        if (!installable.isEmpty()) {
+            BuildOutput.note(installable.size() + " tool"
+                    + (installable.size() == 1 ? "" : "s") + " ready.");
         }
     }
 
@@ -1602,18 +1604,18 @@ public class BuildCommand extends BaseCommand {
 
     /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}. */
     static String formatDnfLine(String label, StepProgress p, int frame) {
-        var sb = new StringBuilder(STEP_INDENT);
+        var sb = new StringBuilder(BuildOutput.STEP_INDENT);
         switch (p.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(' ').append(label);
-            case DONE    -> sb.append("\033[32m✓\033[0m ").append(label);
+            case DONE    -> sb.append(label).append(" done.");
             case FAILED  -> sb.append("\033[31m✗\033[0m ").append(label);
         }
         if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
             sb.append("  \033[2m").append(p.detail()).append("\033[0m");
         }
         if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
-            sb.append(" \033[2m").append(p.note()).append("\033[0m");
+            sb.append(" \033[2m(").append(p.note()).append(")\033[0m");
         }
         if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
             sb.append("  \033[31m").append(p.detail()).append("\033[0m");
@@ -1624,10 +1626,11 @@ public class BuildCommand extends BaseCommand {
     /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
     private static String plainDnfLine(String label, StepProgress p) {
         if (p.state() == StepState.DONE) {
-            return p.note() != null && !p.note().isEmpty() ? STEP_INDENT + label + " (" + p.note() + ")"
-                    : STEP_INDENT + label;
+            var line = BuildOutput.STEP_INDENT + label + " done.";
+            if (p.note() != null && !p.note().isEmpty()) line += " (" + p.note() + ")";
+            return line;
         }
-        var msg = STEP_INDENT + "Warning: " + label + " failed";
+        var msg = BuildOutput.STEP_INDENT + "Warning: " + label + " failed";
         if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
         return msg;
     }
@@ -2240,7 +2243,10 @@ public class BuildCommand extends BaseCommand {
         return skillsRepo + "@" + skill;
     }
 
-    record RepoReference(String deviceName, String containerPath) {}
+    record RepoReference(String deviceName, String containerPath, String skipReason) {
+        static RepoReference skipped(String reason) { return new RepoReference(null, null, reason); }
+        boolean mounted() { return deviceName != null; }
+    }
 
     enum StepState { RUNNING, DONE, FAILED }
 
@@ -2249,13 +2255,13 @@ public class BuildCommand extends BaseCommand {
      *  is a dim annotation shown on success; {@code detail} is a concise one-line
      *  error for the inline display; {@code log} is the full captured command output,
      *  printed on failure so the diagnostic isn't reduced to the single inline line. */
-    record StepProgress(StepState state, String activity, String note, String detail, String log) {
-        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, null, null); }
-        /** Running with a live {@code detail} sub-line (e.g. dnf's current "N/M package"). */
-        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, detail, null); }
-        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, null, null); }
+    record StepProgress(StepState state, String activity, String note, boolean noteHighlight, String detail, String log) {
+        static StepProgress running(String activity) { return new StepProgress(StepState.RUNNING, activity, null, false, null, null); }
+        static StepProgress running(String activity, String detail) { return new StepProgress(StepState.RUNNING, activity, null, false, detail, null); }
+        static StepProgress done(String note) { return new StepProgress(StepState.DONE, null, note, false, null, null); }
+        static StepProgress doneHighlight(String note) { return new StepProgress(StepState.DONE, null, note, true, null, null); }
         static StepProgress failed(String detail, String log) {
-            return new StepProgress(StepState.FAILED, null, null, detail, log);
+            return new StepProgress(StepState.FAILED, null, null, false, detail, log);
         }
     }
 
@@ -2284,7 +2290,7 @@ public class BuildCommand extends BaseCommand {
         var repos = imageDef.getRepos();
         if (repos.isEmpty()) return;
 
-        buildStep("Preparing " + repos.size() + (repos.size() == 1 ? " repository:" : " repositories:"));
+        BuildOutput.step("Preparing " + repos.size() + (repos.size() == 1 ? " repository:" : " repositories:"));
 
         var config = SpawnConfig.load();
 
@@ -2314,7 +2320,7 @@ public class BuildCommand extends BaseCommand {
         } finally {
             // Phase 3 (serial): remove all reference devices.
             for (int i = 0; i < repos.size(); i++) {
-                if (refs[i] != null) {
+                if (refs[i] != null && refs[i].mounted()) {
                     try {
                         incus.deviceRemove(container.name(), refs[i].deviceName());
                     } catch (Exception e) {
@@ -2342,12 +2348,18 @@ public class BuildCommand extends BaseCommand {
         }
 
         String note = clone.usedReference() ? "via host reference" : null;
+        boolean highlight = false;
+        if (!clone.usedReference() && ref != null && ref.skipReason() != null) {
+            note = ref.skipReason();
+            highlight = true;
+        }
         if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
             if (failureSeen.get()) {
                 // Another repo already failed; don't start priming a build that's
                 // going to abort. The clone itself succeeded, so say so.
-                states.set(idx, StepProgress.done(note == null ? "priming skipped"
-                        : note + "; priming skipped"));
+                var skipNote = note == null ? "priming skipped" : note + "; priming skipped";
+                states.set(idx, highlight ? StepProgress.doneHighlight(skipNote)
+                        : StepProgress.done(skipNote));
                 return;
             }
             states.set(idx, StepProgress.running("Priming"));
@@ -2356,7 +2368,7 @@ public class BuildCommand extends BaseCommand {
                 return; // failure recorded
             }
         }
-        states.set(idx, StepProgress.done(note));
+        states.set(idx, highlight ? StepProgress.doneHighlight(note) : StepProgress.done(note));
     }
 
     private record CloneResult(boolean success, boolean usedReference) {
@@ -2371,7 +2383,7 @@ public class BuildCommand extends BaseCommand {
         try {
             boolean usedReference = false;
 
-            if (ref != null) {
+            if (ref != null && ref.mounted()) {
                 var expandedPath = expandHome(repo.getPath());
                 var clone = container.shAsUser("agentuser", buildCloneCommand(repo, ref.containerPath()));
                 if (clone.success()) {
@@ -2490,7 +2502,7 @@ public class BuildCommand extends BaseCommand {
     static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
                                  String doneWord) {
         var runningWord = progress.activity() != null ? progress.activity() : "Working";
-        var sb = new StringBuilder(STEP_INDENT);
+        var sb = new StringBuilder(BuildOutput.STEP_INDENT);
         switch (progress.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m ");
@@ -2502,7 +2514,11 @@ public class BuildCommand extends BaseCommand {
             sb.append(" \033[2m(").append(dimContext).append(")\033[0m");
         }
         if (progress.state() == StepState.DONE && progress.note() != null && !progress.note().isEmpty()) {
-            sb.append(" \033[2m").append(progress.note()).append("\033[0m");
+            if (progress.noteHighlight()) {
+                sb.append(" \033[1m").append(progress.note()).append("\033[0m");
+            } else {
+                sb.append(" \033[2m").append(progress.note()).append("\033[0m");
+            }
         }
         if (progress.state() == StepState.FAILED && progress.detail() != null && !progress.detail().isEmpty()) {
             sb.append("  \033[31m").append(progress.detail()).append("\033[0m");
@@ -2512,11 +2528,11 @@ public class BuildCommand extends BaseCommand {
 
     private static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
         if (progress.state() == StepState.DONE) {
-            var line = STEP_INDENT + doneWord + " " + label;
+            var line = BuildOutput.STEP_INDENT + doneWord + " " + label;
             if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
             return line;
         }
-        var msg = STEP_INDENT + "Warning: " + verb + " failed for " + label;
+        var msg = BuildOutput.STEP_INDENT + "Warning: " + verb + " failed for " + label;
         if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
         return msg;
     }
@@ -2589,18 +2605,9 @@ public class BuildCommand extends BaseCommand {
 
             var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             if (hostPath == null) return null;
-            if (!Files.isDirectory(hostPath)) {
-                BuildOutput.note("Host repo path " + hostPath + " not found, skipping reference clone.");
-                return null;
-            }
-            if (!GitRemoteUtils.isGitRepo(hostPath)) {
-                BuildOutput.note("Host path " + hostPath + " is not a git repo, skipping reference clone.");
-                return null;
-            }
-
-            if (!GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
-                BuildOutput.note("No remote in " + hostPath + " matches " + cloneUrl + ", skipping reference clone.");
-                return null;
+            if (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
+                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
+                return RepoReference.skipped("no local reference found to speedup cloning");
             }
 
             var containerPath = GitRemoteUtils.referenceContainerPath(repoName, cloneUrl);
@@ -2613,7 +2620,7 @@ public class BuildCommand extends BaseCommand {
             HostResourceSetup.addShiftIfSupported(refArgs, isVm);
             incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
-            return new RepoReference(deviceName, containerPath);
+            return new RepoReference(deviceName, containerPath, null);
         } catch (Exception e) {
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;

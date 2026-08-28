@@ -2,6 +2,7 @@ package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.util.BuildOutput;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,17 +48,17 @@ public class CodexSetup implements ToolSetup {
     }
 
     private void installBinary(Container c) {
-        dev.incusspawn.util.BuildOutput.stepStart("Installing Codex CLI...");
+        BuildOutput.stepStart("Installing Codex CLI...");
         c.runQuiet("Failed to install Codex CLI",
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
-        dev.incusspawn.util.BuildOutput.stepDone();
+        BuildOutput.stepDone();
     }
 
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
     private void configureSettings(Container c) {
-        dev.incusspawn.util.BuildOutput.stepStart("Configuring Codex CLI...");
+        BuildOutput.stepStart("Configuring Codex CLI...");
         var configToml = """
                 model = "o4-mini"
                 approval_policy = "never"
@@ -84,7 +85,7 @@ public class CodexSetup implements ToolSetup {
         c.writeFile(CONFIG_PATH, configToml);
         c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
-        dev.incusspawn.util.BuildOutput.stepDone();
+        BuildOutput.stepDone();
     }
 
 }
