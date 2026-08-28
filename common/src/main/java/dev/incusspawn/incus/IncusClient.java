@@ -154,6 +154,18 @@ public class IncusClient {
                 System.out, System.err);
     }
 
+    /**
+     * Execute a command inside a container as root, streaming stdout/stderr to the
+     * given {@link OutputStream}s in real time (no PTY). Returns the exit code.
+     * Unlike {@link #shellExecInteractive} this does not echo to the terminal — the
+     * caller decides what to do with each stream (e.g. parse progress line-by-line).
+     */
+    public int shellExecStreaming(String container, OutputStream stdout, OutputStream stderr,
+                                  String... command) {
+        return http().execStream(container, List.of(command), 0, 0, null, Map.of(),
+                stdout, stderr);
+    }
+
     // su - replaces the process environment with the user's login environment,
     // which on Fedora/RHEL defaults to PATH=/bin:/usr/bin (from login.defs).
     // The old incus CLI injected /usr/local/bin into PATH before su ran, so it

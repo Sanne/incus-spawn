@@ -1272,6 +1272,105 @@ class BuildCommandTest {
         assertEquals(done.indexOf("alpha"), failed.indexOf("alpha"), "label aligns DONE vs FAILED");
     }
 
+    // --- dnf progress parsing (real dnf5 5.4.2.1 non-TTY output) ---
+
+    private static String dnfDetail(String line) {
+        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        state.set(0, BuildCommand.StepProgress.running("", "starting"));
+        BuildCommand.onDnfLine(line, new StringBuilder(), state);
+        return state.get(0).detail();
+    }
+
+    @Test
+    void onDnfLineParsesTransactionStep() {
+        // "[3/6] Reinstalling setup-0:2.15.0-28.fc 100% |  26.4 MiB/s | 730.6 KiB |  00m00s"
+        // The version/arch tail is dropped, leaving the bare package name.
+        assertEquals("3/6  Reinstalling setup",
+                dnfDetail("[3/6] Reinstalling setup-0:2.15.0-28.fc 100% |  26.4 MiB/s | 730.6 KiB |  00m00s"));
+    }
+
+    @Test
+    void onDnfLineParsesDownloadStep() {
+        // "[1/2] filesystem-0:3.18-52.fc44.aarch64 100% |   2.5 MiB/s |   1.3 MiB |  00m01s"
+        assertEquals("1/2  filesystem",
+                dnfDetail("[1/2] filesystem-0:3.18-52.fc44.aarch64 100% |   2.5 MiB/s |   1.3 MiB |  00m01s"));
+    }
+
+    @Test
+    void onDnfLineParsesMultiWordAction() {
+        // No NEVRA, so nothing is stripped.
+        assertEquals("1/6  Verify package files",
+                dnfDetail("[1/6] Verify package files              100% | 222.0   B/s |   2.0   B |  00m00s"));
+    }
+
+    @Test
+    void shortenNevraStripsVersionButKeepsHyphenatedName() {
+        assertEquals("glibc-gconv-extra",
+                BuildCommand.shortenNevra("glibc-gconv-extra-0:2.43-8.fc44.aarch64"));
+        assertEquals("Installing make",
+                BuildCommand.shortenNevra("Installing make-1:4.4.1-12.fc44.aarch64"));
+        // A name truncated before the epoch marker has no "-<epoch>:" and is left as-is.
+        assertEquals("some-very-long-package-nam",
+                BuildCommand.shortenNevra("some-very-long-package-nam"));
+    }
+
+    @Test
+    void onDnfLineSkipsDownloadSubtotal() {
+        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        state.set(0, BuildCommand.StepProgress.running("", "before"));
+        BuildCommand.onDnfLine("[2/2] Total                             100% |   1.4 MiB/s |   1.5 MiB |  00m01s",
+                new StringBuilder(), state);
+        assertEquals("before", state.get(0).detail(), "the download 'Total' subtotal line should be ignored");
+    }
+
+    @Test
+    void onDnfLineIgnoresNonProgressLines() {
+        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        state.set(0, BuildCommand.StepProgress.running("", "before"));
+        var log = new StringBuilder();
+        BuildCommand.onDnfLine("Running transaction", log, state);
+        BuildCommand.onDnfLine("Repositories loaded.", log, state);
+        assertEquals("before", state.get(0).detail(), "non-[N/M] lines shouldn't change the detail");
+        assertTrue(log.toString().contains("Running transaction"), "all lines are still logged");
+    }
+
+    @Test
+    void runSpinnerWorkRecordsThrownExceptionAsFailed() {
+        // TerminalProgress swallows task exceptions, so runSpinnerWork must convert a
+        // thrown exception into a FAILED state (with the cause captured) rather than let
+        // the step stay RUNNING and lose the real error.
+        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        state.set(0, BuildCommand.StepProgress.running("Doing"));
+        BuildCommand.runSpinnerWork(s -> { throw new RuntimeException("transport boom"); }, state);
+        assertEquals(BuildCommand.StepState.FAILED, state.get(0).state(), "exception must yield a failed state");
+        assertEquals("transport boom", state.get(0).detail());
+        assertTrue(state.get(0).log() != null && state.get(0).log().contains("transport boom"),
+                "the stack trace should be captured as the failure log");
+    }
+
+    @Test
+    void runSpinnerWorkKeepsRecordedStateOnSuccess() {
+        var state = new java.util.concurrent.atomic.AtomicReferenceArray<BuildCommand.StepProgress>(1);
+        state.set(0, BuildCommand.StepProgress.running("Doing"));
+        BuildCommand.runSpinnerWork(s -> s.set(0, BuildCommand.StepProgress.done("ok")), state);
+        assertEquals(BuildCommand.StepState.DONE, state.get(0).state());
+    }
+
+    @Test
+    void formatDnfLineShowsLabelAndLiveDetail() {
+        var p = BuildCommand.StepProgress.running("", "3/6  Installing foo");
+        var line = stripAnsi(BuildCommand.formatDnfLine("Installing base packages", p, 0));
+        assertTrue(line.contains("Installing base packages"), "shows the batch label");
+        assertTrue(line.contains("3/6  Installing foo"), "shows the live per-package detail");
+    }
+
+    @Test
+    void formatDnfLineShowsCheckmarkWhenDone() {
+        var line = BuildCommand.formatDnfLine("Installing base packages", BuildCommand.StepProgress.done(null), 0);
+        assertTrue(line.contains("✓"), "should show checkmark when done");
+        assertTrue(line.contains("Installing base packages"));
+    }
+
     private static String stripAnsi(String s) {
         return s.replaceAll("\033\\[[0-9;]*m", "");
     }
