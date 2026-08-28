@@ -1008,7 +1008,65 @@ public class InitCommand extends BaseCommand {
         }
 
         checkStorageDriver();
+        configureBtrfsUsageAccess();
         ensureDefaultProfile();
+    }
+
+    private static final String BTRFS_SUDOERS = "/etc/sudoers.d/incus-spawn-btrfs";
+
+    /**
+     * Install a tightly-scoped NOPASSWD sudoers rule so the (non-root) TUI/build can read btrfs
+     * <em>referenced</em> sizes for the CoW pool — the data behind per-template disk deltas (see
+     * {@link dev.incusspawn.incus.BtrfsUsage}). Reading qgroups needs CAP_SYS_ADMIN and the pool dir
+     * is root-only, and Incus exposes no API for rfer, so a privileged read is unavoidable; a
+     * password prompt on TUI refresh isn't acceptable, hence NOPASSWD. The rule permits ONLY the two
+     * read-only commands against this pool's mount — no wildcards, no other btrfs subcommands.
+     *
+     * <p>Linux only (on macOS the pool lives in the appliance VM and the in-VM agent reads it as
+     * root). Best-effort: if it can't be installed, rfer stamping simply fails and the TUI falls
+     * back to exclusive-usage display.
+     */
+    private void configureBtrfsUsageAccess() {
+        if (Platform.isMacOS()) return;
+        var probe = incus.probeCowPool();
+        if (probe.poolName() == null || !probe.isBtrfs()) return;
+        var pool = probe.poolName();
+
+        var btrfsPath = captureOutput("which", "btrfs").strip();
+        if (btrfsPath.isEmpty()) btrfsPath = "/usr/sbin/btrfs";     // fall back to the usual location
+
+        var user = System.getProperty("user.name");
+        var mount = "/var/lib/incus/storage-pools/" + pool;
+        var content = user + " ALL=(root) NOPASSWD: "
+                + btrfsPath + " qgroup show -re --raw " + mount + ", "
+                + btrfsPath + " subvolume list " + mount + "\n";
+
+        try {
+            if (Files.exists(Path.of(BTRFS_SUDOERS))
+                    && content.equals(Files.readString(Path.of(BTRFS_SUDOERS)))) {
+                return;                                             // already installed, up to date
+            }
+        } catch (IOException ignored) {
+            // unreadable (root-owned 0440) — fall through and (re)install
+        }
+
+        try {
+            var tempFile = Files.createTempFile("isx-btrfs-sudoers-", ".tmp");
+            Files.writeString(tempFile, content);
+            // Validate before installing: a malformed sudoers file can lock the user out of sudo.
+            if (runHostQuiet("visudo", "-cf", tempFile.toString()) != 0) {
+                System.err.println("  Warning: generated btrfs sudoers rule failed validation; skipping.");
+                Files.deleteIfExists(tempFile);
+                return;
+            }
+            if (runHostQuiet("sudo", "install", "-m", "0440", "-o", "root", "-g", "root",
+                    tempFile.toString(), BTRFS_SUDOERS) == 0) {
+                System.out.println("  Enabled per-template disk accounting (scoped btrfs read).");
+            }
+            Files.deleteIfExists(tempFile);
+        } catch (IOException e) {
+            System.err.println("  Warning: could not configure btrfs disk accounting: " + e.getMessage());
+        }
     }
 
     /**

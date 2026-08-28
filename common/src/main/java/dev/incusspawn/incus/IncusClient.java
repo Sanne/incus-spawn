@@ -470,7 +470,16 @@ public class IncusClient {
 
     private static final Set<String> COW_DRIVERS = Set.of("btrfs", "zfs", "lvm");
 
-    public record CowPoolProbe(boolean listed, String poolName) {
+    public record CowPoolProbe(boolean listed, String poolName, String driver) {
+        /**
+         * Whether the found CoW pool is btrfs-backed. Per-subvolume referenced-size accounting (see
+         * {@link BtrfsUsage}) is btrfs-specific, so callers gate on this before probing rfer; other
+         * CoW drivers (zfs/lvm) fall back to exclusive-usage display. The driver is already parsed
+         * during {@link #probeCowPool}, so this needs no extra API call.
+         */
+        public boolean isBtrfs() {
+            return "btrfs".equals(driver);
+        }
     }
 
     /**
@@ -487,14 +496,14 @@ public class IncusClient {
 
     public CowPoolProbe probeCowPool() {
         var resp = http().get("/1.0/storage-pools?recursion=1");
-        if (!resp.isSuccess()) return new CowPoolProbe(false, null);
+        if (!resp.isSuccess()) return new CowPoolProbe(false, null, null);
         for (var pool : resp.body().path("metadata")) {
             var driver = pool.path("driver").asText("");
             if (COW_DRIVERS.contains(driver)) {
-                return new CowPoolProbe(true, pool.path("name").asText());
+                return new CowPoolProbe(true, pool.path("name").asText(), driver);
             }
         }
-        return new CowPoolProbe(true, null);
+        return new CowPoolProbe(true, null, null);
     }
 
     /**

@@ -131,4 +131,94 @@ class ListCommandDiskTest {
         // Rounding / metadata slack can make the row sum momentarily exceed reported pool usage.
         assertEquals(0, ListCommand.sharedBaseBytes(1000, 1200));
     }
+
+    // --- referencedDelta: per-template weight from stamped btrfs referenced (rfer) sizes ---
+
+    @Test
+    void referencedDeltaRootShowsFullReferenced() {
+        // The root template has no template parent, so it owns the base-image weight: its own rfer.
+        long baseImage = 1_200_000_000L;
+        assertEquals(baseImage, ListCommand.referencedDelta(baseImage, null, true));
+        assertEquals(baseImage, ListCommand.referencedDelta(baseImage, 999L, true));  // parent ignored for root
+    }
+
+    @Test
+    void referencedDeltaDerivedShowsDeltaOverParent() {
+        // tpl-isx references base+deltas; over its parent tpl-java it shows only what isx added.
+        long isx = 1_800_000_000L;
+        long java = 1_300_000_000L;
+        assertEquals(500_000_000L, ListCommand.referencedDelta(isx, java, false));
+    }
+
+    @Test
+    void referencedDeltaClampsNegativeToZero() {
+        // A child that deleted files present in its parent can reference slightly less than it.
+        assertEquals(0, ListCommand.referencedDelta(1000, 1200L, false));
+    }
+
+    @Test
+    void referencedDeltaFallsBackToFullReferencedWhenParentUnknown() {
+        // Parent out of scope / unstamped: show full rfer rather than over-subtracting to a bogus delta.
+        assertEquals(1_800_000_000L, ListCommand.referencedDelta(1_800_000_000L, null, false));
+    }
+
+    // --- nearestStampedAncestorRfer: template-deletion resilience for the delta model ---
+
+    // Chain (YAML definitions, which survive deletion): minimal <- dev <- java <- isx
+    private static java.util.Map<String, String> chainDefs() {
+        var m = new java.util.HashMap<String, String>();
+        m.put("tpl-minimal", "");
+        m.put("tpl-dev", "tpl-minimal");
+        m.put("tpl-java", "tpl-dev");
+        m.put("tpl-isx", "tpl-java");
+        return m;
+    }
+
+    @Test
+    void ancestorUsesImmediateParentWhenPresent() {
+        var rfer = java.util.Map.of("tpl-minimal", 1_000L, "tpl-java", 1_300L, "tpl-isx", 1_800L);
+        assertEquals(1_300L, ListCommand.nearestStampedAncestorRfer("tpl-java", rfer, chainDefs()));
+    }
+
+    @Test
+    void ancestorClimbsPastADeletedIntermediate() {
+        // tpl-java (isx's parent) was deleted -> its rfer is gone; climb to the surviving tpl-dev.
+        var rfer = java.util.Map.of("tpl-minimal", 1_000L, "tpl-dev", 1_150L, "tpl-isx", 1_800L);
+        assertEquals(1_150L, ListCommand.nearestStampedAncestorRfer("tpl-java", rfer, chainDefs()));
+    }
+
+    @Test
+    void ancestorReturnsNullWhenWholeChainAboveWasDeleted() {
+        // Every ancestor deleted -> null, so the caller shows full rfer and re-absorbs the base weight.
+        var rfer = java.util.Map.of("tpl-isx", 1_800L);
+        assertNull(ListCommand.nearestStampedAncestorRfer("tpl-java", rfer, chainDefs()));
+    }
+
+    @Test
+    void ancestorTerminatesOnCyclicParentDefinition() {
+        var cyclic = java.util.Map.of("a", "b", "b", "a");
+        assertNull(ListCommand.nearestStampedAncestorRfer("a", java.util.Map.of(), cyclic));
+    }
+
+    // --- hasDescendant: an instance/template that something was branched or derived from ---
+
+    @Test
+    void hasDescendantWhenAnotherRowNamesItAsParent() {
+        // instance "work-b" was branched from instance "work-a": work-a has a live descendant.
+        var parents = java.util.List.of("tpl-isx", "work-a", "");
+        assertTrue(ListCommand.hasDescendant("work-a", parents));
+    }
+
+    @Test
+    void noDescendantForALeafInstance() {
+        var parents = java.util.List.of("tpl-isx", "work-a", "");
+        assertFalse(ListCommand.hasDescendant("work-b", parents));
+    }
+
+    @Test
+    void hasDescendantIgnoresNullAndBlankNames() {
+        var parents = java.util.List.of("", "tpl-isx");
+        assertFalse(ListCommand.hasDescendant(null, parents));
+        assertFalse(ListCommand.hasDescendant("", parents));   // blank parent must never self-match
+    }
 }
