@@ -1043,7 +1043,7 @@ class BuildCommandTest {
     }
 
     @Test
-    void cloneReposWithReferenceDissociates() {
+    void cloneReposWithReferenceLocalClone() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
         when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
@@ -1063,12 +1063,18 @@ class BuildCommandTest {
 
         cmd.cloneRepos(container, imageDef, false);
 
-        // Reference clone command
+        // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
-                "git clone --single-branch --reference '/mnt/ref/repo' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
-        // Dissociation: repack + alternates removal
+                "git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+        // URL fixup + fetch + detect default branch
         verify(incus).execInContainer("test", "agentuser",
-                "git -C '/home/agentuser/repo' repack -a -d && rm -f -- '/home/agentuser/repo/.git/objects/info/alternates'");
+                "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
+                        + " && git -C '/home/agentuser/repo' fetch --quiet origin"
+                        + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
+        // Checkout remote's default branch (host ref may have a different HEAD)
+        verify(incus).execInContainer("test", "agentuser",
+                "git -C '/home/agentuser/repo' checkout"
+                        + " \"$(git -C '/home/agentuser/repo' symbolic-ref --short refs/remotes/origin/HEAD)\"");
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -1077,9 +1083,9 @@ class BuildCommandTest {
     void cloneReposWithReferenceFailsFallsBack() {
         var incus = mock(IncusClient.class);
         var container = new Container(incus, "test");
-        // First call (reference clone) fails, rest succeed
+        // First call (local clone from reference) fails, rest succeed
         when(incus.execInContainer(eq("test"), anyString(), anyString()))
-                .thenReturn(FAIL)  // reference clone fails
+                .thenReturn(FAIL)  // local clone fails
                 .thenReturn(OK)    // cleanup rm -rf
                 .thenReturn(OK)    // normal clone
                 .thenReturn(OK);   // refspec restore
@@ -1103,6 +1109,76 @@ class BuildCommandTest {
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         // Reference device still cleaned up
+        verify(incus).deviceRemove("test", "ref-repo");
+    }
+
+    @Test
+    void cloneReposWithReferenceAndBranchCheckout() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        repo.setBranch("feature/x");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+
+        cmd.cloneRepos(container, imageDef, false);
+
+        // Local clone (no --branch — handled after fetch)
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --no-hardlinks -- '/mnt/ref/repo' '/home/agentuser/repo'");
+        // URL fixup + fetch + detect default branch
+        verify(incus).execInContainer("test", "agentuser",
+                "git -C '/home/agentuser/repo' remote set-url origin 'https://github.com/owner/repo.git'"
+                        + " && git -C '/home/agentuser/repo' fetch --quiet origin"
+                        + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
+        // Branch checkout (explicit branch overrides detected default)
+        verify(incus).execInContainer("test", "agentuser",
+                "git -C '/home/agentuser/repo' checkout 'feature/x'");
+    }
+
+    @Test
+    void cloneReposWithReferenceCheckoutFailsFallsBack() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString()))
+                .thenReturn(OK)    // local clone
+                .thenReturn(OK)    // fixup (set-url + fetch + set-head)
+                .thenReturn(FAIL)  // checkout fails
+                .thenReturn(OK)    // cleanup rm -rf
+                .thenReturn(OK)    // normal remote clone
+                .thenReturn(OK);   // set-branches
+
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        repo.setBranch("nonexistent");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo");
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+
+        cmd.cloneRepos(container, imageDef, false);
+
+        // Should fall back to normal clone after checkout failure
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch --branch 'nonexistent'"
+                        + " -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
         verify(incus).deviceRemove("test", "ref-repo");
     }
 
