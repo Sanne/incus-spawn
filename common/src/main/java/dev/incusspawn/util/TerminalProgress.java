@@ -29,6 +29,40 @@ public final class TerminalProgress {
 
     public static final String[] SPINNER = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
 
+    static int terminalWidth() {
+        try {
+            var pb = new ProcessBuilder("stty", "size");
+            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            pb.redirectErrorStream(true);
+            var p = pb.start();
+            var output = new String(p.getInputStream().readAllBytes()).strip();
+            if (p.waitFor(1, TimeUnit.SECONDS)) {
+                var parts = output.split("\\s+");
+                if (parts.length >= 2) return Integer.parseInt(parts[1]);
+            }
+        } catch (Exception ignored) {}
+        return 120;
+    }
+
+    static String truncateToWidth(String s, int maxWidth) {
+        int visible = 0;
+        boolean inEscape = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\033') {
+                inEscape = true;
+            } else if (inEscape) {
+                if (Character.isLetter(c)) inEscape = false;
+            } else {
+                if (visible >= maxWidth) {
+                    return s.substring(0, i) + "\033[0m";
+                }
+                visible++;
+            }
+        }
+        return s;
+    }
+
     public static boolean isAnsiTerminal() {
         if (System.console() == null) return false;
         var term = System.getenv("TERM");
@@ -61,8 +95,9 @@ public final class TerminalProgress {
                                 IntConsumer task,
                                 BiFunction<Integer, Integer, String> line) {
         var out = System.out;
+        int width = terminalWidth();
         for (int i = 0; i < taskCount; i++) {
-            out.println(line.apply(i, 0));
+            out.println(truncateToWidth(line.apply(i, 0), width));
         }
         out.flush();
 
@@ -70,7 +105,7 @@ public final class TerminalProgress {
         var frame = new int[]{0};
         Runnable redraw = () -> {
             synchronized (lock) {
-                redrawLines(taskCount, line, out, frame[0]++);
+                redrawLines(taskCount, line, out, frame[0]++, width);
             }
         };
 
@@ -90,17 +125,17 @@ public final class TerminalProgress {
         }
 
         synchronized (lock) {
-            redrawLines(taskCount, line, out, 0);
+            redrawLines(taskCount, line, out, 0, width);
         }
     }
 
     private static void redrawLines(int taskCount, BiFunction<Integer, Integer, String> line,
-                                    PrintStream out, int frame) {
+                                    PrintStream out, int frame, int width) {
         var sb = new StringBuilder();
         sb.append("\033[").append(taskCount).append('A');
         for (int i = 0; i < taskCount; i++) {
             sb.append('\r').append("\033[2K");
-            sb.append(line.apply(i, frame));
+            sb.append(truncateToWidth(line.apply(i, frame), width));
             sb.append('\n');
         }
         out.print(sb);
