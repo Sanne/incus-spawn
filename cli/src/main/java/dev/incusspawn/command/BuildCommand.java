@@ -136,7 +136,21 @@ public class BuildCommand extends BaseCommand {
             }
         }));
 
-        var defs = ImageDef.loadAll();
+        var loaded = ImageDef.loadAllWithConflicts();
+        var toolConflicts = toolDefLoader.conflicts();
+        if (!loaded.conflicts().isEmpty() || !toolConflicts.isEmpty()) {
+            System.err.println("Cannot build: definitions have conflicting names.");
+            for (var conflict : loaded.conflicts()) {
+                System.err.println();
+                System.err.println(conflict.message());
+            }
+            for (var conflict : toolConflicts) {
+                System.err.println();
+                System.err.println(conflict.message());
+            }
+            return CommandResult.valueOf(1);
+        }
+        var defs = loaded.defs();
 
         try {
             if (withParents) {

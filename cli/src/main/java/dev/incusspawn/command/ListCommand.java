@@ -464,8 +464,15 @@ public class ListCommand extends BaseCommand {
 
         var loadWarnings = new ArrayList<String>();
         imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
+        // Tool conflicts don't flow through image loadAll; surface them here too so
+        // the TUI warns about duplicate tool names instead of only failing at build.
+        for (var conflict : toolDefLoader.conflicts()) {
+            loadWarnings.add(conflict.shortMessage());
+        }
         if (!loadWarnings.isEmpty()) {
-            statusMessage = loadWarnings.get(0);
+            statusMessage = loadWarnings.size() == 1
+                    ? loadWarnings.get(0)
+                    : loadWarnings.get(0) + " (+" + (loadWarnings.size() - 1) + " more)";
         }
 
         // Build template panel data by merging ImageDef definitions with Incus state

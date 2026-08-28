@@ -94,7 +94,7 @@ user-level override to `~/.config/incus-spawn/images/minimal.yaml` when pinning.
 release) is used. See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
 for the full release process.
 
-**Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones.
+**Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones — this is the mechanism behind pinning and template customization, so it stays silent. But two files declaring the same `name:` *within the same directory* is always a mistake (typically a copy that forgot to update `name:`, which silently masks the file you think you are editing). `ImageDef.loadAllWithConflicts()` distinguishes the two: same-directory collisions become `NameConflict`s (listing every colliding file), cross-layer replacements become `LayerOverride`s. `isx build` refuses to build while any conflict exists and names the offending files; the TUI degrades to a status warning but still renders; `isx doctor` surfaces both (conflicts as warnings, overrides as informational notes). Both `ImageDef` and `ToolDefLoader` feed the same `LayeredDefinitions<T>` collector (`config/LayeredDefinitions.java`), which owns the per-directory collision/override bookkeeping and the `NameConflict`/`LayerOverride` record types — so the policy is defined once and applies identically to images and tools.
 
 ### Tool System
 
@@ -133,7 +133,7 @@ Execution order: packages → downloads → run → run_as_user → files → ve
 - Discovered via CDI (`@Dependent`)
 - Currently used by: `claude` (binary install + settings), `codex` (npm install + settings, behind `openai` feature flag), `gh` (dnf install), `pi` (npm install + settings), `bob` (npm install)
 
-**Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`). A YAML tool with the same name replaces any earlier definition. Java CDI implementations (`@Dependent` beans) are used as fallback when no YAML tool matches.
+**Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`). A YAML tool with the same name replaces any earlier definition. Two tool files declaring the same `name:` within one directory are a same-directory conflict, reported by `ToolDefLoader.conflicts()` and treated exactly like image conflicts (see the images section above). Java CDI implementations (`@Dependent` beans) are used as fallback when no YAML tool matches.
 
 **Feature flags**: Tools can declare a `feature()` that gates them behind an opt-in `features` list in `~/.config/incus-spawn/config.yaml`. Tools gated behind a feature flag are excluded from init menus, build resolution, TUI actions, and credential validation unless the feature is enabled — or the corresponding credentials are already configured (implicit enablement). The first gated feature is `openai`, which gates the `codex` tool.
 
