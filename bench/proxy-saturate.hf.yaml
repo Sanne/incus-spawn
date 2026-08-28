@@ -1,0 +1,50 @@
+name: proxy-saturate
+http:
+  host: !param TARGET
+  sharedConnections: 256
+phases:
+- warmup:
+    always:
+      users: 32
+      duration: 5s
+      isWarmup: true
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
+- c016:
+    always:
+      users: 16
+      duration: 10s
+      startAfter: warmup
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
+- c064:
+    always:
+      users: 64
+      duration: 10s
+      startAfter: c016
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
+- c128:
+    always:
+      users: 128
+      duration: 10s
+      startAfter: c064
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health
+- c256:
+    always:
+      users: 256
+      duration: 10s
+      startAfter: c128
+      scenario:
+      - health:
+        - httpRequest:
+            GET: /health

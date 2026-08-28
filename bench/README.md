@@ -5,7 +5,8 @@ Performance benchmarks for the native image build of the MITM proxy. Use these t
 ## Prerequisites
 
 - **Linux x86_64** (benchmarks read `/proc/<pid>/status` for RSS)
-- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Download from https://www.oracle.com/java/technologies/downloads/ or use sdkman: `sdk install java 25.0.4-oracle`
+- **Oracle GraalVM** with `native-image` on `PATH` — release builds use Oracle GraalVM (not Community Edition), so benchmarks should too for comparable results. Download from https://www.oracle.com/java/technologies/downloads/ or use sdkman: `sdk install java 25.0.4-oracle`. On Linux you can instead pass `--builder-image=<tag>`, which builds inside the same container image `install.sh` uses and so reproduces the release toolchain exactly.
+- **No proxy already running** — stop the service first (`systemctl --user stop incus-spawn-proxy`), otherwise the freshly built proxy cannot bind the port. The script refuses to run in that state rather than measure the wrong process.
 - **Running Incus daemon** with the default `incusbr0` bridge
 - **Working isx setup** — run `isx init` first so `~/.config/incus-spawn/config.yaml` and the CA cert exist. The proxy needs an API key configured (it doesn't make real API calls during benchmarks, but validates the config)
 - **Podman** — [Hyperfoil](https://hyperfoil.io/) runs inside a Podman container to work around a [CpuWatchdog bug](https://github.com/Hyperfoil/Hyperfoil/issues/833) on machines with non-contiguous CPU numbering in `/proc/stat`. The container virtualizes `/proc/stat` with contiguous numbering.
@@ -36,6 +37,38 @@ bench/run.sh --label "before"
 bench/run.sh --label "after"
 ```
 
+## Load Profiles
+
+`--load=constant` (the default) drives 5,000 req/s at the proxy. That is about **3% of
+capacity**, which makes it a cheap regression tripwire but structurally blind to throughput:
+both a faster and a slower proxy will report ~5,000 req/s at 100% success.
+
+`--load=saturate` runs a closed-loop concurrency ladder (16/64/128/256) that drives the proxy
+to its actual ceiling. Throughput plateaus while latency grows linearly with concurrency —
+that plateau is the capacity figure, and it is what to compare across builds or toolchains.
+
+```shell
+bench/run.sh --load=saturate --label=my-change
+```
+
+Results record `loadMode`, and the delta table only ever compares runs of the same mode.
+
+## Comparing Two Toolchains
+
+The same code built by two different GraalVM releases, on one host:
+
+```shell
+bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.2 --label=25.2
+bench/run.sh --builder-image=incus-spawn-graalvm-builder:25.3 --label=25.3
+```
+
+Use `--graalvm=DIR` instead to point at an unpacked GraalVM (the only option on macOS).
+Either way the binaries self-report the toolchain that produced them (`org.graalvm.version`
+is baked in), and that is what lands in `proxyBuiltWith` / `cliBuiltWith` — so a result can
+never be mislabelled with a toolchain it wasn't built by.
+
+## Reading the Comparison
+
 The script automatically compares with the most recent previous result and prints a delta table:
 
 ```
@@ -56,7 +89,9 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 
 | Metric | How | Why |
 |---|---|---|
-| Binary size | `stat` on the native runner | Detects image bloat from dependency changes |
+| Proxy binary size | `stat` on `proxy/target/…-runner` | Detects image bloat from dependency changes |
+| CLI binary size | `stat` on `cli/target/…-runner` | The `-Os` vs `-O3` trade-off is a size question |
+| CLI startup | Median of 20 `isx --help` runs | The CLI is short-lived, so launch cost is its cost |
 | Startup time | Wall-clock to first healthy `/health` response | Native startup regression |
 | Idle RSS | `/proc/<pid>/status` VmRSS after 2s settle | Memory footprint at rest |
 | Peak RSS | VmRSS after the load test | Memory under pressure |
@@ -65,9 +100,9 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 
 ## How It Works
 
-1. Validates the environment (GraalVM, Podman, isx config, Incus bridge)
-2. Builds a native image (`mvnw package -Dnative -DskipTests`), skippable with `--skip-build`
-3. Starts the proxy against the Incus bridge gateway IP
+1. Validates the environment (GraalVM, Podman, isx config, Incus bridge, health port free)
+2. Builds the native images (`mvnw package -Dnative -DskipTests`), skippable with `--skip-build`
+3. Starts `proxy/target/…-runner` directly against the Incus bridge gateway IP
 4. Measures startup time (polling `/health` at 250ms intervals)
 5. Records idle RSS after a 2-second settle period
 6. Starts a Hyperfoil controller in a Podman container (`--network=host`)
@@ -77,6 +112,11 @@ Regressions of 1% or more are flagged with `!!!`; improvements with `(better)`.
 10. Records peak RSS after load
 11. Saves results as JSON to `bench/results/<git-sha>-<timestamp>.json`
 12. Prints summary and comparison with the previous run
+
+Step 3 runs the proxy binary itself rather than `isx proxy start`. Going through the CLI would
+exec whatever `isx-proxy` sits next to the installed `isx` (`ProxyService.resolveProxyBinaryPath`
+resolves it from `which isx`), so the run could silently measure a stale binary instead of the one
+just built — and RSS would be sampled from the CLI wrapper process rather than the proxy.
 
 ## Result Format
 
@@ -89,7 +129,11 @@ Results are JSON files in `bench/results/`:
   "gitSha": "831a617",
   "gitSubject": "Use Quarkus-managed Vert.x instance in MITM proxy",
   "graalvm": "native-image 25.0.3 2026-04-21",
-  "binarySizeBytes": 38210632,
+  "proxyBuiltWith": "native (GraalVM 25.3.4.1)",
+  "cliBuiltWith": "native (GraalVM 25.3.4.1)",
+  "binarySizeBytes": 89919144,
+  "cliBinarySizeBytes": 31525880,
+  "cliStartupUs": 3800,
   "startupMs": 1815,
   "idleRssKb": 152744,
   "peakRssKb": 160108,
@@ -115,7 +159,9 @@ Result files are git-ignored.
 
 ## Interpreting Results
 
-**Stable metrics:** Binary size is deterministic for a given commit — any change is real. Throughput at constant rate (5000 req/s) should show 100% success; a drop means the proxy can't keep up.
+**Binary size:** near-deterministic, but not byte-exact — the same commit and toolchain have produced binaries 65,536 bytes apart, because `git-commit-id` bakes build metadata into the image heap. Treat deltas under ~100 KB as noise and anything larger as real.
+
+**Throughput:** at constant rate (5000 req/s) this only confirms the proxy kept up — it is ~3% of capacity, so it cannot detect a throughput change in either direction. Use `--load=saturate` for that. Success below 100% in either mode means the proxy could not keep up.
 
 **Noisy metrics:** Startup time and RSS vary between runs due to OS scheduling, memory fragmentation, and background load. Run benchmarks on a quiet machine for reliable comparisons. Expect ~10% variance in startup time and ~5% in RSS.
 
@@ -127,8 +173,9 @@ Result files are git-ignored.
 
 ```
 bench/
-  run.sh                # Main benchmark script
-  proxy-health.hf.yaml  # Hyperfoil benchmark definition
-  README.md             # This file
-  results/              # JSON result files (git-ignored)
+  run.sh                  # Main benchmark script
+  proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
+  proxy-saturate.hf.yaml  # Closed-loop capacity ladder (--load=saturate)
+  README.md               # This file
+  results/                # JSON result files (git-ignored)
 ```
