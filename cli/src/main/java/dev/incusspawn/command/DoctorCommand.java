@@ -37,7 +37,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
+
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -354,7 +354,7 @@ public class DoctorCommand extends BaseCommand {
         var instances = incus.list();
 
         // 2. Failed-build instances
-        findings.addAll(findFailedBuilds(incus, instances));
+        findings.addAll(findFailedBuilds(incus));
 
         // 3. Unused base images
         findings.addAll(findUnusedImages(incus));
@@ -427,12 +427,9 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private List<Finding> findFailedBuilds(IncusClient incus,
-                                            List<Map<String, String>> instances) {
+    private List<Finding> findFailedBuilds(IncusClient incus) {
         var findings = new ArrayList<Finding>();
-        for (var inst : instances) {
-            var name = inst.get("name");
-            if (!name.endsWith("-failed-build")) continue;
+        for (var name : CleanCommand.findFailedBuilds(incus)) {
             findings.add(Finding.warn("Failed build: " + name, "can be deleted to reclaim space",
                     new Remediation("Delete " + name, true,
                             () -> incus.delete(name, true))));
@@ -443,26 +440,15 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> findUnusedImages(IncusClient incus) {
         var findings = new ArrayList<Finding>();
         try {
-            var knownAliases = new HashSet<String>();
-            for (var def : ImageDef.loadAll().values()) {
-                var img = def.getImage();
-                if (img != null && !img.contains(":")) {
-                    knownAliases.add(img);
-                }
-            }
-
-            for (var image : incus.listImages()) {
-                boolean inUse = image.aliases().stream().anyMatch(knownAliases::contains);
-                if (!inUse) {
-                    findings.add(Finding.warn("Unused image: " + image.label(),
-                            CleanCommand.formatSize(image.size()),
-                            new Remediation("Delete image " + image.label(), true, () -> {
-                                for (var alias : image.aliases()) {
-                                    incus.deleteImageAlias(alias);
-                                }
-                                incus.deleteImage(image.fingerprint());
-                            })));
-                }
+            for (var image : CleanCommand.findUnusedImages(incus)) {
+                findings.add(Finding.warn("Unused image: " + image.label(),
+                        CleanCommand.formatSize(image.size()),
+                        new Remediation("Delete image " + image.label(), true, () -> {
+                            for (var alias : image.aliases()) {
+                                incus.deleteImageAlias(alias);
+                            }
+                            incus.deleteImage(image.fingerprint());
+                        })));
             }
         } catch (Exception ignored) {}
         return findings;

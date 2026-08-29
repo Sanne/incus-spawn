@@ -9,6 +9,8 @@ import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Option;
 
+import dev.incusspawn.util.BuildOutput;
+
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -352,6 +354,138 @@ public class CleanCommand extends BaseCommand {
         }
     }
 
+    // -- shared pool-clean logic (used by both CLI and TUI) --
+
+    record CleanScan(
+            String poolName,
+            IncusClient.PoolUsage usage,
+            List<String> failedBuilds,
+            List<IncusClient.ImageInfo> unusedImages,
+            boolean dnfCacheExists
+    ) {
+        boolean hasAnything() {
+            return !failedBuilds.isEmpty() || !unusedImages.isEmpty() || dnfCacheExists;
+        }
+        long unusedImagesBytes() {
+            return unusedImages.stream().mapToLong(IncusClient.ImageInfo::size).sum();
+        }
+    }
+
+    record CleanResult(
+            String poolName,
+            IncusClient.PoolUsage beforeUsage,
+            IncusClient.PoolUsage afterUsage,
+            int failedBuildsDeleted,
+            int unusedImagesDeleted,
+            boolean dnfCacheDeleted,
+            List<String> warnings
+    ) {
+        boolean found() {
+            return failedBuildsDeleted > 0 || unusedImagesDeleted > 0 || dnfCacheDeleted;
+        }
+    }
+
+    static List<String> findFailedBuilds(IncusClient incus) {
+        var result = new ArrayList<String>();
+        for (var inst : incus.list()) {
+            var name = inst.get("name");
+            if (name.endsWith("-failed-build")) result.add(name);
+        }
+        return result;
+    }
+
+    static List<IncusClient.ImageInfo> findUnusedImages(IncusClient incus) {
+        var knownAliases = new HashSet<String>();
+        for (var def : ImageDef.loadAll().values()) {
+            var img = def.getImage();
+            if (img != null && !img.contains(":")) knownAliases.add(img);
+        }
+        var unused = new ArrayList<IncusClient.ImageInfo>();
+        for (var image : incus.listImages()) {
+            if (image.aliases().stream().noneMatch(knownAliases::contains)) unused.add(image);
+        }
+        return unused;
+    }
+
+    static CleanScan scanPool(IncusClient incus) {
+        var pool = incus.findCowPool();
+        if (pool == null) return null;
+
+        var usage = incus.getPoolUsageBytes(pool);
+        var failedBuilds = findFailedBuilds(incus);
+        var unusedImages = findUnusedImages(incus);
+        boolean dnfExists = false;
+        try {
+            dnfExists = incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME);
+        } catch (Exception ignored) {}
+        return new CleanScan(pool, usage, failedBuilds, unusedImages, dnfExists);
+    }
+
+    static CleanResult cleanPool(IncusClient incus) {
+        return cleanPool(incus, true, true, true);
+    }
+
+    static CleanResult cleanPool(IncusClient incus,
+                                 boolean deleteFailedBuilds,
+                                 boolean deleteUnusedImages,
+                                 boolean deleteDnfCache) {
+        var pool = incus.findCowPool();
+        if (pool == null) return null;
+
+        var beforeUsage = incus.getPoolUsageBytes(pool);
+        var warnings = new ArrayList<String>();
+
+        int failedDeleted = 0;
+        if (deleteFailedBuilds) {
+            for (var name : findFailedBuilds(incus)) {
+                try {
+                    incus.delete(name, true);
+                    failedDeleted++;
+                } catch (Exception e) {
+                    warnings.add("Could not delete " + name + ": " + e.getMessage());
+                }
+            }
+        }
+
+        int imagesDeleted = 0;
+        if (deleteUnusedImages) {
+            for (var image : findUnusedImages(incus)) {
+                try {
+                    for (var alias : image.aliases()) {
+                        incus.deleteImageAlias(alias);
+                    }
+                    incus.deleteImage(image.fingerprint());
+                    imagesDeleted++;
+                } catch (Exception e) {
+                    warnings.add("Could not delete image: " + e.getMessage());
+                }
+            }
+        }
+
+        boolean dnfDeleted = false;
+        if (deleteDnfCache) {
+            try {
+                if (incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                    if (incus.deleteStorageVolume(pool, BuildCommand.DNF_CACHE_VOLUME)) {
+                        dnfDeleted = true;
+                    }
+                }
+            } catch (Exception e) {
+                var msg = e.getMessage();
+                if (msg != null && msg.toLowerCase().contains("in use")) {
+                    warnings.add("DNF cache volume in use by a running build");
+                } else {
+                    warnings.add("Could not clean DNF cache volume: " + msg);
+                }
+            }
+        }
+
+        boolean anyDeleted = failedDeleted > 0 || imagesDeleted > 0 || dnfDeleted;
+        var afterUsage = anyDeleted ? incus.getPoolUsageBytes(pool) : beforeUsage;
+        return new CleanResult(pool, beforeUsage, afterUsage,
+                failedDeleted, imagesDeleted, dnfDeleted, warnings);
+    }
+
     @CommandDefinition(
             name = "pool",
             description = "Reclaim space from the storage pool (failed builds, unused images, build caches)",
@@ -374,9 +508,9 @@ public class CleanCommand extends BaseCommand {
                 return CommandResult.SUCCESS;
             }
 
+            BuildOutput.header("Reclaim pool space");
             var usage = incus.getStoragePoolUsage(pool);
-            System.out.println(usage);
-            System.out.println();
+            BuildOutput.note(usage);
 
             boolean found = false;
 
@@ -385,88 +519,64 @@ public class CleanCommand extends BaseCommand {
             found |= cleanDnfCacheFromPool(incus, pool, dryRun);
 
             if (!found) {
-                System.out.println("Nothing to clean — no reclaimable artifacts found on the pool.");
+                BuildOutput.step("Nothing to clean — no reclaimable artifacts found.");
             }
 
-            var newUsage = incus.getStoragePoolUsage(pool);
             if (found && !dryRun) {
-                System.out.println();
-                System.out.println(newUsage);
+                var newUsage = incus.getStoragePoolUsage(pool);
+                BuildOutput.success("Reclaimed — " + newUsage);
             }
 
             return CommandResult.SUCCESS;
         }
 
         private boolean cleanFailedBuilds(IncusClient incus, boolean dryRun, boolean skip) {
-            var failed = new ArrayList<String>();
-            for (var inst : incus.list()) {
-                var name = inst.get("name");
-                if (name.endsWith("-failed-build")) {
-                    failed.add(name);
-                }
-            }
+            var failed = findFailedBuilds(incus);
             if (failed.isEmpty()) return false;
 
-            System.out.println("Failed build instances (" + failed.size() + "):");
+            System.out.println();
+            BuildOutput.step("Failed builds (" + failed.size() + "):");
             for (var name : failed) {
-                System.out.println("  " + name);
+                BuildOutput.step("  " + name);
             }
 
             if (dryRun) {
-                System.out.println("Would delete " + failed.size() + " failed build instance(s).");
-                System.out.println();
+                BuildOutput.note("Would delete " + failed.size() + " failed build instance(s).");
                 return true;
             }
 
-            if (!confirm("Delete " + failed.size() + " failed build instance(s)?", skip)) {
-                System.out.println();
+            if (!confirm(BuildOutput.STEP_INDENT + "Delete " + failed.size() + " failed build instance(s)?", skip)) {
                 return true;
             }
 
             for (var name : failed) {
                 try {
                     incus.delete(name, true);
-                    System.out.println("  Deleted " + name);
+                    BuildOutput.step("  Deleted " + name);
                 } catch (Exception e) {
-                    System.err.println("  Warning: could not delete " + name + ": " + e.getMessage());
+                    System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete " + name + ": " + e.getMessage());
                 }
             }
-            System.out.println();
             return true;
         }
 
         private boolean cleanUnusedImages(IncusClient incus, boolean dryRun, boolean skip) {
-            var knownAliases = new HashSet<String>();
-            for (var def : ImageDef.loadAll().values()) {
-                var img = def.getImage();
-                if (img != null && !img.contains(":")) {
-                    knownAliases.add(img);
-                }
-            }
-
-            var unused = new ArrayList<IncusClient.ImageInfo>();
-            for (var image : incus.listImages()) {
-                boolean inUse = image.aliases().stream().anyMatch(knownAliases::contains);
-                if (!inUse) {
-                    unused.add(image);
-                }
-            }
+            var unused = findUnusedImages(incus);
             if (unused.isEmpty()) return false;
 
             long totalSize = unused.stream().mapToLong(IncusClient.ImageInfo::size).sum();
-            System.out.println("Unused base images (" + unused.size() + ", ~" + formatSize(totalSize) + "):");
+            System.out.println();
+            BuildOutput.step("Unused images (" + unused.size() + ", ~" + formatSize(totalSize) + "):");
             for (var image : unused) {
-                System.out.println("  " + image.label() + " (" + formatSize(image.size()) + ")");
+                BuildOutput.step("  " + image.label() + " (" + formatSize(image.size()) + ")");
             }
 
             if (dryRun) {
-                System.out.println("Would delete " + unused.size() + " unused image(s).");
-                System.out.println();
+                BuildOutput.note("Would delete " + unused.size() + " unused image(s).");
                 return true;
             }
 
-            if (!confirm("Delete " + unused.size() + " unused image(s)?", skip)) {
-                System.out.println();
+            if (!confirm(BuildOutput.STEP_INDENT + "Delete " + unused.size() + " unused image(s)?", skip)) {
                 return true;
             }
 
@@ -476,12 +586,11 @@ public class CleanCommand extends BaseCommand {
                         incus.deleteImageAlias(alias);
                     }
                     incus.deleteImage(image.fingerprint());
-                    System.out.println("  Deleted " + image.label());
+                    BuildOutput.step("  Deleted " + image.label());
                 } catch (Exception e) {
-                    System.err.println("  Warning: could not delete image: " + e.getMessage());
+                    System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete image: " + e.getMessage());
                 }
             }
-            System.out.println();
             return true;
         }
 

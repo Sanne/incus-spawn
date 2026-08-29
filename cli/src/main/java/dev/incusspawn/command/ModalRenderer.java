@@ -105,6 +105,17 @@ final class ModalRenderer {
                 Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg()))))), area);
     }
 
+    void renderToggleInto(List<Line> lines, String label, boolean enabled, boolean focused) {
+        var check = enabled ? "☑" : "☐";
+        var checkColor = enabled ? theme.checkEnabled() : theme.checkDisabled();
+        var prefix = focused ? "▸" : " ";
+        var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
+        lines.add(Line.from(List.of(
+                Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
+                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(theme.modalBg())),
+                Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg())))));
+    }
+
     void renderNetworkModeRadio(Frame frame, Rect area,
                                         NetworkMode selected, boolean focused) {
         var spans = new ArrayList<Span>();
