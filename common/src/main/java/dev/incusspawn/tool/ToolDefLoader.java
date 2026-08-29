@@ -48,13 +48,23 @@ public class ToolDefLoader {
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
         this.projectToolsDir = dir;
-        this.defs = null; // force reload
+        reload();
     }
 
     /** Override the search paths (for testing). */
     void setSearchPaths(List<String> searchPaths) {
         this.searchPaths = searchPaths;
-        this.defs = null; // force reload
+        reload();
+    }
+
+    /**
+     * Discard cached definitions so the next access re-reads tool YAML from disk.
+     * The loader is a process-lifetime singleton, so a long-running process that reloads
+     * on-disk state (e.g. the TUI, or an in-process build) must call this to observe edits
+     * to tool YAML — otherwise fingerprints stay frozen at first load.
+     */
+    public void reload() {
+        this.defs = null;
     }
 
     /** Same-directory name collisions found during the last load (always a mistake). */

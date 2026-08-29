@@ -150,6 +150,11 @@ public class BuildCommand extends BaseCommand {
             }
         }));
 
+        // Re-read tool defs from disk before resolving/stamping. The loader is a
+        // process-lifetime singleton; when a build is triggered in-process from the TUI it
+        // would otherwise reuse the cached tools and stamp a definition-sha that no longer
+        // matches the on-disk YAML. Runs before conflicts()/find() and before addFallbacks().
+        toolDefLoader.reload();
         var loaded = ImageDef.loadAllWithConflicts();
         var toolConflicts = toolDefLoader.conflicts();
         if (!loaded.conflicts().isEmpty() || !toolConflicts.isEmpty()) {
