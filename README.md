@@ -206,11 +206,11 @@ Three images are built-in (`tpl-minimal`, `tpl-dev`, `tpl-java`). The root image
 ```shell
 isx update-base              # interactive — shows versions, prompts for action
 isx update-base --list       # list available versions
-isx update-base --latest     # always track the newest version
+isx update-base --latest     # track the newest release (remove any pin)
 isx update-base fedora-44-v2 # pin to a specific release tag
 ```
 
-Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`. Tracking latest (the default) uses the built-in definition, which is updated with each isx release. After changing the base image version, rebuild with `isx build tpl-minimal`.
+Tracking latest is the default and requires no action: when the base image is unpinned, `isx build tpl-minimal` resolves the newest release at build time and installs it (falling back to the version baked into the binary if it can't reach the release list). Pinning writes a user-level override to `~/.config/incus-spawn/images/minimal.yaml`; `--latest` removes that override to resume tracking. After changing the base image version, rebuild with `isx build tpl-minimal`.
 
 Add your own templates by placing YAML files in `~/.config/incus-spawn/images/` (user-level) or `.incus-spawn/images/` (project-local). You can also point to external directories via `searchPaths` in `config.yaml` (see [Configuration](#configuration)).
 

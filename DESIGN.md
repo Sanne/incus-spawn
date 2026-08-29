@@ -85,13 +85,28 @@ agentuser, systemd-networkd, a connectivity watchdog, container-specific service
 masking, and a tmpfiles override for device node permissions — all the static
 setup that `buildFromScratch` would otherwise perform on every build. A separate
 VM base image (`vm_image_url`) is also available — a stock Incus Fedora VM image
-customized with the same base configuration via `virt-customize`. The base image
-tag and SHA256 checksums are pinned in `src/main/resources/images/minimal.yaml`.
-`isx update-base` manages base image versions: it fetches the release list from
-the GitHub API, retrieves per-architecture SHA256 checksums, and writes a
-user-level override to `~/.config/incus-spawn/images/minimal.yaml` when pinning.
-`--latest` removes the override so the built-in definition (updated with each isx
-release) is used. See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
+customized with the same base configuration via `virt-customize`. A base image
+tag and SHA256 checksums are baked into `src/main/resources/images/minimal.yaml`,
+but they are only an **offline fallback**: when the base image is unpinned,
+`BuildCommand.resolveTrackedBaseImage()` fetches the newest release from the
+GitHub API at build time (via the shared `baseimage/BaseImageReleases`, whose
+owning repo is parsed from the definition's `image_url` — the YAML is the single
+source of truth, and a non-GitHub URL is simply not tracked) and swaps
+in its tag + per-arch container/VM checksums, so a plain `isx build tpl-minimal`
+always installs the latest base image. Any failure to reach or read the release
+list leaves the built-in tag in place and the build proceeds. A scheduled CI job
+(`.github/workflows/update-base-image.yml`) keeps that built-in fallback from
+drifting by opening a PR to bump it whenever the images repo publishes a newer
+release.
+
+`isx update-base` manages the pin: it fetches the release list from the GitHub
+API, retrieves per-architecture container **and VM** SHA256 checksums, and writes
+a user-level override to `~/.config/incus-spawn/images/minimal.yaml` (`pinned:
+true`) when pinning a specific version. `--latest` (or menu option 1) simply
+removes that override, restoring build-time latest tracking — it does not itself
+download anything. `BaseImageReleases.parseSha256Sums()` keys checksums by arch
+and separates the `-vm.tar.xz` disk image from the `.tar.xz` container rootfs, so
+a pin records the correct digest for each. See the [incus-spawn-images README](https://github.com/Sanne/incus-spawn-images#releasing-a-new-version)
 for the full release process.
 
 **Resolution order** (later overrides earlier): built-in YAML (classpath) → user-defined YAML (`~/.config/incus-spawn/images/`) → search paths (`searchPaths` in config.yaml) → project-local (`.incus-spawn/images/`). Definitions with the same name from a later source override earlier ones — this is the mechanism behind pinning and template customization, so it stays silent. But two files declaring the same `name:` *within the same directory* is always a mistake (typically a copy that forgot to update `name:`, which silently masks the file you think you are editing). `ImageDef.loadAllWithConflicts()` distinguishes the two: same-directory collisions become `NameConflict`s (listing every colliding file), cross-layer replacements become `LayerOverride`s. `isx build` refuses to build while any conflict exists and names the offending files; the TUI degrades to a status warning but still renders; `isx doctor` surfaces both (conflicts as warnings, overrides as informational notes). Both `ImageDef` and `ToolDefLoader` feed the same `LayeredDefinitions<T>` collector (`config/LayeredDefinitions.java`), which owns the per-directory collision/override bookkeeping and the `NameConflict`/`LayerOverride` record types — so the policy is defined once and applies identically to images and tools.
