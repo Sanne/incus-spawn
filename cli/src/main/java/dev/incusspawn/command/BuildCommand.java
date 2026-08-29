@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
+import dev.incusspawn.baseimage.BaseImageReleases;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.EnvResolver;
@@ -128,6 +129,9 @@ public class BuildCommand extends BaseCommand {
     private volatile boolean savedFailureSummary;
 
     private volatile String[] activeBuild;
+
+    /** Root defs whose latest base image was already resolved this invocation (avoids re-fetching). */
+    private final Set<String> resolvedRoots = new HashSet<>();
 
     private void buildDone(String name) {
         BuildOutput.success(name + " built successfully.");
@@ -927,6 +931,7 @@ public class BuildCommand extends BaseCommand {
         var canonicalName = imageDef.getName();
         var ancestors = ImageDef.ancestors(imageDef, defs);
         var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
+        resolveTrackedBaseImage(rootDef);
         var image = rootDef.getImage();
         var effectiveVm = effectiveVm(imageDef);
         var prebaked = false;
@@ -1157,6 +1162,45 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepDone();
 
         buildDone(canonicalName);
+    }
+
+    /**
+     * When the root base image is unpinned, resolve the newest published
+     * release and swap its tag + checksums into the definition, so a plain
+     * build always tracks the latest base image. The built-in {@code image_tag}
+     * (baked into the binary) is only an offline fallback: any failure to reach
+     * or read the release list leaves the definition untouched and the build
+     * proceeds on the built-in version. A pin ({@code pinned: true}) opts out.
+     */
+    private void resolveTrackedBaseImage(ImageDef rootDef) {
+        if (rootDef.isPinned()) return;
+        var releases = BaseImageReleases.fromImageUrl(rootDef.getImageUrl());
+        if (releases == null) return; // not a releases-tracked base image
+        if (!resolvedRoots.add(rootDef.getName())) return; // already resolved this build
+
+        var builtinTag = rootDef.getImageTag();
+        var fallback = "; using built-in base image (" + builtinTag + ").";
+        try {
+            var available = releases.fetchReleases();
+            if (available.isEmpty()) return;
+            var latest = available.get(0);
+            if (latest.tag().equals(builtinTag)) return; // already newest
+
+            var checksums = releases.fetchChecksums(latest);
+            if (checksums == null || checksums.container().isEmpty()) {
+                BuildOutput.note("Could not fetch checksums for " + latest.tag() + fallback);
+                return;
+            }
+            rootDef.setImageTag(latest.tag());
+            rootDef.setImageSha256(checksums.container());
+            if (rootDef.getVmImageUrl() != null && !checksums.vm().isEmpty()) {
+                rootDef.setVmImageSha256(checksums.vm());
+            }
+            BuildOutput.step("Tracking latest base image: "
+                    + (builtinTag != null ? builtinTag + " -> " : "") + latest.tag() + ".");
+        } catch (IOException e) {
+            BuildOutput.note("Could not reach base-image release list (" + e.getMessage() + ")" + fallback);
+        }
     }
 
     private void checkPinnedWarning(ImageDef imageDef) {
