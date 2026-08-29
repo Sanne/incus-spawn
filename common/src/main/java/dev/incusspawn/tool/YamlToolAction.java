@@ -102,7 +102,7 @@ public class YamlToolAction implements ToolAction {
             return prereq;
         }
 
-        if (openInBrowser(url)) {
+        if (dev.incusspawn.Platform.openUrl(url)) {
             return ActionResult.ok("Opened " + url);
         } else {
             return ActionResult.error("Could not open URL (no handler found): " + url);
@@ -163,25 +163,6 @@ public class YamlToolAction implements ToolAction {
         return result;
     }
 
-    private static boolean openInBrowser(String url) {
-        try {
-            Process process;
-            if (dev.incusspawn.Platform.isLinux()) {
-                process = new ProcessBuilder("xdg-open", url).start();
-            } else if (dev.incusspawn.Platform.isMacOS()) {
-                process = new ProcessBuilder("open", url).start();
-            } else {
-                return false;
-            }
-            return process.waitFor() == 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        } catch (IOException ignored) {
-            return false;
-        }
-    }
-
     private static boolean copyToClipboard(String text) {
         try {
             var pb = new ProcessBuilder("xclip", "-selection", "clipboard");
@@ -231,7 +212,7 @@ public class YamlToolAction implements ToolAction {
                         "The VS Code 'Remote - SSH' extension is required for this action but is not installed.\n" +
                         "\nPress Enter to open VS Code and install it...");
                 try { System.in.read(); } catch (java.io.IOException ignored) {}
-                openInBrowser("vscode:extension/ms-vscode-remote.remote-ssh");
+                dev.incusspawn.Platform.openUrl("vscode:extension/ms-vscode-remote.remote-ssh");
                 return ActionResult.error(
                         "Please retry this action after the extension installation completes.");
             }
