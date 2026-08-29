@@ -221,4 +221,108 @@ class ListCommandDiskTest {
         assertFalse(ListCommand.hasDescendant(null, parents));
         assertFalse(ListCommand.hasDescendant("", parents));   // blank parent must never self-match
     }
+
+    // --- canUseReferencedModel: gate the delta model on the root's stamp, tolerate derived misses ---
+
+    // A template row with just the fields the gate reads (name, buildStatus, parent, referencedBytes).
+    private static ListCommand.TemplateInfo tpl(String name, String parent, String buildStatus, long rfer) {
+        return new ListCommand.TemplateInfo(name, "", buildStatus, "", "", "", "", parent, -1, rfer);
+    }
+
+    private static final String BUILT = "2026-08-29T10:00:00Z";   // any non-"not built" status
+    private static final String NOT_BUILT = "not built";
+
+    @Test
+    void referencedModelRejectedOffBtrfs() {
+        var tpls = java.util.List.of(tpl("tpl-minimal", "", BUILT, 1_000L));
+        assertFalse(ListCommand.canUseReferencedModel(false, tpls));
+    }
+
+    @Test
+    void referencedModelRejectedWhenNothingBuilt() {
+        var tpls = java.util.List.of(tpl("tpl-minimal", "", NOT_BUILT, -1));
+        assertFalse(ListCommand.canUseReferencedModel(true, tpls));
+    }
+
+    @Test
+    void referencedModelUsedWhenRootStamped() {
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-isx", "tpl-minimal", BUILT, 1_800L));
+        assertTrue(ListCommand.canUseReferencedModel(true, tpls));
+    }
+
+    @Test
+    void referencedModelToleratesAnUnstampedDerivedTemplate() {
+        // The exact regression: a rebuild left a derived template's stamp missing. The root is still
+        // stamped, so the delta model stays on (that one row falls back to exclusive), rather than
+        // collapsing the whole display to the fold.
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-java", "tpl-minimal", BUILT, 1_500L),
+                tpl("tpl-isx", "tpl-java", BUILT, -1));       // stamp missing
+        assertTrue(ListCommand.canUseReferencedModel(true, tpls));
+    }
+
+    @Test
+    void referencedModelRejectedWhenRootUnstamped() {
+        // Without the root's rfer the base-image weight can't be attributed, so the shared-base fold
+        // is the better model — don't use the delta model.
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, -1),
+                tpl("tpl-isx", "tpl-minimal", BUILT, 1_800L));
+        assertFalse(ListCommand.canUseReferencedModel(true, tpls));
+    }
+
+    @Test
+    void referencedModelTreatsDashParentAsRoot() {
+        var tpls = java.util.List.of(tpl("tpl-minimal", "-", BUILT, 1_000L));
+        assertTrue(ListCommand.canUseReferencedModel(true, tpls));
+    }
+
+    // --- fillMissingReferenced: live, non-sync backfill of a missing rfer stamp ---
+
+    @Test
+    void gapDetectedForABuiltUnstampedTemplate() {
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-isx", "tpl-minimal", BUILT, -1));
+        assertTrue(ListCommand.hasUnstampedBuiltTemplate(tpls));
+    }
+
+    @Test
+    void noGapWhenEveryBuiltTemplateStampedOrNotBuilt() {
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-dev", "tpl-minimal", NOT_BUILT, -1));   // not built -> not a gap
+        assertFalse(ListCommand.hasUnstampedBuiltTemplate(tpls));
+    }
+
+    @Test
+    void backfillFillsOnlyUnstampedBuiltRowsFromLiveMap() {
+        var tpls = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),          // stamped -> keep
+                tpl("tpl-java", "tpl-minimal", BUILT, -1),      // unstamped -> fill
+                tpl("tpl-dev", "tpl-minimal", NOT_BUILT, -1));  // not built -> leave
+        var live = java.util.Map.of("tpl-minimal", 9_999L, "tpl-java", 1_500L, "tpl-dev", 1_200L);
+
+        var out = ListCommand.fillMissingReferenced(tpls, live);
+
+        assertEquals(1_000L, out.get(0).referencedBytes());     // existing stamp not overwritten
+        assertEquals(1_500L, out.get(1).referencedBytes());     // backfilled from live
+        assertEquals(-1L, out.get(2).referencedBytes());        // not built stays unstamped
+    }
+
+    @Test
+    void backfillLeavesRowUnstampedWhenLiveMissesOrIsNonPositive() {
+        var tpls = java.util.List.of(
+                tpl("tpl-a", "", BUILT, -1),
+                tpl("tpl-b", "tpl-a", BUILT, -1));
+        var live = java.util.Map.of("tpl-b", 0L);               // absent for tpl-a, zero for tpl-b
+
+        var out = ListCommand.fillMissingReferenced(tpls, live);
+
+        assertEquals(-1L, out.get(0).referencedBytes());        // absent from live -> still unstamped
+        assertEquals(-1L, out.get(1).referencedBytes());        // non-positive live value -> ignored
+    }
 }

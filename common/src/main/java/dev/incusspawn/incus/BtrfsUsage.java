@@ -43,21 +43,41 @@ public final class BtrfsUsage {
     private BtrfsUsage() {}
 
     /**
-     * Referenced bytes per instance/template name for {@code poolName}, or an empty map if the data
-     * can't be obtained. Never throws — a failure is a fallback signal, not an error.
+     * Referenced bytes per instance/template name for {@code poolName}, read <em>without</em> forcing
+     * a filesystem sync — the cheap flavour, safe to call on a periodic sampling cadence. Never throws.
      */
     public static Map<String, Long> probe(String poolName) {
+        return probe(poolName, false);
+    }
+
+    /**
+     * Referenced bytes per instance/template name for {@code poolName}, or an empty map if the data
+     * can't be obtained. Never throws — a failure is a fallback signal, not an error.
+     *
+     * <p>{@code sync} selects between two flavours of the read:
+     * <ul>
+     *   <li>{@code false} (default): read committed accounting as-is. Cheap; use for periodic
+     *       sampling, where forcing a full-filesystem commit on every tick would be wasteful.</li>
+     *   <li>{@code true}: pass {@code --sync} so btrfs commits the current transaction before
+     *       reporting. Necessary when the accounting may be stale — e.g. right after a build, whose
+     *       final writes are otherwise still uncommitted. Heavyweight (a whole-fs commit), so reserve
+     *       it for the rare accuracy-critical read, not the sampling path.</li>
+     * </ul>
+     */
+    public static Map<String, Long> probe(String poolName, boolean sync) {
         if (poolName == null || !isSafePoolName(poolName)) return Map.of();
         try {
             if (Platform.isMacOS()) {
-                var resp = VmAgentClient.btrfsUsage(poolName);
+                var resp = VmAgentClient.btrfsUsage(poolName, sync);
                 if (resp.isEmpty()) return Map.of();
                 var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
                 if (parts.length != 2) return Map.of();
                 return parse(parts[0], parts[1]);
             }
             var mount = POOL_MOUNT_PREFIX + poolName;
-            var qgroup = runBtrfs("qgroup", "show", "-re", "--raw", mount);
+            var qgroup = sync
+                    ? runBtrfs("qgroup", "show", "-re", "--raw", "--sync", mount)
+                    : runBtrfs("qgroup", "show", "-re", "--raw", mount);
             var subvols = runBtrfs("subvolume", "list", mount);
             if (qgroup == null || subvols == null) return Map.of();
             return parse(qgroup, subvols);

@@ -12,9 +12,9 @@ FORWARDER_MATCH='UNIX-CONNECT:/var/lib/incus/unix.socket'
 INCUS_VSOCK_PORT=8443
 POOL_MOUNT_PREFIX=/var/lib/incus/storage-pools
 
-# One line per connection: "<verb> [arg]". arg is optional and only consumed by verbs
-# that declare one (currently btrfs-usage); it is always validated before use.
-read -r verb arg || exit 0
+# One line per connection: "<verb> [arg] [opt]". arg and opt are optional and only consumed by
+# verbs that declare them (currently btrfs-usage); both are always validated before use.
+read -r verb arg opt || exit 0
 
 case "$verb" in
     ping)
@@ -58,8 +58,17 @@ case "$verb" in
                 echo "error: bad pool name"
                 ;;
             *)
+                # Optional, allowlisted second token: "sync" adds --sync (force a commit before
+                # reading, so accounting reflects still-uncommitted writes — used right after a
+                # build); anything else than empty/sync is rejected. Mirrors the Linux path in
+                # BtrfsUsage.probe(pool, sync) — keep the two flavours in step.
+                case "$opt" in
+                    sync) sync_flag=--sync ;;
+                    '')   sync_flag= ;;
+                    *)    echo "error: bad option"; exit 0 ;;
+                esac
                 mount="$POOL_MOUNT_PREFIX/$arg"
-                btrfs qgroup show -re --raw "$mount" 2>/dev/null || true
+                btrfs qgroup show -re --raw $sync_flag "$mount" 2>/dev/null || true
                 echo "---ISX-SUBVOL---"
                 btrfs subvolume list "$mount" 2>/dev/null || true
                 ;;
