@@ -1708,17 +1708,117 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    /** GitHub's fine-grained PAT creation form — lands the user directly on the "new token" page. */
+    private static final String GH_PAT_NEW_URL = "https://github.com/settings/personal-access-tokens/new";
+
+    /**
+     * Last-resort fallback: reuse the host's authenticated 'gh' CLI token. This is deliberately
+     * discouraged — the 'gh' login is almost always your personal identity, so the agent would act
+     * as you with your (usually broad) scopes, defeating the point of an isolated environment. It is
+     * offered only when the user skips the dedicated-PAT prompt, and defaults to No. Returns true if
+     * a token was verified and saved.
+     */
+    private boolean offerGhCliToken(SpawnConfig config, Console console) {
+        // 'gh auth status' exits 0 only when gh is installed and logged in; a missing binary or no
+        // active login exits non-zero, so this one check gates the whole fallback.
+        if (runHostCapturingExit("gh", "auth", "status") != 0) {
+            return false;
+        }
+
+        System.out.println("  An authenticated 'gh' CLI is available on this host.");
+        System.out.println("  " + DIM + "Not recommended: that login is almost certainly your personal identity,"
+                + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
+                + " agent account and a fine-grained PAT (above)." + RESET);
+        if (!askConfirmation(console, "  Reuse your personal 'gh' token anyway?", false)) {
+            return false;
+        }
+
+        var token = readGhAuthToken();
+        if (token == null || token.isBlank()) {
+            System.out.println("  Could not read a token from 'gh auth token' — continuing with manual setup.");
+            return false;
+        }
+        var result = verifyGitHubToken(token);
+        if (result == null) {
+            System.out.println("  The 'gh' token failed verification — continuing with manual setup.");
+            return false;
+        }
+        if (result.email == null) {
+            System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
+        }
+        saveGitHubToken(config, token, result.email);
+        return true;
+    }
+
+    /** Persists a verified GitHub token (and email, if any) and prints the matching "saved" line. */
+    private void saveGitHubToken(SpawnConfig config, String token, String email) {
+        config.getGithub().setToken(token);
+        if (email != null) {
+            config.getGithub().setEmail(email);
+        }
+        config.save();
+        System.out.println(email != null
+                ? "  GitHub configuration saved."
+                : "  GitHub configuration saved (without email).");
+    }
+
+    /** Reads the token backing the current 'gh' login (stdout of 'gh auth token'). */
+    private static String readGhAuthToken() {
+        try {
+            var p = new ProcessBuilder("gh", "auth", "token").start();
+            String out;
+            try (var in = p.getInputStream()) {
+                out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            }
+            if (!p.waitFor(30, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return null;
+            }
+            return p.exitValue() == 0 ? out : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Prints step-by-step instructions for creating a fine-grained PAT and offers to open the page. */
+    private void printGitHubPatGuide(Console console) {
+        System.out.println("  To create a fine-grained PAT (ideally signed in as the agent's account,");
+        System.out.println("  not your personal one):");
+        System.out.println();
+        System.out.println("    1. Open " + BOLD + GH_PAT_NEW_URL + RESET);
+        System.out.println("    2. Give it a name (e.g. 'isx') and an expiration.");
+        System.out.println("    3. Under " + BOLD + "Repository access" + RESET
+                + ", choose the repos to grant (or 'All repositories').");
+        System.out.println("    4. Under " + BOLD + "Repository permissions" + RESET + ", set to read/write:");
+        System.out.println("         Contents  •  Issues  •  Pull requests");
+        System.out.println("    5. Under " + BOLD + "Account permissions" + RESET + ", set " + BOLD
+                + "Email addresses" + RESET + " to read");
+        System.out.println("       " + DIM + "(needed to stamp your git commit identity)." + RESET);
+        System.out.println("    6. Click " + BOLD + "Generate token" + RESET
+                + " and copy the value (starts with 'github_pat_').");
+        System.out.println();
+        System.out.println("  " + DIM + "Avoid admin, org, and delete permissions unless you need them." + RESET);
+        System.out.println();
+
+        if (askConfirmation(console, "  Open the token page in your browser now?", true)) {
+            if (Platform.openUrl(GH_PAT_NEW_URL)) {
+                System.out.println("  Opened your browser — finish there, then paste the token below.");
+            } else {
+                System.out.println("  Could not open a browser — visit the URL above manually.");
+            }
+        }
+        System.out.println();
+    }
+
     private void setupGitHubAuth() {
         startStep("GitHub Authentication",
                 "Sets up a GitHub PAT so containers can open PRs, push",
-                "code, and manage issues on your behalf. For best security,",
-                "create a dedicated bot account (e.g. yourname-ai-bot) with",
-                "collaborator access, or use a fine-grained PAT scoped to",
-                "specific repos and permissions. Grant Contents, Issues, and",
-                "Pull requests (read/write), plus Email addresses (read) under",
-                "Account permissions (needed for git commit identity).",
-                "Avoid admin, org, and delete permissions unless needed.",
-                "Create one at: https://github.com/settings/personal-access-tokens");
+                "code, and manage issues. These containers run autonomous",
+                "agents, so give them their own identity rather than",
+                "your personal one — create a dedicated agent account (e.g.",
+                "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
+                "just the repos and permissions the agent needs. That keeps the",
+                "agent's actions attributable to it and its blast radius small.");
         var config = SpawnConfig.load();
         var console = System.console();
         if (console == null) {
@@ -1734,10 +1834,18 @@ public class InitCommand extends BaseCommand {
             }
         }
 
+        // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
+        printGitHubPatGuide(console);
+
         while (true) {
-            System.out.print("  GitHub PAT (or press Enter to skip): ");
+            System.out.print("  GitHub PAT for the agent (or press Enter to skip): ");
             var token = readSecret(console.readPassword());
             if (token.isBlank()) {
+                // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
+                // agent act as you — so it is offered here (default No), never as the primary path.
+                if (offerGhCliToken(config, console)) {
+                    break;
+                }
                 System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                 break;
             }
@@ -1752,10 +1860,7 @@ public class InitCommand extends BaseCommand {
             }
 
             if (result.email != null) {
-                config.getGithub().setToken(token);
-                config.getGithub().setEmail(result.email);
-                config.save();
-                System.out.println("  GitHub configuration saved.");
+                saveGitHubToken(config, token, result.email);
                 break;
             }
 
@@ -1767,28 +1872,23 @@ public class InitCommand extends BaseCommand {
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
             var newToken = readSecret(console.readPassword());
             if (newToken.isBlank()) {
-                config.getGithub().setToken(token);
-                config.save();
-                System.out.println("  GitHub configuration saved (without email).");
+                saveGitHubToken(config, token, null);
                 break;
             }
 
             var newResult = verifyGitHubToken(newToken);
             if (newResult == null) {
                 System.out.println("  New token failed verification — keeping the original token.");
-                config.getGithub().setToken(token);
-                config.save();
-                System.out.println("  GitHub configuration saved (without email).");
+                saveGitHubToken(config, token, null);
                 break;
             }
             config.getGithub().setToken(newToken);
             if (newResult.email != null) {
                 config.getGithub().setEmail(newResult.email);
-            }
-            config.save();
-            if (newResult.email != null) {
+                config.save();
                 System.out.println("  GitHub configuration saved.");
             } else {
+                config.save();
                 System.out.println("  GitHub configuration saved (still without email).");
             }
             break;
