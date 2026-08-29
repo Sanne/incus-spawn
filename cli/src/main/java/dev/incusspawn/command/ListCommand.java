@@ -114,11 +114,17 @@ public class ListCommand extends BaseCommand {
     private static final long REFRESH_DEBOUNCE_MS = 1000;
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
     private String pendingDeleteNote = "";      // computed once when the confirm dialog opens
+    private CleanCommand.CleanScan cleanScan;
+    private boolean cleanBuilds;
+    private boolean cleanImages;
+    private boolean cleanDnf;
+    private int cleanFieldIndex;
+    private CleanCommand.CleanResult cleanResult;
     // Build menu state (computed once when F5 opens the menu)
     private record BuildMenuOption(String label, String description, String badge, String[] buildArgs, boolean enabled) {}
     private java.util.List<BuildMenuOption> buildMenuOptions;
@@ -174,7 +180,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean deferredBuildForBranch;
 
-    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION, CLEAN_POOL }
+    private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
     private PendingAction pendingAction = PendingAction.NONE;
     private String pendingActionTarget;
     private String pendingShellCommand;
@@ -414,17 +420,6 @@ public class ListCommand extends BaseCommand {
                     if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
                         waitForKeypress();
                     }
-                }
-                case CLEAN_POOL -> {
-                    try {
-                        org.aesh.AeshRuntimeRunner.builder()
-                                .command(CleanCommand.class)
-                                .args(new String[]{"pool"})
-                                .execute();
-                    } catch (Exception e) {
-                        statusMessage = "Clean failed: " + e.getMessage();
-                    }
-                    waitForKeypress();
                 }
                 case NONE -> { return; }
             }
@@ -836,6 +831,8 @@ public class ListCommand extends BaseCommand {
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> handleInfoEvent(key);
             case ERROR -> { mode = Mode.BROWSE; yield true; }
+            case CLEAN_CONFIRM -> handleCleanConfirmEvent(key, tui, tableState);
+            case CLEAN_RESULT -> { mode = Mode.BROWSE; yield true; }
             case ACTIONS -> handleActionsEvent(key, tui);
         };
     }
@@ -865,10 +862,28 @@ public class ListCommand extends BaseCommand {
             refreshData(tableState);
             return true;
         }
-        // Reclaim storage: suspend the TUI and run `isx clean pool`.
         if (!key.hasCtrl() && key.isCharIgnoreCase('c')) {
-            pendingAction = PendingAction.CLEAN_POOL;
-            tui.quit();
+            progressMessage = "Scanning pool...";
+            tui.draw(frame -> render(frame, tableState));
+            try {
+                cleanScan = CleanCommand.scanPool(incus);
+            } catch (Exception e) {
+                progressMessage = null;
+                statusMessage = "Clean failed: " + e.getMessage();
+                return true;
+            }
+            progressMessage = null;
+            if (cleanScan == null) {
+                statusMessage = "No CoW storage pool found.";
+            } else if (!cleanScan.hasAnything()) {
+                statusMessage = "Nothing to clean — no reclaimable artifacts found.";
+            } else {
+                cleanBuilds = !cleanScan.failedBuilds().isEmpty();
+                cleanImages = !cleanScan.unusedImages().isEmpty();
+                cleanDnf = false;
+                cleanFieldIndex = 0;
+                mode = Mode.CLEAN_CONFIRM;
+            }
             return true;
         }
         if (key.isChar('/')) {
@@ -2423,6 +2438,8 @@ public class ListCommand extends BaseCommand {
             case INFO -> renderInfoModal(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
+            case CLEAN_CONFIRM -> renderCleanConfirmModal(frame, screen);
+            case CLEAN_RESULT -> renderCleanResultModal(frame, screen);
             default -> {}
         }
     }
@@ -2770,6 +2787,209 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         return false;
+    }
+
+    private boolean handleCleanConfirmEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.code() == KeyCode.CHAR && key.character() == ' ') {
+            var option = cleanConfirmOption(cleanFieldIndex);
+            if (option != null) option.run();
+            return true;
+        }
+        if (key.isKey(KeyCode.DOWN) || key.isChar('j') || key.isKey(KeyCode.TAB)) {
+            cleanFieldIndex = (cleanFieldIndex + 1) % cleanConfirmOptionCount();
+            return true;
+        }
+        if (key.isKey(KeyCode.UP) || key.isChar('k') || ShiftTabBindings.isShiftTab(key)) {
+            cleanFieldIndex = (cleanFieldIndex - 1 + cleanConfirmOptionCount()) % cleanConfirmOptionCount();
+            return true;
+        }
+        if (key.isKey(KeyCode.ENTER)) {
+            if (!cleanBuilds && !cleanImages && !cleanDnf) {
+                mode = Mode.BROWSE;
+                return true;
+            }
+            progressMessage = "Cleaning pool...";
+            tui.draw(frame -> render(frame, tableState));
+            try {
+                cleanResult = CleanCommand.cleanPool(incus, cleanBuilds, cleanImages, cleanDnf);
+            } catch (Exception e) {
+                progressMessage = null;
+                statusMessage = "Clean failed: " + e.getMessage();
+                mode = Mode.BROWSE;
+                return true;
+            }
+            progressMessage = null;
+            if (cleanResult == null) {
+                mode = Mode.BROWSE;
+            } else {
+                if (cleanResult.found()) refreshData(tableState);
+                mode = Mode.CLEAN_RESULT;
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private int cleanConfirmOptionCount() {
+        int count = 0;
+        if (!cleanScan.failedBuilds().isEmpty()) count++;
+        if (!cleanScan.unusedImages().isEmpty()) count++;
+        if (cleanScan.dnfCacheExists()) count++;
+        return count;
+    }
+
+    private Runnable cleanConfirmOption(int index) {
+        int i = 0;
+        if (!cleanScan.failedBuilds().isEmpty()) {
+            if (i == index) return () -> cleanBuilds = !cleanBuilds;
+            i++;
+        }
+        if (!cleanScan.unusedImages().isEmpty()) {
+            if (i == index) return () -> cleanImages = !cleanImages;
+            i++;
+        }
+        if (cleanScan.dnfCacheExists()) {
+            if (i == index) return () -> cleanDnf = !cleanDnf;
+        }
+        return null;
+    }
+
+    private void renderCleanConfirmModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var lines = new ArrayList<Line>();
+        var usage = cleanScan.usage();
+
+        if (usage != null && usage.totalBytes() > 0) {
+            lines.add(Line.styled(gibShort(usage.usedBytes()) + " used / "
+                    + gibShort(usage.totalBytes()) + " (" + usage.percent() + "%)",
+                    Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+            lines.add(Line.styled("", Style.EMPTY));
+        }
+
+        int optionIndex = 0;
+        if (!cleanScan.failedBuilds().isEmpty()) {
+            var n = cleanScan.failedBuilds().size();
+            modal.renderToggleInto(lines, "Failed builds (" + n + ")",
+                    cleanBuilds, cleanFieldIndex == optionIndex);
+            optionIndex++;
+        }
+        if (!cleanScan.unusedImages().isEmpty()) {
+            var n = cleanScan.unusedImages().size();
+            var size = CleanCommand.formatSize(cleanScan.unusedImagesBytes());
+            modal.renderToggleInto(lines, "Unused images (" + n + ", ~" + size + ")",
+                    cleanImages, cleanFieldIndex == optionIndex);
+            optionIndex++;
+        }
+        if (cleanScan.dnfCacheExists()) {
+            modal.renderToggleInto(lines, "DNF build cache",
+                    cleanDnf, cleanFieldIndex == optionIndex);
+        }
+
+        int width = 54;
+        int modalHeight = lines.size() + 5;
+        var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(modal.styledTitle(" Pool cleanup ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
+                .build();
+        modal.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
+                .split(inner);
+
+        frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(1));
+
+        var hintSpans = new ArrayList<Span>();
+        modal.addKey(hintSpans, "Space", "Toggle");
+        modal.addKey(hintSpans, "Enter", "Clean");
+        modal.addKey(hintSpans, "Esc", "Cancel");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
+    }
+
+    private Line cleanCheckLine(String text) {
+        return Line.from(List.of(
+                Span.styled("✓ ", Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())),
+                Span.styled(text, Style.EMPTY.fg(modal.fg()).bg(modal.bg()))));
+    }
+
+    private void renderCleanResultModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        var lines = new ArrayList<Line>();
+        var before = cleanResult.beforeUsage();
+
+        if (before != null && before.totalBytes() > 0) {
+            lines.add(Line.styled(gibShort(before.usedBytes()) + " used / "
+                    + gibShort(before.totalBytes()) + " (" + before.percent() + "%)",
+                    Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+        }
+
+        if (cleanResult.found()) {
+            lines.add(Line.styled("", Style.EMPTY));
+            if (cleanResult.failedBuildsDeleted() > 0) {
+                lines.add(cleanCheckLine("Deleted " + cleanResult.failedBuildsDeleted()
+                        + " failed build" + (cleanResult.failedBuildsDeleted() > 1 ? "s" : "")));
+            }
+            if (cleanResult.unusedImagesDeleted() > 0) {
+                lines.add(cleanCheckLine("Deleted " + cleanResult.unusedImagesDeleted()
+                        + " unused image" + (cleanResult.unusedImagesDeleted() > 1 ? "s" : "")));
+            }
+            if (cleanResult.dnfCacheDeleted()) {
+                lines.add(cleanCheckLine("Deleted DNF cache volume"));
+            }
+
+            var after = cleanResult.afterUsage();
+            if (after != null && before != null) {
+                long freed = before.usedBytes() - after.usedBytes();
+                if (freed > 0) {
+                    lines.add(Line.styled("", Style.EMPTY));
+                    lines.add(Line.from(List.of(
+                            Span.styled("Freed " + gibShort(freed),
+                                    Style.EMPTY.bold().fg(theme.statusSuccess()).bg(modal.bg())),
+                            Span.styled("  →  " + gibShort(after.usedBytes()) + " used ("
+                                    + after.percent() + "%)",
+                                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())))));
+                }
+            }
+        } else {
+            lines.add(Line.styled("", Style.EMPTY));
+            lines.add(Line.styled("Nothing to clean — no reclaimable artifacts found.",
+                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
+        }
+
+        for (var warn : cleanResult.warnings()) {
+            lines.add(Line.styled("  ⚠ " + warn,
+                    Style.EMPTY.fg(modal.warn()).bg(modal.bg())));
+        }
+
+        int width = 54;
+        int modalHeight = lines.size() + 5;
+        var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(modal.styledTitle(" Pool cleanup ", modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
+                .build();
+        modal.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        var rows = Layout.vertical()
+                .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
+                .split(inner);
+
+        frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(1));
+
+        var hintSpans = new ArrayList<Span>();
+        modal.addKey(hintSpans, "any key", "Close");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
     }
 
     private void renderInfoModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
