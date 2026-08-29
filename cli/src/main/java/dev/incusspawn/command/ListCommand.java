@@ -86,8 +86,14 @@ import java.util.Optional;
 )
 public class ListCommand extends BaseCommand {
 
-    @Option(name = "plain", hasValue = false, description = "Plain text output (no TUI)")
+    // Deprecated: `isx list` is always plain now, so this flag is a no-op kept only so existing
+    // scripts that pass it keep working. The bare `isx` command (no subcommand) opens the TUI.
+    @Option(name = "plain", hasValue = false, description = "Deprecated: plain output is the default for 'isx list' (no-op).")
     boolean plain;
+
+    // True only on the bare `isx` no-subcommand path (via executeDirect), which opens the TUI.
+    // When 'list' is invoked explicitly, output is always plain.
+    private boolean launchedAsDefault;
 
     private IncusClient incus;
 
@@ -226,6 +232,7 @@ public class ListCommand extends BaseCommand {
     private boolean storageWarningShown;
 
     public void executeDirect() {
+        launchedAsDefault = true;
         try { doExecute(); } catch (Exception e) { System.err.println("Error: " + e.getMessage()); }
     }
 
@@ -236,15 +243,16 @@ public class ListCommand extends BaseCommand {
         this.cdiTools = RuntimeServices.toolSetups();
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
+        // Bare `isx` opens the TUI; the explicit `list` command is always plain (it's a CLI listing).
         try {
             reloadData();
         } catch (IncusException e) {
-            if (plain) {
+            if (!launchedAsDefault) {
                 System.err.println("Error: " + e.getMessage());
                 return CommandResult.FAILURE;
             }
         }
-        if (plain) {
+        if (!launchedAsDefault) {
             if (entries.isEmpty() && templateEntries.stream().noneMatch(t -> !"not built".equals(t.buildStatus))) {
                 System.out.println("No incus-spawn environments found.");
                 System.out.println("Run 'isx build tpl-java' to create your first template.");

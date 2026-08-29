@@ -183,7 +183,7 @@ public class CompletionCommand extends BaseCommand {
             _isx_list() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '--plain[Plain text output (no TUI)]'
+                '--plain[Deprecated: plain output is the default for list (no-op)]'
             }
 
             _isx_shell() {
@@ -720,7 +720,7 @@ public class CompletionCommand extends BaseCommand {
 
             # ── list ─────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Plain text output (no TUI)'
+            complete -c isx -f -n '__isx_using_subcommand list' -l plain -d 'Deprecated: plain output is the default for list (no-op)'
 
             # ── shell ────────────────────────────────────────────────────────────────────
 
