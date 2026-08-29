@@ -201,26 +201,41 @@ The TUI branch modal supports:
 
 ### Terminal Output Visual Language
 
-Build and branch output follows a consistent visual language, centralized in
+All multi-step command output follows a consistent visual language, centralized in
 `BuildOutput` (`common/.../util/BuildOutput.java`). All output helpers live
 there; individual commands should not define their own ANSI constants or
-formatting patterns.
+formatting patterns. Beyond build/branch, this governs the other lifecycle
+commands too — `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`,
+and `project` — plus the shared `VmManager`. (`isx init`'s large interactive
+first-run flow is the one deliberate exception, kept in its own style for now.)
 
 **Structure:**
 
-- **Header** (bold bullet): `  ● Building tpl-dev  [1/3]` or `  ● my-branch  ← tpl-dev`.
-  Identifies the top-level operation. Preceded by a blank line.
+- **Header** (bold bullet): `  ● Building tpl-dev  [1/3]`, `  ● my-branch  ← tpl-dev`,
+  or the generic `  ● Resizing VM data disk` via `header(msg)`. Identifies the
+  top-level operation. Preceded by a blank line.
 - **Step** (4-space indent): `    Configuring network...` — a complete line for
   fast or informational actions.
 - **Step-start / step-done** (inline completion): `    Starting container... done.`
   — for slow operations, `stepStart` prints without a newline, work runs, then
-  `stepDone` appends ` done.\n`. On error, `stepBreak` closes the line before
-  the error message.
+  `stepDone` appends ` done.\n`. Use `stepDone(detail)` to report a result value
+  inline instead of on a second line — `    Extracting root disk... done (4.0G).`.
+  On error, `stepBreak` closes the line before the error message. Never print a
+  `Doing X...` line whose result lands on a *separate* line — complete it inline.
 - **Note** (dim, 4-space indent): informational messages that should be visible
   but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.`
   Uses ANSI dim (`\e[2m`).
 - **Success** (green checkmark): `    ✓ my-branch is ready.` — final confirmation,
   preceded by a blank line.
+
+**Headers live in commands, steps in shared helpers.** A shared operation that
+runs both standalone and nested (e.g. `VmManager.start()`/`stop()`, called both by
+`isx vm start` and as sub-steps of `isx vm resize`) emits only steps/notes and
+never its own header. The command class prints the one `● Header`; the shared
+method's steps then indent correctly under whichever header the caller printed, so
+no duplicate or nested headers appear. Where a shared step would otherwise repeat
+the header verbatim, reword it (the stop step reads `Shutting down VM...` under a
+`● Stopping VM` header).
 
 **Warnings and errors** go to stderr. Notes (dim) are for expected conditions the
 user may want to know about (skipped steps, cache hits). Warnings (`System.err`)
@@ -233,9 +248,13 @@ print it on failure. This prevents leaked output (e.g. systemd's "Created
 symlink" lines) from breaking alignment. `runInteractive` is reserved for
 commands that genuinely need live terminal output (e.g. interactive shells).
 
-**Adding new output:** use `BuildOutput.step()` for quick actions,
-`stepStart()`/`stepDone()` for slow ones, `note()` for informational dim
-messages. Do not add raw `System.out.println()` with inline ANSI escapes.
+**Adding new output:** use `BuildOutput.header()` to frame a multi-step operation,
+`step()` for quick actions, `stepStart()`/`stepDone()`/`stepDone(detail)` for slow
+ones, `note()` for informational dim messages, and `success()` for the final
+confirmation. Do not add raw `System.out.println()` with inline ANSI escapes, and
+do not leave a `Doing X...` line dangling. Pure reports/tables and interactive
+prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences
+and stay as plain output.
 
 ### Resource Limits (Adaptive)
 

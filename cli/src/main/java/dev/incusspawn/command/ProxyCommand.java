@@ -8,6 +8,7 @@ import dev.incusspawn.proxy.DumpProxy;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -138,9 +139,9 @@ public class ProxyCommand extends BaseCommand {
             if (ProxyService.isActive()) {
                 ProxyService.upgradeIfNeeded();
                 if (ProxyService.reinstallIfChanged(incus)) {
-                    System.out.println("Proxy service restarted with updated binary.");
+                    BuildOutput.success("Proxy service restarted with updated binary.");
                 } else {
-                    System.out.println("Proxy service is already installed and running.");
+                    BuildOutput.note("Proxy service is already installed and running.");
                 }
                 return CommandResult.SUCCESS;
             }

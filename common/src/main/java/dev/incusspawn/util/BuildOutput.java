@@ -44,22 +44,60 @@ public final class BuildOutput {
         System.out.println(" done.");
     }
 
+    /**
+     * Complete a line started by {@link #stepStart}, reporting a result value
+     * inline instead of on a second line — e.g. {@code Extracting root disk... done (4.0G).}
+     */
+    public static void stepDone(String detail) {
+        System.out.println(" done (" + detail + ").");
+    }
+
     /** Print a newline to close an incomplete {@link #stepStart} line before an error. */
     public static void stepBreak() {
         System.out.println();
     }
 
+    /**
+     * Fail a slow step started by {@link #stepStart}: close the dangling line, then
+     * write {@code msg} to stderr. Centralizes the "terminate the step line before any
+     * stderr output" contract so callers don't each have to remember it.
+     */
+    public static void stepFail(String msg) {
+        stepBreak();
+        System.err.println(msg);
+    }
+
+    /**
+     * Print a bold bullet header for a top-level operation: {@code  ● Resizing VM data disk}.
+     * Preceded by a blank line. Use this to frame any multi-step command; the
+     * build/branch-specific {@link #buildHeader}/{@link #branchHeader} build on the same style.
+     */
+    public static void header(String msg) {
+        System.out.println();
+        System.out.println("  " + BOLD + "● " + msg + RESET);
+    }
+
+    /**
+     * Header with a dim secondary detail: {@code  ● Resizing VM data disk  60.0G → 120.0G}.
+     * The detail is rendered dim, mirroring {@link #branchHeader}'s source styling, so every
+     * header's secondary part reads the same.
+     */
+    public static void header(String msg, String detail) {
+        System.out.println();
+        System.out.println("  " + BOLD + "● " + msg + RESET + " " + DIM + detail + RESET);
+    }
+
     /** Print a bold bullet header: {@code  ● Building tpl-dev  [1/3]} */
     public static void buildHeader(String name, int index, int total) {
-        System.out.println();
         if (total > 1) {
+            System.out.println();
             var counter = "[" + index + "/" + total + "]";
             var label = "Building " + name;
             int gap = Math.max(2, 62 - 4 - label.length() - counter.length());
             System.out.println("  " + BOLD + "● " + label + RESET
                     + " ".repeat(gap) + DIM + counter + RESET);
         } else {
-            System.out.println("  " + BOLD + "● Building " + name + RESET);
+            header("Building " + name);
         }
     }
 

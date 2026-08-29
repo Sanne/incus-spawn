@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -42,6 +43,7 @@ public class VmCommand extends BaseCommand {
     public static class Start extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
+            BuildOutput.header("Starting VM");
             return VmManager.start() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
     }
@@ -54,6 +56,7 @@ public class VmCommand extends BaseCommand {
     public static class Stop extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
+            BuildOutput.header("Stopping VM");
             VmManager.stop();
             return CommandResult.SUCCESS;
         }
@@ -135,29 +138,34 @@ public class VmCommand extends BaseCommand {
                 return CommandResult.SUCCESS;
             }
 
+            var currentH = VmManager.humanSize(current);
+            var targetH = VmManager.humanSize(target);
+            BuildOutput.header("Resizing VM data disk", currentH + " → " + targetH);
+
             if (wasRunning) {
-                System.out.println("Stopping VM...");
                 VmManager.stop();
             }
 
+            BuildOutput.stepStart("Growing disk image to " + targetH + " (sparse)...");
             VmManager.resizeDataDisk(size);
-            System.out.println("Data disk image grown to " + VmManager.humanSize(target) + " (sparse).");
+            BuildOutput.stepDone();
 
-            System.out.println("Starting VM to expand the filesystem...");
+            // start() prints its own steps (root-disk replacement, launch); the boot is only needed
+            // so the guest can expand btrfs and we can verify.
             if (!VmManager.start()) {
                 System.err.println("Failed to start VM after resize.");
                 return CommandResult.valueOf(1);
             }
-            // Once the VM is up, restore its prior state on every exit path (below): the boot was
-            // only needed so the guest could expand btrfs and we could verify — a later failure
+            // Once the VM is up, restore its prior state on every exit path (below): a later failure
             // must not leave a previously-stopped VM running.
             try {
-                System.out.println("Waiting for Incus daemon...");
+                BuildOutput.stepStart("Waiting for Incus daemon...");
                 if (!VmManager.waitUntilReady(60)) {
-                    System.err.println("VM started but Incus did not become reachable within 60s.");
+                    BuildOutput.stepFail("VM started but Incus did not become reachable within 60s.");
                     System.err.println("Check 'isx vm console' for boot logs.");
                     return CommandResult.valueOf(1);
                 }
+                BuildOutput.stepDone();
 
                 // Verify the guest actually grew the pool to fill the larger device.
                 var incus = RuntimeServices.incus();
@@ -169,20 +177,20 @@ public class VmCommand extends BaseCommand {
                     // near `target`; one that didn't sits near `current`. The midpoint separates the
                     // two cleanly and is immune to that overhead.
                     if (usage.totalBytes() >= (current + target) / 2) {
-                        System.out.println("Storage pool is now " + VmManager.humanSize(usage.totalBytes())
+                        BuildOutput.success("Storage pool is now " + VmManager.humanSize(usage.totalBytes())
                                 + " (" + usage.percent() + "% used).");
                     } else {
                         System.out.println();
-                        System.out.println("The data disk image was grown, but the storage pool did not expand.");
-                        System.out.println("Your appliance may predate automatic data-disk expansion. Upgrade isx");
-                        System.out.println("(so it re-downloads the appliance) to pick up the change.");
+                        BuildOutput.note("The data disk image was grown, but the storage pool did not expand.");
+                        BuildOutput.note("Your appliance may predate automatic data-disk expansion. Upgrade isx");
+                        BuildOutput.note("(so it re-downloads the appliance) to pick up the change.");
                     }
                 }
                 return CommandResult.SUCCESS;
             } finally {
                 // Best-effort: the resize already succeeded, so a stop failure must not mask it.
                 if (!wasRunning) {
-                    System.out.println("Stopping VM to restore its previous state...");
+                    BuildOutput.note("VM was stopped before the resize — stopping it again.");
                     try {
                         VmManager.stop();
                     } catch (Exception e) {

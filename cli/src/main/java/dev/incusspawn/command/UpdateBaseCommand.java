@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -46,19 +47,21 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
+        BuildOutput.header("Checking for base image updates");
         var currentTag = minimal.getImageTag();
         var isPinned = minimal.isPinned();
-        System.out.println("Current base image: " + (currentTag != null ? currentTag : "unknown")
+        BuildOutput.note("Current base image: " + (currentTag != null ? currentTag : "unknown")
                 + (isPinned ? " [pinned]" : ""));
 
-        System.out.println("Fetching available releases...");
+        BuildOutput.stepStart("Fetching available releases...");
         List<ReleaseInfo> releases;
         try {
             releases = fetchReleases();
         } catch (IOException e) {
-            System.err.println("Failed to fetch releases: " + e.getMessage());
+            BuildOutput.stepFail("Failed to fetch releases: " + e.getMessage());
             return CommandResult.valueOf(1);
         }
+        BuildOutput.stepDone();
 
         if (releases.isEmpty()) {
             System.out.println("No releases found.");
@@ -87,12 +90,12 @@ public class UpdateBaseCommand extends BaseCommand {
     private CommandResult trackLatest(ImageDef current) throws IOException {
         var overridePath = ImageDef.userImagesDir().resolve("minimal.yaml");
         if (Files.deleteIfExists(overridePath)) {
-            System.out.println("Removed user override.");
+            BuildOutput.note("Removed user override.");
         }
         var builtin = ImageDef.loadBuiltinByName("tpl-minimal");
         var builtinTag = builtin != null ? builtin.getImageTag() : "unknown";
-        System.out.println("Tracking latest — using built-in base image (" + builtinTag + ").");
-        System.out.println("The base image will be updated on the next 'isx build tpl-minimal'.");
+        BuildOutput.success("Tracking latest — using built-in base image (" + builtinTag + ").");
+        BuildOutput.note("The base image will be updated on the next 'isx build tpl-minimal'.");
         return CommandResult.SUCCESS;
     }
 
@@ -107,16 +110,17 @@ public class UpdateBaseCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        System.out.println("Fetching checksums for " + selected.tag + "...");
+        BuildOutput.stepStart("Fetching checksums for " + selected.tag + "...");
         var checksums = fetchSha256Sums(selected);
         if (checksums == null) {
-            System.err.println("SHA256SUMS not found in release " + selected.tag + ".");
+            BuildOutput.stepFail("SHA256SUMS not found in release " + selected.tag + ".");
             return CommandResult.valueOf(1);
         }
+        BuildOutput.stepDone();
 
         writeUserOverride(current, selected.tag, checksums, true);
-        System.out.println("Pinned base image to " + selected.tag + ".");
-        System.out.println("The new base image will be downloaded on the next 'isx build tpl-minimal'.");
+        BuildOutput.success("Pinned base image to " + selected.tag + ".");
+        BuildOutput.note("The new base image will be downloaded on the next 'isx build tpl-minimal'.");
         return CommandResult.SUCCESS;
     }
 
@@ -125,7 +129,7 @@ public class UpdateBaseCommand extends BaseCommand {
 
         var latest = releases.get(0);
         if (latest.tag.equals(currentTag) && !current.isPinned()) {
-            System.out.println("\nAlready on the latest version.");
+            BuildOutput.success("Already on the latest version.");
             return CommandResult.SUCCESS;
         }
 
@@ -188,7 +192,7 @@ public class UpdateBaseCommand extends BaseCommand {
                 checksums.aarch64);
 
         Files.writeString(overridePath, yaml);
-        System.out.println("Wrote " + overridePath);
+        BuildOutput.note("Wrote " + overridePath);
     }
 
     record ReleaseInfo(String tag, String date, String sha256sumsUrl) {}

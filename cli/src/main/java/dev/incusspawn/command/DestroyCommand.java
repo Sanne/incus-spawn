@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -27,18 +28,22 @@ public class DestroyCommand extends BaseCommand {
             return CommandResult.valueOf(1);
         }
 
-        // Informational message for templates
+        BuildOutput.header("Destroying " + name);
+
+        // Informational note for templates
         var type = Metadata.getType(incus, name);
         if (Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) {
-            System.out.println("Note: '" + name + "' is a template (type: " + type + ").");
-            System.out.println("Destroying it means you won't be able to create new branches from it");
-            System.out.println("until you rebuild it. Existing branches are not affected.");
+            BuildOutput.note("'" + name + "' is a template (type: " + type + ").");
+            BuildOutput.note("Destroying it means you won't be able to create new branches from it");
+            BuildOutput.note("until you rebuild it. Existing branches are not affected.");
         }
 
-        System.out.println("Destroying " + name + "...");
+        BuildOutput.stepStart("Removing instance...");
         incus.delete(name, true);
         InstanceLifecycle.removeHostIntegration(name);
-        System.out.println("Destroyed " + name + ".");
+        BuildOutput.stepDone();
+
+        BuildOutput.success("Destroyed " + name + ".");
         return CommandResult.SUCCESS;
     }
 }

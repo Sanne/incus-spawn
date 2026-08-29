@@ -86,7 +86,7 @@ Package deduplication: `BuildCommand` collects all ancestor packages and subtrac
 
 ### Terminal Output
 
-Build and branch commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for all terminal output formatting. This centralizes ANSI constants and step patterns — individual commands should not define their own. Key helpers: `buildHeader()`/`branchHeader()` for bold bullet headers, `step()` for complete lines, `stepStart()`/`stepDone()` for inline completion on slow operations, `note()` for dim informational messages, `success()` for green checkmark lines. See DESIGN.md "Terminal Output Visual Language" for the full spec.
+All multi-step lifecycle commands use `BuildOutput` (`common/.../util/BuildOutput.java`) for terminal output formatting — not just build/branch but also `vm` (start/stop/resize), `destroy`, `update-all`, `update-base`, `project`, and the shared `VmManager`. This centralizes ANSI constants and step patterns — individual commands should not define their own. Key helpers: `header()` (generic bold bullet header), `buildHeader()`/`branchHeader()` (build/branch-specific), `step()` for complete lines, `stepStart()`/`stepDone()`/`stepDone(detail)` for inline completion on slow operations (never leave a `Doing X...` line dangling with its result on a separate line), `note()` for dim informational messages, `success()` for green checkmark lines. Headers live in command classes; shared helpers like `VmManager` emit only steps so they nest correctly under whichever header the caller prints. `isx init`'s interactive first-run flow is the one exception (its own style for now). See DESIGN.md "Terminal Output Visual Language" for the full spec.
 
 ### Tool System
 
