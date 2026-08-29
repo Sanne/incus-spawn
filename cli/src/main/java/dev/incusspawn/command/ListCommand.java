@@ -778,7 +778,9 @@ public class ListCommand extends BaseCommand {
             focusedPanel = (focusedPanel == Panel.TEMPLATES) ? Panel.INSTANCES : Panel.TEMPLATES;
             return true;
         }
-        if (key.hasCtrl() && key.isCharIgnoreCase('l')) {
+        // Refresh data. 'r' is the TUI-idiomatic binding (k9s/lazygit/btop);
+        // Ctrl+L is kept as an alias for the terminal "redraw screen" reflex.
+        if ((!key.hasCtrl() && key.isCharIgnoreCase('r')) || (key.hasCtrl() && key.isCharIgnoreCase('l'))) {
             refreshData(tableState);
             return true;
         }
@@ -2738,6 +2740,7 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
                 shortcutRow("C", "Clean pool storage", null, null),
+                shortcutRow("r", "Refresh", null, null),
                 shortcutRow("n", "New template…", null, null),
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
