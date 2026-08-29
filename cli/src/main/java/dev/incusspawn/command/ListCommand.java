@@ -474,6 +474,10 @@ public class ListCommand extends BaseCommand {
         }
 
         var loadWarnings = new ArrayList<String>();
+        // Re-read tool defs from disk alongside the image defs below, so edited tool YAML
+        // is reflected in the "△ definition changed" flag. Must precede addFallbacks(),
+        // which re-populates the freshly cleared cache.
+        toolDefLoader.reload();
         imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
         // Tool conflicts don't flow through image loadAll; surface them here too so
         // the TUI warns about duplicate tool names instead of only failing at build.

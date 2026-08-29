@@ -318,4 +318,32 @@ class ToolDefLoaderTest {
             System.setProperty("user.home", originalHome);
         }
     }
+
+    @Test
+    void reloadPicksUpOnDiskEdits(@TempDir Path tempDir) throws Exception {
+        var toolFile = tempDir.resolve("edit-me.yaml");
+        Files.writeString(toolFile, """
+                name: edit-me
+                packages:
+                  - old-package
+                """);
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        // First access caches the definition (and memoizes its fingerprint).
+        var fpBefore = ((YamlToolSetup) loader.find("edit-me")).toolDef().contentFingerprint();
+
+        // Edit the file on disk in a way that changes the fingerprint.
+        Files.writeString(toolFile, """
+                name: edit-me
+                packages:
+                  - new-package
+                """);
+
+        // After reload the on-disk edit is visible in the recomputed fingerprint.
+        loader.reload();
+        var fpAfter = ((YamlToolSetup) loader.find("edit-me")).toolDef().contentFingerprint();
+        assertNotEquals(fpBefore, fpAfter,
+                "reload() should surface the edited tool content in the fingerprint");
+    }
 }
