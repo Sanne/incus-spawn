@@ -1718,11 +1718,22 @@ public class InitCommand extends BaseCommand {
      * offered only when the user skips the dedicated-PAT prompt, and defaults to No. Returns true if
      * a token was verified and saved.
      */
-    private boolean offerGhCliToken(SpawnConfig config, Console console) {
+    /**
+     * Outcome of the optional 'gh' CLI token fallback.
+     * <ul>
+     *   <li>{@code SAVED} — a token was verified and persisted; GitHub setup is done.
+     *   <li>{@code NOT_OFFERED} — gh is unavailable or the user declined reuse; no attempt made.
+     *   <li>{@code FAILED} — reuse was attempted but the token could not be read or verified, so
+     *       the caller should fall back to manual PAT entry (as the failure message promises).
+     * </ul>
+     */
+    private enum GhTokenOutcome { SAVED, NOT_OFFERED, FAILED }
+
+    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console) {
         // 'gh auth status' exits 0 only when gh is installed and logged in; a missing binary or no
         // active login exits non-zero, so this one check gates the whole fallback.
         if (runHostCapturingExit("gh", "auth", "status") != 0) {
-            return false;
+            return GhTokenOutcome.NOT_OFFERED;
         }
 
         System.out.println("  An authenticated 'gh' CLI is available on this host.");
@@ -1730,24 +1741,24 @@ public class InitCommand extends BaseCommand {
                 + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
                 + " agent account and a fine-grained PAT (above)." + RESET);
         if (!askConfirmation(console, "  Reuse your personal 'gh' token anyway?", false)) {
-            return false;
+            return GhTokenOutcome.NOT_OFFERED;
         }
 
         var token = readGhAuthToken();
         if (token == null || token.isBlank()) {
             System.out.println("  Could not read a token from 'gh auth token' — continuing with manual setup.");
-            return false;
+            return GhTokenOutcome.FAILED;
         }
         var result = verifyGitHubToken(token);
         if (result == null) {
             System.out.println("  The 'gh' token failed verification — continuing with manual setup.");
-            return false;
+            return GhTokenOutcome.FAILED;
         }
         if (result.email == null) {
             System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
         }
         saveGitHubToken(config, token, result.email);
-        return true;
+        return GhTokenOutcome.SAVED;
     }
 
     /** Persists a verified GitHub token (and email, if any) and prints the matching "saved" line. */
@@ -1765,7 +1776,11 @@ public class InitCommand extends BaseCommand {
     /** Reads the token backing the current 'gh' login (stdout of 'gh auth token'). */
     private static String readGhAuthToken() {
         try {
-            var p = new ProcessBuilder("gh", "auth", "token").start();
+            // Discard stderr: gh warnings must not leak into the interactive init flow, and an
+            // undrained stderr pipe could fill and block the process until the timeout below.
+            var p = new ProcessBuilder("gh", "auth", "token")
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
             String out;
             try (var in = p.getInputStream()) {
                 out = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
@@ -1843,8 +1858,13 @@ public class InitCommand extends BaseCommand {
             if (token.isBlank()) {
                 // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
                 // agent act as you — so it is offered here (default No), never as the primary path.
-                if (offerGhCliToken(config, console)) {
+                var outcome = offerGhCliToken(config, console);
+                if (outcome == GhTokenOutcome.SAVED) {
                     break;
+                }
+                if (outcome == GhTokenOutcome.FAILED) {
+                    // The gh fallback promised to "continue with manual setup" — re-prompt for a PAT.
+                    continue;
                 }
                 System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                 break;

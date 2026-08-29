@@ -27,8 +27,13 @@ public final class Platform {
 
     /**
      * Best-effort open of a URL in the host's default browser via the platform opener
-     * ({@code open} on macOS, {@code xdg-open} on Linux). Returns true only if the opener
-     * exited 0 within a short timeout; a missing opener or non-zero exit yields false.
+     * ({@code open} on macOS, {@code xdg-open} on Linux). A missing opener yields false.
+     *
+     * <p>Both openers are fire-and-forget launchers: they normally hand the URL to the browser
+     * and exit promptly. If the opener exits within a short window we trust its exit code. But
+     * some {@code xdg-open} setups block until the spawned handler exits — so once it is still
+     * running past that window we assume the launch succeeded and leave it alone, rather than
+     * force-killing a browser that did open and falsely reporting failure.
      */
     public static boolean openUrl(String url) {
         String opener = isMacOS() ? "open" : isLinux() ? "xdg-open" : null;
@@ -40,11 +45,11 @@ public final class Platform {
             pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             var p = pb.start();
-            if (!p.waitFor(10, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                return false;
+            if (p.waitFor(3, TimeUnit.SECONDS)) {
+                return p.exitValue() == 0;
             }
-            return p.exitValue() == 0;
+            // Still running: the handler launched but the opener is blocking on it. Treat as success.
+            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;

@@ -5,6 +5,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.tool.DownloadCache;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
 import dev.incusspawn.Platform;
 
@@ -219,7 +220,7 @@ public final class VmManager {
 
     public static boolean start() {
         if (isRunning()) {
-            System.out.println("VM already running (pid=" + readPid() + ")");
+            BuildOutput.note("VM already running (pid=" + readPid() + ").");
             return true;
         }
         try {
@@ -238,16 +239,15 @@ public final class VmManager {
 
         if (backend == Backend.VFKIT && !Files.exists(Environment.vmLogFile())) {
             System.out.println();
-            System.out.println("  macOS may show permission dialogs for home folder access and");
-            System.out.println("  local network connectivity. These are safe to approve:");
-            System.out.println("  - Your home directory is mounted read-only (nothing is modified)");
-            System.out.println("  - Agents run in sandboxed containers that only see paths you configure");
-            System.out.println("  - Network access enables connectivity for the Linux containers");
-            System.out.println();
+            BuildOutput.note("macOS may show permission dialogs for home folder access and");
+            BuildOutput.note("local network connectivity. These are safe to approve:");
+            BuildOutput.note("  - Your home directory is mounted read-only (nothing is modified)");
+            BuildOutput.note("  - Agents run in sandboxed containers that only see paths you configure");
+            BuildOutput.note("  - Network access enables connectivity for the Linux containers");
         }
 
-        System.out.println("Starting VM with " + backend.name().toLowerCase()
-                + " (cpus=" + cpus + ", memory=" + memoryMiB + "M)...");
+        BuildOutput.stepStart("Launching VM (" + backend.name().toLowerCase()
+                + ", cpus=" + cpus + ", memory=" + memoryMiB + "M)...");
         try {
             Files.createDirectories(Environment.vmStateDir());
             switch (backend) {
@@ -256,24 +256,26 @@ public final class VmManager {
             }
             return true;
         } catch (Exception e) {
-            System.err.println("Failed to start VM: " + e.getMessage());
+            BuildOutput.stepFail("Failed to start VM: " + e.getMessage());
             return false;
         }
     }
 
     public static void stop() {
         if (!isRunning()) {
-            System.out.println("VM not running");
+            BuildOutput.note("VM not running.");
             cleanupStaleFiles();
             return;
         }
         long pid = readPid();
         var handle = ProcessHandle.of(pid);
         if (handle.isEmpty()) {
-            System.out.println("VM not running");
+            BuildOutput.note("VM not running.");
             cleanupStaleFiles();
             return;
         }
+
+        BuildOutput.stepStart("Shutting down VM...");
 
         // Attempt graceful shutdown via REST API (vfkit only)
         var restUriFile = Environment.vmRestUriFile();
@@ -309,7 +311,7 @@ public final class VmManager {
         }
 
         cleanupStaleFiles();
-        System.out.println("VM stopped");
+        BuildOutput.stepDone();
     }
 
     public static String status() {
@@ -587,7 +589,7 @@ public final class VmManager {
 
         Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
         Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
-        System.out.println("VM started (pid=" + pid + ", rest=localhost:" + restPort + ")");
+        BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort);
     }
 
     // --- Internal: QEMU ---
@@ -643,7 +645,7 @@ public final class VmManager {
         long pid = process.pid();
 
         Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-        System.out.println("VM started (pid=" + pid + ")");
+        BuildOutput.stepDone("pid=" + pid);
     }
 
     // --- Internal: disk management ---
@@ -683,16 +685,18 @@ public final class VmManager {
                 if (Files.exists(versionFile)) {
                     var diskVersion = Files.readString(versionFile).strip();
                     if (diskVersion.equals(currentVersion)) return;
-                    System.out.println("Appliance version changed (" + diskVersion + " -> "
-                            + currentVersion + "), replacing root disk...");
+                    BuildOutput.step("Replacing appliance root disk ("
+                            + diskVersion + " → " + currentVersion + ")");
                 } else {
-                    System.out.println("Appliance disk predates version tracking, replacing with "
-                            + currentVersion + "...");
+                    BuildOutput.step("Replacing appliance root disk (untracked → "
+                            + currentVersion + ")");
                 }
                 Files.delete(Environment.vmDiskImage());
                 try {
                     downloadArtifacts();
                 } catch (IOException e) {
+                    // downloadArtifacts closes any dangling step line itself, so the cursor is at
+                    // column 0 here on every throw path — no stepBreak needed.
                     System.err.println("Warning: could not re-download appliance artifacts: "
                             + e.getMessage());
                 }
@@ -707,7 +711,7 @@ public final class VmManager {
                     + "\nRun 'isx init' to download appliance artifacts.");
         }
 
-        System.out.println("Extracting root disk image...");
+        BuildOutput.stepStart("Extracting root disk...");
         var tmp = Environment.vmDiskImage().resolveSibling("disk.img.tmp");
         try {
             Files.createDirectories(Environment.vmStateDir());
@@ -720,9 +724,10 @@ public final class VmManager {
             }
             Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
             Files.writeString(versionFile, currentVersion);
-            System.out.println("Root disk ready: " + humanSize(Files.size(Environment.vmDiskImage()))
-                    + " (" + rootDiskSize() + " virtual)");
+            BuildOutput.stepDone(humanSize(Files.size(Environment.vmDiskImage()))
+                    + ", " + rootDiskSize() + " virtual");
         } catch (IOException e) {
+            BuildOutput.stepBreak();
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             throw new VmException("Failed to extract disk image: " + e.getMessage());
         }
@@ -732,13 +737,15 @@ public final class VmManager {
         var dataImage = Environment.vmDataImage();
         if (Files.exists(dataImage)) return;
 
-        System.out.println("Creating data disk (" + diskSize() + " sparse)...");
+        BuildOutput.stepStart("Creating data disk (" + diskSize() + " sparse)...");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var raf = new RandomAccessFile(dataImage.toFile(), "rw")) {
                 raf.setLength(parseDiskSize(diskSize()));
             }
+            BuildOutput.stepDone();
         } catch (IOException e) {
+            BuildOutput.stepBreak();
             throw new VmException("Failed to create data disk: " + e.getMessage());
         }
     }
@@ -840,18 +847,35 @@ public final class VmManager {
         var cache = new DownloadCache();
 
         if (!Files.exists(Environment.applianceKernel())) {
-            System.out.println("  Downloading vmlinuz (" + arch + ")...");
-            var cached = cache.download(baseUrl + "/vmlinuz-" + arch, null);
-            Files.copy(cached, Environment.applianceKernel(), StandardCopyOption.REPLACE_EXISTING);
+            downloadStep(cache, "Downloading vmlinuz (" + arch + ")...",
+                    baseUrl + "/vmlinuz-" + arch, Environment.applianceKernel());
         }
 
         if (!Files.exists(Environment.applianceDiskImage())) {
-            System.out.println("  Downloading disk image (" + arch + ")...");
-            var cached = cache.download(baseUrl + "/disk-" + arch + ".img.gz", null);
-            Files.copy(cached, Environment.applianceDiskImage(), StandardCopyOption.REPLACE_EXISTING);
+            downloadStep(cache, "Downloading disk image (" + arch + ")...",
+                    baseUrl + "/disk-" + arch + ".img.gz", Environment.applianceDiskImage());
         }
 
         Files.writeString(versionFile, version);
+    }
+
+    /**
+     * Run one download as a single terminal step, closing its own dangling step line on failure
+     * before propagating. Because only the code that printed the {@code stepStart} knows a line is
+     * outstanding, owning the {@code stepBreak} here lets callers report the error with a plain
+     * message rather than each guessing whether a line needs terminating.
+     */
+    private static void downloadStep(DownloadCache cache, String label, String url, java.nio.file.Path dest)
+            throws IOException {
+        BuildOutput.stepStart(label);
+        try {
+            var cached = cache.download(url, null);
+            Files.copy(cached, dest, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException | RuntimeException e) {
+            BuildOutput.stepBreak();
+            throw e;
+        }
+        BuildOutput.stepDone();
     }
 
     public static long parseDiskSize(String size) {

@@ -5,6 +5,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
@@ -42,15 +43,14 @@ public class UpdateAllCommand extends BaseCommand {
 
         refreshHostRepos(incus, templates);
 
-        System.out.println("Updating " + templates.size() + " template(s)...\n");
+        System.out.println("Updating " + templates.size() + " template(s).");
 
         for (var name : templates) {
-            System.out.println("--- Updating " + name + " ---");
+            BuildOutput.header("Updating " + name);
             updateImage(incus, name);
-            System.out.println();
         }
 
-        System.out.println("All templates updated.");
+        BuildOutput.success("All templates updated.");
         return CommandResult.SUCCESS;
     }
 
@@ -78,22 +78,24 @@ public class UpdateAllCommand extends BaseCommand {
         incus.waitForReady(name);
 
         // System updates
-        System.out.println("  Running system updates...");
+        BuildOutput.stepStart("Running system updates...");
         incus.shellExec(name, "dnf", "update", "-y");
+        BuildOutput.stepDone();
 
         // Update globally installed npm packages (coding tools, etc.)
         if (incus.shellExec(name, "which", "npm").success()) {
-            System.out.println("  Updating npm packages...");
+            BuildOutput.stepStart("Updating npm packages...");
             incus.shellExec(name, "npm", "update", "-g");
+            BuildOutput.stepDone();
         }
 
         // Git fetch in all repos (for project images)
-        System.out.println("  Updating git repositories...");
+        BuildOutput.stepStart("Updating git repositories...");
         incus.execInContainer(name, "agentuser",
                 "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"  Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
+        BuildOutput.stepDone();
 
         incus.stop(name);
-        System.out.println("  Done.");
     }
 
 }

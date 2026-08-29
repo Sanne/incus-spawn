@@ -17,6 +17,7 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
@@ -646,6 +647,7 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private static void restartVm() {
+        BuildOutput.header("Restarting VM");
         VmManager.stop();
         if (!VmManager.start()) throw new RuntimeException("VM failed to start");
     }

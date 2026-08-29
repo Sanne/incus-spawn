@@ -4,6 +4,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -53,39 +54,44 @@ public class ProjectCommand extends BaseCommand {
             }
 
             var parent = projectConfig.getParent();
-            System.out.println("Creating project template: " + imageName + " (parent: " + parent + ")");
 
             if (!incus.exists(parent)) {
                 System.err.println("Error: parent image '" + parent + "' does not exist. Run 'incus-spawn build " + parent + "' first.");
                 return CommandResult.valueOf(1);
             }
 
+            BuildOutput.header("Creating project template " + imageName);
+            BuildOutput.note("Parent: " + parent);
+
             if (incus.exists(imageName)) {
-                System.out.println("Image " + imageName + " already exists. Deleting and rebuilding...");
+                BuildOutput.note("'" + imageName + "' already exists — deleting and rebuilding.");
                 incus.delete(imageName, true);
             }
 
             // Clone from parent
-            System.out.println("Cloning from " + parent + "...");
+            BuildOutput.stepStart("Cloning from " + parent + "...");
             incus.copy(parent, imageName);
             incus.start(imageName);
             incus.waitForReady(imageName);
+            BuildOutput.stepDone();
 
             // Clone repos
             if (projectConfig.getRepos() != null && !projectConfig.getRepos().isEmpty()) {
-                System.out.println("Cloning git repositories...");
                 for (var repo : projectConfig.getRepos()) {
-                    System.out.println("  Cloning " + repo + "...");
+                    BuildOutput.stepStart("Cloning " + repo + "...");
                     incus.execInContainer(imageName, "agentuser", "git", "clone", repo);
+                    BuildOutput.stepDone();
                 }
             }
 
             // Run pre-build
             if (projectConfig.getPreBuild() != null && !projectConfig.getPreBuild().isBlank()) {
-                System.out.println("Running pre-build: " + projectConfig.getPreBuild());
+                BuildOutput.stepStart("Running pre-build: " + projectConfig.getPreBuild() + "...");
                 var result = incus.execInContainer(imageName, "agentuser", "sh", "-c", projectConfig.getPreBuild());
                 if (!result.success()) {
-                    System.err.println("Warning: pre-build command failed: " + result.stderr().strip());
+                    BuildOutput.stepFail("Warning: pre-build command failed: " + result.stderr().strip());
+                } else {
+                    BuildOutput.stepDone();
                 }
             }
 
@@ -93,10 +99,11 @@ public class ProjectCommand extends BaseCommand {
             incus.configSet(imageName, Metadata.PROJECT, imageName);
 
             // Stop the template
-            System.out.println("Stopping project template...");
+            BuildOutput.stepStart("Stopping template...");
             incus.stop(imageName);
+            BuildOutput.stepDone();
 
-            System.out.println("Project template " + imageName + " created successfully.");
+            BuildOutput.success("Project template " + imageName + " created.");
             return CommandResult.SUCCESS;
         }
 
@@ -136,29 +143,29 @@ public class ProjectCommand extends BaseCommand {
                 return CommandResult.valueOf(1);
             }
 
-            System.out.println("Updating project template: " + name);
+            BuildOutput.header("Updating project template " + name);
 
             // Start if stopped
             incus.start(name);
             incus.waitForReady(name);
 
             // System updates
-            System.out.println("Running system updates...");
+            BuildOutput.stepStart("Running system updates...");
             incus.shellExec(name, "dnf", "update", "-y");
+            BuildOutput.stepDone();
 
             // Update globally installed npm packages (coding tools, etc.)
             if (incus.shellExec(name, "which", "npm").success()) {
-                System.out.println("Updating npm packages...");
+                BuildOutput.stepStart("Updating npm packages...");
                 incus.shellExec(name, "npm", "update", "-g");
+                BuildOutput.stepDone();
             }
 
             // Git fetch in all repos
-            System.out.println("Updating git repositories...");
-            var result = incus.execInContainer(name, "agentuser",
+            BuildOutput.stepStart("Updating git repositories...");
+            incus.execInContainer(name, "agentuser",
                     "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
-            if (result.success() && !result.stdout().isBlank()) {
-                System.out.println(result.stdout());
-            }
+            BuildOutput.stepDone();
 
             // Re-run pre-build if config available
             ProjectConfig projectConfig = null;
@@ -168,15 +175,17 @@ public class ProjectCommand extends BaseCommand {
                 projectConfig = ProjectConfig.findInDirectory(Path.of("."));
             }
             if (projectConfig != null && projectConfig.getPreBuild() != null && !projectConfig.getPreBuild().isBlank()) {
-                System.out.println("Running pre-build: " + projectConfig.getPreBuild());
+                BuildOutput.stepStart("Running pre-build: " + projectConfig.getPreBuild() + "...");
                 incus.execInContainer(name, "agentuser", "sh", "-c", projectConfig.getPreBuild());
+                BuildOutput.stepDone();
             }
 
             // Stop
-            System.out.println("Stopping template...");
+            BuildOutput.stepStart("Stopping template...");
             incus.stop(name);
+            BuildOutput.stepDone();
 
-            System.out.println("Project template " + name + " updated successfully.");
+            BuildOutput.success("Project template " + name + " updated.");
             return CommandResult.SUCCESS;
         }
 
