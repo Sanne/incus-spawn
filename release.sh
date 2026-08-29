@@ -15,7 +15,12 @@ if [ -n "$1" ]; then
     version="${1#v}"
 else
     git fetch origin --tags --quiet
-    latest_tag=$(git tag --sort=-v:refname --list 'v*' | head -1)
+    # versionsort.suffix=-dev makes git rank a pre-release BELOW its release
+    # (semver order), so v0.3.2 sorts above v0.3.2-dev.N. Without it git's
+    # version sort treats the longer "-dev.N" string as higher, and a stable
+    # release would be out-ranked by its own dev tags — deriving the next dev
+    # version from the dev run instead of bumping the patch.
+    latest_tag=$(git -c versionsort.suffix=-dev tag --sort=-v:refname --list 'v*' | head -1)
     if [ -z "$latest_tag" ]; then
         echo "ERROR: No existing v* tags found — cannot derive next version." >&2
         echo "Pass the version explicitly: ./release.sh 0.1.9" >&2
