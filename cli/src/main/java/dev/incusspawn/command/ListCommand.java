@@ -557,6 +557,7 @@ public class ListCommand extends BaseCommand {
         // per-template deltas from stamped rfer); fall back to the shared-base fold when any built
         // template predates the stamp or the pool isn't btrfs.
         refreshPoolUsage();
+        fillMissingReferencedSizes();
         if (canUseReferencedModel()) {
             applyReferencedTemplateDeltas();
         } else {
@@ -626,8 +627,7 @@ public class ListCommand extends BaseCommand {
         for (int i = 0; i < templateEntries.size(); i++) {
             var t = templateEntries.get(i);
             if (t.diskUsage() < 0) continue;                            // not built — no subvolume yet
-            var p = t.parent();
-            if (p != null && !p.isEmpty() && !"-".equals(p)) continue;  // derived — not a root
+            if (!t.isRoot()) continue;                                  // derived — not a root
             if (rootIdx >= 0) return;                                   // ambiguous: >1 root, don't guess
             rootIdx = i;
         }
@@ -671,9 +671,12 @@ public class ListCommand extends BaseCommand {
         boolean rootAmbiguous = false;
         for (int i = 0; i < templateEntries.size(); i++) {
             var t = templateEntries.get(i);
-            if (t.referencedBytes() < 0) continue;                      // not built / not stamped
+            // Unstamped: either not built, or a built derived template whose stamp is missing (e.g. a
+            // transient btrfs read failure at build time). Leave its diskUsage on the exclusive value
+            // set at load — a per-row fallback, rather than dropping the whole model to the fold.
+            if (t.referencedBytes() < 0) continue;
             var p = t.parent();
-            boolean isRoot = p == null || p.isEmpty() || "-".equals(p);
+            boolean isRoot = t.isRoot();
             if (isRoot) {
                 if (rootName != null) rootAmbiguous = true;
                 rootName = t.name();
@@ -698,7 +701,7 @@ public class ListCommand extends BaseCommand {
                                            Map<String, String> defParentOf) {
         var seen = new java.util.HashSet<String>();
         String name = parent;
-        while (name != null && !name.isEmpty() && !"-".equals(name) && seen.add(name)) {
+        while (!isRootParent(name) && seen.add(name)) {
             Long r = rferOf.get(name);
             if (r != null) return r;                    // present and stamped
             name = defParentOf.get(name);               // deleted -> climb toward the base
@@ -706,24 +709,90 @@ public class ListCommand extends BaseCommand {
         return null;
     }
 
-    /**
-     * Whether the referenced-size (rfer) model can be used this refresh: a btrfs CoW pool, and every
-     * <em>built</em> template carries the {@link Metadata#DISK_REFERENCED} stamp. All-or-nothing so
-     * the display stays coherent — mixing rfer deltas with the fold's global redistribution would
-     * not. Templates built before this feature lack the stamp, so an install shows the fold fallback
-     * until its templates are rebuilt (cache-only, no backfill).
-     */
+    /** Whether {@code parent} is the "no template parent" sentinel (null, empty, or "-"). */
+    static boolean isRootParent(String parent) {
+        return parent == null || parent.isEmpty() || "-".equals(parent);
+    }
+
     private boolean canUseReferencedModel() {
         // usagePoolIsBtrfs already implies a named CoW pool (it's set from probe.isBtrfs()).
-        if (!usagePoolIsBtrfs) return false;
-        boolean anyBuilt = false;
-        for (var t : templateEntries) {
-            boolean built = !"not built".equals(t.buildStatus());
-            if (!built) continue;
-            anyBuilt = true;
-            if (t.referencedBytes() < 0) return false;                 // a built template is missing its stamp
+        return canUseReferencedModel(usagePoolIsBtrfs, templateEntries);
+    }
+
+    /**
+     * Whether the referenced-size (rfer) model can be used this refresh. Requires a btrfs CoW pool
+     * and that every built <em>root</em> template (no template parent) carries the
+     * {@link Metadata#DISK_REFERENCED} stamp — the root is where the base-image weight lands, so
+     * without its rfer the base can't be attributed and the shared-base fold is the better model.
+     *
+     * <p>A built <em>derived</em> template that lacks a stamp is deliberately <em>not</em>
+     * disqualifying: {@link #applyReferencedTemplateDeltas} leaves each such row on its exclusive
+     * usage, so one missing stamp degrades that single row instead of collapsing the whole display
+     * to the fold. (This matters because a transient btrfs read failure at build time can drop a
+     * lone stamp; the old all-or-nothing gate turned that into every template reading ~0.) A missing
+     * stamp (pre-feature install, or a build whose stamp failed) is backfilled live before this gate
+     * runs — see {@link #fillMissingReferencedSizes}.
+     */
+    static boolean canUseReferencedModel(boolean poolIsBtrfs, java.util.List<TemplateInfo> templates) {
+        if (!poolIsBtrfs) return false;
+        boolean anyBuiltRoot = false;
+        for (var t : templates) {
+            if (!t.isBuilt()) continue;
+            if (!t.isRoot()) continue;
+            anyBuiltRoot = true;
+            if (t.referencedBytes() < 0) return false;                 // base weight would be lost — use the fold
         }
-        return anyBuilt;
+        return anyBuiltRoot;
+    }
+
+    /**
+     * Backfill any built template that's missing its {@link Metadata#DISK_REFERENCED} stamp with a
+     * single <em>live</em> btrfs read, so the referenced-delta model still applies to that row (and,
+     * if the missing one is the root, to the whole panel) instead of falling back to the shared-base
+     * fold. This heals both pre-feature templates (built before rfer stamping) and the rare build
+     * whose stamp failed to record — with no rebuild required.
+     *
+     * <p>Deliberately lazy and light, to honour the "privileged read is rare, not per-refresh"
+     * posture: it runs the probe <em>only</em> when there is an actual gap (an unstamped built
+     * template), and uses the non-sync flavour ({@link dev.incusspawn.incus.BtrfsUsage#probe(String,
+     * boolean)} with {@code sync=false}) — no forced filesystem commit, cheap enough for a refresh
+     * cadence. An existing stamp is never overwritten (templates are immutable, so the stamp is
+     * authoritative and free), and the overlay is in-memory only (a rebuild re-stamps permanently).
+     * If the read is unavailable (dir pool, no sudoers rule, agent down) the gap stays and the fold
+     * fallback handles it.
+     */
+    private void fillMissingReferencedSizes() {
+        if (!usagePoolIsBtrfs || usagePoolName == null) return;
+        if (!hasUnstampedBuiltTemplate(templateEntries)) return;       // no gap — skip the probe entirely
+        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);   // non-sync: light enough for refresh
+        if (live.isEmpty()) return;
+        templateEntries = fillMissingReferenced(templateEntries, live);
+    }
+
+    /** Whether any built template lacks a stamped referenced size — the trigger for a live backfill. */
+    static boolean hasUnstampedBuiltTemplate(java.util.List<TemplateInfo> templates) {
+        for (var t : templates) {
+            if (t.isBuilt() && t.referencedBytes() < 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Return {@code templates} with each built-but-unstamped row's referenced size filled from
+     * {@code live} (a name→rfer map). Existing stamps and not-built rows are left untouched; a name
+     * absent from {@code live} or mapped to a non-positive value is skipped (keeps it unstamped, so
+     * it degrades per-row rather than showing a bogus size).
+     */
+    static java.util.List<TemplateInfo> fillMissingReferenced(java.util.List<TemplateInfo> templates,
+                                                              java.util.Map<String, Long> live) {
+        var out = new java.util.ArrayList<>(templates);
+        for (int i = 0; i < out.size(); i++) {
+            var t = out.get(i);
+            if (!t.isBuilt() || t.referencedBytes() >= 0) continue;
+            var r = live.get(t.name());
+            if (r != null && r > 0) out.set(i, t.withReferencedBytes(r));
+        }
+        return out;
     }
 
     // --- Event handling ---
@@ -4635,14 +4704,33 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private record TemplateInfo(String name, String description,
+    // Package-private so canUseReferencedModel(...) can be unit-tested with hand-built rows.
+    record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
                                 String definitionSha, String pendingOp, String parent, long diskUsage,
                                 long referencedBytes) {
+        static final String NOT_BUILT = "not built";
+
+        /** Whether this template has been built (has a subvolume/stamp), vs. definition-only. */
+        boolean isBuilt() {
+            return !NOT_BUILT.equals(buildStatus);
+        }
+
+        /** Whether this is a definitional root (no template parent) — where the base weight lands. */
+        boolean isRoot() {
+            return isRootParent(parent);
+        }
+
         /** Copy with a substituted disk weight — used by the two disk-attribution models. */
         TemplateInfo withDiskUsage(long newDiskUsage) {
             return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
                     definitionSha, pendingOp, parent, newDiskUsage, referencedBytes);
+        }
+
+        /** Copy with a substituted referenced size — used to backfill a missing stamp live. */
+        TemplateInfo withReferencedBytes(long newReferencedBytes) {
+            return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
+                    definitionSha, pendingOp, parent, diskUsage, newReferencedBytes);
         }
     }
 

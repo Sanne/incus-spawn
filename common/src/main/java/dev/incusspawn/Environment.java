@@ -42,7 +42,10 @@ public final class Environment {
 
     // v4: install a scoped NOPASSWD sudoers rule (Linux) so the non-root TUI can read btrfs
     // referenced sizes for per-template disk accounting (see InitCommand.configureBtrfsUsageAccess).
-    public static final int INIT_VERSION = 4;
+    // v5: the btrfs qgroup read now has a --sync flavour (for the accuracy-critical read after a
+    // build) alongside the plain one (for periodic sampling); the pinned sudoers rule gained the
+    // extra command form, so existing installs must re-run init to rewrite it (else sudo denies it).
+    public static final int INIT_VERSION = 5;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();

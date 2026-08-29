@@ -559,29 +559,56 @@ public class BuildCommand extends BaseCommand {
             throw new BuildFailedException(canonicalName);
         }
 
+        // Measure the just-built template's referenced size BEFORE deleting the previous subvolume.
+        // Deleting a btrfs subvolume marks the pool's qgroup accounting inconsistent, so an rfer read
+        // taken after deleteIfExists (i.e. on every *rebuild*) can come back stale or zero — which
+        // drops the stamp and collapses the TUI's per-template delta model to the fold fallback
+        // (every template ~0, a shrunken base on the root). tempName's rfer is exactly what
+        // canonicalName reports after the rename: rfer is per-subvolume, unaffected by renaming it or
+        // by deleting a sibling subvolume.
+        long referenced = probeReferencedSize(tempName);
+
         incus.deleteIfExists(canonicalName);
         incus.rename(tempName, canonicalName);
         activeBuild = null;
 
-        stampReferencedSize(canonicalName);
+        stampReferencedSize(canonicalName, referenced);
     }
 
     /**
-     * Record the just-built template's btrfs referenced (rfer) size as metadata. Templates are
-     * immutable and rfer is stable, so this one-time measurement stays correct and lets the TUI show
-     * each template as a delta from its parent without shelling out to btrfs on every refresh (see
-     * {@link dev.incusspawn.incus.BtrfsUsage}). Best-effort and btrfs-only: on any failure the stamp
-     * is simply absent and the TUI falls back to exclusive-usage display. Must run after the rename
-     * to the canonical name (the subvolume path btrfs reports) and after the instance is stopped.
+     * The just-built template's btrfs referenced (rfer) size, or -1 when it can't be read (non-btrfs
+     * pool, quota off, btrfs unreachable). Measure this against {@code name} while it still exists as
+     * the freshly-built subvolume — <em>before</em> any {@code deleteIfExists}/{@code rename}, since a
+     * subvolume delete marks qgroup accounting inconsistent and would poison a later read. The read
+     * forces a filesystem sync (see {@link dev.incusspawn.incus.BtrfsUsage}) so the final, otherwise
+     * uncommitted, build writes are accounted for.
      */
-    private void stampReferencedSize(String canonicalName) {
+    private long probeReferencedSize(String name) {
         try {
             var probe = incus.probeCowPool();
-            if (probe.poolName() == null || !probe.isBtrfs()) return;
-            var rfer = dev.incusspawn.incus.BtrfsUsage.probe(probe.poolName()).get(canonicalName);
-            if (rfer != null && rfer > 0) {
-                incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(rfer));
-            }
+            if (probe.poolName() == null || !probe.isBtrfs()) return -1;
+            // sync=true: force a commit so the build's final (otherwise uncommitted) writes are
+            // accounted. This is the rare accuracy-critical read; sampling uses the plain flavour.
+            var rfer = dev.incusspawn.incus.BtrfsUsage.probe(probe.poolName(), true).get(name);
+            return rfer == null ? -1 : rfer;
+        } catch (Exception ignored) {
+            // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
+            return -1;
+        }
+    }
+
+    /**
+     * Record a template's btrfs referenced (rfer) size as metadata. Templates are immutable and rfer
+     * is stable, so this one-time measurement stays correct and lets the TUI show each template as a
+     * delta from its parent without shelling out to btrfs on every refresh (see
+     * {@link dev.incusspawn.incus.BtrfsUsage}). Best-effort: a non-positive/absent size (see
+     * {@link #probeReferencedSize}) is simply not stamped and the TUI falls back to exclusive-usage
+     * display. Must run after the rename to the canonical name (the subvolume path btrfs reports).
+     */
+    private void stampReferencedSize(String canonicalName, long referenced) {
+        if (referenced <= 0) return;
+        try {
+            incus.configSet(canonicalName, Metadata.DISK_REFERENCED, String.valueOf(referenced));
         } catch (Exception ignored) {
             // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
         }

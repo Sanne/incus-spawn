@@ -85,9 +85,13 @@ public final class VmAgentClient {
      * where the pool lives and only the root agent can read it. The reply concatenates both command
      * outputs separated by {@code BtrfsUsage.AGENT_SECTION_MARKER}; empty if unavailable. The pool
      * name is validated here and again in the agent before it touches a path.
+     *
+     * <p>{@code sync} appends the allowlisted {@code sync} option so the agent passes {@code --sync}
+     * to {@code qgroup show} (force a commit before reading). Reserve it for the accuracy-critical
+     * read after a build; periodic sampling should pass {@code false}.
      */
-    public static Optional<String> btrfsUsage(String poolName) {
+    public static Optional<String> btrfsUsage(String poolName, boolean sync) {
         if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
-        return send("btrfs-usage " + poolName);
+        return send("btrfs-usage " + poolName + (sync ? " sync" : ""));
     }
 }

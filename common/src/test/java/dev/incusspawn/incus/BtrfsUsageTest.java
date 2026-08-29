@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BtrfsUsageTest {
 
-    // Representative `btrfs qgroup show -re --raw <mount>`: header, top-level, then per-subvolume
+    // Representative `btrfs qgroup show -re --raw --sync <mount>`: header, top-level, then per-subvolume
     // rows. Columns are Qgroupid, Referenced, Exclusive — we want Referenced (the middle column).
     private static final String QGROUP = """
             Qgroupid         Referenced        Exclusive
