@@ -363,9 +363,6 @@ public class CleanCommand extends BaseCommand {
             List<IncusClient.ImageInfo> unusedImages,
             boolean dnfCacheExists
     ) {
-        boolean hasAnything() {
-            return !failedBuilds.isEmpty() || !unusedImages.isEmpty() || dnfCacheExists;
-        }
         long unusedImagesBytes() {
             return unusedImages.stream().mapToLong(IncusClient.ImageInfo::size).sum();
         }

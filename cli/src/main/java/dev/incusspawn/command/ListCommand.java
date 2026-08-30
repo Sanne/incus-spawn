@@ -875,13 +875,11 @@ public class ListCommand extends BaseCommand {
             progressMessage = null;
             if (cleanScan == null) {
                 statusMessage = "No CoW storage pool found.";
-            } else if (!cleanScan.hasAnything()) {
-                statusMessage = "Nothing to clean — no reclaimable artifacts found.";
             } else {
                 cleanBuilds = !cleanScan.failedBuilds().isEmpty();
                 cleanImages = !cleanScan.unusedImages().isEmpty();
                 cleanDnf = false;
-                cleanFieldIndex = 0;
+                cleanFieldIndex = cleanConfirmFirstActionableIndex();
                 mode = Mode.CLEAN_CONFIRM;
             }
             return true;
@@ -2794,17 +2792,24 @@ public class ListCommand extends BaseCommand {
             mode = Mode.BROWSE;
             return true;
         }
+        int actionableCount = cleanConfirmActionableCount();
+        if (actionableCount == 0) {
+            if (key.isKey(KeyCode.ENTER)) {
+                mode = Mode.BROWSE;
+            }
+            return true;
+        }
         if (key.code() == KeyCode.CHAR && key.character() == ' ') {
             var option = cleanConfirmOption(cleanFieldIndex);
             if (option != null) option.run();
             return true;
         }
         if (key.isKey(KeyCode.DOWN) || key.isChar('j') || key.isKey(KeyCode.TAB)) {
-            cleanFieldIndex = (cleanFieldIndex + 1) % cleanConfirmOptionCount();
+            cleanFieldIndex = cleanConfirmNextActionable(cleanFieldIndex, 1);
             return true;
         }
         if (key.isKey(KeyCode.UP) || key.isChar('k') || ShiftTabBindings.isShiftTab(key)) {
-            cleanFieldIndex = (cleanFieldIndex - 1 + cleanConfirmOptionCount()) % cleanConfirmOptionCount();
+            cleanFieldIndex = cleanConfirmNextActionable(cleanFieldIndex, -1);
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
@@ -2834,28 +2839,42 @@ public class ListCommand extends BaseCommand {
         return true;
     }
 
-    private int cleanConfirmOptionCount() {
+    private boolean cleanConfirmIsActionable(int index) {
+        return switch (index) {
+            case 0 -> !cleanScan.failedBuilds().isEmpty();
+            case 1 -> !cleanScan.unusedImages().isEmpty();
+            case 2 -> cleanScan.dnfCacheExists();
+            default -> false;
+        };
+    }
+
+    private int cleanConfirmActionableCount() {
         int count = 0;
-        if (!cleanScan.failedBuilds().isEmpty()) count++;
-        if (!cleanScan.unusedImages().isEmpty()) count++;
-        if (cleanScan.dnfCacheExists()) count++;
+        for (int i = 0; i < 3; i++) if (cleanConfirmIsActionable(i)) count++;
         return count;
     }
 
+    private int cleanConfirmFirstActionableIndex() {
+        for (int i = 0; i < 3; i++) if (cleanConfirmIsActionable(i)) return i;
+        return -1;
+    }
+
+    private int cleanConfirmNextActionable(int current, int direction) {
+        for (int step = 1; step <= 3; step++) {
+            int next = (current + direction * step % 3 + 3) % 3;
+            if (cleanConfirmIsActionable(next)) return next;
+        }
+        return current;
+    }
+
     private Runnable cleanConfirmOption(int index) {
-        int i = 0;
-        if (!cleanScan.failedBuilds().isEmpty()) {
-            if (i == index) return () -> cleanBuilds = !cleanBuilds;
-            i++;
-        }
-        if (!cleanScan.unusedImages().isEmpty()) {
-            if (i == index) return () -> cleanImages = !cleanImages;
-            i++;
-        }
-        if (cleanScan.dnfCacheExists()) {
-            if (i == index) return () -> cleanDnf = !cleanDnf;
-        }
-        return null;
+        if (!cleanConfirmIsActionable(index)) return null;
+        return switch (index) {
+            case 0 -> () -> cleanBuilds = !cleanBuilds;
+            case 1 -> () -> cleanImages = !cleanImages;
+            case 2 -> () -> cleanDnf = !cleanDnf;
+            default -> null;
+        };
     }
 
     private void renderCleanConfirmModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
@@ -2869,23 +2888,41 @@ public class ListCommand extends BaseCommand {
             lines.add(Line.styled("", Style.EMPTY));
         }
 
-        int optionIndex = 0;
         if (!cleanScan.failedBuilds().isEmpty()) {
             var n = cleanScan.failedBuilds().size();
             modal.renderToggleInto(lines, "Failed builds (" + n + ")",
-                    cleanBuilds, cleanFieldIndex == optionIndex);
-            optionIndex++;
+                    cleanBuilds, cleanFieldIndex == 0);
+        } else {
+            modal.renderDisabledLineInto(lines, "Failed builds", "none");
         }
         if (!cleanScan.unusedImages().isEmpty()) {
             var n = cleanScan.unusedImages().size();
             var size = CleanCommand.formatSize(cleanScan.unusedImagesBytes());
             modal.renderToggleInto(lines, "Unused images (" + n + ", ~" + size + ")",
-                    cleanImages, cleanFieldIndex == optionIndex);
-            optionIndex++;
+                    cleanImages, cleanFieldIndex == 1);
+        } else {
+            modal.renderDisabledLineInto(lines, "Unused images", "all match a template");
         }
         if (cleanScan.dnfCacheExists()) {
             modal.renderToggleInto(lines, "DNF build cache",
-                    cleanDnf, cleanFieldIndex == optionIndex);
+                    cleanDnf, cleanFieldIndex == 2);
+        } else {
+            modal.renderDisabledLineInto(lines, "DNF build cache", "no cache volume");
+        }
+
+        boolean nothingActionable = cleanConfirmActionableCount() == 0;
+        if (nothingActionable) {
+            lines.add(Line.styled("", Style.EMPTY));
+            lines.add(Line.styled("  Pool is clean.",
+                    Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())));
+        }
+
+        boolean showResizeHint = Platform.isMacOS() && usage != null
+                && usage.percent() >= STORAGE_WARN_PERCENT;
+        if (showResizeHint) {
+            lines.add(Line.styled("", Style.EMPTY));
+            lines.add(Line.styled("  Tip: isx vm resize can grow the storage pool",
+                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
         }
 
         int width = 54;
@@ -2908,9 +2945,13 @@ public class ListCommand extends BaseCommand {
         frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(1));
 
         var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Space", "Toggle");
-        modal.addKey(hintSpans, "Enter", "Clean");
-        modal.addKey(hintSpans, "Esc", "Cancel");
+        if (nothingActionable) {
+            modal.addKey(hintSpans, "Esc", "Close");
+        } else {
+            modal.addKey(hintSpans, "Space", "Toggle");
+            modal.addKey(hintSpans, "Enter", "Clean");
+            modal.addKey(hintSpans, "Esc", "Cancel");
+        }
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
     }
 

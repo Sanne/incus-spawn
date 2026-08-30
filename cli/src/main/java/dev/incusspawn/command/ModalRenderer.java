@@ -116,6 +116,13 @@ final class ModalRenderer {
                 Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg())))));
     }
 
+    void renderDisabledLineInto(List<Line> lines, String label, String reason) {
+        var dimColor = theme.textDim();
+        lines.add(Line.from(List.of(
+                Span.styled("     ", Style.EMPTY.bg(theme.modalBg())),
+                Span.styled(label + " — " + reason, Style.EMPTY.fg(dimColor).bg(theme.modalBg())))));
+    }
+
     void renderNetworkModeRadio(Frame frame, Rect area,
                                         NetworkMode selected, boolean focused) {
         var spans = new ArrayList<Span>();
