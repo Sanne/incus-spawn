@@ -24,7 +24,13 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
+      # Check out with BOT_TOKEN so the branch push and PR are made by that token
+      # rather than the default GITHUB_TOKEN — this both avoids needing the org
+      # "Actions may create pull requests" setting and lets the resulting PR run CI
+      # (PRs opened by GITHUB_TOKEN are deliberately blocked from triggering workflows).
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
 
       - name: Resolve release + checksums
         id: resolve
@@ -119,7 +125,7 @@ jobs:
       - name: Open pull request
         if: steps.resolve.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.BOT_TOKEN }}
           TAG: ${{ steps.resolve.outputs.tag }}
           CURRENT_TAG: ${{ steps.resolve.outputs.current }}
         run: |
