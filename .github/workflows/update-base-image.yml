@@ -4,10 +4,16 @@ name: Update base image
 # in step with the newest release of the Sanne/incus-spawn-images repo. That tag is
 # the offline fallback used when a build cannot reach the release list; "track latest"
 # resolves the newest release at build time, but this keeps the fallback from drifting.
+#
+# Event-driven (push model): the images repo fires a `base-image-released`
+# repository_dispatch when it publishes a release, carrying the tag and checksums
+# in the payload — so there is nothing to poll or re-derive. The manual
+# `workflow_dispatch` path is a backstop that re-derives the newest release from
+# the images repo's release list (used if a dispatch is ever missed).
 
 on:
-  schedule:
-    - cron: '0 6 * * *'   # daily at 06:00 UTC
+  repository_dispatch:
+    types: [base-image-released]
   workflow_dispatch:
 
 permissions:
@@ -20,93 +26,105 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve newest base image release
-        id: latest
+      - name: Resolve release + checksums
+        id: resolve
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           YAML="common/src/main/resources/images/minimal.yaml"
-
-          # Single source of truth: derive the owning repo from the image_url.
-          IMAGES_REPO="$(yq -r '.image_url' "$YAML" \
-            | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')"
           CURRENT_TAG="$(yq -r '.image_tag' "$YAML")"
-          LATEST_TAG="$(gh api "repos/$IMAGES_REPO/releases" \
-            --jq '[.[] | select(.tag_name | startswith("fedora-"))][0].tag_name')"
 
-          echo "repo=$IMAGES_REPO"       >> "$GITHUB_OUTPUT"
-          echo "current=$CURRENT_TAG"    >> "$GITHUB_OUTPUT"
-          echo "latest=$LATEST_TAG"      >> "$GITHUB_OUTPUT"
-          echo "Current built-in tag: $CURRENT_TAG"
-          echo "Latest release tag:   $LATEST_TAG"
-
-          if [[ -z "$LATEST_TAG" || "$LATEST_TAG" == "null" ]]; then
-            echo "Could not resolve a latest release; skipping."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            # The images repo already computed the tag + checksums; trust the payload.
+            TAG="$(jq -r '.tag' <<<"$PAYLOAD")"
+            C_X86="$(jq -r '.sha256.container.x86_64' <<<"$PAYLOAD")"
+            C_ARM="$(jq -r '.sha256.container.aarch64' <<<"$PAYLOAD")"
+            V_X86="$(jq -r '.sha256.vm.x86_64' <<<"$PAYLOAD")"
+            V_ARM="$(jq -r '.sha256.vm.aarch64' <<<"$PAYLOAD")"
+          else
+            # Manual backstop: derive from the images repo's newest release.
+            # Single source of truth: derive the owning repo from the image_url.
+            IMAGES_REPO="$(yq -r '.image_url' "$YAML" \
+              | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')"
+            TAG="$(gh api "repos/$IMAGES_REPO/releases" \
+              --jq '[.[] | select(.tag_name | startswith("fedora-"))][0].tag_name')"
+            SUMS_URL="$(gh api "repos/$IMAGES_REPO/releases/tags/$TAG" \
+              --jq '.assets[] | select(.name == "SHA256SUMS") | .browser_download_url')"
+            if [[ -z "$SUMS_URL" ]]; then
+              echo "Release $TAG has no SHA256SUMS asset; aborting." >&2
+              exit 1
+            fi
+            curl -fsSL "$SUMS_URL" -o SHA256SUMS
+            # <sha>  <filename>; -vm distinguishes the VM disk image from the container rootfs.
+            sha_for() { awk -v f="$1" '$2 == f { print $1 }' SHA256SUMS; }
+            C_X86="$(sha_for "fedora-44-x86_64.tar.xz")"
+            C_ARM="$(sha_for "fedora-44-aarch64.tar.xz")"
+            V_X86="$(sha_for "fedora-44-x86_64-vm.tar.xz")"
+            V_ARM="$(sha_for "fedora-44-aarch64-vm.tar.xz")"
+            rm -f SHA256SUMS
           fi
-          if [[ "$LATEST_TAG" == "$CURRENT_TAG" ]]; then
-            echo "Already current; nothing to do."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Update minimal.yaml
-        if: steps.latest.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGES_REPO: ${{ steps.latest.outputs.repo }}
-          LATEST_TAG: ${{ steps.latest.outputs.latest }}
-        run: |
-          set -euo pipefail
-          YAML="common/src/main/resources/images/minimal.yaml"
-
-          SUMS_URL="$(gh api "repos/$IMAGES_REPO/releases/tags/$LATEST_TAG" \
-            --jq '.assets[] | select(.name == "SHA256SUMS") | .browser_download_url')"
-          if [[ -z "$SUMS_URL" ]]; then
-            echo "Release $LATEST_TAG has no SHA256SUMS asset; aborting." >&2
-            exit 1
-          fi
-          curl -fsSL "$SUMS_URL" -o SHA256SUMS
-
-          # <sha>  <filename>; -vm distinguishes the VM disk image from the container rootfs.
-          sha_for() { awk -v f="$1" '$2 == f { print $1 }' SHA256SUMS; }
-          C_X86="$(sha_for "fedora-44-x86_64.tar.xz")"
-          C_ARM="$(sha_for "fedora-44-aarch64.tar.xz")"
-          V_X86="$(sha_for "fedora-44-x86_64-vm.tar.xz")"
-          V_ARM="$(sha_for "fedora-44-aarch64-vm.tar.xz")"
-
-          for pair in "container/x86_64:$C_X86" "container/aarch64:$C_ARM" \
+          for pair in "tag:$TAG" \
+                      "container/x86_64:$C_X86" "container/aarch64:$C_ARM" \
                       "vm/x86_64:$V_X86" "vm/aarch64:$V_ARM"; do
-            if [[ -z "${pair#*:}" ]]; then
-              echo "Missing checksum for ${pair%%:*} in $LATEST_TAG; aborting." >&2
+            val="${pair#*:}"
+            if [[ -z "$val" || "$val" == "null" ]]; then
+              echo "Missing ${pair%%:*} in resolved release; aborting." >&2
               exit 1
             fi
           done
 
+          {
+            echo "tag=$TAG"
+            echo "current=$CURRENT_TAG"
+            echo "c_x86=$C_X86"
+            echo "c_arm=$C_ARM"
+            echo "v_x86=$V_X86"
+            echo "v_arm=$V_ARM"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Current built-in tag: $CURRENT_TAG"
+          echo "Incoming release tag: $TAG"
+          if [[ "$TAG" == "$CURRENT_TAG" ]]; then
+            echo "Already current; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update minimal.yaml
+        if: steps.resolve.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+          C_X86: ${{ steps.resolve.outputs.c_x86 }}
+          C_ARM: ${{ steps.resolve.outputs.c_arm }}
+          V_X86: ${{ steps.resolve.outputs.v_x86 }}
+          V_ARM: ${{ steps.resolve.outputs.v_arm }}
+        run: |
+          set -euo pipefail
+          YAML="common/src/main/resources/images/minimal.yaml"
           yq -i "
-            .image_tag = \"$LATEST_TAG\" |
+            .image_tag = \"$TAG\" |
             .image_sha256.x86_64 = \"$C_X86\" |
             .image_sha256.aarch64 = \"$C_ARM\" |
             .vm_image_sha256.x86_64 = \"$V_X86\" |
             .vm_image_sha256.aarch64 = \"$V_ARM\"
           " "$YAML"
-
-          rm -f SHA256SUMS
-          echo "Updated $YAML to $LATEST_TAG"
+          echo "Updated $YAML to $TAG"
           git diff -- "$YAML"
 
       - name: Open pull request
-        if: steps.latest.outputs.changed == 'true'
+        if: steps.resolve.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_TAG: ${{ steps.latest.outputs.latest }}
-          CURRENT_TAG: ${{ steps.latest.outputs.current }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          CURRENT_TAG: ${{ steps.resolve.outputs.current }}
         run: |
           set -euo pipefail
-          BRANCH="bot/update-base-image-$LATEST_TAG"
+          BRANCH="bot/update-base-image-$TAG"
 
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Branch $BRANCH already exists; a PR is likely already open. Skipping."
@@ -117,12 +135,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           git add common/src/main/resources/images/minimal.yaml
-          git commit -m "Update base image to $LATEST_TAG"
+          git commit -m "Update base image to $TAG"
           git push -u origin "$BRANCH"
 
           gh pr create \
-            --title "Update base image to $LATEST_TAG" \
-            --body "Bumps the built-in base-image fallback from \`$CURRENT_TAG\` to \`$LATEST_TAG\` (newest release of Sanne/incus-spawn-images), refreshing the container and VM checksums.
+            --title "Update base image to $TAG" \
+            --body "Bumps the built-in base-image fallback from \`$CURRENT_TAG\` to \`$TAG\` (newest release of Sanne/incus-spawn-images), refreshing the container and VM checksums.
 
           Builds already track the latest release at build time when unpinned; this keeps the offline fallback current." \
             --base main \

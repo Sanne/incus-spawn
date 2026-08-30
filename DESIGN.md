@@ -94,10 +94,14 @@ owning repo is parsed from the definition's `image_url` — the YAML is the sing
 source of truth, and a non-GitHub URL is simply not tracked) and swaps
 in its tag + per-arch container/VM checksums, so a plain `isx build tpl-minimal`
 always installs the latest base image. Any failure to reach or read the release
-list leaves the built-in tag in place and the build proceeds. A scheduled CI job
-(`.github/workflows/update-base-image.yml`) keeps that built-in fallback from
+list leaves the built-in tag in place and the build proceeds. An event-driven CI
+job (`.github/workflows/update-base-image.yml`) keeps that built-in fallback from
 drifting by opening a PR to bump it whenever the images repo publishes a newer
-release.
+release: `Sanne/incus-spawn-images` fires a `base-image-released`
+`repository_dispatch` (carrying the new tag and the container/VM checksums it just
+computed), so this repo neither polls nor re-parses `SHA256SUMS`. A manual
+`workflow_dispatch` re-derives the newest release from the images repo's release
+list as a backstop if a dispatch is ever missed.
 
 `isx update-base` manages the pin: it fetches the release list from the GitHub
 API, retrieves per-architecture container **and VM** SHA256 checksums, and writes
