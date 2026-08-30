@@ -70,7 +70,7 @@ public class UpdateAllCommand extends BaseCommand {
         }
         if (repos.isEmpty()) return;
 
-        HostRepoRefresh.refresh(repos, config, false, false, System.out::println);
+        HostRepoRefresh.refresh(repos, config, false, System.out::println);
     }
 
     private void updateImage(dev.incusspawn.incus.IncusClient incus, String name) {
