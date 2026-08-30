@@ -1478,9 +1478,11 @@ public class BuildCommand extends BaseCommand {
             return;
         }
 
-        BuildOutput.step("Installing " + allPackages.size() + " packages (" +
-                (totalCount - allPackages.size()) + " already installed): " +
-                String.join(", ", allPackages));
+        var alreadyInstalled = totalCount - allPackages.size();
+        var pkgHeader = "Installing " + allPackages.size() + " packages"
+                + (alreadyInstalled > 0 ? " (" + alreadyInstalled + " already installed)" : "")
+                + ":";
+        BuildOutput.stepWithList(pkgHeader, allPackages);
         var rest = new ArrayList<String>(List.of("install", "-y"));
         rest.addAll(allPackages);
         // Label carries no count: the println above states the requested packages, while
@@ -1549,8 +1551,8 @@ public class BuildCommand extends BaseCommand {
         var installable = tools.stream().filter(t -> !t.reconfigureOnly()).toList();
         if (!installable.isEmpty()) {
             var names = installable.stream().map(ResolvedTool::name).toList();
-            BuildOutput.step("Setting up " + names.size() + " tool"
-                    + (names.size() == 1 ? "" : "s") + ": " + String.join(", ", names));
+            BuildOutput.stepWithList("Setting up " + names.size() + " tool"
+                    + (names.size() == 1 ? "" : "s") + ":", names);
         }
 
         for (var resolved : tools) {
@@ -2133,21 +2135,28 @@ public class BuildCommand extends BaseCommand {
         if (skillSources.isEmpty()) return;
 
         var repo = imageDef.getSkills().getRepo();
+
+        var resolvedNames = new ArrayList<String>(skillSources.size());
+        for (var entry : skillSources) {
+            try {
+                resolvedNames.add(resolveSkillSource(entry, repo));
+            } catch (IllegalArgumentException e) {
+                System.err.println("Error: " + e.getMessage());
+                System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in your image definition.");
+                throw new BuildFailedException();
+            }
+        }
+
+        BuildOutput.stepWithList("Installing " + resolvedNames.size() + " skill"
+                + (resolvedNames.size() == 1 ? "" : "s") + ":", resolvedNames);
+
         var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL).build();
         var cache = new dev.incusspawn.tool.SkillsCache();
 
         container.exec("mkdir", "-p", SKILLS_DIR);
 
-        for (var entry : skillSources) {
-            String resolved;
-            try {
-                resolved = resolveSkillSource(entry, repo);
-            } catch (IllegalArgumentException e) {
-                System.err.println("Error: " + e.getMessage());
-                System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in your image definition.");
-                throw new BuildFailedException();
-            }
+        for (var resolved : resolvedNames) {
             BuildOutput.stepStart("Installing skill: " + resolved + "...");
             try {
                 var skills = fetchSkills(resolved, http, cache);

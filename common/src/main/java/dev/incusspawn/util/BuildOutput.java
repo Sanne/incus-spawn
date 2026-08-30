@@ -1,5 +1,8 @@
 package dev.incusspawn.util;
 
+import java.util.Collection;
+import java.util.Iterator;
+
 /**
  * Shared terminal output helpers for build and branch operations.
  *
@@ -12,6 +15,8 @@ package dev.incusspawn.util;
 public final class BuildOutput {
 
     private BuildOutput() {}
+
+    private static final String LIST_INDENT = "      ";
 
     private static final String BOLD = "[1m";
     private static final String DIM  = "[2m";
@@ -31,6 +36,34 @@ public final class BuildOutput {
     /** Print a complete indented step line. */
     public static void step(String msg) {
         System.out.println(STEP_INDENT + msg);
+    }
+
+    /**
+     * Print a header line followed by a comma-separated list of items that wraps
+     * at the terminal width with a hanging indent (6 spaces).
+     */
+    public static void stepWithList(String header, Collection<String> items) {
+        step(header);
+        int width = TerminalProgress.terminalWidth();
+        var sb = new StringBuilder(LIST_INDENT);
+        int col = LIST_INDENT.length();
+        Iterator<String> it = items.iterator();
+        while (it.hasNext()) {
+            var item = it.next();
+            var suffix = it.hasNext() ? ", " : "";
+            var chunk = item + suffix;
+            if (col + chunk.length() > width && col > LIST_INDENT.length()) {
+                System.out.println(sb);
+                sb.setLength(0);
+                sb.append(LIST_INDENT);
+                col = LIST_INDENT.length();
+            }
+            sb.append(chunk);
+            col += chunk.length();
+        }
+        if (col > LIST_INDENT.length()) {
+            System.out.println(sb);
+        }
     }
 
     /** Start a slow step — prints an incomplete line (no newline). Call {@link #stepDone} when finished. */
@@ -108,8 +141,9 @@ public final class BuildOutput {
                 + " " + DIM + "← " + source + RESET);
     }
 
-    /** Print an indented dim note (informational, not a warning). */
+    /** Print an indented dim note (informational, not a warning). Blank messages are skipped. */
     public static void note(String msg) {
+        if (msg == null || msg.isBlank()) return;
         System.out.println(STEP_INDENT + DIM + msg + RESET);
     }
 
