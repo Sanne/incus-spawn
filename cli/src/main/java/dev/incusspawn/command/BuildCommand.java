@@ -59,6 +59,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.Consumer;
@@ -130,6 +132,8 @@ public class BuildCommand extends BaseCommand {
 
     private volatile String[] activeBuild;
 
+    private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
+
     /** Root defs whose latest base image was already resolved this invocation (avoids re-fetching). */
     private final Set<String> resolvedRoots = new HashSet<>();
 
@@ -175,6 +179,11 @@ public class BuildCommand extends BaseCommand {
         }
         var defs = loaded.defs();
 
+        var executor = Executors.newCachedThreadPool(r -> {
+            var t = new Thread(r, "git-refresh");
+            t.setDaemon(true);
+            return t;
+        });
         try {
             if (withParents) {
                 if (name == null) {
@@ -187,7 +196,7 @@ public class BuildCommand extends BaseCommand {
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
                     return CommandResult.valueOf(1);
                 }
-                refreshHostRepos(List.of(imageDef), defs);
+                startHostRepoRefresh(List.of(imageDef), defs, executor);
                 buildWithParents(imageDef, defs);
                 return CommandResult.SUCCESS;
             }
@@ -202,22 +211,22 @@ public class BuildCommand extends BaseCommand {
                     System.err.println("Available images: " + String.join(", ", defs.keySet()));
                     return CommandResult.valueOf(1);
                 }
-                refreshHostRepos(List.of(imageDef), defs);
+                startHostRepoRefresh(List.of(imageDef), defs, executor);
                 buildWithDescendants(imageDef, defs);
                 return CommandResult.SUCCESS;
             }
             if (missing) {
-                refreshHostRepos(new ArrayList<>(defs.values()), defs);
+                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
                 buildMissing(defs);
                 return CommandResult.SUCCESS;
             }
             if (outOfSync) {
-                refreshHostRepos(new ArrayList<>(defs.values()), defs);
+                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
                 buildAll(defs, true);
                 return CommandResult.SUCCESS;
             }
             if (all) {
-                refreshHostRepos(new ArrayList<>(defs.values()), defs);
+                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
                 buildAll(defs, false);
                 return CommandResult.SUCCESS;
             }
@@ -245,23 +254,25 @@ public class BuildCommand extends BaseCommand {
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
                 return CommandResult.valueOf(1);
             }
-            refreshHostRepos(List.of(imageDef), defs);
+            startHostRepoRefresh(List.of(imageDef), defs, executor);
             build(imageDef, defs);
             return CommandResult.SUCCESS;
         } catch (BuildFailedException e) {
             return CommandResult.valueOf(1);
+        } finally {
+            executor.shutdownNow();
         }
     }
 
-    private void refreshHostRepos(List<ImageDef> targets, Map<String, ImageDef> defs) {
-        if (skipGitRefresh) return;
+    private void startHostRepoRefresh(List<ImageDef> targets, Map<String, ImageDef> defs,
+                                      ExecutorService executor) {
+        if (skipGitRefresh) {
+            hostRepoRefresh = HostRepoRefresh.AsyncRefresh.COMPLETE;
+            return;
+        }
         var config = SpawnConfig.load();
-        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
-
         var allRepos = HostRepoRefresh.collectAllRepos(targets, defs);
-        if (allRepos.isEmpty()) return;
-
-        HostRepoRefresh.refresh(allRepos, config, true, yes, System.out::println);
+        hostRepoRefresh = HostRepoRefresh.refreshAsync(allRepos, config, true, executor);
     }
 
     /**
@@ -2425,6 +2436,20 @@ public class BuildCommand extends BaseCommand {
      * {@code git fetch} picks up any commits added since the last host refresh.
      */
     void cloneRepos(Container container, ImageDef imageDef, boolean isVm) {
+        if (hostRepoRefresh != null) {
+            if (!hostRepoRefresh.isDone()) {
+                BuildOutput.stepStart("Waiting for host repo refresh");
+                hostRepoRefresh.join();
+                BuildOutput.stepDone();
+            } else {
+                hostRepoRefresh.join();
+            }
+            for (var w : hostRepoRefresh.warnings()) {
+                BuildOutput.note(w);
+            }
+            hostRepoRefresh = null;
+        }
+
         var repos = imageDef.getRepos();
         if (repos.isEmpty()) return;
 
