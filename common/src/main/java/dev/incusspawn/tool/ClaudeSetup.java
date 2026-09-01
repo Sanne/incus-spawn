@@ -116,9 +116,15 @@ public class ClaudeSetup implements ToolSetup {
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
+        linkSkillsDir(c);
         var claude = SpawnConfig.load().getClaude();
         syncGcloudStub(c, claude);
         configureSettings(c, claude, resolvedParams);
+    }
+
+    private void linkSkillsDir(Container c) {
+        c.sh("mkdir -p /home/agentuser/.agents/skills /home/agentuser/.claude"
+                + " && ln -sfn /home/agentuser/.agents/skills /home/agentuser/.claude/skills");
     }
 
     @Override

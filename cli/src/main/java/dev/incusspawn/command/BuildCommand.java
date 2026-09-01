@@ -2133,11 +2133,14 @@ public class BuildCommand extends BaseCommand {
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
     }
 
-    /** Global skills directory for Claude Code inside the container. */
-    private static final String SKILLS_DIR = "/home/agentuser/.claude/skills";
+    /** Agent home directory inside the container, shared across agents. */
+    private static final String AGENTS_DIR = "/home/agentuser/.agents";
+
+    /** Global skills directory inside the container, shared across agents. */
+    private static final String SKILLS_DIR = AGENTS_DIR + "/skills";
 
     /**
-     * Install Claude Code skills declared in the image definition.
+     * Install agent skills declared in the image definition.
      * Fetches SKILL.md files on the host and writes them directly into the container.
      * Deduplicates against skills already declared by ancestor images.
      */
@@ -2183,9 +2186,8 @@ public class BuildCommand extends BaseCommand {
                 throw new BuildFailedException();
             }
         }
-
-        // Fix ownership so agentuser owns the skills directory
-        container.exec("chown", "-R", "agentuser:agentuser", SKILLS_DIR);
+        // Fix ownership so agentuser owns the agents / skills directories
+        container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
     }
 
     /** A fetched skill ready to be written into the container. */
