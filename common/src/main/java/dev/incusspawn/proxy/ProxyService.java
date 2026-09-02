@@ -218,6 +218,25 @@ public final class ProxyService {
         return false;
     }
 
+    /**
+     * Start the proxy through the service manager when it is installed but not
+     * currently active. Returns true if the service is running afterward.
+     */
+    public static boolean startService() {
+        if (!isInstalled()) return false;
+        if (isActive()) return true;
+
+        if (Platform.isMacOS()) {
+            var uid = getUid();
+            runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
+            runQuiet("launchctl", "kickstart", "gui/" + uid + "/" + PROXY_LABEL);
+        } else {
+            runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
+            runQuiet("systemctl", "--user", "start", SERVICE_NAME);
+        }
+        return isActive();
+    }
+
     public static void stop() {
         if (isActive()) {
             System.out.println("Stopping proxy service...");

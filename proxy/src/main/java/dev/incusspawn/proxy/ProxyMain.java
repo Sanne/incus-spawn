@@ -137,8 +137,23 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
 
+        var configWatcher = new ConfigWatcher(
+                dev.incusspawn.config.SpawnConfig.configDir(), proxy::reload);
+        configWatcher.start();
+        ProxyLog.info("Config watcher started");
+
+        try {
+            sun.misc.Signal.handle(new sun.misc.Signal("HUP"), signal -> {
+                System.out.println("Received SIGHUP, reloading configuration...");
+                proxy.reload();
+            });
+        } catch (Exception e) {
+            ProxyLog.info("SIGHUP handler not available: " + e.getMessage());
+        }
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("\nStopping proxy...");
+            configWatcher.stop();
             var forceExit = new Thread(() -> {
                 try { Thread.sleep(10000); } catch (InterruptedException e) { return; }
                 System.err.println("Proxy shutdown exceeded 10 seconds, forcing exit.");

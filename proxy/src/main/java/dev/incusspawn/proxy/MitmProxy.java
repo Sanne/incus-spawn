@@ -120,7 +120,7 @@ public class MitmProxy {
     private final String bindAddress;
     private final int mitmPort;
     private final int healthPort;
-    private final ProxyCredentials credentials;
+    private volatile ProxyCredentials credentials;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -210,28 +210,18 @@ public class MitmProxy {
     // --- Lifecycle ---
 
     /**
-     * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
-     *
-     * @param onReady called after both servers are listening, before blocking on the stop latch.
-     *                Use this to enable DNS overrides so they are never visible without a healthy proxy.
+     * Build a JKS keystore buffer containing per-domain leaf certs signed by the
+     * current CA. Reuses persisted certs when they are still valid; re-mints against
+     * the new CA on rotation. Also updates {@link #caFingerprint}.
      */
-    public void start(Runnable onReady) throws Exception {
-        stopLatch = new CountDownLatch(1);
-
+    private Buffer buildKeyStoreBuffer() throws Exception {
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
 
-        // Build JKS keystore with per-domain certs (alias = domain name for SNI).
-        // Also generate wildcard certs (*.domain) so subdomains resolved via
-        // dnsmasq address= overrides get a valid cert (e.g. cdn01.quay.io).
         var allDomains = ProxyConfig.interceptedDomains().stream()
                 .sorted()
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
-        // Reuse persisted leaf certs across restarts so their notBefore stays
-        // stable (minted while clocks were in sync); only mint on miss/expiry/CA
-        // rotation. See CertStore for why per-start re-minting broke validation
-        // on hosts whose container clock lags (e.g. macOS VM after resume).
         var certStore = new CertStore(ca);
         var certs = allDomains.parallelStream()
                 .map(domain -> java.util.Map.entry(domain, certStore.get(domain)))
@@ -247,7 +237,55 @@ public class MitmProxy {
         }
         var baos = new ByteArrayOutputStream();
         keyStore.store(baos, "changeit".toCharArray());
-        var jksBuffer = Buffer.buffer(baos.toByteArray());
+        return Buffer.buffer(baos.toByteArray());
+    }
+
+    /**
+     * Reload configuration and certificates from disk. Re-reads {@code config.yaml}
+     * for credential changes and re-loads the CA (re-minting leaf certs if the CA key
+     * changed). Thread-safe: in-flight requests complete with the old state; new
+     * connections pick up the new certs and credentials.
+     */
+    public synchronized void reload() {
+        ProxyLog.info("Reloading configuration and certificates");
+        System.out.println("Reloading configuration...");
+        try {
+            var config = dev.incusspawn.config.SpawnConfig.load();
+            credentials = ProxyCredentials.fromConfig(config);
+            invalidateVertexToken();
+            var jksBuffer = buildKeyStoreBuffer();
+            if (mitmServer != null) {
+                var sslOptions = new io.vertx.core.net.SSLOptions()
+                        .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"));
+                mitmServer.updateSSLOptions(sslOptions)
+                        .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            }
+            System.out.println("Configuration reloaded successfully.");
+            ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
+        } catch (Exception e) {
+            System.err.println("Configuration reload failed: " + e.getMessage());
+            e.printStackTrace(System.err);
+            ProxyLog.error("Configuration reload failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
+     *
+     * @param onReady called after both servers are listening, before blocking on the stop latch.
+     *                Use this to enable DNS overrides so they are never visible without a healthy proxy.
+     */
+    public void start(Runnable onReady) throws Exception {
+        stopLatch = new CountDownLatch(1);
+
+        // Build JKS keystore with per-domain certs (alias = domain name for SNI).
+        // Also generate wildcard certs (*.domain) so subdomains resolved via
+        // dnsmasq address= overrides get a valid cert (e.g. cdn01.quay.io).
+        // Reuses persisted leaf certs across restarts so their notBefore stays
+        // stable (minted while clocks were in sync); only mint on miss/expiry/CA
+        // rotation. See CertStore for why per-start re-minting broke validation
+        // on hosts whose container clock lags (e.g. macOS VM after resume).
+        var jksBuffer = buildKeyStoreBuffer();
 
         // MITM TLS server with SNI
         var serverOptions = new HttpServerOptions()
