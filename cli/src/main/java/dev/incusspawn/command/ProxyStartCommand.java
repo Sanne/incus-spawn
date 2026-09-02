@@ -32,6 +32,20 @@ public class ProxyStartCommand extends BaseCommand {
 
     @Override
     protected CommandResult doExecute() throws Exception {
+        if (ProxyService.isInstalled() && !hasNonDefaultOptions()) {
+            if (ProxyService.isActive()) {
+                System.out.println("Proxy is already running (service-managed).");
+                return CommandResult.SUCCESS;
+            }
+            System.out.println("Starting proxy via service manager...");
+            if (ProxyService.startService()) {
+                System.out.println("Proxy service started.");
+                return CommandResult.SUCCESS;
+            }
+            System.err.println("Proxy service failed to start. Check logs with: isx proxy logs");
+            return CommandResult.FAILURE;
+        }
+
         var proxyBin = ProxyService.resolveProxyBinaryPath();
         if (proxyBin == null) {
             System.err.println("Error: could not find 'isx-proxy' binary.");
@@ -53,5 +67,12 @@ public class ProxyStartCommand extends BaseCommand {
         pb.inheritIO();
         var process = pb.start();
         return CommandResult.valueOf(process.waitFor());
+    }
+
+    private boolean hasNonDefaultOptions() {
+        return port != ProxyConfig.DEFAULT_MITM_PORT
+                || healthPort != ProxyConfig.DEFAULT_HEALTH_PORT
+                || (gatewayIpOption != null && !gatewayIpOption.isBlank())
+                || debug;
     }
 }
