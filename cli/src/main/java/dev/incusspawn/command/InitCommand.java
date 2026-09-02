@@ -1678,7 +1678,7 @@ public class InitCommand extends BaseCommand {
             var host = ProxyConfig.vertexHost(region);
             var url = "https://" + host + "/v1/projects/" + projectId
                     + "/locations/" + region
-                    + "/publishers/anthropic/models/claude-sonnet-4:rawPredict";
+                    + "/publishers/anthropic/models/claude-sonnet-4-6:rawPredict";
             var client = getHttpClient();
             var request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -1690,16 +1690,13 @@ public class InitCommand extends BaseCommand {
             var response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             return switch (response.statusCode()) {
-                case 400 -> new AuthResult(true,
+                case 400, 404 -> new AuthResult(true,
                         "Vertex AI verified (region: " + region + ", project: " + projectId + ").");
                 case 401 -> new AuthResult(false,
                         "Vertex AI authentication failed (HTTP 401). Run: gcloud auth application-default login");
                 case 403 -> new AuthResult(false,
                         "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled\n"
                         + "  for project '" + projectId + "' and your account has the required permissions.");
-                case 404 -> new AuthResult(false,
-                        "Vertex AI endpoint not found (HTTP 404). Check region '" + region
-                        + "' and project '" + projectId + "' are correct.");
                 default -> new AuthResult(false,
                         "Unexpected Vertex AI response (HTTP " + response.statusCode() + ").");
             };
