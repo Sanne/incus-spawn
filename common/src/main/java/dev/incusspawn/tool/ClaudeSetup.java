@@ -124,7 +124,11 @@ public class ClaudeSetup implements ToolSetup {
 
     private void linkSkillsDir(Container c) {
         c.sh("mkdir -p /home/agentuser/.agents/skills /home/agentuser/.claude"
-                + " && ln -sfn /home/agentuser/.agents/skills /home/agentuser/.claude/skills");
+                // Replace a pre-existing .claude/skills directory (from builds before the shared path)
+                + " && if [ -d /home/agentuser/.claude/skills ] && [ ! -L /home/agentuser/.claude/skills ]; then"
+                + " rm -rf /home/agentuser/.claude/skills; fi"
+                + " && ln -sfn /home/agentuser/.agents/skills /home/agentuser/.claude/skills"
+                + " && chown -R agentuser:agentuser /home/agentuser/.agents");
     }
 
     @Override
