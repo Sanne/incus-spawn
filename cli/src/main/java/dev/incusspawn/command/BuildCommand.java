@@ -2188,6 +2188,11 @@ public class BuildCommand extends BaseCommand {
         }
         // Fix ownership so agentuser owns the agents / skills directories
         container.exec("chown", "-R", "agentuser:agentuser", AGENTS_DIR);
+        // Ensure .claude/skills points to the shared location if Claude Code is installed
+        // (handles inherited-claude case where ClaudeSetup.linkSkillsDir didn't run)
+        container.sh("[ ! -d /home/agentuser/.claude ] || [ -L /home/agentuser/.claude/skills ]"
+                + " || { rm -rf /home/agentuser/.claude/skills"
+                + " && ln -sfn " + SKILLS_DIR + " /home/agentuser/.claude/skills; }");
     }
 
     /** A fetched skill ready to be written into the container. */
