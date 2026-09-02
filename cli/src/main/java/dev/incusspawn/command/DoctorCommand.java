@@ -37,7 +37,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
-
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -296,16 +296,46 @@ public class DoctorCommand extends BaseCommand {
     private List<Finding> checkStoragePool() {
         try {
             var incus = RuntimeServices.incus();
-            var pool = incus.findCowPool();
-            if (pool == null) {
-                return List.of(Finding.warn("No CoW storage pool", "(btrfs/zfs/lvm recommended)", null));
+            var pools = incus.listPools();
+            String pool = null;
+            for (var e : pools.entrySet()) {
+                if (IncusClient.isCowDriver(e.getValue())) { pool = e.getKey(); break; }
             }
+            if (pool == null) {
+                var poolDesc = pools.isEmpty() ? "no storage pools configured"
+                        : String.join(", ", pools.entrySet().stream()
+                                .map(e -> "'" + e.getKey() + "' (" + e.getValue() + ")")
+                                .toList());
+                Remediation remediation = null;
+                if (Platform.isLinux()) {
+                    remediation = new Remediation(
+                            "Create a btrfs pool: sudo incus storage create cow btrfs size=100GiB",
+                            false,
+                            () -> {
+                                var r1 = new ProcessBuilder("sudo", "mkdir", "-p", "/var/lib/incus/disks")
+                                        .inheritIO().start().waitFor();
+                                if (r1 != 0) throw new RuntimeException(
+                                        "Failed to create /var/lib/incus/disks directory");
+                                var r2 = new ProcessBuilder("sudo", "incus", "storage", "create",
+                                        "cow", "btrfs", "size=100GiB")
+                                        .inheritIO().start().waitFor();
+                                if (r2 != 0) throw new RuntimeException(
+                                        "Failed to create pool — ensure the 'loop' kernel module is loaded (sudo modprobe loop)");
+                            });
+                }
+                return List.of(Finding.fail("No copy-on-write storage pool",
+                        poolDesc + " — every branch and derived build is a full rsync copy:"
+                                + " minutes instead of seconds, and the template's full size on disk each time",
+                        remediation));
+            }
+            var findings = new ArrayList<Finding>();
+            findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
-                return List.of(Finding.ok("Storage pool " + pool, "(no usage info)"));
+                findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
+                return findings;
             }
             var usageString = formatPoolUsage(pool, usage);
-            var findings = new ArrayList<Finding>();
             findings.add(evaluateStorageUsage(pool, usageString));
             if (usage.percent() > 90) {
                 findings.addAll(analyzePoolUsage(incus, pool, usage));
@@ -314,6 +344,41 @@ public class DoctorCommand extends BaseCommand {
         } catch (Exception e) {
             return List.of(Finding.warn("Storage pool", "(could not check: " + e.getMessage() + ")", null));
         }
+    }
+
+    private List<Finding> checkInstancesOffCowPool(IncusClient incus, String cowPool,
+                                                    Map<String, String> pools) {
+        var instancePools = incus.instanceRootPools();
+        var offPool = classifyOffCowPool(cowPool, pools, instancePools);
+        if (offPool.isEmpty()) return List.of();
+        var findings = new ArrayList<Finding>();
+        for (var entry : offPool.entrySet()) {
+            var poolName = entry.getKey();
+            var driver = pools.getOrDefault(poolName, "unknown");
+            var names = entry.getValue();
+            var listed = names.size() <= 5 ? String.join(", ", names)
+                    : String.join(", ", names.subList(0, 5)) + ", … (" + names.size() + " total)";
+            findings.add(Finding.warn(
+                    names.size() + " instance(s) not on CoW pool '" + cowPool + "'",
+                    "on '" + poolName + "' (" + driver + "): " + listed
+                            + " — branching from these is a full copy;"
+                            + " rebuild templates with 'isx build <name>' or move with 'incus move <name> --storage " + cowPool + "'",
+                    null));
+        }
+        return findings;
+    }
+
+    static Map<String, List<String>> classifyOffCowPool(String cowPool,
+                                                         Map<String, String> pools,
+                                                         Map<String, String> instancePools) {
+        var result = new LinkedHashMap<String, List<String>>();
+        for (var entry : instancePools.entrySet()) {
+            var pool = entry.getValue();
+            if (pool.equals(cowPool)) continue;
+            if (IncusClient.isCowDriver(pools.getOrDefault(pool, ""))) continue;
+            result.computeIfAbsent(pool, k -> new ArrayList<>()).add(entry.getKey());
+        }
+        return result;
     }
 
     static String formatPoolUsage(String poolName, IncusClient.PoolUsage usage) {

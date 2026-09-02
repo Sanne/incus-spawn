@@ -470,6 +470,10 @@ public class IncusClient {
 
     private static final Set<String> COW_DRIVERS = Set.of("btrfs", "zfs", "lvm");
 
+    public static boolean isCowDriver(String driver) {
+        return driver != null && COW_DRIVERS.contains(driver);
+    }
+
     public record CowPoolProbe(boolean listed, String poolName, String driver) {
         /**
          * Whether the found CoW pool is btrfs-backed. Per-subvolume referenced-size accounting (see
@@ -533,6 +537,78 @@ public class IncusClient {
             if (!name.isEmpty()) return name;
         }
         return null;
+    }
+
+    public Map<String, String> listPools() {
+        var resp = http().get("/1.0/storage-pools?recursion=1");
+        if (!resp.isSuccess()) return Map.of();
+        var result = new LinkedHashMap<String, String>();
+        for (var pool : resp.body().path("metadata")) {
+            var name = pool.path("name").asText("");
+            if (!name.isEmpty()) {
+                result.put(name, pool.path("driver").asText(""));
+            }
+        }
+        return result;
+    }
+
+    static String rootDiskPoolFromDevices(JsonNode expandedDevices) {
+        if (expandedDevices == null || expandedDevices.isMissingNode()) return null;
+        for (var it = expandedDevices.fields(); it.hasNext(); ) {
+            var entry = it.next();
+            var dev = entry.getValue();
+            if ("disk".equals(dev.path("type").asText()) && "/".equals(dev.path("path").asText())) {
+                var pool = dev.path("pool").asText("");
+                return pool.isEmpty() ? null : pool;
+            }
+        }
+        return null;
+    }
+
+    public String rootDiskPool(String instance) {
+        var resp = http().get("/1.0/instances/" + instance);
+        if (!resp.isSuccess()) return null;
+        return rootDiskPoolFromDevices(resp.body().path("metadata").path("expanded_devices"));
+    }
+
+    public Map<String, String> instanceRootPools() {
+        var resp = http().get("/1.0/instances?recursion=1");
+        if (!resp.isSuccess()) return Map.of();
+        var result = new LinkedHashMap<String, String>();
+        for (var inst : resp.body().path("metadata")) {
+            var name = inst.path("name").asText("");
+            var pool = rootDiskPoolFromDevices(inst.path("expanded_devices"));
+            if (!name.isEmpty() && pool != null) {
+                result.put(name, pool);
+            }
+        }
+        return result;
+    }
+
+    public record CopyPlan(String sourcePool, String sourceDriver, String targetPool, boolean cow) {
+        public String fullCopyReason() {
+            if (cow) return null;
+            if (sourcePool == null) return "source has no root disk pool";
+            if (targetPool == null) return "no CoW storage pool available (all pools use the 'dir' driver)";
+            return "source is on '" + sourcePool + "' (" + sourceDriver + "), not a CoW pool";
+        }
+    }
+
+    public CopyPlan planCopy(String source) {
+        var sourcePool = rootDiskPool(source);
+        var pools = listPools();
+        var sourceDriver = sourcePool != null ? pools.getOrDefault(sourcePool, "") : null;
+        if (sourcePool != null && isCowDriver(sourceDriver)) {
+            return new CopyPlan(sourcePool, sourceDriver, sourcePool, true);
+        }
+        String cowPool = null;
+        for (var entry : pools.entrySet()) {
+            if (isCowDriver(entry.getValue())) {
+                cowPool = entry.getKey();
+                break;
+            }
+        }
+        return new CopyPlan(sourcePool, sourceDriver, cowPool, false);
     }
 
     /**
@@ -1189,15 +1265,19 @@ public class IncusClient {
 
     /**
      * Copy (clone) an existing container/VM.
-     * Automatically selects the best CoW storage pool if available.
+     * Follows the source instance's pool when it is CoW; otherwise falls back
+     * to the first available CoW pool (or the profile default if none exists).
      */
     public void copy(String source, String target) {
+        copy(source, target, planCopy(source));
+    }
+
+    public void copy(String source, String target, CopyPlan plan) {
         var http = http();
-        var cowPool = findCowPool();
         var body = new LinkedHashMap<String, Object>();
         body.put("name", target);
         body.put("source", Map.of("type", "copy", "source", source));
-        if (cowPool != null) body.put("storage", cowPool);
+        if (plan.targetPool() != null) body.put("storage", plan.targetPool());
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
         if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
     }

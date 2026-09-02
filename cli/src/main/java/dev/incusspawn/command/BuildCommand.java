@@ -848,8 +848,13 @@ public class BuildCommand extends BaseCommand {
         var parentCanonical = imageDef.getParent();
         var effectiveVm = effectiveVm(imageDef);
 
+        var copyPlan = incus.planCopy(parentSource);
+        if (!copyPlan.cow()) {
+            BuildOutput.warn("Deriving will be a full copy, not a CoW clone: "
+                    + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
+        }
         BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
-        incus.copy(parentSource, buildName);
+        incus.copy(parentSource, buildName, copyPlan);
         if (!effectiveVm) {
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");

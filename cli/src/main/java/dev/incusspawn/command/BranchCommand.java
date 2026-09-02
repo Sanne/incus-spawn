@@ -102,8 +102,13 @@ public class BranchCommand extends BaseCommand {
 
         BuildOutput.branchHeader(name, resolvedSource);
 
+        var copyPlan = incus.planCopy(resolvedSource);
+        if (!copyPlan.cow()) {
+            BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
+                    + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
+        }
         BuildOutput.stepStart("Copying from template...");
-        incus.copy(resolvedSource, name);
+        incus.copy(resolvedSource, name, copyPlan);
         BuildOutput.stepDone();
 
         String cpu;

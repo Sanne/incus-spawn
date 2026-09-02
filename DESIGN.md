@@ -520,7 +520,9 @@ user.incus-spawn.host-resources=[...]        # (JSON, when host-resources declar
 
 ### Storage and COW
 
-Copy-on-write storage is essential for efficient branching. `isx init` automatically creates a btrfs storage pool (`cow`) if no CoW-capable pool exists. All instance creation (`launch` and `copy`) auto-detects the best CoW pool and uses it via `--storage`, regardless of what the default Incus profile points to.
+Copy-on-write storage is essential for efficient branching. `isx init` automatically creates a btrfs storage pool (`cow`) if no CoW-capable pool exists. On a CoW-capable pool (btrfs/zfs/lvm), Incus implements a same-pool `type: copy` as a native snapshot (e.g. `btrfs subvolume snapshot`), so copies are instant CoW clones with no data transfer — there is no need to use the Incus snapshot API explicitly. Full copies happen only in two cases: (1) there is no CoW pool at all (the `dir` driver uses rsync), or (2) the source instance's root disk is on a different pool than the copy target, forcing a cross-pool migration path.
+
+`IncusClient.copy()` therefore follows the source instance's pool: if the source's root disk is on a CoW pool, the copy targets that same pool (guaranteeing same-pool CoW); otherwise it falls back to the first available CoW pool or the profile default. `isx branch` and `BuildCommand.buildFromParent()` compute a `CopyPlan` before copying and warn the user when the copy will be a full rsync (with a pointer to `isx doctor` for remediation). `isx doctor` surfaces both failure modes: no CoW pool at all (FAIL with a Linux remediation to create one), and instances whose root disk landed on a non-CoW pool (WARN naming the affected instances and suggesting rebuild or `incus move`).
 
 Supported CoW drivers: **btrfs**, **zfs**, **lvm**. If btrfs pool creation fails during init (e.g. unsupported filesystem), the user is warned and can continue with the `dir` driver, but clones will be full copies.
 
