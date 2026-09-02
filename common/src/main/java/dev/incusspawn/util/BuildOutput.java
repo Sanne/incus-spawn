@@ -141,6 +141,14 @@ public final class BuildOutput {
                 + " " + DIM + "← " + source + RESET);
     }
 
+    private static final String YELLOW = "[33m";
+
+    /** Print a yellow warning line. Blank messages are skipped. */
+    public static void warn(String msg) {
+        if (msg == null || msg.isBlank()) return;
+        System.out.println(STEP_INDENT + YELLOW + "⚠ " + msg + RESET);
+    }
+
     /** Print an indented dim note (informational, not a warning). Blank messages are skipped. */
     public static void note(String msg) {
         if (msg == null || msg.isBlank()) return;

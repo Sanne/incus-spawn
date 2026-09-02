@@ -7,6 +7,7 @@ import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -240,6 +241,51 @@ class DoctorCommandTest {
     void findingsToJsonEmptyListProducesEmptyArray() throws Exception {
         var json = DoctorCommand.findingsToJson(List.of());
         assertEquals("[ ]", json);
+    }
+
+    // ---- Off-CoW-pool instance classification ----
+
+    @Test
+    void allInstancesOnCowPoolProducesNoFinding() {
+        var pools = Map.of("cow", "btrfs", "default", "dir");
+        var instancePools = Map.of("tpl-minimal", "cow", "my-branch", "cow");
+        var result = DoctorCommand.classifyOffCowPool("cow", pools, instancePools);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void instanceOnAnotherCowPoolProducesNoFinding() {
+        var pools = Map.of("cow", "btrfs", "fast", "zfs");
+        var instancePools = Map.of("tpl-minimal", "cow", "my-branch", "fast");
+        var result = DoctorCommand.classifyOffCowPool("cow", pools, instancePools);
+        assertTrue(result.isEmpty(), "instance on another CoW pool should not be flagged");
+    }
+
+    @Test
+    void instanceOnDirPoolIsGroupedAndFlagged() {
+        var pools = Map.of("cow", "btrfs", "default", "dir");
+        var instancePools = Map.of("tpl-minimal", "cow", "stray-1", "default", "stray-2", "default");
+        var result = DoctorCommand.classifyOffCowPool("cow", pools, instancePools);
+        assertEquals(1, result.size());
+        assertTrue(result.containsKey("default"));
+        assertEquals(2, result.get("default").size());
+    }
+
+    @Test
+    void instancesOnMultipleNonCowPoolsGroupedSeparately() {
+        var pools = Map.of("cow", "btrfs", "old", "dir", "tmp", "dir");
+        var instancePools = Map.of("a", "old", "b", "tmp", "c", "cow");
+        var result = DoctorCommand.classifyOffCowPool("cow", pools, instancePools);
+        assertEquals(2, result.size());
+        assertEquals(List.of("a"), result.get("old"));
+        assertEquals(List.of("b"), result.get("tmp"));
+    }
+
+    @Test
+    void emptyInstancePoolsProducesNoFinding() {
+        var pools = Map.of("cow", "btrfs", "default", "dir");
+        var result = DoctorCommand.classifyOffCowPool("cow", pools, Map.of());
+        assertTrue(result.isEmpty(), "no instances means no findings");
     }
 
     // ---- Sanitized config structural redaction ----
