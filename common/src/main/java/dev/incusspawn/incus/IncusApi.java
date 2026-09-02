@@ -625,17 +625,25 @@ class IncusApi {
                     } catch (InterruptedException ignored) {}
                 });
 
+                // Open a dedicated fd for stdin reading so we can close it to
+                // cleanly stop the stdinThread when the PTY session ends.
+                // Using System.in would leave the thread blocked on read()
+                // after the session — it then races with the TUI's input
+                // reader and eats the first keypress.
+                var stdinChannel = java.nio.channels.FileChannel.open(
+                        Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
+                var stdinThread = Thread.ofVirtual().start(() -> {
+                    try {
+                        var buf = java.nio.ByteBuffer.allocate(4096);
+                        while (stdinChannel.read(buf) != -1) {
+                            buf.flip();
+                            ws.sendData(buf.array(), 0, buf.remaining());
+                            buf.clear();
+                        }
+                    } catch (IOException ignored) {}
+                });
                 setRawTerminal();
                 try {
-                    // Thread: System.in → WebSocket (no close frame on EOF to avoid losing output).
-                    var stdinThread = Thread.ofVirtual().start(() -> {
-                        try {
-                            var buf = new byte[4096];
-                            int n;
-                            while ((n = System.in.read(buf)) != -1) ws.sendData(buf, 0, n);
-                        } catch (IOException ignored) {}
-                    });
-
                     // Main: WebSocket → System.out (exits when watcher closes the connection).
                     byte[] payload;
                     while ((payload = ws.readPayload()) != null) {
@@ -645,6 +653,9 @@ class IncusApi {
                 } catch (IOException ignored) {
                     // Connection closed by watcher — normal PTY session end.
                 } finally {
+                    try { stdinChannel.close(); } catch (IOException ignored) {}
+                    stdinThread.interrupt();
+                    try { stdinThread.join(500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                     keepaliveThread.interrupt();
                     resizeThread.interrupt();
                     restoreTerminal();
