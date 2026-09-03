@@ -252,7 +252,15 @@ jobs:
 
           sg incus-admin -c "sudo incus admin init --minimal"
           sudo chown -R "$USER:$USER" ~/.config/incus/
+
+          # Pre-create a small btrfs pool and wire the default profile to it.
+          # On a real machine isx init creates a 100GiB pool (times out on CI)
+          # and ensureDefaultProfile is meant to point the profile at it; the
+          # profile rewire is done explicitly here because ensureDefaultProfile
+          # currently only adds missing devices, it does not change the pool of
+          # an existing root disk.  This reproduces the intended end state.
           sg incus-admin -c "incus storage create cow btrfs size=5GiB"
+          sg incus-admin -c "incus profile device set default root pool=cow"
 
       - name: Enable KVM
         run: |
@@ -335,6 +343,9 @@ jobs:
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+
+      - name: Test CoW branching
+        run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 
       - name: Test container
         run: |
@@ -426,7 +437,11 @@ jobs:
 
           sg incus-admin -c "sudo incus admin init --minimal"
           sudo chown -R "$USER:$USER" ~/.config/incus/
+
+          # Pre-create a small btrfs pool and wire the default profile to it.
+          # See the JVM job's comment for the rationale.
           sg incus-admin -c "incus storage create cow btrfs size=5GiB"
+          sg incus-admin -c "incus profile device set default root pool=cow"
 
       - name: Enable KVM
         run: |
@@ -499,6 +514,9 @@ jobs:
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+
+      - name: Test CoW branching
+        run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 
       - name: Test container
         run: |
