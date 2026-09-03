@@ -1,0 +1,47 @@
+---
+paths:
+  - "cli/src/main/java/dev/incusspawn/command/BuildCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/CleanCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/BranchCommand.java"
+  - "cli/src/main/java/dev/incusspawn/command/UpdateBaseCommand.java"
+  - "cli/src/main/java/dev/incusspawn/baseimage/**"
+  - "common/src/main/java/dev/incusspawn/config/HostResourceSetup.java"
+  - "common/src/main/java/dev/incusspawn/git/**"
+  - "common/src/main/java/dev/incusspawn/incus/**"
+  - "common/src/main/java/dev/incusspawn/util/DownloadCache.java"
+  - "common/src/main/java/dev/incusspawn/util/CpuInfo.java"
+  - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
+  - "common/src/main/resources/images/**"
+---
+
+# Image Hierarchy and Build System
+
+Templates are YAML definitions (`common/src/main/resources/images/`) with optional parent inheritance forming a chain: `tpl-minimal` -> `tpl-dev` -> `tpl-java`. Building an image auto-builds missing parents. Each definition can set `type` (`container`, `vm`, or `kvm`) which inherits through the parent chain via `inheritTypes()` at `ImageDef.loadAll()` time. VM definitions also support `vm_image_url` and `vm_image_sha256` for a pre-baked VM base image.
+
+`BuildCommand` has two build paths:
+- **`buildFromScratch`** (root image, no parent): launches base OS, configures security/DNS/user, installs packages and tools
+- **`buildFromParent`** (derived image): copies parent via CoW, applies only the delta (new packages/tools)
+
+For VMs, `buildFromScratch` applies the entire ancestor chain from YAML definitions -- parent Incus instances are not needed. `buildChain` detects type changes (container->VM) and skips unnecessary parent rebuilds. Container-specific security config (raw.idmap, nesting, setxattr interception) is skipped for VMs. Tool downloads use a mount-and-copy strategy instead of file push (vsock can't handle large pushes). The `--type` CLI flag overrides the definition's type; `effectiveVm()` resolves the effective VM status considering both the flag and definition.
+
+Package deduplication: `BuildCommand` collects all ancestor packages and subtracts them from the install list so derived images only install what's new.
+
+**Base image version tracking**: The root template (`tpl-minimal`) downloads a pre-baked base image from `Sanne/incus-spawn-images`, whose tag/checksums are baked into `minimal.yaml`. That built-in tag is only an **offline fallback**. When the root def is unpinned (`pinned: false`), `BuildCommand.resolveTrackedBaseImage()` (called at the top of `buildFromScratch` on the root def) fetches the newest release at build time via `baseimage/BaseImageReleases` and swaps in its tag + per-arch container/VM checksums, so a plain build always tracks the latest base image; any network/API failure falls back to the built-in tag with a `note()`. `isx update-base` only manages the *pin* -- pinning writes a `pinned: true` user override (`~/.config/incus-spawn/images/minimal.yaml`) with the selected tag and both `image_sha256`+`vm_image_sha256`; `--latest`/menu option 1 just deletes that override to resume build-time tracking (it downloads nothing). `BaseImageReleases.parseSha256Sums()` keys checksums by arch and distinguishes `-vm.tar.xz` from `.tar.xz`. An event-driven CI job (`.github/workflows/update-base-image.yml`) opens a PR to bump the built-in fallback when the images repo publishes a newer release: the images repo (`Sanne/incus-spawn-images`) fires a `base-image-released` `repository_dispatch` carrying the tag + container/VM checksums, so the consumer neither polls nor re-derives them (a manual `workflow_dispatch` backstop re-derives from the release list if a dispatch is missed). This tracking behavior is unrelated to `INIT_VERSION`.
+
+**DNF output and parallelism**: dnf steps render a single animated `TerminalProgress` spinner line instead of flooding the terminal -- so isx's own warnings stay visible. Install/upgrade go through `runDnf`, which **streams** dnf's output through a parser (`onDnfLine` + the `DNF_STEP` regex) rather than echoing it: dnf5's non-TTY output prints one `[N/M] <action> <package>` line per completed step (both the download and transaction phases), so the spinner shows live "N/M -- current package" feedback (`formatDnfLine`). dnf's non-TTY column truncates the version/arch tail off each NEVRA (and it can't be widened -- `COLUMNS`/`terminal_width` are ignored without a TTY, and a PTY only trades the clean per-line format for concurrent ANSI progress-bar redraws), so `shortenNevra` reduces each `name-epoch:ver-rel.arch` to its bare package name for the display detail. Streaming without terminal echo is provided by `Container.execLines` -> `IncusClient.shellExecStreaming` -> `util/LineOutputStream` (UTF-8 line splitter). COPR-enable and VM rootfs-expansion use `runWithSpinner` (captured exec, no live detail -- they're single/short ops); its `runSpinnerWork` wrapper (and `dnfWork`) convert a thrown exception into a recorded `failed` state, because `TerminalProgress` swallows task exceptions -- otherwise the step would stay RUNNING and `finishSpinner` would throw a generic message with no cause. The VM rootfs dependency install goes through `dnfCommand(...)` too; `dnf copr enable`/`dnf clean` run plain `dnf` (the download/cache flags don't apply). Full dnf output is printed to stderr only on failure, after the animated line, via the shared `finishSpinner`. `runDnf` still retries once with `--refresh` on failure (the spinner shows "retrying with --refresh"). dnf has no built-in single-line progress mode -- `-q` would suppress the very lines we parse -- so consuming its native `[N/M]` output is the approach. Shared dnf flags live in `DNF_BASE_OPTS` (built via `dnfCommand(...)`): `keepcache`, `metadata_expire`, `tsflags=nodocs`, and `max_parallel_downloads` (scaled to `CpuInfo.logicalCores()`, capped at dnf's practical max of 20) to speed the download phase; the rpm transaction itself is serial.
+
+# Host Repo Refresh
+
+Before building, `HostRepoRefresh` (`git/HostRepoRefresh.java`) fetches host-side git repos matching image definition repos so local-clone optimization uses current objects. Optionally clones missing repos (persisted via `auto-clone-repos` config). `--skip-git-refresh` bypasses the refresh. `update-all` only fetches.
+
+# Parallel Repo Cloning
+
+`BuildCommand.cloneRepos()` clones a template's declared repos concurrently, bounded to `CpuInfo.highPerfCores()` (`util/CpuInfo.java` -- P-core count via macOS `sysctl`/Linux `cpu_capacity`, else all logical CPUs). `CpuInfo` is the single source of CPU-topology counts: `logicalCores()` (real host count, bypassing the native image's `-R:ActiveProcessorCount` cap; `ResourceLimits.hostProcessorCount()` delegates to it), `performanceCores()` (P/big cores, or 0 when indistinguishable; `VmManager.detectCpus()` uses it), and `highPerfCores()`. When a host-side checkout is available, the clone runs locally from the mounted reference (`git clone --no-hardlinks`) -- this copies pack files directly, avoiding the expensive `git repack` that the old `--reference`/dissociate approach required. After the local clone, the remote URL is fixed to the real origin and a `git fetch` picks up any commits added since the last host refresh (usually nothing, so only ref advertisements travel the network). If a specific branch was requested, it is checked out after the fetch supplies the ref. On any failure the local-clone path is discarded and a normal remote clone runs as fallback. Clones and `prime` commands use captured (non-streamed) exec so parallel output doesn't garble; progress renders via `util/TerminalProgress.java`, the shared animated braille-spinner display also used by `HostRepoRefresh`'s parallel fetch and by `BuildCommand`'s dnf operations. Each repo's `prime` command runs in the same worker as soon as that repo's clone finishes (Cloning -> Priming within one progress line), so priming pipelines with the remaining clones instead of waiting at a barrier. Incus device add/remove (host-reference mounts) must not run concurrently, so they bracket the parallel section in serial phases: mount-all -> clone-and-prime-all-in-parallel -> remove-all. Clone/prime failures are aggregated and abort the build; once any repo fails, workers whose clone finishes afterward skip launching their prime (best-effort fail-fast -- primes already running finish).
+
+# Host Resources
+
+`HostResourceSetup` (`config/HostResourceSetup.java`) handles sharing host files/directories with containers. Three modes: `readonly` (Incus disk device), `overlay` (overlayfs with container-local writable upper layer), `copy` (baked into template). Applied before tools during build so caches are available. Devices are removed from stopped templates and re-attached at branch time from JSON metadata stored in `user.incus-spawn.host-resources`. Overlay mounts persist across reboots via a systemd service inside the container. VM-specific: virtiofs disk devices are mounted asynchronously by the incus-agent, so overlay mounts poll `mountpoint -q` for up to 15s before overlaying. File-level resources (not directories) fall back to `copy` mode on VMs since disk devices only support directories.
+
+# Download Caching
+
+`DownloadCache` handles host-side download caching with SHA256 verification. Archives are downloaded and extracted on the host, then pushed into containers. This avoids needing tar/curl inside containers.
