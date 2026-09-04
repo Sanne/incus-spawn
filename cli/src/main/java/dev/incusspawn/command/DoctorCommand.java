@@ -333,6 +333,7 @@ public class DoctorCommand extends BaseCommand {
                         remediation));
             }
             var findings = new ArrayList<Finding>();
+            findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
@@ -347,6 +348,33 @@ public class DoctorCommand extends BaseCommand {
             return findings;
         } catch (Exception e) {
             return List.of(Finding.warn("Storage pool", "(could not check: " + e.getMessage() + ")", null));
+        }
+    }
+
+    private List<Finding> checkProfilePool(IncusClient incus, String cowPool,
+                                          Map<String, String> pools) {
+        try {
+            var devices = incus.profileDevices("default");
+            var profilePool = IncusClient.rootDiskPoolFromDevices(devices);
+            if (profilePool == null || profilePool.equals(cowPool)) return List.of();
+            var driver = pools.getOrDefault(profilePool, "unknown");
+            if (IncusClient.isCowDriver(driver)) return List.of();
+            return List.of(Finding.warn(
+                    "Default profile root disk on non-CoW pool '" + profilePool + "'",
+                    "the default profile's root disk uses '" + profilePool + "' (" + driver
+                            + ") instead of CoW pool '" + cowPool + "'"
+                            + " — run 'isx init' to upgrade it, or manually:"
+                            + " incus profile device set default root pool=" + cowPool,
+                    new Remediation(
+                            "Update default profile: incus profile device set default root pool=" + cowPool,
+                            false,
+                            () -> {
+                                if (!incus.updateProfileRootDiskPool("default", cowPool)) {
+                                    throw new RuntimeException("Failed to update profile root disk pool");
+                                }
+                            })));
+        } catch (Exception e) {
+            return List.of();
         }
     }
 
