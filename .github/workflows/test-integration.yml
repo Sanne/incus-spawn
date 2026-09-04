@@ -340,6 +340,9 @@ jobs:
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
 
+      - name: Test CoW branching
+        run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
+
       - name: Test container
         run: |
           sg incus-admin -c "isx branch test-container --from tpl-minimal --no-start"
@@ -507,6 +510,9 @@ jobs:
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+
+      - name: Test CoW branching
+        run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 
       - name: Test container
         run: |
