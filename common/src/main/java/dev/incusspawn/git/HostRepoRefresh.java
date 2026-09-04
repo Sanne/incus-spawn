@@ -205,6 +205,10 @@ public final class HostRepoRefresh {
             return;
         }
 
+        if (policy == ClonePolicy.ASK) {
+            BuildOutput.note("Local repo clones are kept in sync and shared across containers — builds copy from disk instead of the network.");
+        }
+
         for (var task : tasks) {
             if (policy == ClonePolicy.NEVER) {
                 break;
