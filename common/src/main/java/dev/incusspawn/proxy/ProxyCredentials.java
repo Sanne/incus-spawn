@@ -12,8 +12,7 @@ public record ProxyCredentials(
         boolean useVertex,
         String vertexRegion,
         String vertexProjectId,
-        List<ResolvedToolProxy> toolProxies,
-        String toolProxyFingerprint
+        List<ResolvedToolProxy> toolProxies
 ) {
     public ProxyCredentials {
         anthropicApiKey = anthropicApiKey != null ? anthropicApiKey : "";
@@ -21,7 +20,6 @@ public record ProxyCredentials(
         vertexRegion = vertexRegion != null ? vertexRegion : "";
         vertexProjectId = vertexProjectId != null ? vertexProjectId : "";
         toolProxies = toolProxies != null ? toolProxies : List.of();
-        toolProxyFingerprint = toolProxyFingerprint != null ? toolProxyFingerprint : "";
     }
 
     public static ProxyCredentials fromConfig(SpawnConfig config) {
@@ -33,8 +31,7 @@ public record ProxyCredentials(
                 claude.isUseVertex(),
                 claude.getCloudMlRegion(),
                 claude.getVertexProjectId(),
-                resolved,
-                ToolProxyResolver.fingerprint(resolved)
+                resolved
         );
     }
 

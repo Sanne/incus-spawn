@@ -19,7 +19,7 @@ public final class ProxyHealthCheck {
     }
 
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
-                            String toolProxyFingerprint, boolean dnsConfigured) {
+                            boolean configDrifted, boolean dnsConfigured) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
     }
 
@@ -125,18 +125,18 @@ public final class ProxyHealthCheck {
         try {
             var node = JSON.readTree(json);
             var dnsNode = node.get("dnsConfigured");
-            // Default to true only if field is missing (backwards compat with old proxies).
-            // Reject malformed values (non-boolean) to catch serialization bugs.
             var dnsConfigured = dnsNode == null ? true : (dnsNode.isBoolean() && dnsNode.asBoolean());
+            var driftNode = node.get("configDrifted");
+            var configDrifted = driftNode != null && driftNode.isBoolean() && driftNode.asBoolean();
             return new ProxyInfo(
                     textOrEmpty(node, "version"),
                     textOrEmpty(node, "gitSha"),
                     textOrEmpty(node, "runtime"),
                     textOrEmpty(node, "caFingerprint"),
-                    textOrEmpty(node, "toolProxyFingerprint"),
+                    configDrifted,
                     dnsConfigured);
         } catch (Exception e) {
-            return new ProxyInfo("", "", "", "", "", true);
+            return new ProxyInfo("", "", "", "", false, true);
         }
     }
 
@@ -165,16 +165,8 @@ public final class ProxyHealthCheck {
 
     static String checkToolProxyDrift(ProxyInfo proxyInfo) {
         if (proxyInfo == null || proxyInfo.isLegacy()) return "";
-        try {
-            var expected = ProxyCredentials.fromConfig(
-                    dev.incusspawn.config.SpawnConfig.load()).toolProxyFingerprint();
-            var running = proxyInfo.toolProxyFingerprint() != null
-                    ? proxyInfo.toolProxyFingerprint() : "";
-            if (expected.equals(running)) return "";
-            return "(config has changed since the proxy started)";
-        } catch (Exception e) {
-            return "";
-        }
+        if (!proxyInfo.configDrifted()) return "";
+        return "(config has changed since the proxy started)";
     }
 
     public static String formatError(ProxyStatus status) {

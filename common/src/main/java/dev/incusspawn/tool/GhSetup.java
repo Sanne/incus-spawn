@@ -30,7 +30,7 @@ public class GhSetup implements ToolSetup {
     @Override
     public ToolDef.ProxyDef proxy() {
         var token = new ToolDef.ConfigEntry();
-        token.setConfigPath("github.token");
+        token.setConfigPath("token");
         token.setDescription("GitHub personal access token");
         token.setSecret(true);
 
@@ -46,6 +46,7 @@ public class GhSetup implements ToolSetup {
         bearerAuth.setToken("${token}");
 
         var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("github");
         proxy.setConfiguration(Map.of("token", token));
         proxy.setAuth(List.of(basicAuth, bearerAuth));
         return proxy;

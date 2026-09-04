@@ -1268,15 +1268,18 @@ public class InitCommand extends BaseCommand {
         if ("claude".equals(toolName)) return config.getClaude().hasAuth();
         var proxyDef = tool.proxy();
         if (proxyDef == null) return false;
+        boolean anyChecked = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configDef = entry.getValue();
             if (!configDef.getValue().isBlank()) continue;
-            if (!configDef.getConfigPath().isBlank()) {
-                var v = ToolProxyResolver.navigateConfigPath(configTree, configDef.getConfigPath());
-                if (!v.isBlank()) return true;
-            }
+            if (configDef.isConfirm()) continue;
+            if (configDef.getConfigPath().isBlank()) continue;
+            anyChecked = true;
+            var v = ToolProxyResolver.navigateConfigPath(configTree,
+                    proxyDef.fullConfigPath(configDef));
+            if (v.isBlank()) return false;
         }
-        return false;
+        return anyChecked;
     }
 
     private void setupClaudeAuth() {
@@ -2124,7 +2127,8 @@ public class InitCommand extends BaseCommand {
 
             var label = configDef.getDescription().isBlank() ? configKey : configDef.getDescription();
 
-            var existing = ToolProxyResolver.navigateConfigPath(configTree, configDef.getConfigPath());
+            var fullPath = proxyDef.fullConfigPath(configDef);
+            var existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
             if (!existing.isBlank()) {
                 System.out.println("  " + label + ": " + maskSecret(existing));
                 if (askConfirmation(console, "  Keep current?", true, true)) continue;
@@ -2150,7 +2154,7 @@ public class InitCommand extends BaseCommand {
                 }
             }
             if (!value.isBlank()) {
-                config.setConfigByPath(configDef.getConfigPath(), value);
+                config.setConfigByPath(fullPath, value);
                 savedAny = true;
             }
         }

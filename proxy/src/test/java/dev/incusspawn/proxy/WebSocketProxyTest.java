@@ -104,8 +104,7 @@ class WebSocketProxyTest {
         var toolProxies = List.of(new ResolvedToolProxy(
                 "codex", "api.openai.com", openaiAuth, Map.of("token", "sk-real-openai-key")));
         var credentials = new ProxyCredentials(
-                "", "", false, "", "",
-                toolProxies, ToolProxyResolver.fingerprint(toolProxies));
+                "", "", false, "", "", toolProxies);
         proxy = new MitmProxy(serverVertx, "127.0.0.1", mitmPort, healthPort,
                 "127.0.0.1", credentials);
         proxy.upstreamWsPort = mockPort;

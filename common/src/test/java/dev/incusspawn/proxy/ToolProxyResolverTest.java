@@ -114,10 +114,17 @@ class ToolProxyResolverTest {
     }
 
     @Test
-    void navigateConfigPathNonTextLeafReturnsEmpty() {
+    void navigateConfigPathNumberLeafReturnsText() {
         var tree = JSON.createObjectNode();
         tree.putObject("github").put("count", 42);
-        assertEquals("", ToolProxyResolver.navigateConfigPath(tree, "github.count"));
+        assertEquals("42", ToolProxyResolver.navigateConfigPath(tree, "github.count"));
+    }
+
+    @Test
+    void navigateConfigPathBooleanLeafReturnsText() {
+        var tree = JSON.createObjectNode();
+        tree.putObject("bob").put("licenseConsent", true);
+        assertEquals("true", ToolProxyResolver.navigateConfigPath(tree, "bob.licenseConsent"));
     }
 
     @Test

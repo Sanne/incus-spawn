@@ -284,12 +284,15 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkCredentials() {
         var config = SpawnConfig.load();
-        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
-        if (unresolved.isEmpty()) return Finding.ok("Credentials", "configured");
         var missing = new ArrayList<String>();
+        if (!config.getClaude().hasAuth()) {
+            missing.add("claude");
+        }
+        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
         for (var u : unresolved) {
             missing.add(u.toolName() + " " + u.configKey());
         }
+        if (missing.isEmpty()) return Finding.ok("Credentials", "configured");
         return Finding.warn("Missing credentials", "(" + String.join(", ", missing) + ")",
                 new Remediation("Run 'isx init' to configure", false, null));
     }
@@ -775,24 +778,33 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkBridgeDns(IncusClient incus) {
         try {
-            if (ProxyConfig.isBridgeDnsComplete(incus)) {
+            var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                    SpawnConfig.load());
+            var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+            if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) {
                 return Finding.ok("Bridge DNS overrides",
-                        "all " + ProxyConfig.interceptedDomains().size() + " domains configured");
+                        "all " + allDomains.size() + " domains configured");
             }
             var overrides = ProxyConfig.getDnsOverrides(incus);
             if (overrides.isEmpty()) {
                 return Finding.fail("Bridge DNS overrides", "not configured",
                         new Remediation("Configure bridge DNS", false,
-                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
+                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
+                                        ProxyConfig.interceptedDomains(
+                                                dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                                                        SpawnConfig.load())))));
             }
-            var missing = ProxyConfig.interceptedDomains().stream()
+            var missing = allDomains.stream()
                     .filter(d -> !overrides.contains("address=/" + d + "/"))
                     .sorted()
                     .toList();
             return Finding.warn("Bridge DNS overrides incomplete",
                     "missing: " + String.join(", ", missing),
                     new Remediation("Reconfigure bridge DNS", false,
-                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
+                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
+                                    ProxyConfig.interceptedDomains(
+                                            dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                                                    SpawnConfig.load())))));
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }

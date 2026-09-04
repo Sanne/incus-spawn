@@ -43,7 +43,7 @@ public class BobSetup implements ToolSetup {
     @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
-        apiKey.setConfigPath("bob.apiKey");
+        apiKey.setConfigPath("apiKey");
         apiKey.setDescription("IBM Bob API key");
         apiKey.setSecret(true);
         apiKey.setHelp(List.of(
@@ -54,7 +54,7 @@ public class BobSetup implements ToolSetup {
                 "  4. Copy the generated key"));
 
         var license = new ToolDef.ConfigEntry();
-        license.setConfigPath("bob.licenseAccepted");
+        license.setConfigPath("licenseConsent");
         license.setType("confirm");
         license.setDescription("Accept IBM license terms");
         license.setHelp(List.of(
@@ -70,6 +70,7 @@ public class BobSetup implements ToolSetup {
         auth.setValue("Apikey ${api-key}");
 
         var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("bob");
         proxy.setConfiguration(Map.of("api-key", apiKey, "license", license));
         proxy.setAuth(List.of(auth));
         return proxy;
