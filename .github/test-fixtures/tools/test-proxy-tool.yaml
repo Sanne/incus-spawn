@@ -1,0 +1,33 @@
+name: test-proxy-tool
+proxy:
+  config-namespace: testProxyTool
+  configuration:
+    token:
+      config-path: "token"
+      description: Test bearer token
+      secret: true
+    username:
+      value: "test-user"
+    password:
+      config-path: "password"
+      description: Test password
+      secret: true
+    api-key:
+      config-path: "apiKey"
+      description: Test API key
+      secret: true
+  auth:
+    - domains:
+        - echo.incus-spawn.test
+      type: bearer
+      token: "${token}"
+    - domains:
+        - echo-basic.incus-spawn.test
+      type: basic
+      username: "${username}"
+      password: "${password}"
+    - domains:
+        - echo-header.incus-spawn.test
+      type: header
+      name: X-Custom-Auth
+      value: "Key ${api-key}"

@@ -36,6 +36,47 @@ public class BobSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Bob Shell — IBM AI coding assistant";
+    }
+
+    @Override
+    public ToolDef.ProxyDef proxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("apiKey");
+        apiKey.setDescription("IBM Bob API key");
+        apiKey.setSecret(true);
+        apiKey.setHelp(List.of(
+                "To create an API key:",
+                "  1. Go to https://bob.ibm.com/admin/apikeys",
+                "  2. Click 'Create API key'",
+                "  3. Set the scope to Inference",
+                "  4. Copy the generated key"));
+
+        var license = new ToolDef.ConfigEntry();
+        license.setConfigPath("licenseConsent");
+        license.setType("confirm");
+        license.setDescription("Accept IBM license terms");
+        license.setHelp(List.of(
+                "IBM Bob Shell requires acceptance of the IBM license agreement.",
+                "The license is presented on first launch of Bob Shell.",
+                "Pre-accepting here skips that prompt inside containers."));
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("bob.ibm.com", "*.bob.ibm.com",
+                "us-east.bob.ibm.com", "eu-de.bob.ibm.com", "jp-tok.bob.ibm.com"));
+        auth.setType("header");
+        auth.setName("Authorization");
+        auth.setValue("Apikey ${api-key}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("bob");
+        proxy.setConfiguration(Map.of("api-key", apiKey, "license", license));
+        proxy.setAuth(List.of(auth));
+        return proxy;
+    }
+
+    @Override
     public List<String> packages() {
         return List.of("nodejs");
     }

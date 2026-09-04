@@ -285,8 +285,13 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkCredentials() {
         var config = SpawnConfig.load();
         var missing = new ArrayList<String>();
-        if (!config.getClaude().hasAuth()) missing.add("Claude API key/OAuth/Vertex");
-        if (config.getGithub().getToken().isBlank()) missing.add("GitHub token");
+        if (!config.getClaude().hasAuth()) {
+            missing.add("claude");
+        }
+        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
+        for (var u : unresolved) {
+            missing.add(u.toolName() + " " + u.configKey());
+        }
         if (missing.isEmpty()) return Finding.ok("Credentials", "configured");
         return Finding.warn("Missing credentials", "(" + String.join(", ", missing) + ")",
                 new Remediation("Run 'isx init' to configure", false, null));
@@ -711,7 +716,10 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkProxy() {
         var incus = RuntimeServices.incus();
-        return List.of(checkProxyRunning(incus), checkProxyVersionDrift(incus));
+        var findings = new ArrayList<Finding>();
+        findings.add(checkProxyRunning(incus));
+        findings.addAll(checkProxyDrift(incus));
+        return findings;
     }
 
     private Finding checkProxyRunning(IncusClient incus) {
@@ -732,21 +740,26 @@ public class DoctorCommand extends BaseCommand {
         };
     }
 
-    private Finding checkProxyVersionDrift(IncusClient incus) {
+    private List<Finding> checkProxyDrift(IncusClient incus) {
         try {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            if (info == null) return Finding.ok("Proxy version", "(proxy not reachable, skipped)");
-            var drift = ProxyHealthCheck.checkVersionDrift(info);
-            if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
-            if (ProxyService.isActive()) {
-                return Finding.warn("Proxy version drift", drift,
-                        new Remediation("Restart proxy service to update", false,
-                                () -> ProxyService.reinstallIfChanged(incus)));
+            if (info == null) return List.of(Finding.ok("Proxy version", "(proxy not reachable, skipped)"));
+            var drifts = ProxyHealthCheck.checkDrift(info);
+            if (drifts.isEmpty()) {
+                return List.of(Finding.ok("Proxy version", "matches CLI"));
             }
-            return Finding.warn("Proxy version drift", drift,
-                    new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
+            Remediation restart = ProxyService.isActive()
+                    ? new Remediation("Restart proxy service to update", false,
+                            () -> ProxyService.reinstallIfChanged(incus))
+                    : new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null);
+            var findings = new ArrayList<Finding>();
+            for (var drift : drifts) {
+                findings.add(Finding.warn("Proxy drift", drift,
+                        findings.isEmpty() ? restart : null));
+            }
+            return findings;
         } catch (Exception e) {
-            return Finding.ok("Proxy version", "(could not check)");
+            return List.of(Finding.ok("Proxy version", "(could not check)"));
         }
     }
 
@@ -765,24 +778,33 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkBridgeDns(IncusClient incus) {
         try {
-            if (ProxyConfig.isBridgeDnsComplete(incus)) {
+            var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                    SpawnConfig.load());
+            var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+            if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) {
                 return Finding.ok("Bridge DNS overrides",
-                        "all " + ProxyConfig.interceptedDomains().size() + " domains configured");
+                        "all " + allDomains.size() + " domains configured");
             }
             var overrides = ProxyConfig.getDnsOverrides(incus);
             if (overrides.isEmpty()) {
                 return Finding.fail("Bridge DNS overrides", "not configured",
                         new Remediation("Configure bridge DNS", false,
-                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
+                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
+                                        ProxyConfig.interceptedDomains(
+                                                dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                                                        SpawnConfig.load())))));
             }
-            var missing = ProxyConfig.interceptedDomains().stream()
+            var missing = allDomains.stream()
                     .filter(d -> !overrides.contains("address=/" + d + "/"))
                     .sorted()
                     .toList();
             return Finding.warn("Bridge DNS overrides incomplete",
                     "missing: " + String.join(", ", missing),
                     new Remediation("Reconfigure bridge DNS", false,
-                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus())));
+                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
+                                    ProxyConfig.interceptedDomains(
+                                            dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
+                                                    SpawnConfig.load())))));
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }

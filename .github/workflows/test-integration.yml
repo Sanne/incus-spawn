@@ -19,6 +19,8 @@ on:
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: integration-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -65,6 +67,8 @@ jobs:
     needs: [unit-tests]
     if: failure()
     runs-on: ubuntu-latest
+    permissions:
+      actions: write  # needed for gh run cancel
     steps:
       - name: Cancel workflow run
         run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
@@ -293,12 +297,67 @@ jobs:
       - name: Initialize isx
         run: sg incus-admin -c "yes '' | isx init"
 
-      - name: Start MITM proxy
+      - name: Install test proxy tool fixture
         run: |
-          sed -i 's/apiKey: ""/apiKey: "sk-ant-placeholder-for-ci"/' \
-              ~/.config/incus-spawn/config.yaml
-          sg incus-admin -c "isx proxy start" &
+          mkdir -p ~/.config/incus-spawn/tools
+          cp .github/test-fixtures/tools/test-proxy-tool.yaml ~/.config/incus-spawn/tools/
+
+      - name: Start echo server for proxy credential test
+        run: |
+          CA_CRT="$HOME/.config/incus-spawn/ca.crt"
+          CA_KEY="$HOME/.config/incus-spawn/ca.key"
+          ECHO_DIR="$HOME/.config/incus-spawn/echo-test"
+          mkdir -p "$ECHO_DIR"
+          DOMAINS="echo.incus-spawn.test echo-basic.incus-spawn.test echo-header.incus-spawn.test api.openai.com api.anthropic.com api.github.com"
+          for d in $DOMAINS; do echo "127.0.0.1 $d"; done | sudo tee -a /etc/hosts
+          SANS=$(echo "$DOMAINS" | tr ' ' '\n' | sed 's/^/DNS:/' | paste -sd,)
+          openssl req -new -newkey rsa:2048 -nodes \
+              -keyout "$ECHO_DIR/leaf.key" -out "$ECHO_DIR/leaf.csr" \
+              -subj "/CN=echo.incus-spawn.test" 2>/dev/null
+          openssl x509 -req -in "$ECHO_DIR/leaf.csr" \
+              -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
+              -out "$ECHO_DIR/leaf.crt" -days 1 \
+              -extfile <(printf "subjectAltName=%s" "$SANS") 2>/dev/null
+          sudo keytool -importcert -trustcacerts -file "$CA_CRT" \
+              -alias incus-spawn-mitm -keystore "$JAVA_HOME/lib/security/cacerts" \
+              -storepass changeit -noprompt 2>/dev/null || true
+          sudo cp "$CA_CRT" /usr/local/share/ca-certificates/incus-spawn-mitm.crt
+          sudo update-ca-certificates 2>/dev/null
+          openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt "$ECHO_DIR/leaf.crt"
+          sudo python3 .github/scripts/echo-server.py \
+              "$ECHO_DIR/leaf.crt" "$ECHO_DIR/leaf.key" &
+          sleep 1
+          echo "Echo server started for: $DOMAINS"
+          curl -sf --cacert "$CA_CRT" https://echo.incus-spawn.test/ \
+              && echo "Echo server reachable from host" \
+              || echo "::warning::Echo server not reachable from host"
+
+      - name: Start MITM proxy
+        env:
+          GH_CI_TOKEN: ${{ github.token }}
+        run: |
+          CFG=~/.config/incus-spawn/config.yaml
+          python3 -c "
+          import yaml, os
+          with open('$CFG') as f: cfg = yaml.safe_load(f) or {}
+          cfg.setdefault('claude', {})['apiKey'] = 'sk-ant-placeholder-for-ci'
+          cfg.setdefault('openai', {})['apiKey'] = 'sk-test-openai-key-for-ci'
+          cfg.setdefault('github', {})['token'] = os.environ['GH_CI_TOKEN']
+          cfg.setdefault('testProxyTool', {})['token'] = 'test-bearer-token-for-ci'
+          cfg['testProxyTool']['password'] = 'test-password-for-ci'
+          cfg['testProxyTool']['apiKey'] = 'test-api-key-for-ci'
+          with open('$CFG', 'w') as f: yaml.dump(cfg, f, default_flow_style=False)
+          "
+          cat "$CFG"
           GATEWAY=$(sg incus-admin -c "incus network get incusbr0 ipv4.address" | cut -d/ -f1)
+          # Prevent bridge dnsmasq from reading host /etc/hosts, which has
+          # echo server domains pointing to 127.0.0.1 that would override
+          # the proxy's address= directives. Must run BEFORE the proxy starts
+          # so the proxy's own DNS override write doesn't race with this one.
+          DNSMASQ=$(sg incus-admin -c "incus network get incusbr0 raw.dnsmasq")
+          printf -v NOHOSTS 'no-hosts\n%s' "$DNSMASQ"
+          sg incus-admin -c "incus network set incusbr0 raw.dnsmasq '$NOHOSTS'"
+          sg incus-admin -c "isx proxy start" &
           echo "Waiting for proxy..."
           for i in $(seq 1 30); do
             if curl -sf "http://$GATEWAY:18080/health" >/dev/null 2>&1; then
@@ -398,6 +457,17 @@ jobs:
             echo "Proxy peak RSS: ${PEAK_RSS_MB}MB (VmHWM: ${PEAK_RSS_KB}kB)"
           fi
 
+      - name: Dump proxy log on failure
+        if: failure()
+        run: |
+          LOG="$HOME/.local/state/incus-spawn/proxy.log"
+          if [ -f "$LOG" ]; then
+            echo "=== Last 100 lines of proxy log ==="
+            tail -100 "$LOG"
+          else
+            echo "No proxy log found at $LOG"
+          fi
+
       - name: Cleanup
         if: always()
         run: |
@@ -457,12 +527,64 @@ jobs:
       - name: Initialize isx
         run: sg incus-admin -c "yes '' | isx init"
 
-      - name: Start MITM proxy
+      - name: Install test proxy tool fixture
         run: |
-          sed -i 's/apiKey: ""/apiKey: "sk-ant-placeholder-for-ci"/' \
-              ~/.config/incus-spawn/config.yaml
-          sg incus-admin -c "isx proxy start" &
+          mkdir -p ~/.config/incus-spawn/tools
+          cp .github/test-fixtures/tools/test-proxy-tool.yaml ~/.config/incus-spawn/tools/
+
+      - name: Start echo server for proxy credential test
+        run: |
+          CA_CRT="$HOME/.config/incus-spawn/ca.crt"
+          CA_KEY="$HOME/.config/incus-spawn/ca.key"
+          ECHO_DIR="$HOME/.config/incus-spawn/echo-test"
+          mkdir -p "$ECHO_DIR"
+          DOMAINS="echo.incus-spawn.test echo-basic.incus-spawn.test echo-header.incus-spawn.test api.openai.com api.anthropic.com api.github.com"
+          for d in $DOMAINS; do echo "127.0.0.1 $d"; done | sudo tee -a /etc/hosts
+          SANS=$(echo "$DOMAINS" | tr ' ' '\n' | sed 's/^/DNS:/' | paste -sd,)
+          openssl req -new -newkey rsa:2048 -nodes \
+              -keyout "$ECHO_DIR/leaf.key" -out "$ECHO_DIR/leaf.csr" \
+              -subj "/CN=echo.incus-spawn.test" 2>/dev/null
+          openssl x509 -req -in "$ECHO_DIR/leaf.csr" \
+              -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
+              -out "$ECHO_DIR/leaf.crt" -days 1 \
+              -extfile <(printf "subjectAltName=%s" "$SANS") 2>/dev/null
+          sudo cp "$CA_CRT" /usr/local/share/ca-certificates/incus-spawn-mitm.crt
+          sudo update-ca-certificates 2>/dev/null
+          openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt "$ECHO_DIR/leaf.crt"
+          sudo python3 .github/scripts/echo-server.py \
+              "$ECHO_DIR/leaf.crt" "$ECHO_DIR/leaf.key" &
+          sleep 1
+          echo "Echo server started for: $DOMAINS"
+          curl -sf --cacert "$CA_CRT" https://echo.incus-spawn.test/ \
+              && echo "Echo server reachable from host" \
+              || echo "::warning::Echo server not reachable from host"
+
+      - name: Start MITM proxy
+        env:
+          GH_CI_TOKEN: ${{ github.token }}
+        run: |
+          CFG=~/.config/incus-spawn/config.yaml
+          python3 -c "
+          import yaml, os
+          with open('$CFG') as f: cfg = yaml.safe_load(f) or {}
+          cfg.setdefault('claude', {})['apiKey'] = 'sk-ant-placeholder-for-ci'
+          cfg.setdefault('openai', {})['apiKey'] = 'sk-test-openai-key-for-ci'
+          cfg.setdefault('github', {})['token'] = os.environ['GH_CI_TOKEN']
+          cfg.setdefault('testProxyTool', {})['token'] = 'test-bearer-token-for-ci'
+          cfg['testProxyTool']['password'] = 'test-password-for-ci'
+          cfg['testProxyTool']['apiKey'] = 'test-api-key-for-ci'
+          with open('$CFG', 'w') as f: yaml.dump(cfg, f, default_flow_style=False)
+          "
+          cat "$CFG"
           GATEWAY=$(sg incus-admin -c "incus network get incusbr0 ipv4.address" | cut -d/ -f1)
+          # Prevent bridge dnsmasq from reading host /etc/hosts, which has
+          # echo server domains pointing to 127.0.0.1 that would override
+          # the proxy's address= directives. Must run BEFORE the proxy starts
+          # so the proxy's own DNS override write doesn't race with this one.
+          DNSMASQ=$(sg incus-admin -c "incus network get incusbr0 raw.dnsmasq")
+          printf -v NOHOSTS 'no-hosts\n%s' "$DNSMASQ"
+          sg incus-admin -c "incus network set incusbr0 raw.dnsmasq '$NOHOSTS'"
+          sg incus-admin -c "isx proxy start" &
           echo "Waiting for proxy..."
           for i in $(seq 1 30); do
             if curl -sf "http://$GATEWAY:18080/health" >/dev/null 2>&1; then
@@ -564,6 +686,17 @@ jobs:
             if [ "$PEAK_RSS_MB" -gt 200 ]; then
               echo "::warning::Proxy peak RSS (${PEAK_RSS_MB}MB) is approaching the 256MB MaxRAM ceiling"
             fi
+          fi
+
+      - name: Dump proxy log on failure
+        if: failure()
+        run: |
+          LOG="$HOME/.local/state/incus-spawn/proxy.log"
+          if [ -f "$LOG" ]; then
+            echo "=== Last 100 lines of proxy log ==="
+            tail -100 "$LOG"
+          else
+            echo "No proxy log found at $LOG"
           fi
 
       - name: Cleanup

@@ -162,4 +162,182 @@ class ToolDefValidatorTest {
             }
         }
     }
+
+    @Test
+    void proxyMissingDomainsIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-proxy
+                proxy:
+                  auth:
+                    - type: bearer
+                      token: "${t}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("missing 'domains'")));
+    }
+
+    @Test
+    void proxyInvalidAuthTypeIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-auth
+                proxy:
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: invalid
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("invalid auth type")));
+    }
+
+    @Test
+    void proxyConfigPathAndValueMutualExclusion() throws Exception {
+        var file = writeTemp("""
+                name: both-set
+                proxy:
+                  config-namespace: bothset
+                  configuration:
+                    token:
+                      config-path: "path"
+                      value: "literal"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("both 'config-path' and 'value'")));
+    }
+
+    @Test
+    void proxyConfigWithoutDescriptionWarns() throws Exception {
+        var file = writeTemp("""
+                name: no-desc
+                proxy:
+                  config-namespace: nodesc
+                  configuration:
+                    token:
+                      secret: true
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors());
+        assertTrue(result.hasWarnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("no description")));
+    }
+
+    @Test
+    void proxyMissingConfigRefIsError() throws Exception {
+        var file = writeTemp("""
+                name: bad-ref
+                proxy:
+                  config-namespace: badref
+                  configuration:
+                    user:
+                      value: "admin"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: basic
+                      username: "${user}"
+                      password: "${pass}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("${pass}") && e.contains("not defined")));
+    }
+
+    @Test
+    void proxyMissingNamespaceIsError() throws Exception {
+        var file = writeTemp("""
+                name: no-ns
+                proxy:
+                  configuration:
+                    token:
+                      config-path: "token"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("no 'config-namespace'")));
+    }
+
+    @Test
+    void proxyDottedConfigPathWarns() throws Exception {
+        var file = writeTemp("""
+                name: dotted
+                proxy:
+                  config-namespace: dotted
+                  configuration:
+                    token:
+                      config-path: "some.nested.path"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                      token: "${token}"
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors());
+        assertTrue(result.hasWarnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("contains a dot")));
+    }
+
+    @Test
+    void bearerAuthRequiresToken() throws Exception {
+        var file = writeTemp("""
+                name: no-token
+                proxy:
+                  config-namespace: notoken
+                  configuration:
+                    key:
+                      value: "val"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: bearer
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("bearer auth requires 'token'")));
+    }
+
+    @Test
+    void basicAuthRequiresUsernameAndPassword() throws Exception {
+        var file = writeTemp("""
+                name: no-creds
+                proxy:
+                  config-namespace: nocreds
+                  configuration:
+                    key:
+                      value: "val"
+                  auth:
+                    - domains:
+                        - api.example.com
+                      type: basic
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("basic auth requires 'username'")));
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("basic auth requires 'password'")));
+    }
+
+    private static Path writeTemp(String content) throws Exception {
+        var file = Files.createTempFile("tool-test-", ".yaml");
+        file.toFile().deleteOnExit();
+        Files.writeString(file, content);
+        return file;
+    }
 }

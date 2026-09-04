@@ -275,8 +275,7 @@ public final class ProxyService {
 
         if (!needsReinstall) {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            var drift = ProxyHealthCheck.checkVersionDrift(info);
-            needsReinstall = !drift.isEmpty();
+            needsReinstall = !ProxyHealthCheck.checkDrift(info).isEmpty();
         }
 
         if (needsReinstall) {

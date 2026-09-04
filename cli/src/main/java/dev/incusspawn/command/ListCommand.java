@@ -4650,11 +4650,13 @@ public class ListCommand extends BaseCommand {
     private void tryFixStaleDns() {
         if (dnsVerified) return;
         dnsVerified = true;
-        if (ProxyConfig.isBridgeDnsComplete(incus)) return;
+        var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(SpawnConfig.load());
+        var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+        if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) return;
         setStatusMessage("Updating bridge DNS overrides...");
         var thread = new Thread(() -> {
             try {
-                ProxyConfig.writeBridgeDns(incus);
+                ProxyConfig.writeBridgeDns(incus, allDomains);
                 setStatusMessage("Bridge DNS overrides updated");
             } catch (Exception e) {
                 setStatusMessage("DNS update failed: " + e.getMessage());

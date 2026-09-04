@@ -117,15 +117,25 @@ public class ProxyMain implements QuarkusApplication {
         } else {
             System.out.println("  Claude:        (not configured)");
         }
-        System.out.println("  GitHub token:  " + (creds.ghToken().isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  Bob API key:   " + (creds.bobApiKey().isBlank() ? "(not configured)" : "configured"));
-        System.out.println("  OpenAI key:    " + (creds.openaiApiKey().isBlank() ? "(not configured)" : "configured"));
+        var toolProxyNames = creds.toolProxyNames();
+        if (!toolProxyNames.isEmpty()) {
+            System.out.println("  Tool proxies:  " + String.join(", ", toolProxyNames));
+        }
+        var unresolved = ToolProxyResolver.findUnresolved(config);
+        if (!unresolved.isEmpty()) {
+            var unresolvedNames = unresolved.stream()
+                    .map(ToolProxyResolver.UnresolvedToolProxy::toolName)
+                    .distinct().sorted().toList();
+            System.out.println("  Skipped (no credentials): " + String.join(", ", unresolvedNames));
+            System.out.println("  Run 'isx init' to configure, or add entries to config.yaml.");
+        }
         System.out.println("  Log file:      " + Environment.proxyLogFile());
         System.out.println();
 
         var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, creds);
+        proxy.setIncusClient(incus);
 
         if (debug) {
             try {
@@ -164,11 +174,12 @@ public class ProxyMain implements QuarkusApplication {
             proxy.stop();
         }));
 
+        var allDomains = proxy.allInterceptedDomains();
         Runnable dnsCallback;
         if (Platform.isMacOS()) {
             dnsCallback = () -> {
                 try {
-                    ProxyConfig.configureBridgeDns(incus);
+                    ProxyConfig.configureBridgeDns(incus, allDomains);
                     ProxyLog.info("DNS overrides configured");
                 } catch (Exception e) {
                     ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
@@ -176,7 +187,7 @@ public class ProxyMain implements QuarkusApplication {
                 proxy.setDnsConfigured(true);
             };
         } else {
-            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, () -> proxy.setDnsConfigured(true));
+            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, allDomains, () -> proxy.setDnsConfigured(true));
         }
         try {
             proxy.start(dnsCallback);

@@ -21,11 +21,6 @@ public final class ProxyConfig {
     public static final int DEFAULT_HEALTH_PORT = 18080;
 
     public static final Set<String> ANTHROPIC_DOMAINS = Set.of("api.anthropic.com");
-    public static final Set<String> GITHUB_DOMAINS = Set.of(
-            "github.com", "api.github.com",
-            "raw.githubusercontent.com", "objects.githubusercontent.com",
-            "codeload.github.com", "uploads.github.com"
-    );
     public static final Set<String> REGISTRY_DOMAINS = Set.of(
             "registry-1.docker.io", "auth.docker.io",
             "ghcr.io", "quay.io"
@@ -35,50 +30,49 @@ public final class ProxyConfig {
             "plugins.gradle.org"
     );
     public static final Set<String> GRADLE_DOMAINS = Set.of("services.gradle.org");
-    public static final Set<String> OPENAI_DOMAINS = Set.of("api.openai.com");
     public static final Set<String> NPM_DOMAINS = Set.of("registry.npmjs.org");
-    private static final String BOB_BASE_DOMAIN = "bob.ibm.com";
-    private static final List<String> BOB_REGIONAL_DOMAINS = List.of(
-            "us-east.bob.ibm.com",
-            "eu-de.bob.ibm.com",
-            "jp-tok.bob.ibm.com"
-    );
 
-    private static final List<String> WILDCARD_DOMAIN_SUFFIXES;
-    private static final Set<String> INTERCEPTED_DOMAIN_SET;
+    private static final Set<String> BUILTIN_INTERCEPTED_DOMAINS;
 
     static {
         var all = new HashSet<String>();
         all.addAll(ANTHROPIC_DOMAINS);
-        all.addAll(GITHUB_DOMAINS);
         all.addAll(REGISTRY_DOMAINS);
         all.addAll(MAVEN_DOMAINS);
         all.addAll(GRADLE_DOMAINS);
-        all.addAll(OPENAI_DOMAINS);
         all.addAll(NPM_DOMAINS);
-        all.add(BOB_BASE_DOMAIN);
-        all.addAll(BOB_REGIONAL_DOMAINS);
-        INTERCEPTED_DOMAIN_SET = Set.copyOf(all);
-
-        WILDCARD_DOMAIN_SUFFIXES = List.of("." + BOB_BASE_DOMAIN);
+        BUILTIN_INTERCEPTED_DOMAINS = Set.copyOf(all);
     }
 
     private ProxyConfig() {}
 
-    public static Set<String> interceptedDomains() {
-        return INTERCEPTED_DOMAIN_SET;
+    public static Set<String> builtinInterceptedDomains() {
+        return BUILTIN_INTERCEPTED_DOMAINS;
     }
 
-    public static boolean isInterceptedDomain(String domain) {
-        if (INTERCEPTED_DOMAIN_SET.contains(domain)) return true;
-        for (var suffix : WILDCARD_DOMAIN_SUFFIXES) {
+    /**
+     * All intercepted domains: built-in + tool proxy domains.
+     * Wildcard entries (*.example.com) are expanded to their base domain.
+     */
+    public static Set<String> interceptedDomains() {
+        return interceptedDomains(Set.of());
+    }
+
+    public static Set<String> interceptedDomains(Set<String> toolProxyDomains) {
+        if (toolProxyDomains.isEmpty()) return BUILTIN_INTERCEPTED_DOMAINS;
+        var all = new HashSet<>(BUILTIN_INTERCEPTED_DOMAINS);
+        all.addAll(toolProxyDomains);
+        return Set.copyOf(all);
+    }
+
+    public static boolean isInterceptedDomain(String domain, Set<String> toolProxyDomains,
+                                               List<String> wildcardSuffixes) {
+        if (BUILTIN_INTERCEPTED_DOMAINS.contains(domain)) return true;
+        if (toolProxyDomains.contains(domain)) return true;
+        for (var suffix : wildcardSuffixes) {
             if (domain.endsWith(suffix)) return true;
         }
         return false;
-    }
-
-    public static boolean isBobDomain(String domain) {
-        return domain.equals(BOB_BASE_DOMAIN) || domain.endsWith("." + BOB_BASE_DOMAIN);
     }
 
     public static String vertexHost(String region) {
@@ -124,14 +118,23 @@ public final class ProxyConfig {
     }
 
     public static void configureBridgeDns(IncusClient incus) {
-        writeBridgeDns(incus);
-        System.out.println("  DNS overrides: " + interceptedDomains().size() +
+        configureBridgeDns(incus, Set.of());
+    }
+
+    public static void configureBridgeDns(IncusClient incus, Set<String> allDomains) {
+        var effective = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
+        writeBridgeDns(incus, effective);
+        System.out.println("  DNS overrides: " + effective.size() +
                 " domains -> " + resolveGatewayIp(incus) + " (via bridge dnsmasq)");
     }
 
     public static void writeBridgeDns(IncusClient incus) {
+        writeBridgeDns(incus, BUILTIN_INTERCEPTED_DOMAINS);
+    }
+
+    public static void writeBridgeDns(IncusClient incus, Set<String> allDomains) {
         var gatewayIp = resolveGatewayIp(incus);
-        var overrides = interceptedDomains().stream()
+        var overrides = allDomains.stream()
                 .sorted()
                 .flatMap(d -> Stream.of(
                         "address=/" + d + "/" + gatewayIp,
@@ -139,10 +142,10 @@ public final class ProxyConfig {
                 .collect(Collectors.joining("\n"));
 
         var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        var servers = existing.lines()
-                .filter(l -> l.startsWith("server="))
+        var preserved = existing.lines()
+                .filter(l -> !l.startsWith("address="))
                 .collect(Collectors.joining("\n"));
-        var dnsmasqConfig = servers.isEmpty() ? overrides : servers + "\n" + overrides;
+        var dnsmasqConfig = preserved.isEmpty() ? overrides : preserved + "\n" + overrides;
 
         if (dnsmasqConfig.equals(existing)) {
             return;
@@ -150,9 +153,10 @@ public final class ProxyConfig {
         incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
     }
 
-    public static void configureBridgeDnsWithRetry(IncusClient incus, Runnable onDnsConfigured) {
+    public static void configureBridgeDnsWithRetry(IncusClient incus, Set<String> allDomains,
+                                                    Runnable onDnsConfigured) {
         try {
-            configureBridgeDns(incus);
+            configureBridgeDns(incus, allDomains);
             ProxyLog.info("DNS overrides configured");
             if (onDnsConfigured != null) onDnsConfigured.run();
             return;
@@ -160,6 +164,7 @@ public final class ProxyConfig {
             ProxyLog.warn("DNS override failed, will retry in background: " + e.getMessage());
         }
 
+        final Set<String> domains = allDomains;
         var thread = new Thread(() -> {
             long delaySec = 2;
             long maxDelaySec = 60;
@@ -173,7 +178,7 @@ public final class ProxyConfig {
                 }
                 attempt++;
                 try {
-                    configureBridgeDns(incus);
+                    configureBridgeDns(incus, domains);
                     ProxyLog.info("DNS overrides configured (attempt " + attempt + ")");
                     if (onDnsConfigured != null) onDnsConfigured.run();
                     return;
@@ -209,9 +214,14 @@ public final class ProxyConfig {
     }
 
     public static boolean isBridgeDnsComplete(IncusClient incus) {
+        return isBridgeDnsComplete(incus, Set.of());
+    }
+
+    public static boolean isBridgeDnsComplete(IncusClient incus, Set<String> allDomains) {
         var overrides = getDnsOverrides(incus);
         if (overrides.isEmpty()) return true;
-        return interceptedDomains().stream()
+        var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
+        return domains.stream()
                 .allMatch(d -> overrides.contains("address=/" + d + "/"));
     }
 }

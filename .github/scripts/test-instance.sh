@@ -210,6 +210,37 @@ assert "trusted MITM CA cert has Subject Key Identifier" \
         | grep -q 'Subject Key Identifier'"
 echo ""
 
+# --- 10. Tool-contributed proxy credential injection ---
+# An HTTPS echo server on the host echoes back request headers so we can
+# verify the proxy injects the right credentials for each auth type and
+# for the built-in GitHub/OpenAI/Anthropic tools.
+echo "10. Tool-contributed proxy credential injection"
+
+# 10a. Test fixture tool — bearer auth
+assert "tool proxy bearer: Authorization header injected" \
+    bash -c "curl -sf https://echo.incus-spawn.test/ | grep -q 'Bearer test-bearer-token-for-ci'"
+
+# 10b. Test fixture tool — basic auth
+assert "tool proxy basic: Authorization header injected" \
+    bash -c "curl -sf https://echo-basic.incus-spawn.test/ | grep -q 'Basic '"
+
+# 10c. Test fixture tool — custom header auth
+assert "tool proxy header: X-Custom-Auth header injected" \
+    bash -c "curl -sf https://echo-header.incus-spawn.test/ | grep -q 'Key test-api-key-for-ci'"
+
+# 10d. Built-in codex tool — bearer auth via config-path
+assert "codex: Bearer token injected for api.openai.com" \
+    bash -c "curl -sf https://api.openai.com/ | grep -q 'Bearer sk-test-openai-key-for-ci'"
+
+# 10e. Built-in Anthropic — x-api-key header (hardcoded handler)
+assert "anthropic: x-api-key header injected for api.anthropic.com" \
+    bash -c "curl -sf https://api.anthropic.com/ | grep -q 'sk-ant-placeholder-for-ci'"
+
+# 10f. Built-in gh.yaml — bearer auth via wildcard *.github.com
+assert "github: Bearer token injected for api.github.com (wildcard)" \
+    bash -c "curl -sf https://api.github.com/ | grep -q 'Bearer '"
+echo ""
+
 echo "========================================"
 printf " Results: \033[1m%d/%d passed\033[0m" "$PASS" "$TESTS"
 if [ "$FAIL" -gt 0 ]; then
