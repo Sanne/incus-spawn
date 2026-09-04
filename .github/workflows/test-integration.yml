@@ -250,10 +250,6 @@ jobs:
           sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
-          sg incus-admin -c "sudo incus admin init --minimal"
-          sudo chown -R "$USER:$USER" ~/.config/incus/
-          sg incus-admin -c "incus storage create cow btrfs size=5GiB"
-
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -291,7 +287,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
-        run: sg incus-admin -c "yes '' | isx init"
+        run: |
+          sg incus-admin -c "isx init </dev/null"
+          # isx init runs 'sudo incus admin init' which creates ~/.config/incus/
+          # owned by root; fix so the incus CLI works for subsequent steps.
+          sudo chown -R "$USER:$USER" ~/.config/incus/ 2>/dev/null || true
+          # admin init creates a 'default' dir pool; isx init adds a 'cow' btrfs
+          # pool but intentionally does not rewire the profile (isx doctor warns
+          # instead). Point the profile at cow so templates use CoW branching.
+          sg incus-admin -c "incus profile device set default root pool=cow"
 
       - name: Start MITM proxy
         run: |
@@ -424,10 +428,6 @@ jobs:
           sudo apt-get install -y -qq incus btrfs-progs qemu-system-x86
           sudo usermod -aG incus-admin "$USER"
 
-          sg incus-admin -c "sudo incus admin init --minimal"
-          sudo chown -R "$USER:$USER" ~/.config/incus/
-          sg incus-admin -c "incus storage create cow btrfs size=5GiB"
-
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -455,7 +455,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Initialize isx
-        run: sg incus-admin -c "yes '' | isx init"
+        run: |
+          sg incus-admin -c "isx init </dev/null"
+          # isx init runs 'sudo incus admin init' which creates ~/.config/incus/
+          # owned by root; fix so the incus CLI works for subsequent steps.
+          sudo chown -R "$USER:$USER" ~/.config/incus/ 2>/dev/null || true
+          # admin init creates a 'default' dir pool; isx init adds a 'cow' btrfs
+          # pool but intentionally does not rewire the profile (isx doctor warns
+          # instead). Point the profile at cow so templates use CoW branching.
+          sg incus-admin -c "incus profile device set default root pool=cow"
 
       - name: Start MITM proxy
         run: |
@@ -573,9 +581,10 @@ jobs:
           sg incus-admin -c "isx destroy test-podman" || true
           sg incus-admin -c "isx destroy test-vm" || true
 
-  # Regression: isx init must produce a working setup on a machine where Incus has never been
-  # initialized. The isx-integration-tests job above runs 'incus admin init --minimal' first,
-  # which populates the default profile — so it cannot catch init leaving that profile empty.
+  # Regression: isx init must produce a working setup on a machine where a pool exists but
+  # the default profile is empty. This can happen when a pool was created manually (or by a
+  # previous isx version) without 'incus admin init'. The isx-integration-tests jobs let
+  # isx init handle everything from scratch, so they cannot catch this case.
   # A pool without a default profile made every instance creation fail with
   # "Failed getting root disk: No root device could be found", and was self-latching: once a
   # pool existed, init reported "Incus already initialized" and skipped the repair forever.
@@ -599,8 +608,7 @@ jobs:
           sudo usermod -aG incus-admin "$USER"
 
           # Create ONLY the storage pool — no admin init. This reproduces the reported broken
-          # state exactly (pool present, default profile empty) and, as a side effect, avoids
-          # isx init building an unbounded btrfs loop file (timed out at 19min on CI).
+          # state exactly (pool present, default profile empty).
           sg incus-admin -c "incus storage create cow btrfs size=5GiB"
 
           echo "Default profile before isx init:"
@@ -636,7 +644,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run isx init
-        run: sg incus-admin -c "yes '' | isx init"
+        run: sg incus-admin -c "isx init </dev/null"
 
       - name: Assert the default profile is usable
         run: |
