@@ -264,7 +264,11 @@ public class ListCommand extends BaseCommand {
     // so the reminder doesn't clobber every other status message on each refresh.
     private boolean storageWarningShown;
     private volatile ProxyHealthCheck.ProxyInfo proxyInfo;
-    private long proxyAuthCheckMs;
+    // Defer the first proxy health check so the TUI renders immediately instead of
+    // stalling up to 500ms on the connect timeout when the proxy isn't running.
+    private static final long PROXY_AUTH_INITIAL_DEFER_MS = 500;
+    private long proxyAuthCheckMs = System.currentTimeMillis()
+            - PROXY_AUTH_CHECK_INTERVAL_MS + PROXY_AUTH_INITIAL_DEFER_MS;
 
     public void executeDirect() {
         launchedAsDefault = true;
@@ -279,10 +283,10 @@ public class ListCommand extends BaseCommand {
         this.backgroundTasks = RuntimeServices.backgroundTasks();
         this.lockManager = RuntimeServices.lockManager();
         // Bare `isx` opens the TUI; the explicit `list` command is always plain (it's a CLI listing).
-        try {
-            reloadData();
-        } catch (IncusException e) {
-            if (!launchedAsDefault) {
+        if (!launchedAsDefault) {
+            try {
+                reloadData();
+            } catch (IncusException e) {
                 System.err.println("Error: " + e.getMessage());
                 return CommandResult.FAILURE;
             }
@@ -469,11 +473,43 @@ public class ListCommand extends BaseCommand {
      * (non-template instances only).
      */
     private void reloadData() {
-        var allInstances = collectEntries();
+        // The instance listing (GET /1.0/instances?recursion=2) is the heaviest single call.
+        // Run it in the background while the main thread does filesystem I/O and pool probes.
+        var instancesFuture = java.util.concurrent.CompletableFuture.supplyAsync(this::collectEntries);
+
+        var loadWarnings = new ArrayList<String>();
+        // Re-read tool defs from disk alongside the image defs below, so edited tool YAML
+        // is reflected in the "△ definition changed" flag. Must precede addFallbacks(),
+        // which re-populates the freshly cleared cache.
+        toolDefLoader.reload();
+        imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
+        // Tool conflicts don't flow through image loadAll; surface them here too so
+        // the TUI warns about duplicate tool names instead of only failing at build.
+        for (var conflict : toolDefLoader.conflicts()) {
+            loadWarnings.add(conflict.shortMessage());
+        }
+        if (!loadWarnings.isEmpty()) {
+            statusMessage = loadWarnings.size() == 1
+                    ? loadWarnings.get(0)
+                    : loadWarnings.get(0) + " (+" + (loadWarnings.size() - 1) + " more)";
+        }
+
+        // Pool usage runs here (before the merge) so the base-image weight can be attributed
+        // to the root template before the row lists are snapshotted for rendering.
+        refreshPoolUsage();
+
+        List<InstanceInfo> allInstances;
+        try {
+            allInstances = instancesFuture.join();
+        } catch (java.util.concurrent.CompletionException e) {
+            var cause = e.getCause();
+            if (cause instanceof Error err) throw err;
+            if (cause instanceof RuntimeException re) throw re;
+            throw new RuntimeException(cause);
+        }
 
         // Stale metadata cleanup: if pending-op is set but no process holds the lock,
         // a previous process crashed — clear the stale marker.
-        // Acquire the lock before clearing to avoid racing with another process.
         var clearedInstances = new java.util.HashSet<String>();
         for (var inst : allInstances) {
             if (!inst.pendingOp.isEmpty()
@@ -503,23 +539,6 @@ public class ListCommand extends BaseCommand {
                                     inst.diskUsage, inst.referencedBytes)
                             : inst)
                     .toList();
-        }
-
-        var loadWarnings = new ArrayList<String>();
-        // Re-read tool defs from disk alongside the image defs below, so edited tool YAML
-        // is reflected in the "△ definition changed" flag. Must precede addFallbacks(),
-        // which re-populates the freshly cleared cache.
-        toolDefLoader.reload();
-        imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
-        // Tool conflicts don't flow through image loadAll; surface them here too so
-        // the TUI warns about duplicate tool names instead of only failing at build.
-        for (var conflict : toolDefLoader.conflicts()) {
-            loadWarnings.add(conflict.shortMessage());
-        }
-        if (!loadWarnings.isEmpty()) {
-            statusMessage = loadWarnings.size() == 1
-                    ? loadWarnings.get(0)
-                    : loadWarnings.get(0) + " (+" + (loadWarnings.size() - 1) + " more)";
         }
 
         // Build template panel data by merging ImageDef definitions with Incus state
@@ -584,11 +603,6 @@ public class ListCommand extends BaseCommand {
             }
         }
 
-        // Pool usage first, so the base-image weight can be attributed to the root template before
-        // the row lists are snapshotted for rendering. Prefer the referenced-size model (accurate
-        // per-template deltas from stamped rfer); fall back to the shared-base fold when any built
-        // template predates the stamp or the pool isn't btrfs.
-        refreshPoolUsage();
         refreshProxyAuthError();
         refreshAccountingStatus();
         // Stamps taken from consistent accounting stay valid whatever the flag says now (templates
