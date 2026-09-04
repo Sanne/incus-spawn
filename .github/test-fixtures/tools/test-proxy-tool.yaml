@@ -1,18 +1,19 @@
 name: test-proxy-tool
 proxy:
+  config-namespace: testProxyTool
   configuration:
     token:
-      config-path: "testProxyTool.token"
+      config-path: "token"
       description: Test bearer token
       secret: true
     username:
       value: "test-user"
     password:
-      config-path: "testProxyTool.password"
+      config-path: "password"
       description: Test password
       secret: true
     api-key:
-      config-path: "testProxyTool.apiKey"
+      config-path: "apiKey"
       description: Test API key
       secret: true
   auth:
