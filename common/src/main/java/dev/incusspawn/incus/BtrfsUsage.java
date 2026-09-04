@@ -398,7 +398,31 @@ public final class BtrfsUsage {
         return r != null && r.exit() == 0 ? r.stdout() : null;
     }
 
-    private record ProcResult(int exit, String stdout, String stderr) {}
+    /** Package-private so the timeout behaviour can be tested without invoking sudo/btrfs. */
+    record ProcResult(int exit, String stdout, String stderr) {}
+
+    /** A stream being consumed on its own thread, so no read can outlive the caller's timeout. */
+    private record Drain(Thread thread, java.util.concurrent.atomic.AtomicReference<byte[]> bytes) {
+        void join() throws InterruptedException {
+            thread.join(1000);
+        }
+
+        String text() {
+            return new String(bytes.get(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static Drain drain(java.io.InputStream stream) {
+        var bytes = new java.util.concurrent.atomic.AtomicReference<byte[]>(new byte[0]);
+        var thread = Thread.ofVirtual().start(() -> {
+            try (stream) {
+                bytes.set(stream.readAllBytes());
+            } catch (IOException ignored) {
+                // Killed process / closed pipe — whatever arrived before that is enough.
+            }
+        });
+        return new Drain(thread, bytes);
+    }
 
     /**
      * Run {@code sudo -n btrfs <args>} on the host and capture both streams (the rescan trigger
@@ -410,22 +434,35 @@ public final class BtrfsUsage {
         cmd.add("-n");
         cmd.add("btrfs");
         java.util.Collections.addAll(cmd, args);
+        var pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(false);
+        return runProcess(pb, PROBE_TIMEOUT_SECONDS);
+    }
+
+    /**
+     * Run a process, capture both streams, and give up after {@code timeoutSeconds}. Package-private
+     * (rather than inlined above) so the timeout is testable without shelling out to sudo/btrfs —
+     * this is the path that must never block the TUI, so the bound is worth pinning down in a test.
+     */
+    static ProcResult runProcess(ProcessBuilder pb, long timeoutSeconds) {
         try {
-            var pb = new ProcessBuilder(cmd);
-            pb.redirectErrorStream(false);
             var proc = pb.start();
-            // Drain stderr concurrently so a chatty command can't block on a full pipe.
-            var errBytes = new java.util.concurrent.atomic.AtomicReference<byte[]>(new byte[0]);
-            var errThread = Thread.ofVirtual().start(() -> {
-                try { errBytes.set(proc.getErrorStream().readAllBytes()); } catch (IOException ignored) {}
-            });
-            var out = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            if (!proc.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                proc.destroyForcibly();
+            // Drain BOTH streams on their own threads. readAllBytes() blocks until EOF, so reading
+            // either one inline would outlast the bounded wait below whenever the child hangs with
+            // its pipe still open — the timeout would never be reached and the caller would block
+            // indefinitely. That caller is now the TUI reload and the post-delete repair trigger,
+            // not just build-time stamping, so an unbounded wait here is a UI hang.
+            var out = drain(proc.getInputStream());
+            var err = drain(proc.getErrorStream());
+            if (!proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+                proc.destroyForcibly();          // closes the pipes, so the drain threads finish
+                out.join();
+                err.join();
                 return null;
             }
-            errThread.join(1000);
-            return new ProcResult(proc.exitValue(), out, new String(errBytes.get(), StandardCharsets.UTF_8));
+            out.join();
+            err.join();
+            return new ProcResult(proc.exitValue(), out.text(), err.text());
         } catch (IOException e) {
             return null;
         } catch (InterruptedException e) {
