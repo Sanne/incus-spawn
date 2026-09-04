@@ -335,6 +335,7 @@ public class DoctorCommand extends BaseCommand {
             var findings = new ArrayList<Finding>();
             findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
+            findings.addAll(checkDiskAccounting(pool, pools.get(pool)));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
                 findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
@@ -376,6 +377,35 @@ public class DoctorCommand extends BaseCommand {
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /**
+     * Whether the btrfs pool's qgroup accounting — the source of every per-row size the TUI shows —
+     * is trustworthy. The kernel flags it {@code inconsistent} after quotas are enabled on a
+     * populated pool or a subvolume delete exceeds {@code drop_subtree_threshold}, and from then on
+     * every counter is frozen at a plausible-looking stale value until a rescan. The TUI and builds
+     * trigger that rescan automatically; this surfaces the state (and offers the rescan) for the
+     * case where the automatic repair couldn't run — e.g. a sudoers rule from before it existed.
+     */
+    private List<Finding> checkDiskAccounting(String pool, String driver) {
+        if (!"btrfs".equals(driver)) return List.of();
+        var status = dev.incusspawn.incus.BtrfsUsage.status(pool);
+        if (!status.available()) return List.of();                  // quota off / old kernel or agent: nothing to assess
+        if (!status.enabled()) return List.of(Finding.ok("Disk accounting", "(btrfs quotas not enabled yet)"));
+        var detail = "(" + status.mode() + ", drop_subtree_threshold=" + status.dropSubtreeThreshold() + ")";
+        if (status.inconsistent()) {
+            return List.of(Finding.warn("Disk accounting inconsistent",
+                    "btrfs qgroup counters are frozen — every template/instance size is stale " + detail,
+                    new Remediation("Start a btrfs quota rescan (rebuilds the counters in the background; data is untouched)",
+                            false,
+                            () -> {
+                                if (!dev.incusspawn.incus.BtrfsUsage.rescan(pool)) {
+                                    throw new RuntimeException("could not start the rescan"
+                                            + (Platform.isLinux() ? " — re-run 'isx init' to refresh the sudoers rule" : ""));
+                                }
+                            })));
+        }
+        return List.of(Finding.ok("Disk accounting", "consistent " + detail));
     }
 
     private List<Finding> checkInstancesOffCowPool(IncusClient incus, String cowPool,

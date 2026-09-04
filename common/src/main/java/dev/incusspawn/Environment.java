@@ -45,7 +45,10 @@ public final class Environment {
     // v5: the btrfs qgroup read now has a --sync flavour (for the accuracy-critical read after a
     // build) alongside the plain one (for periodic sampling); the pinned sudoers rule gained the
     // extra command form, so existing installs must re-run init to rewrite it (else sudo denies it).
-    public static final int INIT_VERSION = 5;
+    // v6: the sudoers rule also permits `btrfs quota rescan <pool>`, the auto-repair for
+    // inconsistent qgroup accounting (see BtrfsUsage); without it the TUI can detect the broken
+    // state but not fix it.
+    public static final int INIT_VERSION = 6;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();

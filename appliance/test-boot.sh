@@ -110,6 +110,17 @@ probe_agent() {
     count=$(printf 'socat-count\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || count=""
     echo "ISX AGENT SOCAT COUNT: $count" >> "$VSOCK_RESULT"
 
+    # Disk-accounting health verb: must resolve the cow pool's btrfs filesystem and answer with
+    # key=value lines. A fresh pool has quotas off (Incus enables them lazily), so "available=0"
+    # is a valid answer too — what's tested is the lookup and the reply shape, not the flag.
+    local qstatus
+    qstatus=$(printf 'btrfs-status cow\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r') || qstatus=""
+    if echo "$qstatus" | grep -Eq '^(enabled|available)=[01]$'; then
+        echo "ISX AGENT BTRFS STATUS OK: $(echo "$qstatus" | tr '\n' ' ')" >> "$VSOCK_RESULT"
+    else
+        echo "ISX AGENT BTRFS STATUS FAIL: '$qstatus'" >> "$VSOCK_RESULT"
+    fi
+
     # No-reboot recovery: restart the forwarder, then confirm the Incus API answers again
     # over the relaunched forwarder, and that the agent listener is still up afterwards.
     local recover
@@ -308,6 +319,7 @@ if [ "$BACKEND" = "vfkit" ]; then
     echo "-- Control agent (isx.agent_vsock=1025) --"
     check "control agent on vsock port 1025"   "in-guest control agent started"
     check_result "ISX AGENT OK"                "control agent answered ping over vsock"
+    check_result "ISX AGENT BTRFS STATUS OK"   "btrfs-status resolved the cow pool's qgroup status"
     check_result "ISX AGENT RECOVER OK"        "no-reboot forwarder recovery restored the tunnel"
     check_result "ISX AGENT SURVIVED RECOVER OK" "control agent still up after forwarder recovery"
 else

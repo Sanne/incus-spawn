@@ -232,6 +232,61 @@ class ListCommandDiskTest {
     private static final String BUILT = "2026-08-29T10:00:00Z";   // any non-"not built" status
     private static final String NOT_BUILT = "not built";
 
+    // --- hasSuspiciousStamps / restampFromLive: healing stamps recorded from frozen accounting ---
+
+    @Test
+    void equalParentAndChildStampsArePoisoned() {
+        // The observed failure signature: every subvolume frozen at the base image's rfer, so each
+        // derived template is stamped with exactly its parent's value (and would render as ~0B).
+        var rows = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 119_005_184L),
+                tpl("tpl-dev", "tpl-minimal", BUILT, 119_005_184L),
+                tpl("tpl-isx", "tpl-dev", BUILT, 119_005_184L));
+        assertTrue(ListCommand.hasSuspiciousStamps(rows));
+    }
+
+    @Test
+    void healthyDeltasAreNotSuspicious() {
+        var rows = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-dev", "tpl-minimal", BUILT, 1_150L),
+                tpl("tpl-isx", "tpl-dev", BUILT, 1_800L));
+        assertFalse(ListCommand.hasSuspiciousStamps(rows));
+    }
+
+    @Test
+    void suspicionIgnoresUnbuiltUnstampedAndRootRows() {
+        // A not-built child, an unstamped child, and a root can't be compared to a parent stamp.
+        var rows = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 1_000L),
+                tpl("tpl-dev", "tpl-minimal", NOT_BUILT, 1_000L),
+                tpl("tpl-java", "tpl-minimal", BUILT, -1),
+                tpl("other-root", "", BUILT, 1_000L));
+        assertFalse(ListCommand.hasSuspiciousStamps(rows));
+    }
+
+    @Test
+    void restampOverwritesDifferingStampsOnly() {
+        var rows = java.util.List.of(
+                tpl("tpl-minimal", "", BUILT, 119_005_184L),
+                tpl("tpl-dev", "tpl-minimal", BUILT, 119_005_184L),
+                tpl("tpl-new", "tpl-dev", NOT_BUILT, -1));
+        var live = java.util.Map.of("tpl-minimal", 119_005_184L, "tpl-dev", 1_900_000_000L, "tpl-new", 5L);
+        var out = ListCommand.restampFromLive(rows, live);
+        assertEquals(119_005_184L, out.get(0).referencedBytes());        // unchanged: live agrees
+        assertEquals(1_900_000_000L, out.get(1).referencedBytes());      // corrected from the live read
+        assertEquals(-1, out.get(2).referencedBytes());                  // not built: never stamped
+        assertEquals(rows.get(0), out.get(0));                           // untouched rows are the same objects' values
+    }
+
+    @Test
+    void restampSkipsMissingAndNonPositiveLiveValues() {
+        var rows = java.util.List.of(tpl("tpl-minimal", "", BUILT, 1_000L), tpl("tpl-dev", "tpl-minimal", BUILT, 1_000L));
+        var out = ListCommand.restampFromLive(rows, java.util.Map.of("tpl-dev", 0L));
+        assertEquals(1_000L, out.get(0).referencedBytes());              // absent from live: kept
+        assertEquals(1_000L, out.get(1).referencedBytes());              // zero is not a valid rfer: kept
+    }
+
     @Test
     void referencedModelRejectedOffBtrfs() {
         var tpls = java.util.List.of(tpl("tpl-minimal", "", BUILT, 1_000L));

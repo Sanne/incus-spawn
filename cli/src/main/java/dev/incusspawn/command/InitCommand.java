@@ -1019,8 +1019,9 @@ public class InitCommand extends BaseCommand {
      * <em>referenced</em> sizes for the CoW pool — the data behind per-template disk deltas (see
      * {@link dev.incusspawn.incus.BtrfsUsage}). Reading qgroups needs CAP_SYS_ADMIN and the pool dir
      * is root-only, and Incus exposes no API for rfer, so a privileged read is unavoidable; a
-     * password prompt on TUI refresh isn't acceptable, hence NOPASSWD. The rule permits ONLY the two
-     * read-only commands against this pool's mount — no wildcards, no other btrfs subcommands.
+     * password prompt on TUI refresh isn't acceptable, hence NOPASSWD. The rule permits ONLY the
+     * read-only qgroup/subvolume listings plus {@code quota rescan} (rebuilds accounting counters,
+     * never touches data) against this pool's mount — no wildcards, no other btrfs subcommands.
      *
      * <p>Linux only (on macOS the pool lives in the appliance VM and the in-VM agent reads it as
      * root). Best-effort: if it can't be installed, rfer stamping simply fails and the TUI falls
@@ -1039,11 +1040,14 @@ public class InitCommand extends BaseCommand {
         var mount = "/var/lib/incus/storage-pools/" + pool;
         // Permit both flavours of the qgroup read: the plain form (cheap, for periodic sampling) and
         // the --sync form (forces a commit, for the accuracy-critical read right after a build). sudo
-        // matches the argument vector exactly, so each form needs its own entry.
+        // matches the argument vector exactly, so each form needs its own entry. `quota rescan` is
+        // the one non-read: it only rebuilds the accounting counters (never touches data) and is how
+        // isx repairs the `inconsistent` state that would otherwise freeze every size it shows.
         var content = user + " ALL=(root) NOPASSWD: "
                 + btrfsPath + " qgroup show -re --raw " + mount + ", "
                 + btrfsPath + " qgroup show -re --raw --sync " + mount + ", "
-                + btrfsPath + " subvolume list " + mount + "\n";
+                + btrfsPath + " subvolume list " + mount + ", "
+                + btrfsPath + " quota rescan " + mount + "\n";
 
         try {
             if (Files.exists(Path.of(BTRFS_SUDOERS))

@@ -231,6 +231,29 @@ public class ListCommand extends BaseCommand {
     // (foldBaseWeightIntoRootTemplate) or attributed via its own rfer (applyReferencedTemplateDeltas),
     // or null when it couldn't be attributed. Drives the CoW delete note and the ~ marker.
     private String baseTemplateName;
+    // The kernel's view of the btrfs pool's qgroup accounting, refreshed each reload (cheap: a sysfs
+    // read, or one agent round trip on macOS). While it reads `untrusted()` every size the pool
+    // reports — stamped or live, rfer or exclusive — is frozen at some stale value, so no stamp is
+    // backfilled and no base weight folded from it; refreshAccountingStatus() also kicks off the
+    // background repair. Null when the pool isn't btrfs or the status can't be read (then sizes are
+    // taken at face value, as before the check existed).
+    private dev.incusspawn.incus.BtrfsUsage.QgroupStatus qgroupStatus;
+    // True from the moment inconsistent accounting is seen until it reads consistent again — the
+    // transition is what triggers a one-off re-validation of the stamps (revalidateStampsIfNeeded),
+    // since any stamp recorded while the counters were frozen is wrong.
+    private boolean accountingRepairPending;
+    private boolean stampsSuspect;
+    // The "a derived template's stamp equals its parent's" heuristic runs at most once per session:
+    // it's how a pool poisoned before this check existed gets healed, but a live probe that comes
+    // back identical must not be repeated every refresh.
+    private boolean poisonHeuristicSpent;
+    private boolean accountingWarningShown;
+    // Reloads can come ~1/s during activity, and on macOS the status read is an agent round trip
+    // (up to the client's 5s watchdog if the agent is wedged) — so re-read it on a cadence, not
+    // per reload: quickly while a repair is pending (to notice the flag clearing), rarely otherwise.
+    private long accountingCheckMs;
+    private static final long ACCOUNTING_CHECK_INTERVAL_MS = 30_000;
+    private static final long ACCOUNTING_REPAIR_POLL_MS = 2_000;
     // Amber threshold for the storage gauge (percent of pool used).
     private static final int STORAGE_WARN_PERCENT = 75;
     // Set true once we've shown the low-space warning for the current session,
@@ -563,11 +586,22 @@ public class ListCommand extends BaseCommand {
         // template predates the stamp or the pool isn't btrfs.
         refreshPoolUsage();
         refreshProxyAuthError();
-        fillMissingReferencedSizes();
+        refreshAccountingStatus();
+        // Stamps taken from consistent accounting stay valid whatever the flag says now (templates
+        // are immutable), so the delta model keeps running through a repair. What must wait for the
+        // counters to be trustworthy is anything *read live*: backfilling a missing stamp, healing a
+        // suspect one, or folding the pool's shared remainder onto the root.
+        boolean accountingTrusted = qgroupStatus == null || !qgroupStatus.untrusted();
+        if (accountingTrusted) {
+            revalidateStampsIfNeeded();
+            fillMissingReferencedSizes();
+        }
         if (canUseReferencedModel()) {
             applyReferencedTemplateDeltas();
-        } else {
+        } else if (accountingTrusted) {
             foldBaseWeightIntoRootTemplate();
+        } else {
+            baseTemplateName = null;
         }
 
         allTemplateEntries = new ArrayList<>(templateEntries);
@@ -821,6 +855,105 @@ public class ListCommand extends BaseCommand {
         var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);   // non-sync: light enough for refresh
         if (live.isEmpty()) return;
         templateEntries = fillMissingReferenced(templateEntries, live);
+    }
+
+    /**
+     * Read the pool's qgroup accounting status and, if it's inconsistent, start the repair — a
+     * background {@code btrfs quota rescan}, throttled inside {@code BtrfsUsage} so calling this on
+     * every reload is fine. The kernel clears the flag when the rescan completes (seconds on a
+     * developer-sized pool); the reload that first sees it consistent again marks the stamps
+     * suspect, because any recorded while the counters were frozen are wrong.
+     */
+    private void refreshAccountingStatus() {
+        if (!usagePoolIsBtrfs || usagePoolName == null) {
+            qgroupStatus = null;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long interval = accountingRepairPending ? ACCOUNTING_REPAIR_POLL_MS : ACCOUNTING_CHECK_INTERVAL_MS;
+        if (qgroupStatus != null && now - accountingCheckMs < interval) return;
+        accountingCheckMs = now;
+        qgroupStatus = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(usagePoolName);
+        if (qgroupStatus.untrusted()) {
+            accountingRepairPending = true;
+            if (!accountingWarningShown && statusMessage == null) {
+                statusMessage = "Repairing disk accounting (btrfs quota rescan) — sizes may be stale for a moment";
+                accountingWarningShown = true;
+            }
+        } else if (accountingRepairPending && qgroupStatus.available()) {
+            accountingRepairPending = false;
+            stampsSuspect = true;
+        }
+    }
+
+    /**
+     * Re-validate stamped referenced sizes against one live read and re-stamp any that differ.
+     * Runs only when there's reason to doubt them: right after a repair observed this session
+     * (the stamps may have been recorded from frozen counters), or — at most once per session —
+     * when they <em>look</em> poisoned: a built derived template stamped with exactly its parent's
+     * value (see {@link #hasSuspiciousStamps}). That second trigger is what heals a pool that went
+     * inconsistent before this check existed, without a rebuild. Corrected stamps are persisted so
+     * the next launch doesn't probe again; the privileged read stays out of the healthy path.
+     */
+    private void revalidateStampsIfNeeded() {
+        if (!usagePoolIsBtrfs || usagePoolName == null) return;
+        boolean run = stampsSuspect;
+        if (!run && !poisonHeuristicSpent && hasSuspiciousStamps(templateEntries)) {
+            run = true;
+            poisonHeuristicSpent = true;
+        }
+        if (!run) return;
+        stampsSuspect = false;
+        var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);
+        if (live.isEmpty()) return;
+        var corrected = restampFromLive(templateEntries, live);
+        for (int i = 0; i < corrected.size(); i++) {
+            var before = templateEntries.get(i);
+            var after = corrected.get(i);
+            if (after.referencedBytes() == before.referencedBytes()) continue;
+            try {
+                incus.configSet(after.name(), Metadata.DISK_REFERENCED, String.valueOf(after.referencedBytes()));
+            } catch (Exception ignored) {
+                // Best-effort persistence: the corrected value is used for this session regardless.
+            }
+        }
+        templateEntries = corrected;
+    }
+
+    /**
+     * Whether any built derived template carries exactly its (built, stamped) parent's referenced
+     * size. A layer that added literally nothing is not a thing — even an empty template writes its
+     * env file — so equal stamps mean both were recorded from frozen accounting (every subvolume
+     * then reports the value it inherited at snapshot time). This is the signature of the failure,
+     * not a normal state, so it's safe to act on.
+     */
+    static boolean hasSuspiciousStamps(java.util.List<TemplateInfo> templates) {
+        var rferOf = new java.util.HashMap<String, Long>();
+        for (var t : templates) if (t.isBuilt() && t.referencedBytes() >= 0) rferOf.put(t.name(), t.referencedBytes());
+        for (var t : templates) {
+            if (!t.isBuilt() || t.isRoot() || t.referencedBytes() < 0) continue;
+            var parentRfer = rferOf.get(t.parent());
+            if (parentRfer != null && parentRfer == t.referencedBytes()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Return {@code templates} with every built row's referenced size replaced by {@code live}'s
+     * (a name→rfer map) where it differs and the live value is positive. Unlike
+     * {@link #fillMissingReferenced}, this overwrites existing stamps — it's only ever called when
+     * they're suspect. Rows absent from {@code live} and not-built rows are left untouched.
+     */
+    static java.util.List<TemplateInfo> restampFromLive(java.util.List<TemplateInfo> templates,
+                                                        java.util.Map<String, Long> live) {
+        var out = new ArrayList<>(templates);
+        for (int i = 0; i < out.size(); i++) {
+            var t = out.get(i);
+            if (!t.isBuilt()) continue;
+            var r = live.get(t.name());
+            if (r != null && r > 0 && r != t.referencedBytes()) out.set(i, t.withReferencedBytes(r));
+        }
+        return out;
     }
 
     /** Whether any built template lacks a stamped referenced size — the trigger for a live backfill. */
