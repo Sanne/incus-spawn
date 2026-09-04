@@ -26,6 +26,35 @@ public final class Platform {
     }
 
     /**
+     * Best-effort desktop notification. Fire-and-forget: failures are silently ignored.
+     * Uses {@code osascript} on macOS, {@code notify-send} on Linux.
+     */
+    public static void sendNotification(String title, String message) {
+        try {
+            ProcessBuilder pb;
+            if (isMacOS()) {
+                var script = "display notification " + osascriptQuote(message)
+                        + " with title " + osascriptQuote(title)
+                        + " sound name \"Ping\"";
+                pb = new ProcessBuilder("osascript", "-e", script);
+            } else if (isLinux()) {
+                pb = new ProcessBuilder("notify-send", "--app-name=isx", "--urgency=critical", title, message);
+            } else {
+                return;
+            }
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            pb.start();
+        } catch (IOException e) {
+            System.err.println("Desktop notification failed: " + e.getMessage());
+        }
+    }
+
+    private static String osascriptQuote(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /**
      * Best-effort open of a URL in the host's default browser via the platform opener
      * ({@code open} on macOS, {@code xdg-open} on Linux). A missing opener yields false.
      *

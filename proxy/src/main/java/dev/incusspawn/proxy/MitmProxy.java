@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -150,6 +151,9 @@ public class MitmProxy {
     // CA fingerprint computed at startup for the health endpoint
     private String caFingerprint = "";
     private volatile boolean dnsConfigured;
+    private final Object authLock = new Object();
+    private volatile String authError;
+    private long authNotificationSentMs;
     private static final long DNS_CACHE_TTL_MS = 60_000;
     private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
         static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
@@ -776,7 +780,9 @@ public class MitmProxy {
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
             if (!injectHeaders(upReq, domain, upstreamHost, isVertexRequest)) {
-                sendError(clientReq.response(), 502, "Failed to obtain upstream credentials");
+                var err = authError;
+                var detail = err != null ? err : "Failed to obtain upstream credentials";
+                sendError(clientReq.response(), 502, detail);
                 return;
             }
             upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
@@ -791,10 +797,14 @@ public class MitmProxy {
                     return;
                 }
 
-                if (upResp.statusCode() == 401 && !credentials.oauthToken().isBlank()
-                        && ANTHROPIC_DOMAINS.contains(domain)) {
-                    System.err.println("Claude OAuth token rejected (HTTP 401). " +
-                            "The token may have expired — run 'isx init' to refresh.");
+                if (!credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
+                    if (upResp.statusCode() == 401) {
+                        setAuthError("Claude OAuth token rejected (HTTP 401). "
+                                + "The token may have expired — run 'isx init' to refresh.",
+                                "isx init");
+                    } else {
+                        clearAuthError();
+                    }
                 }
 
                 relayApiResponse(clientReq, upResp, upstreamHost, domain,
@@ -1656,8 +1666,9 @@ public class MitmProxy {
             String token;
             try {
                 token = getVertexAccessToken();
+                clearAuthError();
             } catch (Exception e) {
-                System.err.println("Failed to get Vertex token: " + e.getMessage());
+                setAuthError(e.getMessage(), "gcloud auth login");
                 return false;
             }
             upReq.putHeader("Authorization", "Bearer " + token);
@@ -1741,6 +1752,32 @@ public class MitmProxy {
     private synchronized void invalidateVertexToken() {
         cachedVertexToken = null;
         vertexTokenExpiryMs = 0;
+    }
+
+    private static final long AUTH_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000L;
+
+    private void setAuthError(String msg, String hint) {
+        synchronized (authLock) {
+            if (authError == null) {
+                System.err.println(hint.startsWith("gcloud")
+                        ? "Failed to get Vertex token: " + msg : msg);
+            }
+            authError = msg;
+            long now = System.currentTimeMillis();
+            if (now - authNotificationSentMs >= AUTH_NOTIFICATION_COOLDOWN_MS) {
+                authNotificationSentMs = now;
+                Platform.sendNotification("isx: Authentication expired",
+                        "Run '" + hint + "' to re-authenticate.");
+            }
+        }
+    }
+
+    private void clearAuthError() {
+        if (authError == null) return;
+        synchronized (authLock) {
+            authError = null;
+            authNotificationSentMs = 0;
+        }
     }
 
     // --- Maven helpers ---
@@ -1891,19 +1928,23 @@ public class MitmProxy {
             return;
         }
         var info = BuildInfo.instance();
+        var err = authError;
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
                 + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
                 + ",\"caFingerprint\":\"" + caFingerprint + "\""
-                + ",\"dnsConfigured\":" + dnsConfigured + "}";
+                + ",\"dnsConfigured\":" + dnsConfigured
+                + (err != null ? ",\"authError\":\"" + escapeJson(err) + "\"" : "")
+                + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
     }
 
     private static String escapeJson(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        return s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     // --- SSL trust ---

@@ -19,8 +19,12 @@ public final class ProxyHealthCheck {
     }
 
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
-                            boolean dnsConfigured) {
+                            boolean dnsConfigured, String authError) {
         public boolean isLegacy() { return version == null || version.isEmpty(); }
+        public boolean hasAuthError() { return authError != null && !authError.isEmpty(); }
+        public String authRemediationHint() {
+            return authError != null && authError.contains("gcloud") ? "gcloud auth login" : "isx init";
+        }
     }
 
     private record HealthResult(boolean healthy, boolean dnsConfigured) {}
@@ -107,11 +111,15 @@ public final class ProxyHealthCheck {
     }
 
     public static ProxyInfo fetchProxyInfo(String gatewayIp) {
+        return fetchProxyInfo(gatewayIp, 2000);
+    }
+
+    public static ProxyInfo fetchProxyInfo(String gatewayIp, int timeoutMs) {
         try {
             var url = URI.create("http://" + gatewayIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health").toURL();
             var conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(2000);
-            conn.setReadTimeout(2000);
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
             conn.setRequestMethod("GET");
             if (conn.getResponseCode() != 200) return null;
             var body = new String(conn.getInputStream().readAllBytes());
@@ -133,9 +141,10 @@ public final class ProxyHealthCheck {
                     textOrEmpty(node, "gitSha"),
                     textOrEmpty(node, "runtime"),
                     textOrEmpty(node, "caFingerprint"),
-                    dnsConfigured);
+                    dnsConfigured,
+                    textOrEmpty(node, "authError"));
         } catch (Exception e) {
-            return new ProxyInfo("", "", "", "", true);
+            return new ProxyInfo("", "", "", "", true, "");
         }
     }
 

@@ -83,6 +83,9 @@ public class ProxyCommand extends BaseCommand {
                             System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
                         }
                     }
+                    if (proxyInfo != null && proxyInfo.hasAuthError()) {
+                        System.out.println("  \033[1;31m>>> Auth error: " + proxyInfo.authError() + "\033[0m");
+                    }
                     System.out.println("  Health endpoint: http://" + healthIp + ":" + ProxyConfig.DEFAULT_HEALTH_PORT + "/health");
                     System.out.println("  MITM port:       " + ProxyConfig.DEFAULT_MITM_PORT);
                     if (serviceActive) {
