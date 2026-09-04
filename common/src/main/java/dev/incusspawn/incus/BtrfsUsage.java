@@ -60,16 +60,41 @@ public final class BtrfsUsage {
     /**
      * A repair trigger is cheap but not free (a whole-filesystem extent walk), and a rescan already
      * in flight keeps the flag set until it finishes — so don't re-trigger on every refresh: wait
-     * this long between triggers, and give up after {@link #MAX_RESCAN_TRIGGERS} in one process
-     * (a flag that survives that many rescans isn't going to clear by trying harder; leave it to
-     * {@code isx doctor}).
+     * this long between triggers, and give up after {@link #MAX_RESCAN_TRIGGERS} <em>consecutive</em>
+     * ones (a flag that survives that many rescans isn't going to clear by trying harder; leave it
+     * to {@code isx doctor}). The count resets as soon as the accounting reads consistent again, so
+     * this bounds a stuck repair, not the number of repairs a long session may legitimately need.
      */
     static final Duration RESCAN_RETRY_INTERVAL = Duration.ofSeconds(60);
     static final int MAX_RESCAN_TRIGGERS = 5;
 
+    /**
+     * Minimum spacing between <em>opportunistic</em> checks (see
+     * {@link #repairIfInconsistentThrottled}). Deliberate callers — a build about to stamp, the
+     * TUI's own cadence, {@code isx doctor} — are never gated by this.
+     */
+    static final Duration CHECK_MIN_INTERVAL = Duration.ofSeconds(5);
+
     private static final Object RESCAN_LOCK = new Object();
     private static long lastRescanTriggerNanos = Long.MIN_VALUE;
     private static int rescanTriggers;
+    private static long lastOpportunisticCheckNanos = Long.MIN_VALUE;
+
+    /** Clear all throttle state, so each test starts from a known point. */
+    static void resetThrottleStateForTest() {
+        synchronized (RESCAN_LOCK) {
+            lastRescanTriggerNanos = Long.MIN_VALUE;
+            rescanTriggers = 0;
+            lastOpportunisticCheckNanos = Long.MIN_VALUE;
+        }
+    }
+
+    /** Consecutive rescan triggers since the accounting last read consistent. Test-only accessor. */
+    static int rescanTriggerCountForTest() {
+        synchronized (RESCAN_LOCK) {
+            return rescanTriggers;
+        }
+    }
 
     private BtrfsUsage() {}
 
@@ -152,8 +177,47 @@ public final class BtrfsUsage {
      */
     public static QgroupStatus repairIfInconsistent(String poolName) {
         var status = status(poolName);
-        if (status.untrusted()) triggerRescanThrottled(poolName);
+        if (status.untrusted()) {
+            triggerRescanThrottled(poolName);
+        } else if (status.available()) {
+            // Consistent accounting means any earlier repair worked (or none was needed), so the
+            // failed-attempt budget starts over. Without this the cap is a per-process lifetime
+            // limit, and a long-lived TUI session doing more than MAX_RESCAN_TRIGGERS rebuild
+            // cycles would silently stop repairing itself for the rest of the session.
+            synchronized (RESCAN_LOCK) {
+                rescanTriggers = 0;
+            }
+        }
         return status;
+    }
+
+    /**
+     * Opportunistic detect-and-repair for hot paths that fire once per mutation — every subvolume
+     * delete goes through {@code IncusClient.delete}, so deleting N instances in a loop
+     * ({@code isx clean}, destroying several branches) would otherwise pay N status reads, and on
+     * macOS each one is a round trip to the in-VM agent. Skips entirely if any opportunistic check
+     * ran within {@link #CHECK_MIN_INTERVAL}, so a burst costs one check rather than N.
+     *
+     * <p>{@code poolNameSupplier} is only invoked when the check actually runs, so the caller's own
+     * pool lookup (an Incus API call) is skipped too. Nothing is lost by skipping: the flag can only
+     * have been set by the very deletes in this burst, the first check already caught that and
+     * started the rescan, and the TUI's reload cadence plus the next build both re-check anyway.
+     *
+     * @return the status when a check ran, else empty
+     */
+    public static java.util.Optional<QgroupStatus> repairIfInconsistentThrottled(
+            java.util.function.Supplier<String> poolNameSupplier) {
+        synchronized (RESCAN_LOCK) {
+            long now = System.nanoTime();
+            if (lastOpportunisticCheckNanos != Long.MIN_VALUE
+                    && now - lastOpportunisticCheckNanos < CHECK_MIN_INTERVAL.toNanos()) {
+                return java.util.Optional.empty();
+            }
+            lastOpportunisticCheckNanos = now;
+        }
+        var pool = poolNameSupplier.get();
+        if (pool == null) return java.util.Optional.empty();
+        return java.util.Optional.of(repairIfInconsistent(pool));
     }
 
     /**
