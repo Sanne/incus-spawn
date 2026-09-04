@@ -120,6 +120,10 @@ public class DoctorCommand extends BaseCommand {
 
     /** Prompt to apply a remediation (TTY), or print the suggestion when non-interactive. */
     private void applyOrSuggest(Remediation r) {
+        if (r.action() == null) {
+            System.out.println("     " + r.description());
+            return;
+        }
         var console = System.console();
         if (console == null) {
             System.out.println("     fix: " + r.description() + " (re-run in a terminal to apply)");
