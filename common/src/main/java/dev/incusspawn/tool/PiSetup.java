@@ -10,9 +10,37 @@ import java.util.List;
 
 public class PiSetup implements ToolSetup {
 
+    static final String DEFAULT_PROVIDER = "anthropic";
+    static final String DEFAULT_MODEL = "claude-sonnet-4-6";
+
     @Override
     public String name() {
         return "pi";
+    }
+
+    @Override
+    public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+        var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
+
+        var provider = new ToolDef.ParameterDef();
+        provider.setType("string");
+        provider.setDescription("Pi provider (e.g. anthropic, vertex, google)");
+        provider.setPattern("^[a-z][a-z0-9_-]*$");
+        provider.setOptional(true);
+        provider.setReconfigurable(true);
+        provider.setDefault(DEFAULT_PROVIDER);
+        params.put("provider", provider);
+
+        var model = new ToolDef.ParameterDef();
+        model.setType("string");
+        model.setDescription("Model ID (e.g. claude-sonnet-4-6, gemini-3.7-flash)");
+        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setOptional(true);
+        model.setReconfigurable(true);
+        model.setDefault(DEFAULT_MODEL);
+        params.put("model", model);
+
+        return params;
     }
 
     @Override
@@ -34,12 +62,22 @@ public class PiSetup implements ToolSetup {
 
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
-        var claude = SpawnConfig.load().getClaude();
         var entries = new ArrayList<EnvEntry>();
-        if (claude.isOauthMode()) {
-            entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
+        var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
+
+        if ("vertex".equals(provider) || "google".equals(provider)) {
+            var claude = SpawnConfig.load().getClaude();
+            if (claude.isUseVertex()) {
+                entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", claude.getVertexProjectId()));
+                entries.add(EnvEntry.set("GOOGLE_CLOUD_LOCATION", claude.getCloudMlRegion()));
+            }
         } else {
-            entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
+            var claude = SpawnConfig.load().getClaude();
+            if (claude.isOauthMode()) {
+                entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
+            } else {
+                entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
+            }
         }
         entries.add(EnvEntry.set("PI_SKIP_VERSION_CHECK", "1"));
         return entries;
@@ -48,7 +86,12 @@ public class PiSetup implements ToolSetup {
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
-        configureSettings(c);
+        configureSettings(c, resolvedParams);
+    }
+
+    @Override
+    public void reconfigure(Container c, java.util.Map<String, String> resolvedParams) {
+        configureSettings(c, resolvedParams);
     }
 
     private void installBinary(Container c) {
@@ -58,17 +101,19 @@ public class PiSetup implements ToolSetup {
         BuildOutput.stepDone();
     }
 
-    private void configureSettings(Container c) {
+    private void configureSettings(Container c, java.util.Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Pi...");
+        var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
+        var model = resolvedParams.getOrDefault("model", DEFAULT_MODEL);
         var settingsJson = """
                 {
                   "enableInstallTelemetry": false,
                   "quietStartup": true,
-                  "defaultProvider": "anthropic",
-                  "defaultModel": "claude-sonnet-4-6",
+                  "defaultProvider": "%s",
+                  "defaultModel": "%s",
                   "defaultThinkingLevel": "medium"
                 }
-                """;
+                """.formatted(provider, model);
         c.sh("mkdir -p /home/agentuser/.pi/agent");
         c.writeFile("/home/agentuser/.pi/agent/settings.json", settingsJson);
         c.chown("/home/agentuser/.pi", "agentuser:agentuser");
