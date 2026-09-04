@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,5 +85,63 @@ class BtrfsUsageTest {
     @Test
     void probeReturnsEmptyMapForNullPool() {
         assertEquals(Map.of(), BtrfsUsage.probe(null));
+    }
+
+    // --- qgroup accounting status: the trust gate in front of every rfer/exclusive read ---
+
+    @Test
+    void parseStatusReadsTheAgentReply() {
+        var s = BtrfsUsage.parseStatus("enabled=1\ninconsistent=1\nmode=qgroup\ndrop_subtree_threshold=3\n");
+        assertTrue(s.available());
+        assertTrue(s.enabled());
+        assertTrue(s.inconsistent());
+        assertTrue(s.untrusted());
+        assertEquals("qgroup", s.mode());
+        assertEquals(3, s.dropSubtreeThreshold());
+
+        var ok = BtrfsUsage.parseStatus("enabled=1\ninconsistent=0\nmode=squota\ndrop_subtree_threshold=8");
+        assertTrue(ok.available());
+        assertFalse(ok.untrusted());
+        assertEquals("squota", ok.mode());
+    }
+
+    @Test
+    void parseStatusTreatsUnknownAsUnavailableNeverAsTrusted() {
+        // An agent that predates the verb, a bad-pool rejection, or an "available=0" reply (quota off /
+        // no sysfs attributes) all mean "can't assess": behave as before the check existed.
+        for (var reply : new String[] {"error: unknown verb", "error: bad pool name", "available=0", "", "garbage"}) {
+            var s = BtrfsUsage.parseStatus(reply);
+            assertFalse(s.available(), reply);
+            assertFalse(s.untrusted(), reply);
+        }
+        assertFalse(BtrfsUsage.parseStatus(null).available());
+    }
+
+    @Test
+    void parseStatusToleratesMissingOptionalKeys() {
+        var s = BtrfsUsage.parseStatus("enabled=1\ninconsistent=0");
+        assertTrue(s.available());
+        assertEquals("", s.mode());
+        assertEquals(-1, s.dropSubtreeThreshold());
+        var bad = BtrfsUsage.parseStatus("enabled=1\ninconsistent=0\ndrop_subtree_threshold=lots");
+        assertEquals(-1, bad.dropSubtreeThreshold());
+    }
+
+    @Test
+    void quotaOffIsNotUntrusted() {
+        // Quotas disabled: nothing to repair, and the rfer probe fails on its own (the pre-existing
+        // "no stamp" path). Only a positively-inconsistent, enabled pool counts as untrusted.
+        var s = BtrfsUsage.parseStatus("enabled=0\ninconsistent=0");
+        assertTrue(s.available());
+        assertFalse(s.untrusted());
+        assertFalse(BtrfsUsage.parseStatus("enabled=0\ninconsistent=1").untrusted());
+    }
+
+    @Test
+    void statusAndRescanRejectUnsafePoolNames() {
+        assertFalse(BtrfsUsage.status("cow; rm -rf /").available());   // never shells out / hits the agent
+        assertFalse(BtrfsUsage.rescan("../../etc"));
+        assertFalse(BtrfsUsage.status(null).available());
+        assertFalse(BtrfsUsage.repairIfInconsistent(null).untrusted());
     }
 }

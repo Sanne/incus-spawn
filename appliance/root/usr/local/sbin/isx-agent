@@ -12,8 +12,41 @@ FORWARDER_MATCH='UNIX-CONNECT:/var/lib/incus/unix.socket'
 INCUS_VSOCK_PORT=8443
 POOL_MOUNT_PREFIX=/var/lib/incus/storage-pools
 
+# The btrfs filesystem UUID (its /sys/fs/btrfs/<fsid> directory name) backing path $1, or nothing.
+# btrfs st_dev numbers are per-subvolume, so neither stat nor mountinfo's major:minor identify the
+# block device; the mount's *source* does. Take the btrfs mount whose mount point is the longest
+# prefix of the path, resolve its source device, and find the fsid whose devices/ lists that name.
+# Mirrors BtrfsSysfs.java on the Linux host — keep the two lookups in step.
+btrfs_fsid() {
+    src=$(awk -v p="$1" '{
+        mp = $5; i = index($0, " - "); split(substr($0, i + 3), r, " ");
+        if (r[1] != "btrfs") next;
+        if (p == mp || mp == "/" || index(p, mp "/") == 1) {
+            if (length(mp) > best) { best = length(mp); s = r[2] }
+        }
+    } END { print s }' /proc/self/mountinfo)
+    [ -n "$src" ] || return 0
+    name=$(basename "$(readlink -f "$src" 2>/dev/null || echo "$src")")
+    for d in /sys/fs/btrfs/*/devices/"$name"; do
+        if [ -e "$d" ]; then
+            basename "$(dirname "$(dirname "$d")")"
+            return 0
+        fi
+    done
+}
+
+# Pool names are interpolated into a path, so reject anything that isn't a plain pool name —
+# this is a separate trust boundary, so it validates independently of the host (mirrors
+# BtrfsUsage.isSafePoolName). Prints the rejection and returns 1 on a bad name.
+valid_pool() {
+    case "$1" in
+        ''|*[!A-Za-z0-9._-]*) echo "error: bad pool name"; return 1 ;;
+    esac
+    return 0
+}
+
 # One line per connection: "<verb> [arg] [opt]". arg and opt are optional and only consumed by
-# verbs that declare them (currently btrfs-usage); both are always validated before use.
+# verbs that declare them (the btrfs-* verbs); both are always validated before use.
 read -r verb arg opt || exit 0
 
 case "$verb" in
@@ -48,31 +81,58 @@ case "$verb" in
     btrfs-usage)
         # Per-subvolume referenced/exclusive sizes for a btrfs pool. Runs here because the pool
         # lives in the VM and only root can read /var/lib/incus/storage-pools (0700). Both outputs
-        # are read-only introspection; the host joins them (see BtrfsUsage.parse). The pool name is
-        # interpolated into a path, so reject anything that isn't a plain pool name — this is a
-        # separate trust boundary, so it validates independently of the host (mirrors
-        # BtrfsUsage.isSafePoolName; the "---ISX-SUBVOL---" delimiter mirrors
-        # BtrfsUsage.AGENT_SECTION_MARKER — keep both in sync if either is renamed).
-        case "$arg" in
-            ''|*[!A-Za-z0-9._-]*)
-                echo "error: bad pool name"
-                ;;
-            *)
-                # Optional, allowlisted second token: "sync" adds --sync (force a commit before
-                # reading, so accounting reflects still-uncommitted writes — used right after a
-                # build); anything else than empty/sync is rejected. Mirrors the Linux path in
-                # BtrfsUsage.probe(pool, sync) — keep the two flavours in step.
-                case "$opt" in
-                    sync) sync_flag=--sync ;;
-                    '')   sync_flag= ;;
-                    *)    echo "error: bad option"; exit 0 ;;
-                esac
-                mount="$POOL_MOUNT_PREFIX/$arg"
-                btrfs qgroup show -re --raw $sync_flag "$mount" 2>/dev/null || true
-                echo "---ISX-SUBVOL---"
-                btrfs subvolume list "$mount" 2>/dev/null || true
-                ;;
+        # are read-only introspection; the host joins them (see BtrfsUsage.parse). The
+        # "---ISX-SUBVOL---" delimiter mirrors BtrfsUsage.AGENT_SECTION_MARKER — keep both in sync
+        # if either is renamed.
+        valid_pool "$arg" || exit 0
+        # Optional, allowlisted second token: "sync" adds --sync (force a commit before reading, so
+        # accounting reflects still-uncommitted writes — used right after a build); anything else
+        # than empty/sync is rejected. Mirrors the Linux path in BtrfsUsage.probe(pool, sync) —
+        # keep the two flavours in step.
+        case "$opt" in
+            sync) sync_flag=--sync ;;
+            '')   sync_flag= ;;
+            *)    echo "error: bad option"; exit 0 ;;
         esac
+        mount="$POOL_MOUNT_PREFIX/$arg"
+        btrfs qgroup show -re --raw $sync_flag "$mount" 2>/dev/null || true
+        echo "---ISX-SUBVOL---"
+        btrfs subvolume list "$mount" 2>/dev/null || true
+        ;;
+    btrfs-status)
+        # Whether the pool's qgroup accounting can be trusted, straight from the kernel's sysfs
+        # attributes (world-readable, but the lookup needs mountinfo for the VM's own mounts, so it
+        # lives here). key=value lines for BtrfsUsage.parseStatus; "available=0" when the fsid or
+        # its qgroups/ directory (quota off, or a kernel without the attributes) can't be found.
+        # The `inconsistent` flag is the one that matters: set when quotas were enabled on a
+        # populated pool or a subvolume delete exceeded drop_subtree_threshold — every counter is
+        # frozen until a rescan, and nothing clears it on its own.
+        valid_pool "$arg" || exit 0
+        fsid=$(btrfs_fsid "$POOL_MOUNT_PREFIX/$arg")
+        q="/sys/fs/btrfs/$fsid/qgroups"
+        if [ -z "$fsid" ] || [ ! -d "$q" ]; then
+            echo "available=0"
+        else
+            for f in enabled inconsistent mode drop_subtree_threshold; do
+                [ -r "$q/$f" ] && echo "$f=$(cat "$q/$f")"
+            done
+        fi
+        ;;
+    btrfs-rescan)
+        # Start a `btrfs quota rescan` for the pool: the kernel rebuilds every qgroup counter from
+        # the extent tree in the background and clears `inconsistent` when done. Non-destructive
+        # (accounting only, never data). Returns immediately — the host polls btrfs-status.
+        # "running" means one was already in flight (btrfs-progs reports that as an error).
+        valid_pool "$arg" || exit 0
+        out=$(btrfs quota rescan "$POOL_MOUNT_PREFIX/$arg" 2>&1)
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            echo started
+        elif echo "$out" | grep -qi "in progress"; then
+            echo running
+        else
+            echo "error: $out"
+        fi
         ;;
     *)
         echo "error: unknown verb"

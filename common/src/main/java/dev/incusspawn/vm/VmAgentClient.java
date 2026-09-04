@@ -94,4 +94,25 @@ public final class VmAgentClient {
         if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
         return send("btrfs-usage " + poolName + (sync ? " sync" : ""));
     }
+
+    /**
+     * The pool's qgroup accounting status as {@code key=value} lines read from sysfs inside the VM
+     * ({@code enabled}, {@code inconsistent}, {@code mode}, {@code drop_subtree_threshold}), for
+     * {@code BtrfsUsage.parseStatus}. An agent that predates the verb answers {@code error: unknown
+     * verb}, which parses as unavailable — so an old appliance degrades to the pre-check behaviour.
+     */
+    public static Optional<String> btrfsStatus(String poolName) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        return send("btrfs-status " + poolName);
+    }
+
+    /**
+     * Ask the agent to start a {@code btrfs quota rescan} on the pool (asynchronous: the kernel
+     * rebuilds the accounting in the background). Replies {@code started}, {@code running} (one was
+     * already in flight) or {@code error: ...}.
+     */
+    public static Optional<String> btrfsRescan(String poolName) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        return send("btrfs-rescan " + poolName);
+    }
 }

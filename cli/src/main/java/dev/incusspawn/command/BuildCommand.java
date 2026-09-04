@@ -602,15 +602,36 @@ public class BuildCommand extends BaseCommand {
         try {
             var probe = incus.probeCowPool();
             if (probe.poolName() == null || !probe.isBtrfs()) return -1;
+            var pool = probe.poolName();
+            // Never stamp from inconsistent accounting. btrfs freezes every qgroup counter once the
+            // pool is flagged inconsistent (a previous rebuild's subvolume delete is enough), and the
+            // frozen figure is a plausible non-zero number — typically the base image's — that would
+            // sail through the `<= 0` guard and be recorded as this template's weight. Trigger the
+            // repair (a background rescan) and give it a short, bounded wait: on a developer-sized
+            // pool it finishes in seconds and the stamp is taken correctly right here; on a huge one
+            // the template is simply left unstamped and the TUI backfills it once the flag clears.
+            var status = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(pool);
+            if (status.untrusted()) {
+                BuildOutput.stepStart("Repairing disk accounting...");
+                status = dev.incusspawn.incus.BtrfsUsage.awaitConsistent(pool, ACCOUNTING_REPAIR_WAIT);
+                if (status.untrusted()) {
+                    BuildOutput.stepDone("still running, size will be recorded later");
+                    return -1;
+                }
+                BuildOutput.stepDone();
+            }
             // sync=true: force a commit so the build's final (otherwise uncommitted) writes are
             // accounted. This is the rare accuracy-critical read; sampling uses the plain flavour.
-            var rfer = dev.incusspawn.incus.BtrfsUsage.probe(probe.poolName(), true).get(name);
+            var rfer = dev.incusspawn.incus.BtrfsUsage.probe(pool, true).get(name);
             return rfer == null ? -1 : rfer;
         } catch (Exception ignored) {
             // Non-fatal: the referenced-size stamp is a display optimisation, not build state.
             return -1;
         }
     }
+
+    /** How long a build waits for a just-triggered qgroup rescan before giving up on the stamp. */
+    private static final Duration ACCOUNTING_REPAIR_WAIT = Duration.ofSeconds(20);
 
     /**
      * Record a template's btrfs referenced (rfer) size as metadata. Templates are immutable and rfer

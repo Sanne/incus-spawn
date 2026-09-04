@@ -57,6 +57,8 @@ class VmAgentClientTest {
                     case "ping" -> "ok";
                     case "socat-count" -> "5";
                     case "forwarder-restart" -> "restarted";
+                    case "btrfs-status cow" -> "enabled=1\ninconsistent=1\nmode=qgroup\ndrop_subtree_threshold=3";
+                    case "btrfs-rescan cow" -> "started";
                     default -> "error: unknown verb";
                 };
                 conn.write(java.nio.ByteBuffer.wrap((resp + "\n").getBytes(StandardCharsets.UTF_8)));
@@ -86,6 +88,26 @@ class VmAgentClientTest {
     void socatCountParsesNumber() {
         var n = VmAgentClient.send(sock, "socat-count");
         assertEquals("5", n.orElse(null));
+    }
+
+    @Test
+    @Timeout(10)
+    void btrfsStatusReplyParsesIntoQgroupStatus() {
+        var reply = VmAgentClient.send(sock, "btrfs-status cow").orElseThrow();
+        var status = dev.incusspawn.incus.BtrfsUsage.parseStatus(reply);
+        assertTrue(status.available());
+        assertTrue(status.untrusted());
+        assertEquals(3, status.dropSubtreeThreshold());
+        assertEquals("started", VmAgentClient.send(sock, "btrfs-rescan cow").orElse(null));
+    }
+
+    @Test
+    @Timeout(10)
+    void btrfsVerbsFromAnOlderAgentDegradeToUnavailable() {
+        // An appliance built before the verbs existed answers "error: unknown verb": that must parse
+        // as "can't assess", so the host keeps its previous behaviour rather than trusting garbage.
+        var reply = VmAgentClient.send(sock, "btrfs-status other").orElseThrow();
+        assertFalse(dev.incusspawn.incus.BtrfsUsage.parseStatus(reply).available());
     }
 
     @Test
