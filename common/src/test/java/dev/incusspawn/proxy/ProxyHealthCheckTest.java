@@ -112,13 +112,13 @@ class ProxyHealthCheckTest {
     @Test
     void checkVersionDriftReturnsEmptyWhenMatching() {
         var cliInfo = BuildInfo.instance();
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp", true);
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo(cliInfo.version(), cliInfo.gitSha(), cliInfo.runtime(), "somefp", true, "");
         assertEquals("", ProxyHealthCheck.checkVersionDrift(proxyInfo));
     }
 
     @Test
     void checkVersionDriftDetectsMismatch() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "JVM", "somefp", true);
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("0.0.1", "old1234567", "JVM", "somefp", true, "");
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertFalse(drift.isEmpty());
         assertTrue(drift.contains("0.0.1"));
@@ -126,7 +126,7 @@ class ProxyHealthCheckTest {
 
     @Test
     void checkVersionDriftDetectsLegacy() {
-        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "", true);
+        var proxyInfo = new ProxyHealthCheck.ProxyInfo("", "", "", "", true, "");
         var drift = ProxyHealthCheck.checkVersionDrift(proxyInfo);
         assertTrue(drift.contains("pre-versioning"));
     }
@@ -138,9 +138,9 @@ class ProxyHealthCheckTest {
 
     @Test
     void proxyInfoIsLegacyWhenVersionEmpty() {
-        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "runtime", "fp", true).isLegacy());
-        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "runtime", "fp", true).isLegacy());
-        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "runtime", "fp", true).isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo("", "sha", "runtime", "fp", true, "").isLegacy());
+        assertTrue(new ProxyHealthCheck.ProxyInfo(null, "sha", "runtime", "fp", true, "").isLegacy());
+        assertFalse(new ProxyHealthCheck.ProxyInfo("1.0", "sha", "runtime", "fp", true, "").isLegacy());
     }
 
     @Test
@@ -161,6 +161,32 @@ class ProxyHealthCheckTest {
         var info = ProxyHealthCheck.parseProxyInfo(
                 "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":true}");
         assertTrue(info.dnsConfigured());
+    }
+
+    @Test
+    void parseProxyInfoReadsAuthError() {
+        var info = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\",\"authError\":\"gcloud token expired\"}");
+        assertTrue(info.hasAuthError());
+        assertEquals("gcloud token expired", info.authError());
+    }
+
+    @Test
+    void authRemediationHintDistinguishesVertexFromOauth() {
+        var vertex = new ProxyHealthCheck.ProxyInfo("1.0", "", "", "", true,
+                "gcloud auth print-access-token failed (exit 1): ERROR");
+        assertEquals("gcloud auth login", vertex.authRemediationHint());
+
+        var oauth = new ProxyHealthCheck.ProxyInfo("1.0", "", "", "", true,
+                "Claude OAuth token rejected (HTTP 401).");
+        assertEquals("isx init", oauth.authRemediationHint());
+    }
+
+    @Test
+    void parseProxyInfoNoAuthErrorWhenAbsent() {
+        var info = ProxyHealthCheck.parseProxyInfo(
+                "{\"status\":\"ok\",\"version\":\"0.2.5\"}");
+        assertFalse(info.hasAuthError());
     }
 
     @Test

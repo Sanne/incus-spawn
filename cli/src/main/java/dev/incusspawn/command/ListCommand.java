@@ -236,6 +236,8 @@ public class ListCommand extends BaseCommand {
     // Set true once we've shown the low-space warning for the current session,
     // so the reminder doesn't clobber every other status message on each refresh.
     private boolean storageWarningShown;
+    private volatile ProxyHealthCheck.ProxyInfo proxyInfo;
+    private long proxyAuthCheckMs;
 
     public void executeDirect() {
         launchedAsDefault = true;
@@ -560,6 +562,7 @@ public class ListCommand extends BaseCommand {
         // per-template deltas from stamped rfer); fall back to the shared-base fold when any built
         // template predates the stamp or the pool isn't btrfs.
         refreshPoolUsage();
+        refreshProxyAuthError();
         fillMissingReferencedSizes();
         if (canUseReferencedModel()) {
             applyReferencedTemplateDeltas();
@@ -604,6 +607,54 @@ public class ListCommand extends BaseCommand {
         } else {
             storageWarningShown = false;
         }
+    }
+
+    private static final long PROXY_AUTH_CHECK_INTERVAL_MS = 30_000;
+
+    private void refreshProxyAuthError() {
+        long now = System.currentTimeMillis();
+        if (now - proxyAuthCheckMs < PROXY_AUTH_CHECK_INTERVAL_MS) return;
+        proxyAuthCheckMs = now;
+        try {
+            proxyInfo = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus), 500);
+        } catch (Exception e) {
+            proxyInfo = null;
+        }
+    }
+
+    private Thread startAuthTitleMonitor(String containerName) {
+        var baseTitle = "isx:" + containerName;
+        String healthAddr;
+        try {
+            healthAddr = ProxyHealthCheck.healthAddress(incus);
+        } catch (Exception e) {
+            return Thread.currentThread(); // no-op: interrupt is harmless on current thread
+        }
+        var thread = new Thread(() -> {
+            boolean wasError = false;
+            while (!Thread.interrupted()) {
+                try { Thread.sleep(PROXY_AUTH_CHECK_INTERVAL_MS); }
+                catch (InterruptedException e) { break; }
+                try {
+                    var info = ProxyHealthCheck.fetchProxyInfo(healthAddr, 500);
+                    boolean isError = info != null && info.hasAuthError();
+                    if (isError && !wasError) {
+                        setTerminalTitle("⚠ " + info.authRemediationHint() + " — " + baseTitle);
+                    } else if (!isError && wasError) {
+                        setTerminalTitle(baseTitle);
+                    }
+                    wasError = isError;
+                } catch (Exception ignored) {}
+            }
+        }, "auth-title-monitor");
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
+
+    private static void setTerminalTitle(String title) {
+        System.out.print("\033]0;" + title + "\007");
+        System.out.flush();
     }
 
     /**
@@ -1796,17 +1847,28 @@ public class ListCommand extends BaseCommand {
             }
         }
 
-        // Centre: a quiet "N running" badge, split by instance type, filling the gap between the
-        // version and the gauge. Lower priority than the gauge — shown only if it fits the leftover.
+        // Centre: auth-error warning (highest priority) or a quiet "N running" badge,
+        // filling the gap between the version and the gauge.
         var centre = new ArrayList<Span>();
         int centreW = 0;
-        var badge = runningSummary(runningCounts(BadgeKind.CONTAINER), runningCounts(BadgeKind.VM));
-        if (!badge.isEmpty()) {
-            int need = 4 + badge.length();                        // "  ● " prefix + text
-            if (area.width() - leftW - gaugeW - need >= 1) {      // keep >=1 filler cell
-                centre.add(Span.styled("  ● ", Style.EMPTY.fg(theme.statusRunning()).bg(bg)));
-                centre.add(Span.styled(badge, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+        var pi = proxyInfo;
+        if (pi != null && pi.hasAuthError()) {
+            var label = "  ⚠ Auth expired — run: " + pi.authRemediationHint();
+            int need = label.length();
+            if (area.width() - leftW - gaugeW - need >= 1) {
+                centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
                 centreW = need;
+            }
+        }
+        if (centreW == 0) {
+            var badge = runningSummary(runningCounts(BadgeKind.CONTAINER), runningCounts(BadgeKind.VM));
+            if (!badge.isEmpty()) {
+                int need = 4 + badge.length();                    // "  ● " prefix + text
+                if (area.width() - leftW - gaugeW - need >= 1) {  // keep >=1 filler cell
+                    centre.add(Span.styled("  ● ", Style.EMPTY.fg(theme.statusRunning()).bg(bg)));
+                    centre.add(Span.styled(badge, Style.EMPTY.fg(theme.contextSecondaryFg()).bg(bg)));
+                    centreW = need;
+                }
             }
         }
 
@@ -4805,15 +4867,20 @@ public class ListCommand extends BaseCommand {
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
-        if (commandOverride != null) {
-            var prep = IncusClient.ShellPrep.from(incus, name);
-            var withCommand = new IncusClient.ShellPrep(
-                    prep.workdir(), commandOverride,
-                    false, prep.autoAttachZmx(),
-                    prep.subnetDiagnostic(), prep.terminfoHandled());
-            incus.interactiveShell(name, "agentuser", withCommand);
-        } else {
-            incus.interactiveShell(name, "agentuser");
+        var titleMonitor = startAuthTitleMonitor(name);
+        try {
+            if (commandOverride != null) {
+                var prep = IncusClient.ShellPrep.from(incus, name);
+                var withCommand = new IncusClient.ShellPrep(
+                        prep.workdir(), commandOverride,
+                        false, prep.autoAttachZmx(),
+                        prep.subnetDiagnostic(), prep.terminfoHandled());
+                incus.interactiveShell(name, "agentuser", withCommand);
+            } else {
+                incus.interactiveShell(name, "agentuser");
+            }
+        } finally {
+            titleMonitor.interrupt();
         }
         System.out.println();
     }

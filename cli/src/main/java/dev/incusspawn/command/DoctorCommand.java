@@ -711,7 +711,18 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkProxy() {
         var incus = RuntimeServices.incus();
-        return List.of(checkProxyRunning(incus), checkProxyVersionDrift(incus));
+        var findings = new ArrayList<Finding>();
+        findings.add(checkProxyRunning(incus));
+        ProxyHealthCheck.ProxyInfo info;
+        try {
+            info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+        } catch (Exception e) {
+            info = null;
+        }
+        findings.add(checkProxyVersionDrift(info));
+        var authFinding = checkProxyAuth(info);
+        if (authFinding != null) findings.add(authFinding);
+        return findings;
     }
 
     private Finding checkProxyRunning(IncusClient incus) {
@@ -732,21 +743,39 @@ public class DoctorCommand extends BaseCommand {
         };
     }
 
-    private Finding checkProxyVersionDrift(IncusClient incus) {
-        try {
-            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            if (info == null) return Finding.ok("Proxy version", "(proxy not reachable, skipped)");
-            var drift = ProxyHealthCheck.checkVersionDrift(info);
-            if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
-            if (ProxyService.isActive()) {
-                return Finding.warn("Proxy version drift", drift,
-                        new Remediation("Restart proxy service to update", false,
-                                () -> ProxyService.reinstallIfChanged(incus)));
-            }
+    private Finding checkProxyVersionDrift(ProxyHealthCheck.ProxyInfo info) {
+        if (info == null) return Finding.ok("Proxy version", "(proxy not reachable, skipped)");
+        var drift = ProxyHealthCheck.checkVersionDrift(info);
+        if (drift.isEmpty()) return Finding.ok("Proxy version", "matches CLI");
+        if (ProxyService.isActive()) {
+            var incus = RuntimeServices.incus();
             return Finding.warn("Proxy version drift", drift,
-                    new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
-        } catch (Exception e) {
-            return Finding.ok("Proxy version", "(could not check)");
+                    new Remediation("Restart proxy service to update", false,
+                            () -> ProxyService.reinstallIfChanged(incus)));
+        }
+        return Finding.warn("Proxy version drift", drift,
+                new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null));
+    }
+
+    private Finding checkProxyAuth(ProxyHealthCheck.ProxyInfo info) {
+        if (info == null) return null;
+        if (!info.hasAuthError()) return Finding.ok("Proxy auth", "credentials valid");
+        var hint = info.authRemediationHint();
+        return Finding.fail("Proxy auth", info.authError(),
+                new Remediation("Run '" + hint + "'", false,
+                        () -> runInteractive(hint.split("\\s+"))));
+    }
+
+    private static void runInteractive(String... command) {
+        try {
+            var p = new ProcessBuilder(command).inheritIO().start();
+            int rc = p.waitFor();
+            if (rc != 0) throw new RuntimeException("exited with code " + rc);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("interrupted");
+        } catch (IOException e) {
+            throw new RuntimeException(e.getMessage());
         }
     }
 
