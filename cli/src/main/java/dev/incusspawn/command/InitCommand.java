@@ -1113,7 +1113,9 @@ public class InitCommand extends BaseCommand {
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
             runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
-            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs", "size=100GiB");
+            // -K: skip initial whole-device TRIM, which takes minutes on loopback/ext4.
+            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs",
+                    "size=100GiB", "btrfs.create_options=-K");
             if (createResult == 0) {
                 System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
                 System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
