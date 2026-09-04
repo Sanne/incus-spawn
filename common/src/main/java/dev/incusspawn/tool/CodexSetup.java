@@ -28,7 +28,7 @@ public class CodexSetup implements ToolSetup {
     @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
-        apiKey.setConfigPath("openai.apiKey");
+        apiKey.setConfigPath("apiKey");
         apiKey.setDescription("OpenAI API key");
         apiKey.setSecret(true);
         apiKey.setHelp(List.of(
@@ -46,6 +46,7 @@ public class CodexSetup implements ToolSetup {
         auth.setToken("${api-key}");
 
         var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("openai");
         proxy.setConfiguration(Map.of("api-key", apiKey));
         proxy.setAuth(List.of(auth));
         return proxy;

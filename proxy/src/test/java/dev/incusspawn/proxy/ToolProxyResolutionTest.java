@@ -19,9 +19,10 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: gh
                 proxy:
+                  config-namespace: github
                   configuration:
                     token:
-                      config-path: "github.token"
+                      config-path: "token"
                       secret: true
                   auth:
                     - domains:
@@ -43,11 +44,12 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: gh
                 proxy:
+                  config-namespace: github
                   configuration:
                     username:
                       value: "x-access-token"
                     token:
-                      config-path: "github.token"
+                      config-path: "token"
                       secret: true
                   auth:
                     - domains:
@@ -72,9 +74,10 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: gh
                 proxy:
+                  config-namespace: github
                   configuration:
                     token:
-                      config-path: "github.token"
+                      config-path: "token"
                       secret: true
                   auth:
                     - domains:
@@ -96,12 +99,13 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: atlassian-mcp
                 proxy:
+                  config-namespace: atlassian
                   configuration:
                     email:
-                      config-path: "atlassian.email"
+                      config-path: "email"
                       description: Atlassian email
                     api-token:
-                      config-path: "atlassian.apiToken"
+                      config-path: "apiToken"
                       description: API token
                       secret: true
                   auth:
@@ -126,12 +130,13 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: atlassian-mcp
                 proxy:
+                  config-namespace: atlassian
                   configuration:
                     email:
-                      config-path: "atlassian.email"
+                      config-path: "email"
                       description: Atlassian email
                     api-token:
-                      config-path: "atlassian.apiToken"
+                      config-path: "apiToken"
                       description: API token
                       secret: true
                   auth:
@@ -152,9 +157,10 @@ class ToolProxyResolutionTest {
         var ghTool = loadToolSetup("""
                 name: gh
                 proxy:
+                  config-namespace: github
                   configuration:
                     token:
-                      config-path: "github.token"
+                      config-path: "token"
                   auth:
                     - domains:
                         - github.com
@@ -172,8 +178,7 @@ class ToolProxyResolutionTest {
         var resolved = ToolProxyResolver.resolve(config, Map.of("gh", ghTool));
         assertEquals(2, resolved.size());
 
-        var creds = new ProxyCredentials("", "", false, "", "",
-                resolved, ToolProxyResolver.fingerprint(resolved));
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
         var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
 
         var exact = proxy.findToolProxy("github.com");
@@ -196,6 +201,7 @@ class ToolProxyResolutionTest {
         var tool = loadToolSetup("""
                 name: custom
                 proxy:
+                  config-namespace: custom
                   configuration:
                     token:
                       value: "tok"
@@ -208,8 +214,7 @@ class ToolProxyResolutionTest {
         var config = new SpawnConfig();
         var resolved = ToolProxyResolver.resolve(config, Map.of("custom", tool));
 
-        var creds = new ProxyCredentials("", "", false, "", "",
-                resolved, ToolProxyResolver.fingerprint(resolved));
+        var creds = new ProxyCredentials("", "", false, "", "", resolved);
         var proxy = new MitmProxy(null, "127.0.0.1", 18443, 18080, "127.0.0.1", creds);
 
         assertTrue(proxy.allInterceptedDomains().contains("custom.example.com"));
