@@ -137,6 +137,47 @@ class BtrfsUsageTest {
         assertFalse(BtrfsUsage.parseStatus("enabled=0\ninconsistent=1").untrusted());
     }
 
+    // --- process timeout: this path runs on the TUI reload, so it must never block ---
+
+    @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void timeoutIsEnforcedEvenWhenTheChildHoldsItsPipeOpen() throws Exception {
+        // The regression: a child that writes some output and then hangs without closing stdout.
+        // Reading stdout inline with readAllBytes() blocks until EOF, so the bounded wait was never
+        // reached and the caller (TUI reload, post-delete repair trigger) hung for as long as the
+        // child lived. Draining both streams off-thread is what makes the timeout real.
+        var pb = new ProcessBuilder("sh", "-c", "echo partial; sleep 60");
+        var started = System.nanoTime();
+        var result = BtrfsUsage.runProcess(pb, 2);
+        var elapsedSeconds = (System.nanoTime() - started) / 1_000_000_000.0;
+
+        assertNull(result, "a child that outlives the timeout must yield no result");
+        assertTrue(elapsedSeconds < 15,
+                "must give up near the 2s timeout, not wait for the child; took " + elapsedSeconds + "s");
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void capturesBothStreamsAndExitCodeOfAWellBehavedProcess() {
+        var pb = new ProcessBuilder("sh", "-c", "echo to-stdout; echo to-stderr >&2; exit 3");
+        var result = BtrfsUsage.runProcess(pb, 10);
+        assertEquals(3, result.exit());
+        assertEquals("to-stdout", result.stdout().strip());
+        assertEquals("to-stderr", result.stderr().strip());   // stderr drives the "in progress" check
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(20)
+    void largeOutputDoesNotDeadlockOnAFullPipe() {
+        // Both streams must be drained concurrently: a child filling one pipe while the parent reads
+        // the other would deadlock if either were left unread.
+        var pb = new ProcessBuilder("sh", "-c", "seq 1 200000; seq 1 200000 >&2");
+        var result = BtrfsUsage.runProcess(pb, 15);
+        assertEquals(0, result.exit());
+        assertTrue(result.stdout().endsWith("200000\n"), "stdout must be captured in full");
+        assertTrue(result.stderr().endsWith("200000\n"), "stderr must be captured in full");
+    }
+
     // --- opportunistic throttle: a burst of deletes must cost one check, not one per instance ---
 
     @Test

@@ -235,12 +235,16 @@ public class ListCommand extends BaseCommand {
     // read, or one agent round trip on macOS). While it reads `untrusted()` every size the pool
     // reports — stamped or live, rfer or exclusive — is frozen at some stale value, so no stamp is
     // backfilled and no base weight folded from it; refreshAccountingStatus() also kicks off the
-    // background repair. Null when the pool isn't btrfs or the status can't be read (then sizes are
-    // taken at face value, as before the check existed).
+    // background repair. Null only when there is no btrfs pool to ask about (non-btrfs pool, or the
+    // pool name isn't resolved yet); a status that simply couldn't be read is a non-null UNAVAILABLE.
+    // Both cases are treated as trusted, so sizes are taken at face value as before the check existed.
     private dev.incusspawn.incus.BtrfsUsage.QgroupStatus qgroupStatus;
     // True from the moment inconsistent accounting is seen until it reads consistent again — the
     // transition is what triggers a one-off re-validation of the stamps (revalidateStampsIfNeeded),
-    // since any stamp recorded while the counters were frozen is wrong.
+    // since any stamp recorded while the counters were frozen is wrong. Deliberately latched across
+    // a spell of unreadable status (a flaky agent): we still don't know the repair landed, so the
+    // eventual consistent read must still trigger revalidation. It does NOT keep driving the fast
+    // poll cadence though — see refreshAccountingStatus.
     private boolean accountingRepairPending;
     private boolean stampsSuspect;
     // The "a derived template's stamp equals its parent's" heuristic runs at most once per session:
@@ -870,7 +874,12 @@ public class ListCommand extends BaseCommand {
             return;
         }
         long now = System.currentTimeMillis();
-        long interval = accountingRepairPending ? ACCOUNTING_REPAIR_POLL_MS : ACCOUNTING_CHECK_INTERVAL_MS;
+        // Poll fast only while a repair is pending AND the last read actually told us something.
+        // If the status has become unreadable (a wedged agent on macOS, each read costing up to its
+        // 5s watchdog), polling every 2s buys nothing and just hammers a failing channel — so back
+        // off to the normal cadence until it answers again.
+        boolean canObserveRepair = accountingRepairPending && qgroupStatus != null && qgroupStatus.available();
+        long interval = canObserveRepair ? ACCOUNTING_REPAIR_POLL_MS : ACCOUNTING_CHECK_INTERVAL_MS;
         if (qgroupStatus != null && now - accountingCheckMs < interval) return;
         accountingCheckMs = now;
         qgroupStatus = dev.incusspawn.incus.BtrfsUsage.repairIfInconsistent(usagePoolName);
