@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 
 import java.io.IOException;
@@ -27,6 +28,12 @@ public class IncusClient {
     private static final int VSOCK_RETRY_MAX = 5;
     private static final long VSOCK_RETRY_DELAY_MS = 100;
     private static final int MAX_RECONNECT_ATTEMPTS = 10;
+    private static String noCowPoolMsg() {
+        return "No copy-on-write storage pool found — every branch would be a slow full copy."
+                + (Platform.isMacOS()
+                        ? " Recreate the appliance with: isx vm delete && isx init"
+                        : " Create one with: sudo incus storage create cow btrfs size=100GiB");
+    }
 
     private volatile boolean apiInitialized;
     private volatile IncusApi api;
@@ -519,6 +526,23 @@ public class IncusClient {
     }
 
     /**
+     * Like {@link #findCowPool}, but throws instead of returning null so callers that
+     * need a pool (instance creation, copy, image import) fail loudly rather than
+     * silently falling back to the profile default — which may be a non-CoW pool.
+     */
+    public String requireCowPool() {
+        var probe = probeCowPool();
+        if (!probe.listed()) {
+            throw new IncusException(
+                    "Cannot list storage pools to select a CoW target — is the Incus daemon running?");
+        }
+        if (probe.poolName() == null) {
+            throw new IncusException(noCowPoolMsg());
+        }
+        return probe.poolName();
+    }
+
+    /**
      * Name of a storage pool that can back a root disk, preferring a CoW pool but falling back to
      * any pool the daemon has. Returns null if there are none.
      *
@@ -552,17 +576,38 @@ public class IncusClient {
         return result;
     }
 
-    static String rootDiskPoolFromDevices(JsonNode expandedDevices) {
-        if (expandedDevices == null || expandedDevices.isMissingNode()) return null;
-        for (var it = expandedDevices.fields(); it.hasNext(); ) {
+    public static String rootDiskPoolFromDevices(JsonNode devices) {
+        var name = rootDiskDeviceNameFromDevices(devices);
+        if (name == null) return null;
+        var pool = devices.path(name).path("pool").asText("");
+        return pool.isEmpty() ? null : pool;
+    }
+
+    static String rootDiskDeviceNameFromDevices(JsonNode devices) {
+        if (devices == null || devices.isMissingNode()) return null;
+        for (var it = devices.fields(); it.hasNext(); ) {
             var entry = it.next();
             var dev = entry.getValue();
             if ("disk".equals(dev.path("type").asText()) && "/".equals(dev.path("path").asText())) {
-                var pool = dev.path("pool").asText("");
-                return pool.isEmpty() ? null : pool;
+                return entry.getKey();
             }
         }
         return null;
+    }
+
+    public boolean updateProfileRootDiskPool(String profile, String newPool) {
+        return updateProfileRootDiskPool(profile, profileDevices(profile), newPool);
+    }
+
+    public boolean updateProfileRootDiskPool(String profile, JsonNode devices, String newPool) {
+        var deviceName = rootDiskDeviceNameFromDevices(devices);
+        if (deviceName == null) return false;
+        var merged = new LinkedHashMap<String, String>();
+        devices.path(deviceName).fields().forEachRemaining(e -> merged.put(e.getKey(), e.getValue().asText()));
+        merged.put("pool", newPool);
+        var resp = http().requestAndWait("PATCH", "/1.0/profiles/" + profile,
+                Map.of("devices", Map.of(deviceName, merged)));
+        return resp.isSuccess();
     }
 
     public String rootDiskPool(String instance) {
@@ -589,7 +634,6 @@ public class IncusClient {
         public String fullCopyReason() {
             if (cow) return null;
             if (sourcePool == null) return "source has no root disk pool";
-            if (targetPool == null) return "no CoW storage pool available (all pools use the 'dir' driver)";
             return "source is on '" + sourcePool + "' (" + sourceDriver + "), not a CoW pool";
         }
     }
@@ -597,6 +641,10 @@ public class IncusClient {
     public CopyPlan planCopy(String source) {
         var sourcePool = rootDiskPool(source);
         var pools = listPools();
+        if (pools.isEmpty()) {
+            throw new IncusException(
+                    "Cannot list storage pools to plan copy — is the Incus daemon running?");
+        }
         var sourceDriver = sourcePool != null ? pools.getOrDefault(sourcePool, "") : null;
         if (sourcePool != null && isCowDriver(sourceDriver)) {
             return new CopyPlan(sourcePool, sourceDriver, sourcePool, true);
@@ -607,6 +655,9 @@ public class IncusClient {
                 cowPool = entry.getKey();
                 break;
             }
+        }
+        if (cowPool == null) {
+            throw new IncusException(noCowPoolMsg());
         }
         return new CopyPlan(sourcePool, sourceDriver, cowPool, false);
     }
@@ -1196,12 +1247,11 @@ public class IncusClient {
      */
     public void create(String image, String name, boolean vm) {
         var http = http();
-        var cowPool = findCowPool();
         var body = new LinkedHashMap<String, Object>();
         body.put("name", name);
         body.put("type", vm ? "virtual-machine" : "container");
         body.put("source", resolveImageSource(image));
-        if (cowPool != null) body.put("storage", cowPool);
+        body.put("storage", requireCowPool());
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
         if (!resp.isSuccess()) throw new IncusException("Failed to create " + name);
     }
@@ -1265,8 +1315,8 @@ public class IncusClient {
 
     /**
      * Copy (clone) an existing container/VM.
-     * Follows the source instance's pool when it is CoW; otherwise falls back
-     * to the first available CoW pool (or the profile default if none exists).
+     * Follows the source instance's pool when it is CoW; otherwise targets
+     * the first available CoW pool. Throws if no CoW pool is available.
      */
     public void copy(String source, String target) {
         copy(source, target, planCopy(source));
@@ -1274,10 +1324,13 @@ public class IncusClient {
 
     public void copy(String source, String target, CopyPlan plan) {
         var http = http();
+        if (plan.targetPool() == null) {
+            throw new IncusException("No target storage pool for copy — " + plan.fullCopyReason());
+        }
         var body = new LinkedHashMap<String, Object>();
         body.put("name", target);
         body.put("source", Map.of("type", "copy", "source", source));
-        if (plan.targetPool() != null) body.put("storage", plan.targetPool());
+        body.put("storage", plan.targetPool());
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
         if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
     }
@@ -1678,8 +1731,10 @@ public class IncusClient {
     }
 
     public String importImage(Path tarball) {
+        var pool = findCowPool();
+        var headers = pool != null ? Map.of("X-Incus-Pool", pool) : Map.<String, String>of();
         var resp = http().requestFromFileAndWait("POST", "/1.0/images",
-                "application/octet-stream", Map.of(), tarball);
+                "application/octet-stream", headers, tarball);
         var fingerprint = resp.body().path("metadata").path("metadata")
                 .path("fingerprint").asText("");
         if (fingerprint.isEmpty()) {

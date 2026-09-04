@@ -1094,12 +1094,29 @@ public class InitCommand extends BaseCommand {
                 System.out.println("  Default profile was incomplete — added " + added
                         + " (root disk on pool '" + pool + "').");
             }
+            upgradeProfilePoolIfNeeded(pool);
         } catch (Exception e) {
             System.err.println("  Warning: could not repair the default profile: " + e.getMessage());
             System.err.println("  If instance creation fails with 'No root device could be found', run:");
             System.err.println("    incus profile device add default root disk path=/ pool=" + pool);
             System.err.println("  If containers come up without networking, also run:");
             System.err.println("    incus profile device add default eth0 nic network=incusbr0");
+        }
+    }
+
+    private void upgradeProfilePoolIfNeeded(String desiredPool) {
+        var devices = incus.profileDevices("default");
+        var currentPool = IncusClient.rootDiskPoolFromDevices(devices);
+        if (currentPool == null || currentPool.equals(desiredPool)) return;
+
+        var pools = incus.listPools();
+        var currentDriver = pools.getOrDefault(currentPool, "");
+        var desiredDriver = pools.getOrDefault(desiredPool, "");
+        if (IncusClient.isCowDriver(currentDriver) || !IncusClient.isCowDriver(desiredDriver)) return;
+
+        if (incus.updateProfileRootDiskPool("default", devices, desiredPool)) {
+            System.out.println("  Default profile root disk upgraded from pool '" + currentPool
+                    + "' (" + currentDriver + ") to '" + desiredPool + "' (" + desiredDriver + ").");
         }
     }
 

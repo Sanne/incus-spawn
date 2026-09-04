@@ -83,6 +83,39 @@ class IncusClientTest {
     }
 
     @Test
+    void rootDiskDeviceNameFindsCorrectDevice() {
+        var devices = MAPPER.createObjectNode();
+        var eth0 = MAPPER.createObjectNode();
+        eth0.put("type", "nic");
+        devices.set("eth0", eth0);
+        var myRoot = MAPPER.createObjectNode();
+        myRoot.put("type", "disk");
+        myRoot.put("path", "/");
+        myRoot.put("pool", "default");
+        devices.set("my-root", myRoot);
+
+        assertEquals("my-root", IncusClient.rootDiskDeviceNameFromDevices(devices));
+    }
+
+    @Test
+    void rootDiskDeviceNameReturnsNullWhenNoRootDisk() {
+        var devices = MAPPER.createObjectNode();
+        var data = MAPPER.createObjectNode();
+        data.put("type", "disk");
+        data.put("path", "/data");
+        devices.set("data", data);
+
+        assertNull(IncusClient.rootDiskDeviceNameFromDevices(devices));
+    }
+
+    @Test
+    void rootDiskDeviceNameReturnsNullForEmptyDevices() {
+        assertNull(IncusClient.rootDiskDeviceNameFromDevices(MAPPER.createObjectNode()));
+        assertNull(IncusClient.rootDiskDeviceNameFromDevices(null));
+        assertNull(IncusClient.rootDiskDeviceNameFromDevices(MAPPER.missingNode()));
+    }
+
+    @Test
     void isCowDriverRecognizesAllDrivers() {
         assertTrue(IncusClient.isCowDriver("btrfs"));
         assertTrue(IncusClient.isCowDriver("zfs"));
