@@ -178,6 +178,8 @@ public class MitmProxy {
     private List<Map.Entry<String, ResolvedToolProxy>> toolProxyWildcardSuffixes = List.of();
     private Set<String> allInterceptedDomains = ProxyConfig.builtinInterceptedDomains();
     private List<String> wildcardSuffixes = List.of();
+    private volatile String configContentHash = "";
+    private dev.incusspawn.incus.IncusClient incusClient;
 
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
     int upstreamWsPort = 443;
@@ -197,10 +199,15 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies());
+        this.configContentHash = ToolProxyResolver.unsaltedFingerprint(credentials.toolProxies());
     }
 
     public void setDnsConfigured(boolean configured) {
         this.dnsConfigured = configured;
+    }
+
+    public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
+        this.incusClient = incusClient;
     }
 
     private String vertexHost() {
@@ -313,6 +320,7 @@ public class MitmProxy {
         try {
             credentials = ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load());
             applyToolProxies(credentials.toolProxies());
+            configContentHash = ToolProxyResolver.unsaltedFingerprint(credentials.toolProxies());
             invalidateVertexToken();
             var jksBuffer = buildKeyStoreBuffer();
             if (mitmServer != null) {
@@ -320,6 +328,9 @@ public class MitmProxy {
                         .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"));
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+            }
+            if (incusClient != null) {
+                ProxyConfig.writeBridgeDns(incusClient, allInterceptedDomains);
             }
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
@@ -2088,12 +2099,15 @@ public class MitmProxy {
     private void sendHealthResponse(HttpServerRequest req) {
         var info = BuildInfo.instance();
         var err = authError;
+        var currentHash = ToolProxyResolver.unsaltedFingerprint(
+                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()).toolProxies());
+        var configDrifted = !currentHash.equals(configContentHash);
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
                 + ",\"runtime\":\"" + escapeJson(info.runtime()) + "\""
                 + ",\"caFingerprint\":\"" + caFingerprint + "\""
-                + ",\"toolProxyFingerprint\":\"" + credentials.toolProxyFingerprint() + "\""
+                + ",\"configDrifted\":" + configDrifted
                 + ",\"dnsConfigured\":" + dnsConfigured
                 + (err != null ? ",\"authError\":\"" + escapeJson(err) + "\"" : "")
                 + "}";

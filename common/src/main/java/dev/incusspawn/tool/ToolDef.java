@@ -330,15 +330,27 @@ public class ToolDef {
     @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ProxyDef {
+        @JsonProperty("config-namespace")
+        private String configNamespace = "";
         private Map<String, ConfigEntry> configuration = Map.of();
         private List<AuthDef> auth = List.of();
 
+        public String getConfigNamespace() { return configNamespace; }
+        public void setConfigNamespace(String configNamespace) {
+            this.configNamespace = configNamespace != null ? configNamespace : "";
+        }
         public Map<String, ConfigEntry> getConfiguration() { return configuration; }
         public void setConfiguration(Map<String, ConfigEntry> configuration) {
             this.configuration = configuration != null ? configuration : Map.of();
         }
         public List<AuthDef> getAuth() { return auth; }
         public void setAuth(List<AuthDef> auth) { this.auth = auth != null ? auth : List.of(); }
+
+        public String fullConfigPath(ConfigEntry entry) {
+            var path = entry.getConfigPath();
+            if (path.isBlank() || configNamespace.isBlank()) return path;
+            return configNamespace + "." + path;
+        }
     }
 
     @RegisterForReflection

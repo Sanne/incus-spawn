@@ -71,12 +71,26 @@ public class ToolDefValidator {
         var proxyDef = def.getProxy();
         if (proxyDef != null) {
             var configMap = proxyDef.getConfiguration();
+            var ns = proxyDef.getConfigNamespace();
+
+            boolean hasAuth = proxyDef.getAuth() != null && !proxyDef.getAuth().isEmpty();
+            boolean hasConfigPaths = configMap.values().stream()
+                    .anyMatch(c -> !c.getConfigPath().isBlank());
+            if (hasAuth && hasConfigPaths && (ns == null || ns.isBlank())) {
+                errors.add("proxy for '" + def.getName()
+                        + "' has config-path entries but no 'config-namespace'");
+            }
 
             for (var ce : configMap.entrySet()) {
                 var config = ce.getValue();
                 if (!config.getConfigPath().isBlank() && !config.getValue().isBlank()) {
                     errors.add("configuration '" + ce.getKey() + "' in proxy for '"
                             + def.getName() + "' has both 'config-path' and 'value' — use one or the other");
+                }
+                if (!config.getConfigPath().isBlank() && config.getConfigPath().contains(".")) {
+                    warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
+                            + def.getName() + "': config-path '" + config.getConfigPath()
+                            + "' contains a dot — paths are relative to config-namespace, not absolute");
                 }
                 if (!config.isSelfResolving() && config.getDescription().isBlank()) {
                     warnings.add("configuration '" + ce.getKey() + "' in proxy for '"
@@ -102,6 +116,20 @@ public class ToolDefValidator {
                     if (ae.getValue() == null || ae.getValue().isBlank()) {
                         errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
                                 + "': header auth requires 'value'");
+                    }
+                } else if ("bearer".equals(authType)) {
+                    if (ae.getToken() == null || ae.getToken().isBlank()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': bearer auth requires 'token'");
+                    }
+                } else if ("basic".equals(authType)) {
+                    if (ae.getUsername() == null || ae.getUsername().isBlank()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': basic auth requires 'username'");
+                    }
+                    if (ae.getPassword() == null || ae.getPassword().isBlank()) {
+                        errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                                + "': basic auth requires 'password'");
                     }
                 }
 

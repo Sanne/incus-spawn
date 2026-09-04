@@ -40,12 +40,12 @@ public class ClaudeSetup implements ToolSetup {
     @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
-        apiKey.setConfigPath("claude.apiKey");
+        apiKey.setConfigPath("apiKey");
         apiKey.setDescription("Anthropic API key");
         apiKey.setSecret(true);
 
         var oauthToken = new ToolDef.ConfigEntry();
-        oauthToken.setConfigPath("claude.oauthToken");
+        oauthToken.setConfigPath("oauthToken");
         oauthToken.setDescription("Claude Pro/Max OAuth token");
         oauthToken.setSecret(true);
 
@@ -54,6 +54,7 @@ public class ClaudeSetup implements ToolSetup {
         auth.setType("anthropic");
 
         var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("claude");
         proxy.setConfiguration(Map.of("api-key", apiKey, "oauth-token", oauthToken));
         proxy.setAuth(List.of(auth));
         return proxy;
