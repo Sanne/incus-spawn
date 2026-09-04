@@ -203,6 +203,22 @@ class PiSetupTest {
     }
 
     @Test
+    void reconfigureSkipsInstallAndWritesSettings() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new PiSetup().reconfigure(new Container(incus, CONTAINER),
+                Map.of("provider", "google", "model", "gemini-3.5-flash"));
+
+        verify(incus, never()).shellExec(eq(CONTAINER),
+                eq("npm"), any(), any(), any(), any(), any());
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), argThat(arg ->
+                        arg.contains("\"defaultProvider\": \"google\"") &&
+                        arg.contains("\"defaultModel\": \"gemini-3.5-flash\"")));
+    }
+
+    @Test
     void parametersDeclaresProviderAndModel() {
         var params = new PiSetup().parameters();
 
