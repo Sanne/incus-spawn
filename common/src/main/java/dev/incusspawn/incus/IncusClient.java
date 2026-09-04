@@ -1405,6 +1405,32 @@ public class IncusClient {
         var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
         if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
         cleanupStaleVolumes(name);
+        triggerAccountingRepairIfNeeded();
+    }
+
+    /**
+     * Every caller that deletes a subvolume (branch/template removal, `isx clean`, a rebuild's
+     * {@code deleteIfExists}, ...) funnels through this one method, and a subvolume delete is
+     * exactly the operation that can flip a btrfs pool's qgroup accounting to {@code inconsistent}
+     * (see {@link BtrfsUsage}) — so check right here instead of waiting for the next TUI reload or
+     * build to notice.
+     *
+     * <p>Deletes come in bursts ({@code isx clean} removing several failed builds, destroying a set
+     * of branches), so this uses the throttled entry point: one check per burst, not one per
+     * instance. That matters because the status read is a round trip to the in-VM agent on macOS,
+     * and because the pool lookup below is itself an API call — the supplier is only invoked when
+     * the check actually runs. Best-effort throughout: the rescan is async, so this never adds a
+     * wait, and a failure here never fails a delete that already succeeded.
+     */
+    private void triggerAccountingRepairIfNeeded() {
+        try {
+            BtrfsUsage.repairIfInconsistentThrottled(() -> {
+                var probe = probeCowPool();
+                return probe.isBtrfs() ? probe.poolName() : null;
+            });
+        } catch (Exception ignored) {
+            // Best-effort; the delete itself already succeeded.
+        }
     }
 
     private void cleanupStaleVolumes(String instanceName) {

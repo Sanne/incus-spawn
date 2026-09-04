@@ -137,6 +137,43 @@ class BtrfsUsageTest {
         assertFalse(BtrfsUsage.parseStatus("enabled=0\ninconsistent=1").untrusted());
     }
 
+    // --- opportunistic throttle: a burst of deletes must cost one check, not one per instance ---
+
+    @Test
+    void burstOfDeletesRunsOneCheckNotOnePerDelete() {
+        BtrfsUsage.resetThrottleStateForTest();
+        var lookups = new java.util.concurrent.atomic.AtomicInteger();
+        // Simulate `isx clean` deleting 10 failed builds back to back. The supplier stands in for
+        // the caller's pool lookup (an Incus API call) and must not be invoked when throttled.
+        for (int i = 0; i < 10; i++) {
+            BtrfsUsage.repairIfInconsistentThrottled(() -> { lookups.incrementAndGet(); return null; });
+        }
+        assertEquals(1, lookups.get(), "a burst of deletes must collapse to a single check");
+    }
+
+    @Test
+    void throttledCheckSkipsTheExpensivePoolLookupEntirely() {
+        BtrfsUsage.resetThrottleStateForTest();
+        var first = BtrfsUsage.repairIfInconsistentThrottled(() -> null);
+        var second = BtrfsUsage.repairIfInconsistentThrottled(() -> {
+            throw new AssertionError("pool lookup must not run while throttled");
+        });
+        assertTrue(first.isEmpty());        // null pool -> no status, but the check did run
+        assertTrue(second.isEmpty());
+    }
+
+    @Test
+    void consecutiveTriggerBudgetResetsOnceAccountingReadsConsistent() {
+        // The budget bounds a *stuck* repair. A long-lived TUI session legitimately repairs many
+        // times over a day, so observing consistent accounting must clear the count — otherwise
+        // auto-repair silently stops working after MAX_RESCAN_TRIGGERS for the rest of the session.
+        BtrfsUsage.resetThrottleStateForTest();
+        assertEquals(0, BtrfsUsage.rescanTriggerCountForTest());
+        // An unreadable pool yields an unavailable status: neither a trigger nor a reset.
+        BtrfsUsage.repairIfInconsistent("no-such-pool-for-tests");
+        assertEquals(0, BtrfsUsage.rescanTriggerCountForTest());
+    }
+
     @Test
     void statusAndRescanRejectUnsafePoolNames() {
         assertFalse(BtrfsUsage.status("cow; rm -rf /").available());   // never shells out / hits the agent
