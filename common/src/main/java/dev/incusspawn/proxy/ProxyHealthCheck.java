@@ -74,7 +74,10 @@ public final class ProxyHealthCheck {
      */
     public static boolean awaitHealthy(int maxWaitSeconds) {
         var addr = resolveHealthAddress();
-        if (addr == null) return true;
+        if (addr == null) {
+            System.err.println("Could not determine proxy health address; skipping health check.");
+            return true;
+        }
         if (isHealthy(addr)) return true;
         if (maxWaitSeconds <= 0) return false;
         for (int i = 0; i < maxWaitSeconds * 2; i++) {
