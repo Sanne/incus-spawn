@@ -55,7 +55,7 @@ public final class ToolProxyResolver {
                 }
             }
 
-            var allConfigValues = resolveConfiguration(proxyDef, config, configTree);
+            var allConfigValues = resolveConfiguration(proxyDef, configTree);
 
             for (var authEntry : proxyDef.getAuth()) {
                 if (authEntry.getDomains() == null || authEntry.getDomains().isEmpty()) continue;
@@ -122,12 +122,7 @@ public final class ToolProxyResolver {
         return result;
     }
 
-    /**
-     * Compute a SHA-256 fingerprint of resolved tool proxies.
-     * Captures domains, auth types, and actual configuration values so that
-     * both definition changes and value changes are detected.
-     */
-    public static String fingerprint(List<ResolvedToolProxy> proxies) {
+    static String fingerprint(List<ResolvedToolProxy> proxies) {
         if (proxies == null || proxies.isEmpty()) return "";
         return sha256(fingerprintContent(proxies));
     }
@@ -177,7 +172,6 @@ public final class ToolProxyResolver {
 
     private static Map<String, String> resolveConfiguration(
             ToolDef.ProxyDef proxyDef,
-            SpawnConfig config,
             JsonNode configTree) {
         var resolved = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {

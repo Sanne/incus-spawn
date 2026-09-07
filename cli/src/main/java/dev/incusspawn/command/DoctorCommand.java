@@ -905,10 +905,7 @@ public class DoctorCommand extends BaseCommand {
             if (overrides.isEmpty()) {
                 return Finding.fail("Bridge DNS overrides", "not configured",
                         new Remediation("Configure bridge DNS", false,
-                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
-                                        ProxyConfig.interceptedDomains(
-                                                dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
-                                                        SpawnConfig.load())))));
+                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains)));
             }
             var missing = allDomains.stream()
                     .filter(d -> !overrides.contains("address=/" + d + "/"))
@@ -917,10 +914,7 @@ public class DoctorCommand extends BaseCommand {
             return Finding.warn("Bridge DNS overrides incomplete",
                     "missing: " + String.join(", ", missing),
                     new Remediation("Reconfigure bridge DNS", false,
-                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(),
-                                    ProxyConfig.interceptedDomains(
-                                            dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
-                                                    SpawnConfig.load())))));
+                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains)));
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
