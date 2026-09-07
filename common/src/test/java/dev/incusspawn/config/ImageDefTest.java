@@ -627,6 +627,72 @@ class ImageDefTest {
     }
 
     @Test
+    void fingerprintChangesWhenHostResourceFileContentChanges(@TempDir Path tempDir) throws Exception {
+        var file = tempDir.resolve(".gitconfig");
+        Files.writeString(file, "[user]\n  name = Alice\n");
+
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(file.toString(), "~/.gitconfig", "copy")));
+        var fp1 = a.contentFingerprint(Map.of());
+
+        Files.writeString(file, "[user]\n  name = Bob\n");
+        var fp2 = a.contentFingerprint(Map.of());
+
+        assertNotEquals(fp1, fp2, "Fingerprint should change when host-resource file content changes");
+    }
+
+    @Test
+    void fingerprintIncludesFileContentForReadonlyMode(@TempDir Path tempDir) throws Exception {
+        var file = tempDir.resolve(".zshrc");
+        Files.writeString(file, "export FOO=bar\n");
+
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(file.toString(), "~/.zshrc", "readonly")));
+        var fp1 = a.contentFingerprint(Map.of());
+
+        Files.writeString(file, "export FOO=baz\n");
+        var fp2 = a.contentFingerprint(Map.of());
+
+        assertNotEquals(fp1, fp2, "Fingerprint should change when readonly host-resource file content changes");
+    }
+
+    @Test
+    void fingerprintSkipsDirectoryContent(@TempDir Path tempDir) throws Exception {
+        var dir = tempDir.resolve("m2-repo");
+        Files.createDirectories(dir);
+        Files.writeString(dir.resolve("marker.txt"), "v1");
+
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(dir.toString(), "/home/agentuser/.m2", "readonly")));
+        var fp1 = a.contentFingerprint(Map.of());
+
+        Files.writeString(dir.resolve("marker.txt"), "v2");
+        var fp2 = a.contentFingerprint(Map.of());
+
+        assertEquals(fp1, fp2, "Fingerprint should not change when directory content changes");
+    }
+
+    @Test
+    void fingerprintSkipsUrlSourceContent() {
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(
+                "https://example.com/gitconfig", "/home/agentuser/.gitconfig", "copy")));
+        var fp = a.contentFingerprint(Map.of());
+        assertNotNull(fp);
+        assertFalse(fp.isEmpty());
+    }
+
+    @Test
+    void fingerprintSkipsMissingFile() {
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(
+                "/nonexistent/path/.gitconfig", "~/.gitconfig", "copy")));
+        var fp = a.contentFingerprint(Map.of());
+        assertNotNull(fp);
+        assertFalse(fp.isEmpty());
+    }
+
+    @Test
     void fingerprintChangesWhenHostResourceModeChanges() {
         var a = makeDef("images:fedora/44", null, List.of(), List.of());
         var b = makeDef("images:fedora/44", null, List.of(), List.of());
