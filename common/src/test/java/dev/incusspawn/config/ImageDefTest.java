@@ -657,6 +657,21 @@ class ImageDefTest {
     }
 
     @Test
+    void fingerprintSkipsOverlayFileContent(@TempDir Path tempDir) throws Exception {
+        var file = tempDir.resolve("storage.conf");
+        Files.writeString(file, "driver = overlay\n");
+
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setHostResources(List.of(new ImageDef.HostResource(file.toString(), "/etc/containers/storage.conf", "overlay")));
+        var fp1 = a.contentFingerprint(Map.of());
+
+        Files.writeString(file, "driver = vfs\n");
+        var fp2 = a.contentFingerprint(Map.of());
+
+        assertEquals(fp1, fp2, "Fingerprint should not include content for overlay mode host-resources");
+    }
+
+    @Test
     void fingerprintSkipsDirectoryContent(@TempDir Path tempDir) throws Exception {
         var dir = tempDir.resolve("m2-repo");
         Files.createDirectories(dir);
