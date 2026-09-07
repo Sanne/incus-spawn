@@ -146,9 +146,16 @@ public class ProxyCommand extends BaseCommand {
                 } else {
                     BuildOutput.note("Proxy service is already installed and running.");
                 }
+                if (!ProxyHealthCheck.awaitHealthy(5)) {
+                    System.err.println("Warning: proxy service is registered but not responding.");
+                    System.err.println("Check logs with: isx proxy logs");
+                    return CommandResult.FAILURE;
+                }
                 return CommandResult.SUCCESS;
             }
-            ProxyService.install();
+            if (!ProxyService.install()) {
+                return CommandResult.FAILURE;
+            }
             return CommandResult.SUCCESS;
         }
     }

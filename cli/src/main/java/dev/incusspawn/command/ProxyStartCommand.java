@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.proxy.ProxyConfig;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -34,13 +35,32 @@ public class ProxyStartCommand extends BaseCommand {
     protected CommandResult doExecute() throws Exception {
         if (ProxyService.isInstalled() && !hasNonDefaultOptions()) {
             if (ProxyService.isActive()) {
-                System.out.println("Proxy is already running (service-managed).");
-                return CommandResult.SUCCESS;
+                if (ProxyHealthCheck.awaitHealthy(0)) {
+                    System.out.println("Proxy is already running (service-managed).");
+                    return CommandResult.SUCCESS;
+                }
+                System.err.println("Proxy service is registered but not responding. Restarting...");
+                ProxyService.restart(System.err::println);
+                if (ProxyHealthCheck.awaitHealthy(10)) {
+                    return CommandResult.SUCCESS;
+                }
+                if (ProxyService.failedWithConfigError()) {
+                    System.err.println("Proxy failed due to a configuration problem (exit " + ProxyService.EXIT_CONFIG + ").");
+                } else {
+                    System.err.println("Proxy is still not responding after restart.");
+                }
+                System.err.println("Check logs with: isx proxy logs");
+                return CommandResult.FAILURE;
             }
             System.out.println("Starting proxy via service manager...");
             if (ProxyService.startService()) {
-                System.out.println("Proxy service started.");
-                return CommandResult.SUCCESS;
+                if (ProxyHealthCheck.awaitHealthy(5)) {
+                    System.out.println("Proxy service started.");
+                    return CommandResult.SUCCESS;
+                }
+                System.err.println("Proxy service started but is not responding.");
+                System.err.println("Check logs with: isx proxy logs");
+                return CommandResult.FAILURE;
             }
             System.err.println("Proxy service failed to start. Check logs with: isx proxy logs");
             return CommandResult.FAILURE;
