@@ -153,6 +153,9 @@ public class DoctorCommand extends BaseCommand {
         // Layer 2: Incus daemon (via VM)
         boolean vmRunning = VmManager.isRunning();
         findings.add(checkVmRunning(vmRunning));
+        if (!vmRunning) {
+            findings.add(checkRootDiskIntegrity());
+        }
         boolean incusUp = false;
         if (vmRunning) {
             var incusFinding = checkIncusReachable();
@@ -722,6 +725,31 @@ public class DoctorCommand extends BaseCommand {
             return Finding.ok("VM host disk", detail);
         } catch (Exception e) {
             return Finding.ok("VM disk", "(could not check)");
+        }
+    }
+
+    private Finding checkRootDiskIntegrity() {
+        var diskImage = Environment.vmDiskImage();
+        if (!Files.exists(diskImage)) {
+            return Finding.ok("Root disk", "(not yet extracted — will be created on next start)");
+        }
+        var f = validateBtrfsSuperblock(diskImage);
+        if (f.status() == Status.FAIL) {
+            return new Finding(f.status(), f.label(), f.detail(),
+                    new Remediation("Delete the corrupted image (re-extracted on next start)", true, () -> {
+                        Files.deleteIfExists(diskImage);
+                        Files.deleteIfExists(Environment.vmDiskVersion());
+                    }));
+        }
+        return f;
+    }
+
+    static Finding validateBtrfsSuperblock(Path diskImage) {
+        try {
+            VmManager.validateBtrfsMagic(diskImage);
+            return Finding.ok("Root disk", "btrfs superblock valid");
+        } catch (IOException e) {
+            return Finding.fail("Root disk corrupted", e.getMessage(), null);
         }
     }
 

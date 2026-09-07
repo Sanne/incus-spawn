@@ -679,6 +679,10 @@ public final class VmManager {
     static void ensureDisk() {
         var currentVersion = applianceVersion();
         var versionFile = Environment.vmDiskVersion();
+        var tmp = Environment.vmDiskImage().resolveSibling("disk.img.tmp");
+
+        // Clean up incomplete extraction from a prior crash.
+        try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
 
         if (Files.exists(Environment.vmDiskImage())) {
             try {
@@ -692,16 +696,15 @@ public final class VmManager {
                             + currentVersion + ")");
                 }
                 Files.delete(Environment.vmDiskImage());
-                try {
-                    downloadArtifacts();
-                } catch (IOException e) {
-                    // downloadArtifacts closes any dangling step line itself, so the cursor is at
-                    // column 0 here on every throw path — no stepBreak needed.
-                    System.err.println("Warning: could not re-download appliance artifacts: "
-                            + e.getMessage());
-                }
+                Files.deleteIfExists(versionFile);
             } catch (IOException e) {
                 return;
+            }
+            try {
+                downloadArtifacts();
+            } catch (IOException e) {
+                System.err.println("Warning: could not re-download appliance artifacts: "
+                        + e.getMessage());
             }
         }
 
@@ -712,7 +715,6 @@ public final class VmManager {
         }
 
         BuildOutput.stepStart("Extracting root disk...");
-        var tmp = Environment.vmDiskImage().resolveSibling("disk.img.tmp");
         try {
             Files.createDirectories(Environment.vmStateDir());
             try (var gzIn = new GZIPInputStream(Files.newInputStream(compressed), 64 * 1024);
@@ -721,15 +723,35 @@ public final class VmManager {
             }
             try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
                 raf.setLength(parseDiskSize(rootDiskSize()));
+                raf.getFD().sync();
             }
-            Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
+            validateBtrfsMagic(tmp);
             Files.writeString(versionFile, currentVersion);
+            Files.move(tmp, Environment.vmDiskImage(), StandardCopyOption.ATOMIC_MOVE);
             BuildOutput.stepDone(humanSize(Files.size(Environment.vmDiskImage()))
                     + ", " + rootDiskSize() + " virtual");
         } catch (IOException e) {
             BuildOutput.stepBreak();
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
             throw new VmException("Failed to extract disk image: " + e.getMessage());
+        }
+    }
+
+    private static final long BTRFS_SUPERBLOCK_MAGIC_OFFSET = 0x10040;
+    private static final byte[] BTRFS_MAGIC = "_BHRfS_M".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+    public static void validateBtrfsMagic(Path diskImage) throws IOException {
+        var magic = new byte[BTRFS_MAGIC.length];
+        try (var raf = new RandomAccessFile(diskImage.toFile(), "r")) {
+            if (raf.length() < BTRFS_SUPERBLOCK_MAGIC_OFFSET + BTRFS_MAGIC.length) {
+                throw new IOException("disk image too small for a btrfs superblock ("
+                        + raf.length() + " bytes)");
+            }
+            raf.seek(BTRFS_SUPERBLOCK_MAGIC_OFFSET);
+            raf.readFully(magic);
+        }
+        if (!java.util.Arrays.equals(magic, BTRFS_MAGIC)) {
+            throw new IOException("disk image has no valid btrfs superblock");
         }
     }
 
