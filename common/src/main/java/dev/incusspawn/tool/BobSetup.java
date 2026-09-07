@@ -45,7 +45,7 @@ public class BobSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Bob Shell");
         a.setType("shell");
-        a.setCommand("bob --yolo");
+        a.setCommand("bob --auto-approve");
         a.setAutoReturn(true);
         return List.of(a);
     }
