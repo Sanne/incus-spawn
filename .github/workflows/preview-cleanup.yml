@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   cleanup:
+    if: github.event.pull_request.head.repo.fork != true
     runs-on: ubuntu-latest
     steps:
       - name: Delete preview deployments
