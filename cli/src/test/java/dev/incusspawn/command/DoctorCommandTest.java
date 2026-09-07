@@ -6,6 +6,10 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
 
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -286,6 +290,56 @@ class DoctorCommandTest {
         var pools = Map.of("cow", "btrfs", "default", "dir");
         var result = DoctorCommand.classifyOffCowPool("cow", pools, Map.of());
         assertTrue(result.isEmpty(), "no instances means no findings");
+    }
+
+    // ---- Root disk btrfs superblock validation ----
+
+    @Test
+    void validBtrfsSuperblockIsOk() throws Exception {
+        var tmp = Files.createTempFile("disk", ".img");
+        try {
+            try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
+                raf.setLength(0x10048);
+                raf.seek(0x10040);
+                raf.write("_BHRfS_M".getBytes(StandardCharsets.US_ASCII));
+            }
+            var f = DoctorCommand.validateBtrfsSuperblock(tmp);
+            assertEquals(DoctorCommand.Status.OK, f.status());
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
+    void corruptedDiskImageFailsWithBadMagic() throws Exception {
+        var tmp = Files.createTempFile("disk", ".img");
+        try {
+            try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
+                raf.setLength(0x10048);
+                // leave zeros — no valid magic
+            }
+            var f = DoctorCommand.validateBtrfsSuperblock(tmp);
+            assertEquals(DoctorCommand.Status.FAIL, f.status());
+            assertTrue(f.label().contains("corrupted"));
+            assertTrue(f.detail().contains("superblock"));
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
+    void truncatedDiskImageFailsAsTooSmall() throws Exception {
+        var tmp = Files.createTempFile("disk", ".img");
+        try {
+            try (var raf = new RandomAccessFile(tmp.toFile(), "rw")) {
+                raf.setLength(1024); // way too small
+            }
+            var f = DoctorCommand.validateBtrfsSuperblock(tmp);
+            assertEquals(DoctorCommand.Status.FAIL, f.status());
+            assertTrue(f.detail().contains("too small"));
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
     }
 
     // ---- Sanitized config structural redaction ----

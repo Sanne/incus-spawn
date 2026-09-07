@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -194,6 +197,39 @@ class VmManagerTest {
         VmManager.ensureDataDisk();
         var ex = assertThrows(VmException.class, () -> VmManager.resizeDataDisk(VmManager.diskSize()));
         assertTrue(ex.getMessage().contains("larger"));
+    }
+
+    // --- btrfs superblock validation ---
+
+    @Test
+    void validateBtrfsMagicAcceptsValidImage() throws Exception {
+        var img = tempHome.resolve("valid.img");
+        try (var raf = new RandomAccessFile(img.toFile(), "rw")) {
+            raf.setLength(0x10048);
+            raf.seek(0x10040);
+            raf.write("_BHRfS_M".getBytes(StandardCharsets.US_ASCII));
+        }
+        assertDoesNotThrow(() -> VmManager.validateBtrfsMagic(img));
+    }
+
+    @Test
+    void validateBtrfsMagicRejectsTruncatedImage() throws Exception {
+        var img = tempHome.resolve("tiny.img");
+        try (var raf = new RandomAccessFile(img.toFile(), "rw")) {
+            raf.setLength(1024);
+        }
+        var ex = assertThrows(IOException.class, () -> VmManager.validateBtrfsMagic(img));
+        assertTrue(ex.getMessage().contains("too small"));
+    }
+
+    @Test
+    void validateBtrfsMagicRejectsZeroedImage() throws Exception {
+        var img = tempHome.resolve("zeroed.img");
+        try (var raf = new RandomAccessFile(img.toFile(), "rw")) {
+            raf.setLength(0x10048);
+        }
+        var ex = assertThrows(IOException.class, () -> VmManager.validateBtrfsMagic(img));
+        assertTrue(ex.getMessage().contains("no valid btrfs superblock"));
     }
 
     // --- recoverReachability orchestration (grace -> forwarder restart -> backstop) ---
