@@ -1294,7 +1294,7 @@ public class InitCommand extends BaseCommand {
         boolean anyChecked = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configDef = entry.getValue();
-            if (!configDef.getValue().isBlank()) continue;
+            if (!configDef.getValue().isBlank()) continue; // hardcoded literal — always resolved
             if (configDef.isConfirm()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
             anyChecked = true;
@@ -1302,7 +1302,9 @@ public class InitCommand extends BaseCommand {
                     proxyDef.fullConfigPath(configDef));
             if (v.isBlank()) return false;
         }
-        return anyChecked;
+        // If no config-path entries were checked, all config is hardcoded — tool is configured
+        return anyChecked || proxyDef.getConfiguration().values().stream()
+                .anyMatch(c -> !c.getValue().isBlank());
     }
 
     private void setupClaudeAuth() {
