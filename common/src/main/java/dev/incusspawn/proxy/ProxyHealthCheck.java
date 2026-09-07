@@ -58,6 +58,35 @@ public final class ProxyHealthCheck {
         cache = null;
     }
 
+    private static String resolveHealthAddress() {
+        try {
+            return healthAddress(new IncusClient());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Poll the health endpoint until the proxy responds or the timeout expires.
+     * Returns true immediately if the health address cannot be determined.
+     *
+     * @param maxWaitSeconds maximum time to poll; 0 for a single immediate check
+     */
+    public static boolean awaitHealthy(int maxWaitSeconds) {
+        var addr = resolveHealthAddress();
+        if (addr == null) return true;
+        if (isHealthy(addr)) return true;
+        if (maxWaitSeconds <= 0) return false;
+        for (int i = 0; i < maxWaitSeconds * 2; i++) {
+            try { Thread.sleep(500); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            if (isHealthy(addr)) return true;
+        }
+        return false;
+    }
+
     private static ProxyStatus checkUncached(IncusClient incus) {
         if (dev.incusspawn.Platform.isMacOS()) {
             var result = checkHealth("127.0.0.1");

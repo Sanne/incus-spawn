@@ -152,8 +152,13 @@ public final class ProxyService {
         runQuiet("sudo", "loginctl", "enable-linger", System.getProperty("user.name"));
 
         if (isActive()) {
-            System.out.println("Proxy service is running.");
-            return true;
+            if (ProxyHealthCheck.awaitHealthy(5)) {
+                System.out.println("Proxy service is running.");
+                return true;
+            }
+            System.err.println("Warning: service started but proxy is not responding.");
+            printServiceLogs();
+            return false;
         } else {
             System.err.println("Warning: service did not start.");
             printServiceLogs();
@@ -709,9 +714,15 @@ public final class ProxyService {
         runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
 
         if (isActive()) {
-            ProxyLog.info("Service installed and running");
-            System.out.println("  Services installed and running.");
-            return true;
+            if (ProxyHealthCheck.awaitHealthy(5)) {
+                ProxyLog.info("Service installed and running");
+                System.out.println("  Services installed and running.");
+                return true;
+            }
+            ProxyLog.info("Service installed but not healthy");
+            System.err.println("  Services installed but proxy is not responding.");
+            System.err.println("  Check logs with: isx proxy logs");
+            return false;
         } else {
             ProxyLog.info("Service installed (waiting for VM)");
             System.out.println("  Services installed (proxy will start when VM is ready).");
