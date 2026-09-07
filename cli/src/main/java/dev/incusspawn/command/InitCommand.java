@@ -2152,7 +2152,8 @@ public class InitCommand extends BaseCommand {
 
             var fullPath = proxyDef.fullConfigPath(configDef);
             var existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
-            if (!existing.isBlank()) {
+            boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
+            if (hasExisting) {
                 System.out.println("  " + label + ": " + maskSecret(existing));
                 if (askConfirmation(console, "  Keep current?", true, true)) continue;
             }
@@ -2166,7 +2167,7 @@ public class InitCommand extends BaseCommand {
 
             String value;
             if (configDef.isConfirm()) {
-                value = askConfirmation(console, "  " + label + "?", false, true) ? "true" : "";
+                value = askConfirmation(console, "  " + label + "?", false, true) ? "true" : "false";
             } else {
                 System.out.print("  " + label + " (or press Enter to skip): ");
                 if (configDef.isSecret()) {

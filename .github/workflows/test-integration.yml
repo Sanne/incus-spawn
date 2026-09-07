@@ -19,7 +19,8 @@ on:
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: integration-${{ github.event.pull_request.number || github.ref }}

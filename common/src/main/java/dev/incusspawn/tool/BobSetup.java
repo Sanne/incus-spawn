@@ -8,6 +8,7 @@ import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -71,7 +72,10 @@ public class BobSetup implements ToolSetup {
 
         var proxy = new ToolDef.ProxyDef();
         proxy.setConfigNamespace("bob");
-        proxy.setConfiguration(Map.of("api-key", apiKey, "license", license));
+        var config = new LinkedHashMap<String, ToolDef.ConfigEntry>();
+        config.put("api-key", apiKey);
+        config.put("license", license);
+        proxy.setConfiguration(config);
         proxy.setAuth(List.of(auth));
         return proxy;
     }

@@ -61,7 +61,9 @@ public final class ProxyConfig {
     public static Set<String> interceptedDomains(Set<String> toolProxyDomains) {
         if (toolProxyDomains.isEmpty()) return BUILTIN_INTERCEPTED_DOMAINS;
         var all = new HashSet<>(BUILTIN_INTERCEPTED_DOMAINS);
-        all.addAll(toolProxyDomains);
+        for (var d : toolProxyDomains) {
+            all.add(d.startsWith("*.") ? d.substring(2) : d);
+        }
         return Set.copyOf(all);
     }
 
