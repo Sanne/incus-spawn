@@ -199,7 +199,19 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies());
-        this.configContentHash = ToolProxyResolver.unsaltedFingerprint(credentials.toolProxies());
+        this.configContentHash = unsaltedConfigHash(credentials);
+    }
+
+    private static String unsaltedConfigHash(ProxyCredentials creds) {
+        var sb = new StringBuilder();
+        sb.append("anthropic=").append(creds.anthropicApiKey()).append('\n');
+        sb.append("oauth=").append(creds.oauthToken()).append('\n');
+        sb.append("vertex=").append(creds.useVertex()).append(',')
+                .append(creds.vertexRegion()).append(',')
+                .append(creds.vertexProjectId()).append('\n');
+        var toolHash = ToolProxyResolver.unsaltedFingerprint(creds.toolProxies());
+        sb.append("tools=").append(toolHash).append('\n');
+        return ToolProxyResolver.sha256(sb.toString());
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -318,9 +330,9 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
-            credentials = ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load());
-            applyToolProxies(credentials.toolProxies());
-            configContentHash = ToolProxyResolver.unsaltedFingerprint(credentials.toolProxies());
+            var newCreds = ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load());
+            credentials = newCreds;
+            applyToolProxies(newCreds.toolProxies());
             invalidateVertexToken();
             var jksBuffer = buildKeyStoreBuffer();
             if (mitmServer != null) {
@@ -332,6 +344,7 @@ public class MitmProxy {
             if (incusClient != null) {
                 ProxyConfig.writeBridgeDns(incusClient, allInterceptedDomains);
             }
+            configContentHash = unsaltedConfigHash(newCreds);
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
@@ -2099,8 +2112,8 @@ public class MitmProxy {
     private void sendHealthResponse(HttpServerRequest req) {
         var info = BuildInfo.instance();
         var err = authError;
-        var currentHash = ToolProxyResolver.unsaltedFingerprint(
-                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()).toolProxies());
+        var currentHash = unsaltedConfigHash(
+                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()));
         var configDrifted = !currentHash.equals(configContentHash);
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""

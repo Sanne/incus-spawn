@@ -104,7 +104,10 @@ public class ToolDefValidator {
                     continue;
                 }
                 var authType = ae.getType();
-                if (authType == null || !VALID_AUTH_TYPES.contains(authType)) {
+                if ("anthropic".equals(authType)) {
+                    errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
+                            + "': auth type 'anthropic' is reserved for the built-in Claude tool");
+                } else if (authType == null || !VALID_AUTH_TYPES.contains(authType)) {
                     errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
                             + "' has invalid auth type '" + authType + "' — must be one of: basic, bearer, header");
                 }

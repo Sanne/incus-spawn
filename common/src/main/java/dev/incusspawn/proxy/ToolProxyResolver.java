@@ -222,7 +222,7 @@ public final class ToolProxyResolver {
         return node != null && node.isValueNode() ? node.asText() : "";
     }
 
-    private static String sha256(String input) {
+    static String sha256(String input) {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
             var hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));

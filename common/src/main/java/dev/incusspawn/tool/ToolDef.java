@@ -456,7 +456,13 @@ public class ToolDef {
             for (var ae : proxy.auth) {
                 sb.append("auth=");
                 ae.domains.stream().sorted().forEach(d -> sb.append(d).append(','));
-                sb.append(ae.type != null ? ae.type : "").append('\n');
+                sb.append(ae.type != null ? ae.type : "");
+                if (ae.token != null) sb.append(",token=").append(ae.token);
+                if (ae.username != null) sb.append(",user=").append(ae.username);
+                if (ae.password != null) sb.append(",pass=").append(ae.password);
+                if (ae.name != null) sb.append(",name=").append(ae.name);
+                if (ae.value != null) sb.append(",value=").append(ae.value);
+                sb.append('\n');
             }
         }
         if (verify != null) sb.append("verify=").append(verify).append('\n');
