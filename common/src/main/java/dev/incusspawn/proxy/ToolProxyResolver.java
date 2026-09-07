@@ -33,6 +33,7 @@ public final class ToolProxyResolver {
     public static List<ResolvedToolProxy> resolve(SpawnConfig config) {
         var loader = new ToolDefLoader();
         var filtered = filterByFeatureGate(config, loader.allToolSetups());
+        rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
         return resolve(config, filtered);
     }
 
@@ -93,6 +94,7 @@ public final class ToolProxyResolver {
     public static List<UnresolvedToolProxy> findUnresolved(SpawnConfig config) {
         var loader = new ToolDefLoader();
         var filtered = filterByFeatureGate(config, loader.allToolSetups());
+        rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
         return findUnresolved(config, filtered);
     }
 
@@ -153,6 +155,20 @@ public final class ToolProxyResolver {
             sb.append('\n');
         }
         return sb.toString();
+    }
+
+    private static void rejectProjectLocalProxy(Set<String> projectLocal, Map<String, ToolSetup> tools) {
+        var it = tools.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            if (projectLocal.contains(entry.getKey()) && entry.getValue().proxy() != null) {
+                System.err.println("Warning: tool '" + entry.getKey()
+                        + "' has proxy configuration but is project-local (.incus-spawn/tools/)."
+                        + " The proxy daemon cannot see project-local tools —"
+                        + " move it to ~/.config/incus-spawn/tools/ or a configured search path.");
+                it.remove();
+            }
+        }
     }
 
     private static Map<String, ToolSetup> filterByFeatureGate(

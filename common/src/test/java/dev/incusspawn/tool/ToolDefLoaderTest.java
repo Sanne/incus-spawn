@@ -320,6 +320,48 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void projectLocalToolNamesReturnsProjectLocalTools(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("local-tool.yaml"), """
+                name: local-tool
+                description: A project-local tool
+                run:
+                  - echo local
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        var projectLocal = loader.projectLocalToolNames();
+        assertTrue(projectLocal.contains("local-tool"),
+                "local-tool should be project-local");
+        assertFalse(projectLocal.contains("podman"),
+                "podman is built-in, not project-local");
+    }
+
+    @Test
+    void projectLocalToolNamesExcludesSearchPathTools(@TempDir Path tempDir) throws Exception {
+        var searchDir = tempDir.resolve("search");
+        var projectDir = tempDir.resolve("project");
+        Files.createDirectories(searchDir.resolve("tools"));
+        Files.createDirectories(projectDir);
+
+        Files.writeString(searchDir.resolve("tools/search-tool.yaml"), """
+                name: search-tool
+                description: From search path
+                run:
+                  - echo search
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setSearchPaths(java.util.List.of(searchDir.toString()));
+        loader.setProjectToolsDir(projectDir);
+
+        var projectLocal = loader.projectLocalToolNames();
+        assertFalse(projectLocal.contains("search-tool"),
+                "search-tool is from search path, not project-local");
+    }
+
+    @Test
     void reloadPicksUpOnDiskEdits(@TempDir Path tempDir) throws Exception {
         var toolFile = tempDir.resolve("edit-me.yaml");
         Files.writeString(toolFile, """
