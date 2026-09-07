@@ -34,6 +34,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
@@ -178,7 +179,7 @@ public class MitmProxy {
     private List<Map.Entry<String, ResolvedToolProxy>> toolProxyWildcardSuffixes = List.of();
     private Set<String> allInterceptedDomains = ProxyConfig.builtinInterceptedDomains();
     private List<String> wildcardSuffixes = List.of();
-    private volatile String configContentHash = "";
+    private volatile FileTime configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     private dev.incusspawn.incus.IncusClient incusClient;
 
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
@@ -199,19 +200,7 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies());
-        this.configContentHash = unsaltedConfigHash(credentials);
-    }
-
-    private static String unsaltedConfigHash(ProxyCredentials creds) {
-        var sb = new StringBuilder();
-        sb.append("anthropic=").append(creds.anthropicApiKey()).append('\n');
-        sb.append("oauth=").append(creds.oauthToken()).append('\n');
-        sb.append("vertex=").append(creds.useVertex()).append(',')
-                .append(creds.vertexRegion()).append(',')
-                .append(creds.vertexProjectId()).append('\n');
-        var toolHash = ToolProxyResolver.unsaltedFingerprint(creds.toolProxies());
-        sb.append("tools=").append(toolHash).append('\n');
-        return ToolProxyResolver.sha256(sb.toString());
+        this.configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -234,7 +223,7 @@ public class MitmProxy {
         var exact = new java.util.LinkedHashMap<String, ResolvedToolProxy>();
         var wildcards = new ArrayList<Map.Entry<String, ResolvedToolProxy>>();
         var extraDomains = new HashSet<String>();
-        var suffixes = new ArrayList<String>();
+        var suffixSet = new java.util.LinkedHashSet<String>();
 
         for (var tp : proxies) {
             if (tp.auth() != null && "anthropic".equals(tp.auth().getType())) continue;
@@ -242,18 +231,32 @@ public class MitmProxy {
             var domain = tp.domain();
             if (domain.startsWith("*.")) {
                 var suffix = domain.substring(1); // ".example.com"
+                var firstForSuffix = wildcards.stream()
+                        .filter(e -> e.getKey().equals(suffix))
+                        .findFirst().orElse(null);
+                if (firstForSuffix != null
+                        && !firstForSuffix.getValue().toolName().equals(tp.toolName())) {
+                    ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
+                            + "' already registered by tool '" + firstForSuffix.getValue().toolName()
+                            + "' — first match wins");
+                }
                 wildcards.add(Map.entry(suffix, tp));
-                if (!suffixes.contains(suffix)) suffixes.add(suffix);
+                suffixSet.add(suffix);
                 extraDomains.add(domain.substring(2)); // base domain for DNS
             } else {
-                exact.put(domain, tp);
+                var existing = exact.putIfAbsent(domain, tp);
+                if (existing != null) {
+                    ProxyLog.warn("Tool '" + tp.toolName() + "' claims domain '" + domain
+                            + "' already registered by tool '" + existing.toolName() + "' — skipping");
+                    continue;
+                }
                 extraDomains.add(domain);
             }
         }
 
         this.toolProxyByExactDomain = Map.copyOf(exact);
         this.toolProxyWildcardSuffixes = List.copyOf(wildcards);
-        this.wildcardSuffixes = List.copyOf(suffixes);
+        this.wildcardSuffixes = List.copyOf(suffixSet);
         this.allInterceptedDomains = ProxyConfig.interceptedDomains(extraDomains);
     }
 
@@ -342,9 +345,13 @@ public class MitmProxy {
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
             if (incusClient != null) {
-                ProxyConfig.writeBridgeDns(incusClient, allInterceptedDomains);
+                try {
+                    ProxyConfig.writeBridgeDns(incusClient, allInterceptedDomains);
+                } catch (Exception dnsEx) {
+                    ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
+                }
             }
-            configContentHash = unsaltedConfigHash(newCreds);
+            configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
@@ -2112,9 +2119,7 @@ public class MitmProxy {
     private void sendHealthResponse(HttpServerRequest req) {
         var info = BuildInfo.instance();
         var err = authError;
-        var currentHash = unsaltedConfigHash(
-                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()));
-        var configDrifted = !currentHash.equals(configContentHash);
+        var configDrifted = hasConfigChangedSinceLoad();
         var body = "{\"status\":\"ok\""
                 + ",\"version\":\"" + info.version() + "\""
                 + ",\"gitSha\":\"" + info.gitSha() + "\""
@@ -2127,6 +2132,38 @@ public class MitmProxy {
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    private boolean hasConfigChangedSinceLoad() {
+        try {
+            var configFile = dev.incusspawn.config.SpawnConfig.configDir().resolve("config.yaml");
+            if (Files.exists(configFile)
+                    && Files.getLastModifiedTime(configFile).compareTo(configLoadedAt) > 0) {
+                return true;
+            }
+            var toolsDir = dev.incusspawn.config.SpawnConfig.configDir().resolve("tools");
+            if (Files.isDirectory(toolsDir)) {
+                // Check directory mtime (catches file additions/removals)
+                if (Files.getLastModifiedTime(toolsDir).compareTo(configLoadedAt) > 0) {
+                    return true;
+                }
+                // Check individual tool file mtimes (catches in-place edits)
+                try (var stream = Files.list(toolsDir)) {
+                    if (stream.filter(p -> {
+                                var name = p.getFileName().toString();
+                                return name.endsWith(".yaml") || name.endsWith(".yml");
+                            })
+                            .anyMatch(p -> {
+                                try {
+                                    return Files.getLastModifiedTime(p).compareTo(configLoadedAt) > 0;
+                                } catch (IOException e) { return false; }
+                            })) {
+                        return true;
+                    }
+                }
+            }
+        } catch (IOException ignored) {}
+        return false;
     }
 
     private static String escapeJson(String s) {

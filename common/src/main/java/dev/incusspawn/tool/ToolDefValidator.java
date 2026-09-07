@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.YamlErrors;
+import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ToolProxyResolver;
 
 import java.io.IOException;
@@ -133,6 +134,15 @@ public class ToolDefValidator {
                     if (ae.getPassword() == null || ae.getPassword().isBlank()) {
                         errors.add("auth entry for " + ae.getDomains() + " in '" + def.getName()
                                 + "': basic auth requires 'password'");
+                    }
+                }
+
+                for (var domain : ae.getDomains()) {
+                    var bare = domain.startsWith("*.") ? domain.substring(2) : domain;
+                    if (ProxyConfig.builtinInterceptedDomains().contains(bare)) {
+                        warnings.add("auth entry for '" + domain + "' in '" + def.getName()
+                                + "': domain is handled by a built-in proxy handler (caching/relay)"
+                                + " — tool proxy credential injection will not take effect for this domain");
                     }
                 }
 

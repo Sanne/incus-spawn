@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,8 +25,6 @@ public final class ToolProxyResolver {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern REF_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
-    private static final String FINGERPRINT_SALT = UUID.randomUUID().toString();
-
     private ToolProxyResolver() {}
 
     public static List<ResolvedToolProxy> resolve(SpawnConfig config) {
@@ -131,11 +128,6 @@ public final class ToolProxyResolver {
      * both definition changes and value changes are detected.
      */
     public static String fingerprint(List<ResolvedToolProxy> proxies) {
-        if (proxies == null || proxies.isEmpty()) return "";
-        return sha256(FINGERPRINT_SALT + "\n" + fingerprintContent(proxies));
-    }
-
-    static String unsaltedFingerprint(List<ResolvedToolProxy> proxies) {
         if (proxies == null || proxies.isEmpty()) return "";
         return sha256(fingerprintContent(proxies));
     }
