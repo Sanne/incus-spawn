@@ -113,6 +113,11 @@ public final class LayeredDefinitions<T> {
     /** Mutable resolved map (callers such as tool fallbacks add to it deliberately). */
     public Map<String, T> defs() { return defs; }
 
+    /** Get the source string for a named definition ("built-in" or an absolute path), or null if unknown. */
+    public String getSource(String name) {
+        return sources.get(name);
+    }
+
     /** Immutable snapshot of same-directory conflicts (read-only diagnostics). */
     public List<NameConflict> conflicts() { return List.copyOf(conflicts); }
 

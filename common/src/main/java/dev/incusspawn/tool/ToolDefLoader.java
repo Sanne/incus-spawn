@@ -8,9 +8,11 @@ import dev.incusspawn.config.YamlErrors;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Loads YAML tool definitions from built-in resources, user-level, and
@@ -81,6 +83,24 @@ public class ToolDefLoader {
     /** Cross-layer overrides found during the last load (intentional; for diagnostics). */
     public List<LayeredDefinitions.LayerOverride> overrides() {
         return load().overrides();
+    }
+
+    /**
+     * Return the names of tools whose resolved definition came from the project-local directory.
+     * These tools are CWD-dependent and invisible to the proxy daemon.
+     */
+    public Set<String> projectLocalToolNames() {
+        var absProjectDir = projectToolsDir.toAbsolutePath().normalize();
+        var result = new HashSet<String>();
+        var layered = load();
+        for (var name : layered.defs().keySet()) {
+            var source = layered.getSource(name);
+            if (source != null && !"built-in".equals(source)
+                    && Path.of(source).startsWith(absProjectDir)) {
+                result.add(name);
+            }
+        }
+        return result;
     }
 
     /**
