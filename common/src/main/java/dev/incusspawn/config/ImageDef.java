@@ -371,7 +371,17 @@ public class ImageDef {
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         for (var hr : hostResources) {
             sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
-                    .append(',').append(hr.getMode()).append('\n');
+                    .append(',').append(hr.getMode());
+            if (!hr.getSource().startsWith("http://") && !hr.getSource().startsWith("https://")) {
+                try {
+                    var resolved = Path.of(HostResourceSetup.expandHostTilde(hr.getSource()));
+                    if (Files.isRegularFile(resolved)) {
+                        sb.append(',').append(sha256hexFile(resolved));
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+            sb.append('\n');
         }
         env.stream()
                 .map(EnvEntry::fingerprintString)
@@ -382,6 +392,18 @@ public class ImageDef {
         if (workdir != null && !workdir.isEmpty()) sb.append("workdir=").append(workdir).append('\n');
         if (shellCommand != null && !shellCommand.isEmpty()) sb.append("shell-command=").append(shellCommand).append('\n');
         return sha256hex(sb.toString());
+    }
+
+    private static String sha256hexFile(Path file) throws IOException {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            try (var in = new java.security.DigestInputStream(Files.newInputStream(file), digest)) {
+                in.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static String sha256hex(String input) {
