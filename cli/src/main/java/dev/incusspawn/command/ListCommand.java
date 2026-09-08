@@ -1631,6 +1631,12 @@ public class ListCommand extends BaseCommand {
                 try {
                     InstanceLifecycle.removeHostIntegration(renameSourceName);
                     AutoRemoteService.addRemotes(incus, newName, msg -> {});
+                    // The zmx device still points at the old name's directory,
+                    // which removeHostIntegration just deleted — re-point it.
+                    if (ZmxSocketForward.isZmxInstalled(
+                            incus.configGet(newName, Metadata.BUILD_SOURCE))) {
+                        ZmxSocketForward.configure(incus, newName);
+                    }
                     if (InstanceLifecycle.hasSshCapability(incus, newName)) {
                         SshKeyManager.addHostEntry(newName);
                     }
@@ -4987,7 +4993,7 @@ public class ListCommand extends BaseCommand {
 
     private void fixCaMismatchIfNeeded(String containerName) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
-            HostResourceSetup.removeStaleDevices(incus, containerName);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName);
             incus.start(containerName);
             incus.waitForReady(containerName);
         }
@@ -5001,7 +5007,7 @@ public class ListCommand extends BaseCommand {
     private void shellInto(String name, String commandOverride) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
-            HostResourceSetup.removeStaleDevices(incus, name);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
             incus.start(name);
             incus.waitForReady(name);
             if (vmIpFixApplied) {
@@ -5010,6 +5016,7 @@ public class ListCommand extends BaseCommand {
         } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
             System.out.println("VM agent not responding, restarting " + name + "...");
             incus.forceStop(name);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
             incus.start(name);
             incus.waitForReady(name);
             if (vmIpFixApplied) {

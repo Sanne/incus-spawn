@@ -1518,6 +1518,28 @@ public class IncusClient {
     }
 
     /**
+     * The instance's own representation — {@code config} and {@code devices}
+     * as stored, without profile expansion.  Callers that need several fields
+     * read them from this one response instead of paying a round-trip per
+     * field (see {@link #deviceSource}).
+     * A rejected request (any non-2xx response) yields a missing node, so
+     * every field reads as absent; a transport failure still throws
+     * {@link IncusException}.
+     */
+    public JsonNode instanceMetadata(String name) {
+        return http().get("/1.0/instances/" + name).body().path("metadata");
+    }
+
+    /**
+     * Host source of a device as {@link #instanceMetadata} reports it, or ""
+     * when the instance declares no such device (profile-inherited devices
+     * are not part of that representation).
+     */
+    public static String deviceSource(JsonNode instanceMetadata, String deviceName) {
+        return instanceMetadata.path("devices").path(deviceName).path("source").asText("");
+    }
+
+    /**
      * Remove a device from a container/VM.
      * Uses a read-modify-write via GET + PUT because Incus PATCH cannot remove devices
      * (null values are rejected with 400, empty objects with 500).

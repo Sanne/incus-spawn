@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
@@ -142,7 +143,13 @@ public final class HostResourceSetup {
      * Removes disk devices whose host source path no longer exists.
      */
     public static void removeStaleDevices(IncusClient incus, String container) {
-        var hrJson = incus.configGet(container, Metadata.HOST_RESOURCES);
+        removeStaleDevices(incus, container, incus.instanceMetadata(container));
+    }
+
+    /** As above, reading the host-resource list from an already-fetched instance. */
+    public static void removeStaleDevices(IncusClient incus, String container,
+                                          JsonNode instanceMetadata) {
+        var hrJson = instanceMetadata.path("config").path(Metadata.HOST_RESOURCES).asText("");
         var resources = deserialize(hrJson);
         for (var hr : resources) {
             if ("copy".equals(hr.getMode())) continue;

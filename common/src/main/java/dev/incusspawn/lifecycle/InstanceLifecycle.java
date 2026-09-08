@@ -267,6 +267,20 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Repair host-side devices before starting an instance.  Both a
+     * host-resource source that has disappeared and a missing zmx socket
+     * directory otherwise fail Incus start validation with
+     * {@code Missing source path}.
+     */
+    public static void prepareHostDevicesForStart(IncusClient incus, String name) {
+        // Both repairs read the same instance, so fetch it once: start has to
+        // stay as cheap as it was before the repairs existed.
+        var instance = incus.instanceMetadata(name);
+        HostResourceSetup.removeStaleDevices(incus, name, instance);
+        ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
+    }
+
+    /**
      * Apply host resource devices and (for instances) add git remotes.
      */
     public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType) {
