@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
@@ -60,7 +59,7 @@ public class InstancePrep {
         // Start if stopped, or restart VMs with unresponsive agent
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
-            HostResourceSetup.removeStaleDevices(incus, name);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
             incus.start(name);
             incus.waitForReady(name);
             if (ipFixed && incus.isVm(name)) {
@@ -69,6 +68,7 @@ public class InstancePrep {
         } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
             System.out.println("VM agent not responding, restarting " + name + "...");
             incus.forceStop(name);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
             incus.start(name);
             incus.waitForReady(name);
             if (ipFixed) {
@@ -119,7 +119,7 @@ public class InstancePrep {
     private static void fixCaMismatch(IncusClient incus, String container) {
         // Ensure the container is running so we can push the cert
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
-            HostResourceSetup.removeStaleDevices(incus, container);
+            InstanceLifecycle.prepareHostDevicesForStart(incus, container);
             incus.start(container);
             incus.waitForReady(container);
         }

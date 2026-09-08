@@ -1,6 +1,6 @@
 package dev.incusspawn.lifecycle;
 
-import dev.incusspawn.Environment;
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.IncusClient;
@@ -60,9 +60,12 @@ public final class ZmxSocketForward {
      * that zmx may have cleaned up.</p>
      */
     public static void configure(IncusClient incus, String name) {
+        configure(incus, name, hostZmxDir());
+    }
+
+    static void configure(IncusClient incus, String name, Path zmxDir) {
         if (Platform.isMacOS()) return;
 
-        var zmxDir = hostZmxDir();
         var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name);
         try {
             Files.createDirectories(containerDir);
@@ -79,6 +82,45 @@ public final class ZmxSocketForward {
         incus.deviceAdd(name, DEVICE_NAME, "disk", args.toArray(String[]::new));
 
         ensureSymlink(zmxDir, name);
+    }
+
+    /**
+     * Restore the host side of the {@code zmx-sockets} device before start.
+     *
+     * <p>The host zmx dir normally lives under {@code XDG_RUNTIME_DIR}, a
+     * tmpfs wiped on reboot or logout, and a rename leaves the device
+     * pointing at the old (already deleted) directory.  Either way Incus
+     * refuses to start the instance with {@code Missing source path}.</p>
+     *
+     * <p>Costs a single stat while the directory is there; the repair reuses
+     * {@link #configure}, which also re-points a source left behind by a
+     * rename.</p>
+     *
+     * @param instanceMetadata the instance as fetched by
+     *        {@link IncusClient#instanceMetadata} — shared with the other
+     *        pre-start repairs so a start pays for only one round-trip
+     */
+    public static void ensureHostDirForStart(IncusClient incus, String name,
+                                             JsonNode instanceMetadata) {
+        ensureHostDirForStart(incus, name, hostZmxDir(), instanceMetadata);
+    }
+
+    static void ensureHostDirForStart(IncusClient incus, String name, Path zmxDir,
+                                      JsonNode instanceMetadata) {
+        if (Platform.isMacOS()) return;
+
+        var source = IncusClient.deviceSource(instanceMetadata, DEVICE_NAME);
+        if (source.isEmpty()) return; // no device — nothing to repair
+
+        // Healthy only if the device points at this name's directory and that
+        // directory is there: a source left over from a rename can still exist
+        // (it may belong to another instance by now), and the right directory
+        // can exist while the device points elsewhere.  Anything else is
+        // handed to configure(), which is idempotent.
+        var containerDir = zmxDir.resolve(CONTAINERS_SUBDIR).resolve(name).toAbsolutePath();
+        if (source.equals(containerDir.toString()) && Files.isDirectory(containerDir)) return;
+
+        configure(incus, name, zmxDir);
     }
 
     /**
