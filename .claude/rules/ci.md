@@ -12,8 +12,7 @@ paths:
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
 - **`integration-tests`**: boots the appliance VM image under QEMU, checks it reaches `ISX READY` and passes an Incus smoke test
-- **`isx-integration-tests-jvm`**: installs Incus on Ubuntu 24.04, builds isx from the unit-tests artifact, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
-- **`isx-integration-tests-native`**: same as jvm but uses native binaries from the build-native jobs
+- **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.

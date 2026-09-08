@@ -12,6 +12,7 @@
     <description>MITM authentication proxy for incus-spawn</description>
 
     <properties>
+        <native.optimization>-O3</native.optimization>
         <proxy.native.gc>serial</proxy.native.gc>
 <!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
         <svm.target.name.args/>

@@ -12,6 +12,7 @@
     <description>CLI tool for managing isolated Incus development environments</description>
 
     <properties>
+        <native.optimization>-Os</native.optimization>
 <!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->
         <native.march.args/>
     </properties>
