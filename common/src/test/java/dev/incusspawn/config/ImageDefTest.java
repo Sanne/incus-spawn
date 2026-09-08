@@ -642,7 +642,7 @@ class ImageDefTest {
     }
 
     @Test
-    void fingerprintIncludesFileContentForReadonlyMode(@TempDir Path tempDir) throws Exception {
+    void fingerprintSkipsReadonlyFileContent(@TempDir Path tempDir) throws Exception {
         var file = tempDir.resolve(".zshrc");
         Files.writeString(file, "export FOO=bar\n");
 
@@ -653,7 +653,7 @@ class ImageDefTest {
         Files.writeString(file, "export FOO=baz\n");
         var fp2 = a.contentFingerprint(Map.of());
 
-        assertNotEquals(fp1, fp2, "Fingerprint should change when readonly host-resource file content changes");
+        assertEquals(fp1, fp2, "Fingerprint should not include content for readonly (live-mounted) host-resources");
     }
 
     @Test

@@ -372,7 +372,7 @@ public class ImageDef {
         for (var hr : hostResources) {
             sb.append("hr=").append(hr.getSource()).append(',').append(hr.getPath())
                     .append(',').append(hr.getMode());
-            if (!"overlay".equals(hr.getMode())
+            if ("copy".equals(hr.getMode())
                     && !hr.getSource().startsWith("http://") && !hr.getSource().startsWith("https://")) {
                 try {
                     var resolved = Path.of(HostResourceSetup.expandHostTilde(hr.getSource()));
