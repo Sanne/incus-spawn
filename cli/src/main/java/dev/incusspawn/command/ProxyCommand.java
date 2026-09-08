@@ -188,6 +188,9 @@ public class ProxyCommand extends BaseCommand {
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
             if (!Files.exists(logFile())) {
+                if (showFallbackLogs()) {
+                    return CommandResult.SUCCESS;
+                }
                 System.err.println("No proxy log file found at " + logFile());
                 System.err.println("The proxy has not been started yet, or logs have been cleared.");
                 return CommandResult.valueOf(1);
@@ -215,6 +218,38 @@ public class ProxyCommand extends BaseCommand {
                 System.err.println("Failed to tail log file: " + e.getMessage());
             }
             return CommandResult.SUCCESS;
+        }
+
+        private boolean showFallbackLogs() {
+            String header;
+            java.util.List<String> command;
+            if (Platform.isMacOS()) {
+                var serviceLog = Environment.proxyServiceLogFile();
+                if (!Files.exists(serviceLog)) return false;
+                header = "Showing launchd service log instead (" + serviceLog + "):";
+                command = java.util.List.of("tail", "-f", serviceLog.toString());
+            } else if (ProxyService.isInstalled()) {
+                header = "Showing systemd journal instead:";
+                command = java.util.List.of("journalctl", "--user", "-u",
+                        Environment.PROXY_SERVICE_NAME, "--no-pager", "-n", "50", "-f");
+            } else {
+                return false;
+            }
+            System.err.println("No proxy log file at " + logFile());
+            System.err.println(header);
+            System.err.println();
+            try {
+                var pb = new ProcessBuilder(command);
+                pb.inheritIO();
+                pb.start().waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            } catch (IOException e) {
+                System.err.println("Failed to read service logs: " + e.getMessage());
+                return false;
+            }
+            return true;
         }
     }
 
