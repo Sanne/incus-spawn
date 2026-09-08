@@ -57,6 +57,8 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
 
+        installLogTee();
+
         var incus = new IncusClient();
         if (!Environment.hasBeenInitialized()) {
             System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
@@ -93,8 +95,6 @@ public class ProxyMain implements QuarkusApplication {
                 return 1;
             }
         }
-
-        installLogTee();
 
         var build = BuildInfo.instance();
         ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());

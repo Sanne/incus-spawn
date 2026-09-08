@@ -132,6 +132,10 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy.log");
     }
 
+    public static Path proxyServiceLogFile() {
+        return vmStateDir().resolve("proxy-service.log");
+    }
+
     public static Path proxyLifecycleLogFile() {
         return home().resolve(".local/state/incus-spawn/proxy-lifecycle.log");
     }

@@ -586,7 +586,7 @@ public final class ProxyService {
         if (path == null || path.isBlank()) {
             path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
         }
-        var logDir = Environment.vmStateDir();
+        var serviceLog = Environment.proxyServiceLogFile();
         var proxyBin = Path.of(isxPath).getParent().resolve("isx-proxy");
         String programArgs;
         if (Files.isExecutable(proxyBin)) {
@@ -613,11 +613,11 @@ public final class ProxyService {
                     <dict>
                         <key>PATH</key><string>%s</string>
                     </dict>
-                    <key>StandardOutPath</key><string>%s/proxy-service.log</string>
-                    <key>StandardErrorPath</key><string>%s/proxy-service.log</string>
+                    <key>StandardOutPath</key><string>%s</string>
+                    <key>StandardErrorPath</key><string>%s</string>
                 </dict>
                 </plist>
-                """.formatted(PROXY_LABEL, programArgs, path, logDir, logDir);
+                """.formatted(PROXY_LABEL, programArgs, path, serviceLog, serviceLog);
     }
 
     private static boolean needsMacOsPlistUpdate() {
