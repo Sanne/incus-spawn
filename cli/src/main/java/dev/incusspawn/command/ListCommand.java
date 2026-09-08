@@ -3683,7 +3683,7 @@ public class ListCommand extends BaseCommand {
             lines.add(Line.styled("Repos:", labelStyle));
             for (var repo : allRepos) {
                 lines.add(Line.styled("  " + repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle));
-                if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+                if (repo.hasPrime()) {
                     lines.add(Line.from(List.of(
                             Span.styled("    prime: ", labelStyle),
                             Span.styled(repo.getPrime(), lineStyle))));
@@ -4132,7 +4132,7 @@ public class ListCommand extends BaseCommand {
                     lines.add(Line.from(List.of(
                             Span.styled(contentIndent + "Repo: ", labelStyle),
                             Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle))));
-                    if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+                    if (repo.hasPrime()) {
                         lines.add(Line.from(List.of(
                                 Span.styled(contentIndent + "  prime: ", labelStyle),
                                 Span.styled(repo.getPrime(), lineStyle))));

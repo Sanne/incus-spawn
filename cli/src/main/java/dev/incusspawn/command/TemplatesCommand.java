@@ -330,7 +330,7 @@ public class TemplatesCommand extends BaseCommand {
             #   - url: https://github.com/owner/repo
             #     path: ~/repo
             #     branch: main
-            #     prime: mvn -B dependency:go-offline
+            #     prime: mvn -B install -DskipTests
 
             # Claude Code skills
             # skills:
