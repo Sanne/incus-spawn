@@ -2558,7 +2558,7 @@ public class BuildCommand extends BaseCommand {
             note = ref.skipReason();
             highlight = true;
         }
-        if (repo.getPrime() != null && !repo.getPrime().isBlank()) {
+        if (repo.hasPrime()) {
             if (failureSeen.get()) {
                 // Another repo already failed; don't start priming a build that's
                 // going to abort. The clone itself succeeded, so say so.

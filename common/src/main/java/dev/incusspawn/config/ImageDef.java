@@ -275,6 +275,8 @@ public class ImageDef {
         public void setBranch(String branch) { this.branch = branch; }
         public String getPrime() { return prime; }
         public void setPrime(String prime) { this.prime = prime; }
+        @JsonIgnore
+        public boolean hasPrime() { return prime != null && !prime.isBlank(); }
     }
 
     public static class ToolsDeserializer extends StdDeserializer<List<ToolDef.ToolRef>> {
