@@ -632,7 +632,7 @@ class IncusApi {
                 // reader and eats the first keypress.
                 var stdinChannel = java.nio.channels.FileChannel.open(
                         Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
-                var stdinThread = Thread.ofVirtual().start(() -> {
+                var stdinThread = Thread.ofPlatform().daemon().start(() -> {
                     try {
                         var buf = java.nio.ByteBuffer.allocate(4096);
                         while (stdinChannel.read(buf) != -1) {
@@ -653,9 +653,11 @@ class IncusApi {
                 } catch (IOException ignored) {
                     // Connection closed by watcher — normal PTY session end.
                 } finally {
-                    try { stdinChannel.close(); } catch (IOException ignored) {}
+                    // Interrupting a platform thread blocked in FileChannel.read
+                    // closes the channel and aborts the read (InterruptibleChannel contract).
                     stdinThread.interrupt();
                     try { stdinThread.join(500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                    try { stdinChannel.close(); } catch (IOException ignored) {}
                     keepaliveThread.interrupt();
                     resizeThread.interrupt();
                     restoreTerminal();
