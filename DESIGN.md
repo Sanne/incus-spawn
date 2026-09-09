@@ -421,6 +421,17 @@ All other domains (package mirrors, PyPI, etc.) route normally via Incus bridge 
 
 **Credential validation**: Building a template image that includes `claude`, `codex`, `pi`, or `gh` tools requires the corresponding credentials to be configured on the host. Both the CLI and TUI check this before starting a build and abort with a clear error if credentials are missing. Tools behind a feature flag that is not enabled are excluded from credential checks.
 
+**Auth error reporting**: When credential injection fails the proxy records an `authError` and surfaces it on `/health`, which `isx proxy status`, `isx doctor` and the TUI banner all render. Injection only runs on real container traffic, so that latch alone makes the status wrong in both directions: it reports failures the user has already fixed, and reports nothing at all before the first API call of a session. The health endpoint therefore verifies the Vertex token itself, on a worker thread, before answering — clearing a stale error, or reporting a broken credential that no request has hit yet.
+
+The checks it declines are what keep this cheap:
+
+- **Vertex not in use** — returns immediately, before any lock or thread dispatch. A non-Vertex setup never invokes `gcloud`, and pays nothing.
+- **A valid cached token with no standing error** — the steady state. Tokens are cached for 50 minutes, so a healthy Vertex install makes roughly one `gcloud` call per token lifetime regardless of poll rate.
+- **A standing OAuth error** (hint `isx init`) — only the user can resolve it; running `gcloud` would prove nothing.
+- **A check that ran within 10 seconds, or one in flight** — a failing credential caches nothing, so without this every poll from the TUI or `isx doctor` would fork a fresh `gcloud`.
+
+A failure found by the health check is recorded via `recordProbeAuthError`, which never sends a desktop notification: the check runs on every poll, and the notification belongs to the traffic path where a failure actually blocks the user. The first transition is still logged. The `gcloud` invocation is bounded at 15 seconds and an empty token is rejected rather than cached — this path is now reachable with no container traffic to reveal a hang or a blank credential.
+
 **Version drift detection**: The proxy health check (run before builds, branches, and shell access) compares the running proxy's version against the CLI version. If they differ: when no containers are running, the proxy is automatically restarted; when containers are running, a warning is shown with instructions to restart manually. This prevents subtle failures from CA certificate or protocol mismatches.
 
 **CA certificate mismatch**: At branch time, `BranchCommand` compares the template's `ca-fingerprint` metadata against the current CA certificate. If they differ (e.g. after `isx init` regenerated the CA), a warning is shown suggesting to rebuild the template. This prevents TLS failures in branches where the container's trusted CA doesn't match the proxy's signing CA.
@@ -442,7 +453,7 @@ Certs are keyed by domain, never by container: a leaf is a function of `(domain,
 
 **OAuth token support:** Users with a Claude Pro/Max subscription (no API key) can authenticate via `claude setup-token`, which generates a long-lived (~1 year) OAuth token. The proxy injects `Authorization: Bearer <token>` into requests to `api.anthropic.com` and strips the container's placeholder `x-api-key` header. Containers are configured identically to direct API key mode (with `ANTHROPIC_API_KEY=sk-ant-placeholder`). Unlike Vertex AI tokens, OAuth tokens cannot be refreshed automatically — when a 401 is received, the proxy logs an actionable error directing the user to re-run `isx init`.
 
-**Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth application-default login` completed.
+**Configuration**: `~/.config/incus-spawn/config.yaml` (owner-only permissions, `chmod 600`). CA key and certificate at `~/.config/incus-spawn/ca.key` and `~/.config/incus-spawn/ca.crt`. Vertex AI users must have `gcloud` installed on the host and `gcloud auth login` completed — the proxy and `isx init` both shell out to `gcloud auth print-access-token`, which reads the gcloud user credential, not application-default credentials.
 
 ### Host Resources
 

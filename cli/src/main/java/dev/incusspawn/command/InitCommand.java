@@ -1673,7 +1673,7 @@ public class InitCommand extends BaseCommand {
         if (!commandExists("gcloud")) {
             return new AuthResult(false,
                     "gcloud CLI not found. Install it from https://cloud.google.com/sdk/docs/install\n"
-                    + "  Then run: gcloud auth application-default login");
+                    + "  Then run: gcloud auth login");
         }
 
         String accessToken;
@@ -1690,7 +1690,7 @@ public class InitCommand extends BaseCommand {
                 var detail = !stderr.isBlank() ? stderr : stdout;
                 return new AuthResult(false,
                         "gcloud auth failed" + (detail.isBlank() ? "" : ": " + detail)
-                        + "\n  Run: gcloud auth application-default login");
+                        + "\n  Run: gcloud auth login");
             }
             accessToken = stdout;
         } catch (Exception e) {
@@ -1716,7 +1716,7 @@ public class InitCommand extends BaseCommand {
                 case 400, 404 -> new AuthResult(true,
                         "Vertex AI verified (region: " + region + ", project: " + projectId + ").");
                 case 401 -> new AuthResult(false,
-                        "Vertex AI authentication failed (HTTP 401). Run: gcloud auth application-default login");
+                        "Vertex AI authentication failed (HTTP 401). Run: gcloud auth login");
                 case 403 -> new AuthResult(false,
                         "Vertex AI access denied (HTTP 403). Check that the Vertex AI API is enabled\n"
                         + "  for project '" + projectId + "' and your account has the required permissions.");
