@@ -137,8 +137,8 @@ public class MitmProxy {
     private final Set<String> loggedStrippedFields = ConcurrentHashMap.newKeySet();
 
     // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min)
-    private String cachedVertexToken;
-    private long vertexTokenExpiryMs;
+    String cachedVertexToken;
+    long vertexTokenExpiryMs;
 
     private final Vertx vertx;
     private HttpServer mitmServer;
@@ -152,8 +152,14 @@ public class MitmProxy {
     private String caFingerprint = "";
     private volatile boolean dnsConfigured;
     private final Object authLock = new Object();
-    private volatile String authError;
+    volatile String authError;
+    // Remediation hint for the current authError, so the health endpoint knows
+    // whether the failure is one it can re-check on its own (gcloud) or one that
+    // needs the user to re-run 'isx init' (OAuth).
+    private String authErrorHint;
     private long authNotificationSentMs;
+    private long authRevalidatedMs;
+    private boolean authRevalidateInFlight;
     private static final long DNS_CACHE_TTL_MS = 60_000;
     private record DnsEntry(String ip, long expiresAt, Future<String> inflight) {
         static DnsEntry resolving(Future<String> f) { return new DnsEntry(null, 0, f); }
@@ -1668,7 +1674,7 @@ public class MitmProxy {
                 token = getVertexAccessToken();
                 clearAuthError();
             } catch (Exception e) {
-                setAuthError(e.getMessage(), "gcloud auth login");
+                setAuthError(e.getMessage(), VERTEX_AUTH_HINT);
                 return false;
             }
             upReq.putHeader("Authorization", "Bearer " + token);
@@ -1721,6 +1727,8 @@ public class MitmProxy {
 
     // --- GCP access token ---
 
+    private static final long GCLOUD_TIMEOUT_SECONDS = 15;
+
     /**
      * Get a GCP access token for Vertex AI, caching it for ~50 minutes.
      * Tokens are obtained via {@code gcloud auth print-access-token} on the host.
@@ -1732,21 +1740,40 @@ public class MitmProxy {
         try {
             var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
             var process = pb.start();
+            // Bounded wait: the health endpoint calls this without any container
+            // traffic, so a gcloud that blocks (wedged network, a reauth prompt it
+            // cannot show) must not hang the caller. Output is a single short token,
+            // far below the pipe buffer, so waiting before reading cannot deadlock.
+            if (!process.waitFor(GCLOUD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new RuntimeException("gcloud auth print-access-token timed out after "
+                        + GCLOUD_TIMEOUT_SECONDS + "s");
+            }
             // Read stdout and stderr separately — gcloud may print warnings to
             // stderr (e.g. credential refresh notices) which would corrupt the token
             var stdout = new String(process.getInputStream().readAllBytes()).strip();
             var stderr = new String(process.getErrorStream().readAllBytes()).strip();
-            var exitCode = process.waitFor();
+            var exitCode = process.exitValue();
             if (exitCode != 0) {
                 throw new RuntimeException("gcloud auth print-access-token failed (exit " + exitCode + "): " + stderr);
+            }
+            if (stdout.isBlank()) {
+                // Caching a blank token would send an empty Bearer header and turn a
+                // credential problem into an opaque upstream 401.
+                throw new RuntimeException("gcloud auth print-access-token returned an empty token");
             }
             cachedVertexToken = stdout;
             vertexTokenExpiryMs = System.currentTimeMillis() + 50 * 60 * 1000L; // refresh every 50 min
             return cachedVertexToken;
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException("Failed to obtain GCP access token: " + e.getMessage() +
-                    ". Ensure 'gcloud' is installed and 'gcloud auth application-default login' has been run.", e);
+                    ". Ensure 'gcloud' is installed and 'gcloud auth login' has been run.", e);
         }
+    }
+
+    /** True when a cached token is still valid, so a re-check would learn nothing. */
+    synchronized boolean hasFreshVertexToken() {
+        return cachedVertexToken != null && System.currentTimeMillis() < vertexTokenExpiryMs;
     }
 
     private synchronized void invalidateVertexToken() {
@@ -1756,13 +1783,29 @@ public class MitmProxy {
 
     private static final long AUTH_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000L;
 
-    private void setAuthError(String msg, String hint) {
+    /** Remediation for a Vertex token failure: the proxy shells out to
+     *  {@code gcloud auth print-access-token}, which uses the gcloud user
+     *  credential — not application-default credentials. */
+    static final String VERTEX_AUTH_HINT = "gcloud auth login";
+
+    /**
+     * An auth failure with no usable message must never be stored as null or blank:
+     * {@code /health} omits the field entirely in that case, so a real failure would
+     * render as a healthy proxy.
+     */
+    private static String authDetail(String msg, String fallback) {
+        return (msg == null || msg.isBlank()) ? fallback : msg;
+    }
+
+    void setAuthError(String msg, String hint) {
+        var detail = authDetail(msg, "Credential injection failed");
         synchronized (authLock) {
             if (authError == null) {
-                System.err.println(hint.startsWith("gcloud")
-                        ? "Failed to get Vertex token: " + msg : msg);
+                System.err.println(VERTEX_AUTH_HINT.equals(hint)
+                        ? "Failed to get Vertex token: " + detail : detail);
             }
-            authError = msg;
+            authError = detail;
+            authErrorHint = hint;
             long now = System.currentTimeMillis();
             if (now - authNotificationSentMs >= AUTH_NOTIFICATION_COOLDOWN_MS) {
                 authNotificationSentMs = now;
@@ -1772,11 +1815,32 @@ public class MitmProxy {
         }
     }
 
-    private void clearAuthError() {
+    void clearAuthError() {
         if (authError == null) return;
         synchronized (authLock) {
             authError = null;
+            authErrorHint = null;
             authNotificationSentMs = 0;
+        }
+    }
+
+    /**
+     * Record a failure found by the health-endpoint re-check.
+     * <p>
+     * Unlike {@link #setAuthError} this never notifies: the re-check runs on every
+     * status poll, and a desktop notification per poll would be noise. The
+     * notification belongs to the traffic path, where a failure actually blocks the
+     * user. The console line is still printed on the first transition, so the log
+     * shows when the proxy noticed.
+     */
+    void recordProbeAuthError(String msg) {
+        var detail = authDetail(msg, "Vertex authentication check failed");
+        synchronized (authLock) {
+            if (authError == null) {
+                System.err.println("Failed to get Vertex token: " + detail);
+            }
+            authError = detail;
+            authErrorHint = VERTEX_AUTH_HINT;
         }
     }
 
@@ -1922,11 +1986,81 @@ public class MitmProxy {
 
     // --- Health check ---
 
+    /**
+     * How often a health check may re-run gcloud while an auth error stands.
+     * The TUI and 'isx doctor' poll this endpoint, so an unthrottled re-check
+     * would fork a gcloud process per poll.
+     */
+    // Overridable for tests
+    long authRevalidateIntervalMs = 10_000;
+
     private void handleHealthCheck(HttpServerRequest req) {
         if (!"/health".equals(req.path())) {
             req.response().setStatusCode(404).end();
             return;
         }
+        // Credential state is otherwise only learned from real Vertex traffic, so a
+        // status view can be wrong in both directions: reporting a failure the user
+        // has already fixed, or reporting nothing at all because no request has been
+        // made yet. Verify the token here so the answer reflects the present.
+        if (!claimAuthRevalidation()) {
+            sendHealthResponse(req);
+            return;
+        }
+        vertx.<Void>executeBlocking(() -> {
+            try {
+                getVertexAccessToken();
+                clearAuthError();
+            } catch (Exception e) {
+                recordProbeAuthError(e.getMessage());
+            }
+            return null;
+        }, false).onComplete(ar -> {
+            releaseAuthRevalidation();
+            sendHealthResponse(req);
+        });
+    }
+
+    /**
+     * Returns true if this health check should verify the Vertex token, claiming the
+     * right to do so. Declines when:
+     * <ul>
+     *   <li>Vertex is not in use — a non-Vertex setup must never fork gcloud at all;</li>
+     *   <li>the standing error is an OAuth rejection (hint {@code isx init}), which
+     *       only the user can resolve — running gcloud would prove nothing;</li>
+     *   <li>nothing is wrong and the cached token is still valid, so a check would
+     *       learn nothing (this is the steady state: it keeps the healthy path free,
+     *       leaving roughly one gcloud call per token lifetime);</li>
+     *   <li>a check ran recently or is in flight — status views poll this endpoint,
+     *       and a failing credential caches nothing, so every poll would otherwise
+     *       fork a fresh gcloud.</li>
+     * </ul>
+     */
+    boolean claimAuthRevalidation() {
+        if (!credentials.useVertex()) return false;
+        // Read outside authLock: this acquires the instance monitor, and taking the
+        // two in the other order (traffic path) would risk a deadlock.
+        var tokenFresh = hasFreshVertexToken();
+        synchronized (authLock) {
+            if (authError != null && !VERTEX_AUTH_HINT.equals(authErrorHint)) return false;
+            if (authError == null && tokenFresh) return false;
+            var now = System.currentTimeMillis();
+            if (authRevalidateInFlight || now - authRevalidatedMs < authRevalidateIntervalMs) {
+                return false;
+            }
+            authRevalidatedMs = now;
+            authRevalidateInFlight = true;
+            return true;
+        }
+    }
+
+    void releaseAuthRevalidation() {
+        synchronized (authLock) {
+            authRevalidateInFlight = false;
+        }
+    }
+
+    private void sendHealthResponse(HttpServerRequest req) {
         var info = BuildInfo.instance();
         var err = authError;
         var body = "{\"status\":\"ok\""
