@@ -286,6 +286,11 @@ public class IncusClient {
                             boolean autoAttachTmux, boolean autoAttachZmx,
                             String subnetDiagnostic, boolean terminfoHandled) {
 
+        public ShellPrep withCommand(String command) {
+            return new ShellPrep(workdir, command, false, autoAttachZmx,
+                    subnetDiagnostic, terminfoHandled);
+        }
+
         public static ShellPrep from(IncusClient incus, String container) {
             var workdir = incus.configGet(container, Metadata.WORKDIR);
             var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
