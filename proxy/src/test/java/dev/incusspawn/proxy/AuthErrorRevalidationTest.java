@@ -52,8 +52,7 @@ class AuthErrorRevalidationTest {
 
     /** Pretend a live token was fetched, so the cache looks warm. */
     private static void warmToken(MitmProxy p) {
-        p.cachedVertexToken = "ya29.test";
-        p.vertexTokenExpiryMs = System.currentTimeMillis() + 60_000;
+        p.vertexToken.set(MitmProxy.VertexTokenEntry.resolved("ya29.test"));
     }
 
     @Test
