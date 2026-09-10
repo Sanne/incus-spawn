@@ -2293,7 +2293,7 @@ public class ListCommand extends BaseCommand {
                 .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
                         .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(templateRows)
-                .widths(Constraint.length(20), Constraint.length(20), Constraint.length(8), Constraint.fill())
+                .widths(Constraint.min(20), Constraint.length(20), Constraint.length(8), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
