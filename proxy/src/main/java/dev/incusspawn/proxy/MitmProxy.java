@@ -39,6 +39,7 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -175,10 +176,16 @@ public class MitmProxy {
 
     private final String healthBindAddress;
 
-    private Map<String, ResolvedToolProxy> toolProxyByExactDomain = Map.of();
-    private List<Map.Entry<String, ResolvedToolProxy>> toolProxyWildcardSuffixes = List.of();
-    private Set<String> allInterceptedDomains = ProxyConfig.builtinInterceptedDomains();
-    private List<String> wildcardSuffixes = List.of();
+    private record ToolProxyRouting(
+            Map<String, ResolvedToolProxy> exactDomain,
+            List<Map.Entry<String, ResolvedToolProxy>> wildcardSuffixes,
+            Set<String> allInterceptedDomains,
+            List<String> suffixes
+    ) {
+        static final ToolProxyRouting EMPTY = new ToolProxyRouting(
+                Map.of(), List.of(), ProxyConfig.builtinInterceptedDomains(), List.of());
+    }
+    private volatile ToolProxyRouting toolRouting = ToolProxyRouting.EMPTY;
     private volatile FileTime configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     private dev.incusspawn.incus.IncusClient incusClient;
 
@@ -254,28 +261,34 @@ public class MitmProxy {
             }
         }
 
-        this.toolProxyByExactDomain = Map.copyOf(exact);
-        this.toolProxyWildcardSuffixes = List.copyOf(wildcards);
-        this.wildcardSuffixes = List.copyOf(suffixSet);
-        this.allInterceptedDomains = ProxyConfig.interceptedDomains(extraDomains);
+        wildcards.sort(Comparator.<Map.Entry<String, ResolvedToolProxy>, Integer>comparing(
+                e -> e.getKey().length()).reversed());
+
+        this.toolRouting = new ToolProxyRouting(
+                Map.copyOf(exact),
+                List.copyOf(wildcards),
+                ProxyConfig.interceptedDomains(extraDomains),
+                List.copyOf(suffixSet));
     }
 
     ResolvedToolProxy findToolProxy(String domain) {
-        var exact = toolProxyByExactDomain.get(domain);
+        var routing = toolRouting;
+        var exact = routing.exactDomain().get(domain);
         if (exact != null) return exact;
-        for (var entry : toolProxyWildcardSuffixes) {
+        for (var entry : routing.wildcardSuffixes()) {
             if (domain.endsWith(entry.getKey())) return entry.getValue();
         }
         return null;
     }
 
     public Set<String> allInterceptedDomains() {
-        return allInterceptedDomains;
+        return toolRouting.allInterceptedDomains();
     }
 
     private boolean isInterceptedDomain(String domain) {
+        var routing = toolRouting;
         return ProxyConfig.isInterceptedDomain(domain,
-                toolProxyByExactDomain.keySet(), wildcardSuffixes);
+                routing.exactDomain().keySet(), routing.suffixes());
     }
 
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
@@ -301,7 +314,7 @@ public class MitmProxy {
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
 
-        var allDomains = allInterceptedDomains.stream()
+        var allDomains = toolRouting.allInterceptedDomains().stream()
                 .sorted()
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
@@ -346,7 +359,7 @@ public class MitmProxy {
             }
             if (incusClient != null) {
                 try {
-                    ProxyConfig.writeBridgeDns(incusClient, allInterceptedDomains);
+                    ProxyConfig.writeBridgeDns(incusClient, toolRouting.allInterceptedDomains());
                 } catch (Exception dnsEx) {
                     ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
                 }
@@ -467,7 +480,7 @@ public class MitmProxy {
         ProxyLog.info("Health endpoint on " + healthBindAddress + ":" + healthPort);
         System.out.println("MITM proxy listening on " + bindAddress + ":" + mitmPort);
         System.out.println("Health endpoint on " + healthBindAddress + ":" + healthPort + "/health");
-        System.out.println("Intercepted domains: " + allInterceptedDomains);
+        System.out.println("Intercepted domains: " + toolRouting.allInterceptedDomains());
         System.out.println("Registry cache: " + registryCacheDir() +
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + mavenCacheDir() +
