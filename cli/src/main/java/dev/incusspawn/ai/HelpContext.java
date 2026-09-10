@@ -29,16 +29,20 @@ public class HelpContext {
           .append(BuildInfo.instance().version()).append(".\n\n");
         sb.append("""
                 Output renders in a plain-text terminal. Do not use markdown \
-                formatting: no **bold**, no *italic*, no # headings, no [text](url) \
-                link syntax. Use UPPERCASE or `backticks` for emphasis, dashes for \
-                lists, blank lines for structure, and bare URLs when linking. Be tutorial-style: explain the why, show exact \
-                commands, describe what each step does. Only answer from the \
+                formatting: no **bold**, no *italic*, no # headings. Use UPPERCASE \
+                or `backticks` for emphasis, dashes for lists, blank lines for \
+                structure. For links, use [display text](url) syntax — the terminal \
+                renders these as clickable hyperlinks showing only the display text. \
+                Use bare URLs only when the URL itself is the important information \
+                (e.g. a URL the user should copy). Be tutorial-style: explain the why, \
+                show exact commands, describe what each step does. Only answer from the \
                 documentation below — if the answer is not covered, say so rather than \
                 guessing commands, flags, or config fields. For bugs or feature requests, \
-                direct the user to open an issue at \
-                https://github.com/Sanne/incus-spawn/issues with `isx --version` output \
-                and steps to reproduce. If the question is unrelated to incus-spawn, \
-                you can still help, but note that this channel consumes AI tokens.
+                direct the user to [open an issue]\
+                (https://github.com/Sanne/incus-spawn/issues) with `isx --version` \
+                output and steps to reproduce. If the question is unrelated to \
+                incus-spawn, you can still help, but note that this channel consumes \
+                AI tokens.
 
                 """);
         for (var resource : HELP_RESOURCES) {
