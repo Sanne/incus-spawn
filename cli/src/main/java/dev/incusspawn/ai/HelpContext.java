@@ -2,6 +2,7 @@ package dev.incusspawn.ai;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Platform;
+import dev.incusspawn.RuntimeConstants;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
@@ -71,7 +72,7 @@ public class HelpContext {
                 appendUserToolFiles(sb, toolsDir);
             }
             sb.append("Java-based tools (always available, installed when a template references them):\n");
-            for (var tool : ToolDefLoader.CDI_TOOLS) {
+            for (var tool : RuntimeConstants.CDI_TOOLS) {
                 sb.append("- ").append(tool.name());
                 var desc = tool.description();
                 if (desc != null && !desc.isBlank()) sb.append(": ").append(desc);

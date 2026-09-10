@@ -676,6 +676,56 @@ Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell
 `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
 build faster than v3 to the same wrong number and hides the differences between them.
 
+### Build-time initialization must not capture host paths
+
+Quarkus initializes application classes at image-build time unless they are listed in
+`--initialize-at-run-time`, so anything reachable from a static initializer is constructed by the
+*builder* and snapshotted into the image heap — fields and all. On Linux the builder is **root
+inside the GraalVM builder container** (`install.sh` drives native-image through docker/podman,
+where `$HOME=/root`), so a field holding an `Environment` path freezes the builder's home rather
+than the user's.
+
+Host-derived state that must be resolved eagerly therefore lives in exactly two classes, both on
+the flag: **`RuntimeConstants`** in `common` (the download and skills cache directories, plus the
+Java tool setups holding them) and **`RuntimeServices`** in the CLI (Incus client, lock manager,
+tool-def loader). Both say so in their javadoc; `Environment` itself is on the list too and stays
+method-based, which is also what lets tests retarget `user.home`. Everywhere else, call the
+`Environment` method rather than storing its result.
+
+Deferring the class that *resolves* the path is not sufficient on its own — the **holder** must be
+deferred too, which is why `CDI_TOOLS` lives in `RuntimeConstants`. GraalVM does not reject a
+build-time initializer that touches a run-time-initialized class; it initializes it early and folds
+the value, with no error (what `Environment`'s header comment warns about, confirmed by building it
+both ways). That is how this shipped: `DownloadCache` resolves `RuntimeConstants.DOWNLOAD_CACHE_DIR`
+in its constructor and `ClaudeSetup`/`BobSetup` each hold one; those instances used to be created in
+`RuntimeServices`, and commit 08a8ea0 (2026-08-26) moved the list into `ToolDefLoader`, which is not
+on the flag — so the binary carried `/root/.cache/incus-spawn/downloads` as a constant and
+`isx build` failed on any template with a `claude` or `bob` tool. The diagnosis was a bare path:
+`Failed to install Claude Code: /root/.cache/incus-spawn`, an `AccessDeniedException` message from
+`Files.createDirectories` walking into a directory only root can read. Everything else kept working,
+because every other `Environment` read happens at runtime — so it read as a container problem, not a
+build-host leak. `DownloadCache` now names the directory it failed to create.
+
+Two mechanisms keep it from recurring. `BakedHostPathFeature` registers an object replacer — the
+analysis calls it for every object scanned into the image heap — and aborts the build if a constant
+is, or lives under, one of the *builder's* own directories (`user.home`, `user.dir`). Its precision
+comes from an explicit, reviewable allowed list rather than from guessing which paths matter: an
+earlier version only flagged builder paths containing `incus-spawn`, which would have tolerated a
+baked `~/.m2/repository`, `~/.config/incus/`, `~/.local/bin/isx` or bare `$HOME`. It checks `Path`
+objects as well as their string form, because `sun.nio.fs.UnixPath` stores bytes and computes its
+`String` lazily — a folded path can reach the heap with no matching `String` object at all (this
+regression produced both, and the guard reports both). Second, `NativeImageInitializationTest` parses
+all three declarations of the build arguments — each module's `resources-filtered/application.properties`
+plus the duplicate list in `cli/pom.xml`'s `macos-native` profile — and fails in `mvn test` if one
+stops deferring a class or stops registering a guard; a Linux build would otherwise never notice the
+macOS copy drifting.
+
+The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property
+resolvers off the startup path of short-lived commands — and currently cannot fail, because it
+resolves its targets on an abstract GraalVM class whose concrete overrides are what the analysis
+reaches. It now prints `INCONCLUSIVE` per target instead of `ok`, so the report stops reading as
+evidence; `.claude/rules/native-image.md` records what fixing it involves.
+
 ## Testing
 
 **Unit tests** (`mvn test`, no Incus needed):

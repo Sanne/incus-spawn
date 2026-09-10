@@ -22,7 +22,6 @@ public final class RuntimeServices {
     private static final BackgroundTaskManager BG_TASKS = new BackgroundTaskManager();
     private static final FlockInstanceLockManager LOCK_MGR = new FlockInstanceLockManager();
     private static final ToolDefLoader TOOL_DEF_LOADER = new ToolDefLoader();
-    private static final List<ToolSetup> TOOL_SETUPS = ToolDefLoader.CDI_TOOLS;
 
     private RuntimeServices() {}
 
@@ -30,5 +29,5 @@ public final class RuntimeServices {
     public static BackgroundTaskManager backgroundTasks() { return BG_TASKS; }
     public static InstanceLockManager lockManager() { return LOCK_MGR; }
     public static ToolDefLoader toolDefLoader() { return TOOL_DEF_LOADER; }
-    public static List<ToolSetup> toolSetups() { return TOOL_SETUPS; }
+    public static List<ToolSetup> toolSetups() { return RuntimeConstants.CDI_TOOLS; }
 }
