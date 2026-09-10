@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import io.vertx.core.Vertx;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterAll;
@@ -45,7 +46,7 @@ class AuthErrorRevalidationTest {
     }
 
     private static MitmProxy vertexProxy() {
-        var credentials = new ProxyCredentials("", "", "", "", "", true, "us-east5", "proj");
+        var credentials = new ProxyCredentials("", "", true, "us-east5", "proj", List.of());
         return new MitmProxy(vertex, "127.0.0.1", 0, 0, "127.0.0.1", credentials);
     }
 
@@ -63,7 +64,7 @@ class AuthErrorRevalidationTest {
 
     @Test
     void neverForksGcloudWithoutVertex() {
-        var credentials = new ProxyCredentials("", "sk-oauth", "", "", "", false, "", "");
+        var credentials = new ProxyCredentials("", "sk-oauth", false, "", "", List.of());
         var nonVertex = new MitmProxy(vertex, "127.0.0.1", 0, 0, "127.0.0.1", credentials);
 
         assertFalse(nonVertex.claimAuthRevalidation(),
