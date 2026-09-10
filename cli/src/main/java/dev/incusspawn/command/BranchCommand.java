@@ -200,7 +200,7 @@ public class BranchCommand extends BaseCommand {
         if (!shell) {
             var defaultCmd = resolveDefaultCommand(resolvedSource, defs);
             if (defaultCmd != null) {
-                shellPrep = shellPrep.withCommand(defaultCmd);
+                shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
         }
         incus.interactiveShell(name, "agentuser", shellPrep);

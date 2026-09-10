@@ -286,7 +286,7 @@ public class IncusClient {
                             boolean autoAttachTmux, boolean autoAttachZmx,
                             String subnetDiagnostic, boolean terminfoHandled) {
 
-        public ShellPrep withCommand(String command) {
+        public ShellPrep withActionCommand(String command) {
             return new ShellPrep(workdir, command, false, autoAttachZmx,
                     subnetDiagnostic, terminfoHandled);
         }
