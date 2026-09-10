@@ -8,7 +8,7 @@ paths:
 # Tool System
 
 `ToolSetup` interface with two implementations:
-- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `common/src/main/resources/tools/`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
+- **YAML tools** (`ToolDef` + `YamlToolSetup`): declarative definitions in `common/src/main/resources/tools/`. Download entries may set `extract`, `destination_file`, or both; `~/` destinations resolve under `/home/agentuser`. Execution order: packages -> downloads -> run -> run_as_user -> files -> verify. Environment variables are declared via `env:` entries and collected centrally by `BuildCommand.writeEnvFile()`.
 - **Java tools** (CDI `@Dependent` beans implementing `ToolSetup`): for tools needing programmatic logic (`ClaudeSetup`, `CodexSetup`, `GhSetup`, `PiSetup`, `BobSetup`). Declare env vars via `envEntries(Map<String,String>)` method. Tools can declare a `feature()` to gate themselves behind an opt-in feature flag in `SpawnConfig.features`.
 
 Resolution via `ToolDefLoader` (later overrides earlier): built-in YAML -> user YAML -> search paths -> project-local YAML. Java CDI tools are used as fallback when no YAML tool matches.

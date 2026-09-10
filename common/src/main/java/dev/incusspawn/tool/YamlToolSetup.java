@@ -84,7 +84,7 @@ public class YamlToolSetup implements ToolSetup {
 
         // Packages are installed in bulk by BuildCommand before tool.install() is called.
 
-        // 1. Downloads — fetch on host, extract on host, push into container
+        // 1. Downloads — fetch on host, then copy and/or extract into the container
         var containerArch = canonicalArch(container.getArchitecture());
         for (var dl : def.getDownloads()) {
             if (dl.getArch() != null && !dl.getArch().equals(containerArch)) {
@@ -144,9 +144,25 @@ public class YamlToolSetup implements ToolSetup {
 
     private void processDownload(ToolDef.DownloadEntry dl, Container container) {
         try {
-            var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
+            var hasDestinationFile = hasText(dl.getDestinationFile());
+            var hasExtract = hasText(dl.getExtract());
+            if (!hasDestinationFile && !hasExtract) {
+                throw new IllegalArgumentException("Download entry for " + def.getName()
+                        + " must set extract, destination_file, or both");
+            }
 
-            if (container.isVm()) {
+            var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
+            var vm = container.isVm();
+
+            if (hasDestinationFile) {
+                copyToDestination(dl, cached, container, vm);
+            }
+
+            if (!hasExtract) {
+                return;
+            }
+
+            if (vm) {
                 // VMs use the incus-agent for file I/O (over vsock), which
                 // cannot handle pushing large files. Mount the host directory
                 // as a disk device and copy locally inside the VM instead.
@@ -160,6 +176,53 @@ public class YamlToolSetup implements ToolSetup {
             throw new RuntimeException("Failed to process download for " + def.getName()
                     + ": " + e.getMessage(), e);
         }
+    }
+
+    private void copyToDestination(ToolDef.DownloadEntry dl, Path cached, Container container, boolean vm)
+            throws IOException {
+        var destination = expandUserHome(dl.getDestinationFile());
+        var parent = Path.of(destination).getParent();
+        if (parent != null) {
+            container.exec("mkdir", "-p", parent.toString());
+        }
+
+        ensureWorldReadable(cached);
+        if (vm) {
+            copyFileViaMount(cached, destination, container);
+        } else {
+            container.filePush(cached.toString(), destination);
+        }
+        container.exec("chmod", "a+r", destination);
+    }
+
+    private void copyFileViaMount(Path cached, String destination, Container container) {
+        var absoluteCached = cached.toAbsolutePath();
+        var deviceName = "dl-file-" + def.getName();
+        var mountPath = "/mnt/isx-download-file";
+        try {
+            container.exec("rm", "-rf", mountPath);
+            container.addDiskDevice(deviceName, absoluteCached.getParent().toString(), mountPath, true);
+            container.waitForPath(mountPath);
+            container.runQuiet("Failed to copy download for " + def.getName(),
+                    "cp", mountPath + "/" + absoluteCached.getFileName(), destination);
+        } finally {
+            try { container.removeDiskDevice(deviceName); } catch (Exception ignored) {}
+            try { container.exec("rm", "-rf", mountPath); } catch (Exception ignored) {}
+        }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String expandUserHome(String path) {
+        if ("~".equals(path)) {
+            return "/home/agentuser";
+        }
+        if (path.startsWith("~/")) {
+            return "/home/agentuser/" + path.substring(2);
+        }
+        return path;
     }
 
     private void extractInContainer(ToolDef.DownloadEntry dl, Path cached, Container container) {

@@ -159,6 +159,93 @@ class YamlToolSetupTest {
     }
 
     @Test
+    void destinationFileCopiesDownloadWithoutExtracting(@TempDir Path tempDir) throws IOException {
+        var incus = mockIncusWithArch();
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var downloaded = tempDir.resolve("bash_completion.bash");
+        Files.writeString(downloaded, "complete -W clean mvn");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(downloaded);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/bash_completion.bash");
+        dl.setSha256("abc123");
+        dl.setDestinationFile("~/.bashrc.d/maven-bash-completion.sh");
+
+        var def = new ToolDef();
+        def.setName("maven-completion");
+        def.setDownloads(List.of(dl));
+
+        new YamlToolSetup(def, downloadCache).install(new Container(incus, CONTAINER), Map.of());
+
+        var destination = "/home/agentuser/.bashrc.d/maven-bash-completion.sh";
+        InOrder order = inOrder(incus);
+        order.verify(incus).shellExec(CONTAINER, "mkdir", "-p", "/home/agentuser/.bashrc.d");
+        order.verify(incus).filePush(downloaded.toString(), CONTAINER, destination);
+        order.verify(incus).shellExec(CONTAINER, "chmod", "a+r", destination);
+        verify(incus, never()).filePushRecursive(any(), any(), any());
+    }
+
+    @Test
+    void destinationFileAndExtractAreBothProcessed(@TempDir Path tempDir) throws IOException {
+        var incus = mockIncusWithArch();
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var downloaded = tempDir.resolve("tool.tar.gz");
+        Files.writeString(downloaded, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(downloaded);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool.tar.gz");
+        dl.setDestinationFile("/opt/downloads/tool.tar.gz");
+        dl.setExtract("/opt/tool");
+        dl.setExtractInContainer(true);
+
+        var def = new ToolDef();
+        def.setName("raw-and-expanded");
+        def.setDownloads(List.of(dl));
+
+        new YamlToolSetup(def, downloadCache).install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).filePush(downloaded.toString(), CONTAINER, "/opt/downloads/tool.tar.gz");
+        verify(incus).filePush(downloaded.toString(), CONTAINER, "/tmp/tool.tar.gz");
+        verify(incus).shellExec(CONTAINER, "tar", "xf", "/tmp/tool.tar.gz", "-C", "/opt/tool");
+    }
+
+    @Test
+    void destinationFileUsesMountAndCopyForVm(@TempDir Path tempDir) throws IOException {
+        var incus = mockIncusWithArch();
+        when(incus.isVm(CONTAINER)).thenReturn(true);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        var downloaded = tempDir.resolve("tool.zip").toAbsolutePath();
+        Files.writeString(downloaded, "fake");
+
+        var downloadCache = mock(DownloadCache.class);
+        when(downloadCache.download(anyString(), any())).thenReturn(downloaded);
+
+        var dl = new ToolDef.DownloadEntry();
+        dl.setUrl("https://example.com/tool.zip");
+        dl.setDestinationFile("/opt/downloads/tool.zip");
+
+        var def = new ToolDef();
+        def.setName("vm-file");
+        def.setDownloads(List.of(dl));
+
+        new YamlToolSetup(def, downloadCache).install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).deviceAdd(eq(CONTAINER), eq("dl-file-vm-file"), eq("disk"), any(String[].class));
+        verify(incus).shellExec(CONTAINER, "cp", "/mnt/isx-download-file/tool.zip",
+                "/opt/downloads/tool.zip");
+        verify(incus).deviceRemove(CONTAINER, "dl-file-vm-file");
+        verify(incus, never()).filePush(any(), any(), any());
+    }
+
+    @Test
     void extractInContainerPushesArchiveAndExtractsInsideContainer(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
