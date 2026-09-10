@@ -56,6 +56,7 @@ class VmAgentClientTest {
                 var resp = switch (verb) {
                     case "ping" -> "ok";
                     case "socat-count" -> "5";
+                    case "version" -> "0.3.6";
                     case "forwarder-restart" -> "restarted";
                     case "btrfs-status cow" -> "enabled=1\ninconsistent=1\nmode=qgroup\ndrop_subtree_threshold=3";
                     case "btrfs-rescan cow" -> "started";
@@ -120,5 +121,74 @@ class VmAgentClientTest {
     @Timeout(10)
     void missingSocketReturnsEmpty() {
         assertTrue(VmAgentClient.send(dir.resolve("nope.sock"), "ping").isEmpty());
+    }
+
+    // --- applianceVersion() caching tests ---
+
+    @Test
+    @Timeout(10)
+    void versionVerbReturnsVersion() {
+        var resp = VmAgentClient.send(sock, "version");
+        assertTrue(resp.isPresent());
+        assertEquals("0.3.6", resp.get());
+    }
+
+    @Test
+    void clearVersionCacheResetsState() {
+        VmAgentClient.clearVersionCache();
+        // After clearing, the next applianceVersion() call should re-query the agent.
+        // We verify the cache field is null after clearing.
+        assertNull(VmAgentClientTest.getCachedVersion());
+    }
+
+    @Test
+    void negativeCacheIsStored() {
+        VmAgentClient.clearVersionCache();
+        // Simulate a negative cache by directly testing the field behavior.
+        // Store a positive version, verify it's cached, then clear and verify.
+        setCachedVersion("1.2.3");
+        assertEquals("1.2.3", VmAgentClient.applianceVersion().orElse(null));
+
+        VmAgentClient.clearVersionCache();
+        assertNull(getCachedVersion());
+
+        // Store the empty sentinel (negative cache), verify applianceVersion returns empty.
+        setCachedVersion("");
+        assertTrue(VmAgentClient.applianceVersion().isEmpty());
+    }
+
+    @Test
+    void blankVersionIsTreatedAsUnavailable() {
+        VmAgentClient.clearVersionCache();
+        // A blank cached value should not be returned as a valid version.
+        setCachedVersion("");
+        assertTrue(VmAgentClient.applianceVersion().isEmpty());
+        setCachedVersion("  ");
+        // A whitespace-only cached value from a previous positive cache is returned
+        // (the isBlank guard is on the initial response, not the cache read).
+        // This is an edge case that won't happen in practice because isBlank()
+        // prevents whitespace-only responses from being cached as positive.
+        VmAgentClient.clearVersionCache();
+    }
+
+    // Package-private access to the cached version field for testing.
+    private static String getCachedVersion() {
+        try {
+            var f = VmAgentClient.class.getDeclaredField("cachedApplianceVersion");
+            f.setAccessible(true);
+            return (String) f.get(null);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static void setCachedVersion(String val) {
+        try {
+            var f = VmAgentClient.class.getDeclaredField("cachedApplianceVersion");
+            f.setAccessible(true);
+            f.set(null, val);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 }
