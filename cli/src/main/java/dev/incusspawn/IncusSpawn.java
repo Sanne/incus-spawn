@@ -16,8 +16,15 @@ public class IncusSpawn implements QuarkusApplication {
             if (args.length == 0) {
                 return launchTui() ? 0 : 1;
             }
-            // The VM appliance only exists on macOS; on Linux Incus runs natively, so the whole
-            // `vm` command group is genuinely absent (not registered) rather than a no-op stub.
+            if (looksLikeHelpQuestion(args)) {
+                var question = new java.util.ArrayList<>(java.util.List.of(args));
+                question.remove("--help");
+                System.err.println("Did you mean: isx ask " + String.join(" ", question));
+                System.err.println();
+                System.err.println("Use 'isx ask <question>' for AI-powered help (uses AI tokens).");
+                System.err.println("Use 'isx --help' for command usage.");
+                return 1;
+            }
             var topCommand = Platform.isMacOS()
                     ? IncusSpawnCommand.class
                     : IncusSpawnLinuxCommand.class;
@@ -30,6 +37,12 @@ public class IncusSpawn implements QuarkusApplication {
             System.err.println("Error: " + e.getMessage());
             return 1;
         }
+    }
+
+    private static boolean looksLikeHelpQuestion(String[] args) {
+        if (args.length < 2) return false;
+        var first = args[0];
+        return first.equals("--help") && !args[1].startsWith("-");
     }
 
     static boolean launchTui() {
@@ -58,7 +71,8 @@ public class IncusSpawn implements QuarkusApplication {
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
-                VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class
+                VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class,
+                AskCommand.class
             }, generateHelp = true)
     public static class IncusSpawnCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
@@ -79,7 +93,8 @@ public class IncusSpawn implements QuarkusApplication {
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
                 CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
-                UpdateBaseCommand.class, DoctorCommand.class
+                UpdateBaseCommand.class, DoctorCommand.class,
+                AskCommand.class
             }, generateHelp = true)
     public static class IncusSpawnLinuxCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
