@@ -19,6 +19,7 @@ import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.vm.VmManager;
 import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
@@ -439,7 +440,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    sudo " + String.join(" ", installCmd) + " incus");
             } else {
                 System.out.println("  No supported package manager found (dnf, apt, zypper, pacman).");
-                System.out.println("  Install Incus manually (see https://linuxcontainers.org/incus/docs/main/installing/), then run:");
+                System.out.println("  Install Incus manually (see " + TerminalLink.link("https://linuxcontainers.org/incus/docs/main/installing/") + "), then run:");
             }
             System.out.println("    sudo systemctl enable --now incus");
             System.out.println("    sudo usermod -aG incus-admin " + System.getProperty("user.name"));
@@ -1655,7 +1656,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  A Pro/Max subscription does not come with an API key. What it can");
         System.out.println("  produce is a long-lived OAuth token (valid about a year):");
         System.out.println();
-        System.out.println("    1. Install Claude Code: https://claude.com/claude-code");
+        System.out.println("    1. Install Claude Code: " + TerminalLink.link("https://claude.com/claude-code"));
         System.out.println("    2. Sign in with the subscription account: run " + BOLD + "claude" + RESET
                 + ", then " + BOLD + "/login" + RESET);
         System.out.println("    3. Run " + BOLD + "claude setup-token" + RESET);
@@ -1728,7 +1729,7 @@ public class InitCommand extends BaseCommand {
     private AuthResult verifyVertexConfig(String region, String projectId) {
         if (!commandExists("gcloud")) {
             return new AuthResult(false,
-                    "gcloud CLI not found. Install it from https://cloud.google.com/sdk/docs/install\n"
+                    "gcloud CLI not found. Install it from " + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + "\n"
                     + "  Then run: gcloud auth login");
         }
 
@@ -1876,7 +1877,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  To create a fine-grained PAT (ideally signed in as the agent's account,");
         System.out.println("  not your personal one):");
         System.out.println();
-        System.out.println("    1. Open " + BOLD + GH_PAT_NEW_URL + RESET);
+        System.out.println("    1. Open " + BOLD + TerminalLink.link(GH_PAT_NEW_URL) + RESET);
         System.out.println("    2. Give it a name (e.g. 'isx') and an expiration.");
         System.out.println("    3. Under " + BOLD + "Repository access" + RESET
                 + ", choose the repos to grant (or 'All repositories').");
@@ -1963,8 +1964,8 @@ public class InitCommand extends BaseCommand {
             System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
             System.out.println("  To fix this, either:");
             System.out.println("    • Add 'Email addresses' (read) under Account permissions on your PAT");
-            System.out.println("      " + patSettingsUrl(token));
-            System.out.println("    • Or make your email public at https://github.com/settings/profile");
+            System.out.println("      " + TerminalLink.link(patSettingsUrl(token)));
+            System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
             var newToken = readSecret(console.readPassword());
             if (newToken.isBlank()) {
@@ -2291,7 +2292,7 @@ public class InitCommand extends BaseCommand {
     private void offerTemplatesRepo() {
         if (!commandExists("gh") || !commandExists("git")) {
             System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
             return;
         }
@@ -2299,7 +2300,7 @@ public class InitCommand extends BaseCommand {
         var login = getGhLogin();
         if (login == null) {
             System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
             return;
         }
@@ -2307,7 +2308,7 @@ public class InitCommand extends BaseCommand {
         var console = System.console();
         if (console == null) {
             System.out.println("  For community templates, see (clone and add the local path):");
-            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
             return;
         }
@@ -2349,7 +2350,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  You don't have a " + BOLD + TEMPLATES_REPO + RESET + " repo yet.");
         if (!askConfirmation(console, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
             System.out.println("  Skipped. You can fork it manually at:");
-            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM);
+            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
             return;
         }
@@ -2358,7 +2359,7 @@ public class InitCommand extends BaseCommand {
         var forkResult = runHostCapturingExit("gh", "repo", "fork", TEMPLATES_UPSTREAM, "--clone=false");
         if (forkResult != 0) {
             System.out.println("  Fork failed. You can fork it manually at:");
-            System.out.println("  https://github.com/" + TEMPLATES_UPSTREAM + "/fork");
+            System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM + "/fork"));
             System.out.println();
             return;
         }

@@ -20,6 +20,7 @@ import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -3554,11 +3555,12 @@ public class ListCommand extends BaseCommand {
                         Style.EMPTY.fg(modal.warn()).bg(modal.bg())));
             } else {
                 for (var line : helpResponseLines) {
-                    if (line.length() <= wrapWidth || wrapWidth <= 0) {
-                        contentLines.add(Line.styled(line, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+                    var segments = TerminalLink.parseSegments(line);
+                    if (TerminalLink.displayLength(segments) <= wrapWidth || wrapWidth <= 0) {
+                        contentLines.add(helpLineFromSegments(segments));
                     } else {
-                        for (var wrapped : wordWrap(line, wrapWidth)) {
-                            contentLines.add(Line.styled(wrapped, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+                        for (var wrappedSegs : TerminalLink.wrapSegments(segments, wrapWidth)) {
+                            contentLines.add(helpLineFromSegments(wrappedSegs));
                         }
                     }
                 }
@@ -3664,6 +3666,23 @@ public class ListCommand extends BaseCommand {
             frame.renderStatefulWidget(scrollbar, scrollbarArea, state);
         }
         return scrollOffset;
+    }
+
+    private Line helpLineFromSegments(List<TerminalLink.Segment> segments) {
+        if (segments.size() == 1 && segments.getFirst() instanceof TerminalLink.Segment.Text t) {
+            return Line.styled(t.text(), Style.EMPTY.fg(modal.fg()).bg(modal.bg()));
+        }
+        var spans = new ArrayList<Span>();
+        for (var seg : segments) {
+            switch (seg) {
+                case TerminalLink.Segment.Text t ->
+                    spans.add(Span.styled(t.text(), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+                case TerminalLink.Segment.Link l ->
+                    spans.add(Span.styled(l.label(),
+                            Style.EMPTY.fg(modal.accent()).bg(modal.bg()).hyperlink(l.url())));
+            }
+        }
+        return Line.from(spans);
     }
 
     private static List<String> wordWrap(String text, int width) {

@@ -4,6 +4,7 @@ import dev.incusspawn.ai.AiHelpClient;
 import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalLink;
 import dev.incusspawn.util.TerminalProgress;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -78,6 +79,7 @@ public class AskCommand extends BaseCommand {
         }
 
         var firstChunk = new AtomicBoolean(true);
+        var lineBuf = new StringBuilder();
         AiHelpClient.askStreaming(question, systemPrompt, config, chunk -> {
             if (firstChunk.getAndSet(false)) {
                 spinning.set(false);
@@ -87,10 +89,22 @@ public class AskCommand extends BaseCommand {
                 }
                 System.err.println();
             }
-            System.out.print(chunk);
+            if (ansi) {
+                lineBuf.append(chunk);
+                int nl;
+                while ((nl = lineBuf.indexOf("\n")) >= 0) {
+                    System.out.println(TerminalLink.linkify(lineBuf.substring(0, nl)));
+                    lineBuf.delete(0, nl + 1);
+                }
+            } else {
+                System.out.print(chunk);
+            }
             System.out.flush();
         });
 
+        if (ansi && !lineBuf.isEmpty()) {
+            System.out.print(TerminalLink.linkify(lineBuf.toString()));
+        }
         spinning.set(false);
         if (spinner != null) spinner.join(200);
         if (firstChunk.get() && ansi) {
