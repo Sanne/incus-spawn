@@ -868,37 +868,306 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 
 | Command | Description |
 |---------|-------------|
-| `isx` | Launch the interactive TUI |
-| `isx init` | One-time host setup (Incus, firewall, auth) |
-| `isx build <template>` | Build or rebuild a template (`--all`, `--missing`, `--out-of-sync`, `--with-parents`) |
-| `isx branch <name>` | Create a CoW clone from a template or instance |
-| `isx shell <instance>` | Open a shell in an instance |
-| `isx run <instance>` | Run the default action or a specific action (`--action <tool:action-id>`) |
-| `isx destroy <instance>` | Destroy an instance |
-| `isx update-base` | Check for and install base image updates (`--list`, `--latest`, or a tag) |
-| `isx update-all` | Update all templates (packages, repos, tools) |
-| `isx templates` | List available templates |
-| `isx templates list -v` | List templates with source and description |
-| `isx templates new <name>` | Create a new template definition |
-| `isx templates edit <name>` | Edit a template in `$EDITOR` |
-| `isx instances` | List connectable instance names (excludes templates) |
-| `isx project create <name>` | Create a project template from `incus-spawn.yaml` |
-| `isx project update <name>` | Update an existing project template |
-| `isx proxy start` | Start the MITM auth proxy |
-| `isx proxy stop` | Stop the proxy |
-| `isx proxy status` | Show proxy status |
-| `isx proxy install` | Install proxy as a systemd user service |
-| `isx proxy uninstall` | Stop and remove the systemd proxy service |
-| `isx proxy logs` | View proxy logs |
-| `isx proxy dump` | Run a local pass-through proxy for API traffic capture |
-| `isx doctor` | Diagnose host, proxy, VM, and tunnel health |
-| `isx clean` | Reclaim space: `cache`, `state`, `config`, `pool`, or `all` |
-| `isx vm start` | Start the VM (macOS only) |
-| `isx vm stop` | Stop the VM (macOS only) |
-| `isx vm status` | Show VM status and system diagnostics (macOS only) |
-| `isx vm resize <size>` | Grow the VM data disk that backs the storage pool (macOS only) |
-| `isx vm console` | Follow VM serial console output (macOS only) |
-| `isx help <question>` | AI-powered help — ask any question about incus-spawn (`--with-templates`) |
-| `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
+| [`isx`](#isx) | Launch the interactive TUI |
+| [`isx init`](#isx-init) | One-time host setup |
+| [`isx build`](#isx-build) | Build or rebuild template images |
+| [`isx branch`](#isx-branch) | Create a CoW clone from a template or instance |
+| [`isx shell`](#isx-shell) | Open a shell in an instance |
+| [`isx run`](#isx-run) | Run an action on an instance |
+| [`isx destroy`](#isx-destroy) | Destroy an instance |
+| [`isx list`](#isx-list) | List all environments (plain text) |
+| [`isx instances`](#isx-instances) | List connectable instance names |
+| [`isx update-base`](#isx-update-base) | Check for and install base image updates |
+| [`isx update-all`](#isx-update-all) | Update packages and repos in all templates |
+| [`isx templates`](#isx-templates) | Manage template definitions |
+| [`isx project`](#isx-project) | Manage project templates |
+| [`isx proxy`](#isx-proxy) | Manage the MITM authentication proxy |
+| [`isx doctor`](#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
+| [`isx clean`](#isx-clean) | Remove cached data, state, or configuration |
+| [`isx vm`](#isx-vm) | Manage the VM appliance (macOS only) |
+| [`isx help`](#isx-help) | AI-powered help |
+| [`isx completion`](#isx-completion) | Print shell completion script |
 
 Use `isx <command> --help` for detailed options on any command.
+
+---
+
+### `isx`
+
+Launch the interactive TUI. Falls back to plain-text listing when stdout is not a terminal.
+
+    isx
+
+### `isx init`
+
+One-time host setup: install Incus, configure auth, test connectivity.
+
+    isx init
+
+### `isx build`
+
+Build or rebuild a template image.
+
+    isx build [<template>] [options]
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Rebuild all defined templates |
+| `--out-of-sync` | Rebuild templates whose definition or isx version changed |
+| `--with-parents` | Rebuild the template and all its parents unconditionally |
+| `--with-descendants` | Rebuild the template and all templates inheriting from it |
+| `--missing` | Build only templates that don't exist yet |
+| `--type <type>` | Instance type: `container`, `vm`, or `kvm` (overrides image definition) |
+| `--yes` | Skip interactive confirmations |
+| `--skip-git-refresh` | Skip refreshing host-side git repositories before building |
+
+### `isx branch`
+
+Create a new instance as a copy-on-write clone from a template or existing instance.
+
+    isx branch <name> [options]
+
+| Option | Description |
+|--------|-------------|
+| `--from <source>` | Source instance to branch from (auto-detected from cwd if omitted) |
+| `--gui` | Enable GUI passthrough (Wayland + GPU + audio) |
+| `--kvm` | Expose /dev/kvm for nested virtualization |
+| `--no-kvm` | Disable KVM even if the template was built with `type: kvm` |
+| `--airgap` | Disable all network access |
+| `--proxy-only` | Restrict network to the host proxy only |
+| `--inbox <dir>` | Host directory to mount read-only at ~/inbox inside the instance |
+| `--cpu <N>` | CPU core limit (default: adaptive) |
+| `--memory <size>` | Memory limit, e.g. `8GB` (default: adaptive) |
+| `--disk <size>` | Disk size limit (default: adaptive) |
+| `--no-start` | Don't start the instance after creation |
+| `--shell` | Open a plain shell instead of running the default action |
+
+### `isx shell`
+
+Open a shell in an existing instance.
+
+    isx shell <instance>
+
+### `isx run`
+
+Run the default action or a specific action on an instance.
+
+    isx run <instance> [options]
+
+| Option | Description |
+|--------|-------------|
+| `--action <ref>` | Action to run (`tool-name` or `tool-name:action-id`) |
+
+### `isx destroy`
+
+Destroy an instance.
+
+    isx destroy <instance>
+
+### `isx list`
+
+List all incus-spawn environments as plain text.
+
+    isx list
+
+### `isx instances`
+
+List connectable instance names (excludes templates). One name per line, suitable for scripting.
+
+    isx instances
+
+### `isx update-base`
+
+Check for and install base image updates.
+
+    isx update-base [<release-tag>] [options]
+
+Pass a release tag (e.g. `fedora-44-v2`) to pin to that version.
+
+| Option | Description |
+|--------|-------------|
+| `--list` | List available versions |
+| `--latest` | Track the latest version (remove any pin) |
+
+### `isx update-all`
+
+Update system packages, npm globals, and git-fetch repos in all templates. Does not re-clone repos or reinstall tools; for that, use `isx build`.
+
+    isx update-all [options]
+
+| Option | Description |
+|--------|-------------|
+| `--prime` | Also re-run prime commands (e.g. `mvn install -DskipTests`) for repos that define one |
+
+### `isx templates`
+
+Manage template definitions. Running bare `isx templates` defaults to `list`.
+
+    isx templates <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | List available template names |
+| `new` | Create a new template definition |
+| `edit` | Edit a template definition in `$EDITOR` |
+
+#### `isx templates list`
+
+    isx templates list [options]
+
+| Option | Description |
+|--------|-------------|
+| `-v`, `--verbose` | Show source and description |
+
+#### `isx templates new`
+
+    isx templates new [<name>]
+
+| Option | Description |
+|--------|-------------|
+| `--project` | Create in project-local directory (`.incus-spawn/images/`) |
+
+#### `isx templates edit`
+
+    isx templates edit <name>
+
+### `isx project`
+
+Manage project templates defined by an `incus-spawn.yaml` file.
+
+    isx project <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `create` | Create a project template from a parent base image |
+| `update` | Update an existing project template (packages, repos, deps) |
+
+#### `isx project create`
+
+    isx project create <name> [options]
+
+| Option | Description |
+|--------|-------------|
+| `--config <path>` | Path to `incus-spawn.yaml` (default: auto-detect from cwd) |
+
+#### `isx project update`
+
+    isx project update <name> [options]
+
+| Option | Description |
+|--------|-------------|
+| `--config <path>` | Path to `incus-spawn.yaml` |
+
+### `isx proxy`
+
+Manage the MITM authentication proxy.
+
+    isx proxy <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Start the proxy |
+| `stop` | Stop the proxy (handles both systemd and manual processes) |
+| `status` | Check if the proxy is running |
+| `install` | Install as a systemd user service (auto-starts on boot) |
+| `uninstall` | Stop and remove the systemd proxy service |
+| `logs` | Follow the proxy log in real time |
+| `dump` | Run a pass-through proxy for host-side traffic capture |
+
+#### `isx proxy start`
+
+    isx proxy start [options]
+
+| Option | Description |
+|--------|-------------|
+| `--port <port>` | MITM TLS proxy port (default: `18443`) |
+| `--health-port <port>` | Health check HTTP port (default: `18080`) |
+| `--gateway-ip <ip>` | Incus bridge gateway IP (skips auto-detection) |
+| `--debug` | Log full request/response details |
+
+#### `isx proxy dump`
+
+    isx proxy dump [options]
+
+| Option | Description |
+|--------|-------------|
+| `--port <port>` | Local HTTP port (default: `19080`) |
+
+### `isx doctor`
+
+Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
+
+    isx doctor [options]
+
+| Option | Description |
+|--------|-------------|
+| `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
+| `--bundle` | Collect findings and logs into a support archive (.tar.gz) |
+
+### `isx clean`
+
+Remove cached data, state, or configuration.
+
+    isx clean <subcommand> [options]
+
+| Subcommand | Description |
+|------------|-------------|
+| `cache` | Remove cached downloads, registry blobs, and build caches |
+| `state` | Remove VM state, logs, and appliance artifacts |
+| `config` | Remove configuration, SSH keys, and CA certificate |
+| `pool` | Reclaim space from the storage pool (failed builds, unused images) |
+| `all` | Remove all incus-spawn data (cache, state, and configuration) |
+
+All subcommands accept these options:
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show what would be deleted without deleting |
+| `--skip-confirmation` | Skip the confirmation prompt |
+
+### `isx vm`
+
+Manage the incus-spawn VM appliance. macOS only.
+
+    isx vm <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Start the VM (creates disk image on first run) |
+| `stop` | Stop the VM (graceful shutdown) |
+| `status` | Show VM status and system diagnostics |
+| `resize` | Grow the VM data disk that backs the storage pool |
+| `console` | Follow VM serial console output |
+| `check-version` | Check whether the running appliance matches the installed version |
+
+#### `isx vm resize`
+
+    isx vm resize <size>
+
+Size must be larger than the current disk (grow-only), e.g. `100G`.
+
+| Option | Description |
+|--------|-------------|
+| `-y`, `--yes` | Skip the confirmation prompt |
+
+### `isx help`
+
+AI-powered help. Ask any question about incus-spawn (uses AI tokens).
+
+    isx help <question...>
+
+| Option | Description |
+|--------|-------------|
+| `--with-templates` | Include template and tool definitions in the AI context |
+
+### `isx completion`
+
+Print a shell completion script.
+
+    isx completion [<shell>]
+
+Supported shells: `bash` (default), `zsh`, `fish`.
+
+| Option | Description |
+|--------|-------------|
+| `--install` | Print installation instructions instead of the script |
