@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.BuildOutput;
+
 import java.io.IOException;
 
 public final class FirewalldCheck {
@@ -99,10 +101,7 @@ public final class FirewalldCheck {
         try {
             var diagnostic = detectDiagnostic();
             if (diagnostic == null) return false;
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
-            System.err.println("\033[1;33mfirewalld is not running:\033[0m");
-            System.err.println(diagnostic);
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
+            BuildOutput.warnBanner("firewalld is not running:", diagnostic);
             return true;
         } catch (Exception e) {
             return false;

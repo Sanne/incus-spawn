@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.BuildOutput;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -106,10 +108,7 @@ public final class BridgeSubnetCheck {
         try {
             var diagnostic = detectConflictDiagnostic(incus);
             if (diagnostic == null) return false;
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
-            System.err.println("\033[1;33mBridge subnet conflict detected:\033[0m");
-            System.err.println(diagnostic);
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
+            BuildOutput.warnBanner("Bridge subnet conflict detected:", diagnostic);
             return true;
         } catch (Exception e) {
             return false;

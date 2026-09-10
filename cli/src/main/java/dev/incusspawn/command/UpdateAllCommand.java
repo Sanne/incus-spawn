@@ -62,7 +62,7 @@ public class UpdateAllCommand extends BaseCommand {
 
         refreshHostRepos(resolved, defs);
 
-        System.out.println("Updating " + templates.size() + " template(s).");
+        BuildOutput.section("Updating " + templates.size() + " template(s).");
 
         boolean primesSkipped = false;
         boolean primesFailed = false;
@@ -73,14 +73,14 @@ public class UpdateAllCommand extends BaseCommand {
             primesFailed |= result.failed;
         }
 
-        if (primesSkipped) {
-            BuildOutput.note("Use --prime to re-run prime commands.");
-        }
         if (primesFailed) {
             BuildOutput.warn("Some prime commands failed.");
             return CommandResult.valueOf(1);
         }
         BuildOutput.success("All templates updated.");
+        if (primesSkipped) {
+            BuildOutput.note("Use --prime to re-run prime commands.");
+        }
         return CommandResult.SUCCESS;
     }
 

@@ -263,15 +263,16 @@ public class BranchCommand extends BaseCommand {
             return false;
         }
 
-        var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
-        System.err.println(sep);
-        System.err.println("\033[1;33mCA certificate mismatch\033[0m");
-        System.err.println("Template '" + source + "' was built with a different CA certificate.");
-        System.err.println("TLS connections through the proxy will fail in branches.");
         if (!profile.isEmpty()) {
-            System.err.println("Rebuild the template to fix: \033[1misx build " + profile + "\033[0m");
+            BuildOutput.warnBanner("CA certificate mismatch",
+                    "Template '" + source + "' was built with a different CA certificate.",
+                    "TLS connections through the proxy will fail in branches.",
+                    "Rebuild the template to fix: \033[1misx build " + profile + "\033[0m");
+        } else {
+            BuildOutput.warnBanner("CA certificate mismatch",
+                    "Template '" + source + "' was built with a different CA certificate.",
+                    "TLS connections through the proxy will fail in branches.");
         }
-        System.err.println(sep);
         return true;
     }
 

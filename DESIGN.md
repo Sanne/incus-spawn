@@ -230,6 +230,10 @@ first-run flow is the one deliberate exception, kept in its own style for now.)
 
 **Structure:**
 
+- **Section** (column 0): `Refreshing 8 host repos:` or `Updating 6 template(s).`
+  via `section(msg)`. Introduces a block of work at the left margin, preceded by a
+  blank line. Use for top-level groupings; individual operations within a section
+  get `header()`.
 - **Header** (bold bullet): `  ● Building tpl-dev  [1/3]`, `  ● my-branch  ← tpl-dev`,
   or the generic `  ● Resizing VM data disk` via `header(msg)`. Identifies the
   top-level operation. Preceded by a blank line.
@@ -244,6 +248,10 @@ first-run flow is the one deliberate exception, kept in its own style for now.)
 - **Note** (dim, 4-space indent): informational messages that should be visible
   but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.`
   Uses ANSI dim (`\e[2m`).
+- **Warning banner** (yellow borders, stderr): `warnBanner(title, lines...)` for
+  diagnostic warnings that need to stand out — subnet conflicts, CA mismatches,
+  firewall issues. Title is bold yellow, body lines are plain. Distinct from
+  `warn()` which is a single inline yellow line within step output.
 - **Success** (green checkmark): `    ✓ my-branch is ready.` — final confirmation,
   preceded by a blank line.
 
@@ -267,13 +275,14 @@ print it on failure. This prevents leaked output (e.g. systemd's "Created
 symlink" lines) from breaking alignment. `runInteractive` is reserved for
 commands that genuinely need live terminal output (e.g. interactive shells).
 
-**Adding new output:** use `BuildOutput.header()` to frame a multi-step operation,
-`step()` for quick actions, `stepStart()`/`stepDone()`/`stepDone(detail)` for slow
-ones, `note()` for informational dim messages, and `success()` for the final
-confirmation. Do not add raw `System.out.println()` with inline ANSI escapes, and
-do not leave a `Doing X...` line dangling. Pure reports/tables and interactive
-prompts (e.g. `proxy` status, `clean` summaries, the TUI) are not step sequences
-and stay as plain output.
+**Adding new output:** use `BuildOutput.section()` to introduce a block of work,
+`header()` to frame a named multi-step operation within it, `step()` for quick
+actions, `stepStart()`/`stepDone()`/`stepDone(detail)` for slow ones, `note()` for
+informational dim messages, `warnBanner()` for bordered stderr warnings, and
+`success()` for the final confirmation. Do not add raw `System.out.println()` with
+inline ANSI escapes, and do not leave a `Doing X...` line dangling. Pure
+reports/tables and interactive prompts (e.g. `proxy` status, `clean` summaries,
+the TUI) are not step sequences and stay as plain output.
 
 ### Resource Limits (Adaptive)
 
