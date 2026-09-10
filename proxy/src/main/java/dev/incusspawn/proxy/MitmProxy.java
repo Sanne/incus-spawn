@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
@@ -47,6 +48,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
@@ -139,9 +141,19 @@ public class MitmProxy {
     // Track which stripped fields have already been logged (avoid spam)
     private final Set<String> loggedStrippedFields = ConcurrentHashMap.newKeySet();
 
-    // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min)
-    String cachedVertexToken;
-    long vertexTokenExpiryMs;
+    // Cached GCP access token for Vertex AI (tokens last ~60 min, refresh at ~50 min).
+    // Single-flight: concurrent callers share one in-flight gcloud invocation via the
+    // resolving entry, mirroring the DnsEntry pattern used by resolveHost().
+    private static final long VERTEX_TOKEN_TTL_MS = 50 * 60 * 1000L;
+    record VertexTokenEntry(String token, long expiresAt, Future<String> inflight) {
+        static VertexTokenEntry resolving(Future<String> f) { return new VertexTokenEntry(null, 0, f); }
+        static VertexTokenEntry resolved(String token) {
+            return new VertexTokenEntry(token, System.currentTimeMillis() + VERTEX_TOKEN_TTL_MS, null);
+        }
+        boolean isValid() { return token != null && System.currentTimeMillis() < expiresAt; }
+        boolean isResolving() { return inflight != null; }
+    }
+    final AtomicReference<VertexTokenEntry> vertexToken = new AtomicReference<>();
 
     private final Vertx vertx;
     private HttpServer mitmServer;
@@ -868,39 +880,41 @@ public class MitmProxy {
                                 String originalDump, byte[] originalBody) {
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
-            if (!injectHeaders(upReq, domain, upstreamHost, isVertexRequest)) {
-                var err = authError;
-                var detail = err != null ? err : "Failed to obtain upstream credentials";
-                sendError(clientReq.response(), 502, detail);
-                return;
-            }
-            upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
-
-            upReq.send(Buffer.buffer(bodyBytes)).onSuccess(upResp -> {
-                if (!isRetry && isVertexRequest && upResp.statusCode() == 401) {
-                    System.err.println("Vertex 401: invalidating cached token and retrying");
-                    invalidateVertexToken();
-                    sendApiRequest(clientReq, requestOptions, upstreamHost, domain,
-                            bodyBytes, isVertexRequest, bodyRewritten, true,
-                            originalDump, originalBody);
+            injectHeaders(upReq, domain, upstreamHost, isVertexRequest).onSuccess(ok -> {
+                if (!ok) {
+                    var err = authError;
+                    var detail = err != null ? err : "Failed to obtain upstream credentials";
+                    sendError(clientReq.response(), 502, detail);
                     return;
                 }
+                upReq.putHeader("Content-Length", String.valueOf(bodyBytes.length));
 
-                if (!credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
-                    if (upResp.statusCode() == 401) {
-                        setAuthError("Claude OAuth token rejected (HTTP 401). "
-                                + "The token may have expired — run 'isx init' to refresh.",
-                                "isx init");
-                    } else {
-                        clearAuthError();
+                upReq.send(Buffer.buffer(bodyBytes)).onSuccess(upResp -> {
+                    if (!isRetry && isVertexRequest && upResp.statusCode() == 401) {
+                        System.err.println("Vertex 401: invalidating cached token and retrying");
+                        invalidateVertexToken();
+                        sendApiRequest(clientReq, requestOptions, upstreamHost, domain,
+                                bodyBytes, isVertexRequest, bodyRewritten, true,
+                                originalDump, originalBody);
+                        return;
                     }
-                }
 
-                relayApiResponse(clientReq, upResp, upstreamHost, domain,
-                        bodyBytes, bodyRewritten, originalDump, originalBody);
-            }).onFailure(err -> {
-                System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
-                sendError(clientReq.response(), 502, "Upstream error");
+                    if (!credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
+                        if (upResp.statusCode() == 401) {
+                            setAuthError("Claude OAuth token rejected (HTTP 401). "
+                                    + "The token may have expired — run 'isx init' to refresh.",
+                                    "isx init");
+                        } else {
+                            clearAuthError();
+                        }
+                    }
+
+                    relayApiResponse(clientReq, upResp, upstreamHost, domain,
+                            bodyBytes, bodyRewritten, originalDump, originalBody);
+                }).onFailure(err -> {
+                    System.err.println("Upstream send error (" + domain + "): " + err.getMessage());
+                    sendError(clientReq.response(), 502, "Upstream error");
+                });
             });
         }).onFailure(err -> {
             System.err.println("Upstream connect error (" + domain + "): " + err.getMessage());
@@ -1745,35 +1759,32 @@ public class MitmProxy {
 
     /**
      * Inject real credentials into the upstream request.
-     * Returns false if a required token could not be obtained (caller should 502).
+     * Returns a future resolving to false if a required token could not be obtained
+     * (caller should 502). The Vertex path is async — token acquisition runs on a
+     * worker thread via {@link #acquireVertexAccessToken()}, so the event loop is
+     * never blocked by a {@code gcloud} fork.
      */
-    private boolean injectHeaders(HttpClientRequest upReq, String domain,
+    private Future<Boolean> injectHeaders(HttpClientRequest upReq, String domain,
                                String upstreamHost, boolean isVertexRequest) {
         upReq.putHeader("Host", upstreamHost);
 
         if (isVertexRequest) {
-            String token;
-            try {
-                token = getVertexAccessToken();
-                clearAuthError();
-            } catch (Exception e) {
-                setAuthError(e.getMessage(), VERTEX_AUTH_HINT);
-                return false;
-            }
-            upReq.putHeader("Authorization", "Bearer " + token);
-            // Strip Anthropic-specific headers that Vertex doesn't use.
-            // The translated body already carries anthropic_version.
-            upReq.headers().remove("x-api-key");
-            upReq.headers().remove("anthropic-beta");
-            upReq.headers().remove("anthropic-version");
-            upReq.headers().remove("anthropic-dangerous-direct-browser-access");
+            return acquireVertexAccessToken()
+                    .map(token -> {
+                        clearAuthError();
+                        upReq.putHeader("Authorization", "Bearer " + token);
+                        upReq.headers().remove("x-api-key");
+                        upReq.headers().remove("anthropic-beta");
+                        upReq.headers().remove("anthropic-version");
+                        upReq.headers().remove("anthropic-dangerous-direct-browser-access");
+                        return true;
+                    })
+                    .recover(e -> {
+                        setAuthError(e.getMessage(), VERTEX_AUTH_HINT);
+                        return Future.succeededFuture(false);
+                    });
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (!credentials.oauthToken().isBlank()) {
-                // The container's tool (claude or pi) was configured with an OAuth-shaped
-                // placeholder, so it already built the OAuth request itself — Bearer auth
-                // plus whatever Claude Code identity/beta headers Anthropic currently
-                // requires. We only swap the placeholder token for the real one and never
-                // touch those headers, so we don't have to track Anthropic's auth quirks here.
                 upReq.putHeader("Authorization", "Bearer " + credentials.oauthToken());
                 upReq.headers().remove("x-api-key");
             } else if (!credentials.anthropicApiKey().isBlank()) {
@@ -1791,7 +1802,7 @@ public class MitmProxy {
                 }
             }
         }
-        return true;
+        return Future.succeededFuture(true);
     }
 
     // --- GCP access token ---
@@ -1799,27 +1810,48 @@ public class MitmProxy {
     private static final long GCLOUD_TIMEOUT_SECONDS = 15;
 
     /**
-     * Get a GCP access token for Vertex AI, caching it for ~50 minutes.
-     * Tokens are obtained via {@code gcloud auth print-access-token} on the host.
+     * Acquire a GCP access token asynchronously, returning a cached value when valid.
+     * Single-flight: concurrent callers share one in-flight {@code gcloud} invocation
+     * via a CAS loop on {@link #vertexToken}, mirroring the {@link #resolveHost} pattern.
+     * The {@code gcloud} fork runs on a Vert.x worker thread, so this never blocks
+     * the event loop.
      */
-    private synchronized String getVertexAccessToken() {
-        if (cachedVertexToken != null && System.currentTimeMillis() < vertexTokenExpiryMs) {
-            return cachedVertexToken;
+    private Future<String> acquireVertexAccessToken() {
+        while (true) {
+            var existing = vertexToken.get();
+            if (existing != null && existing.isValid()) {
+                return Future.succeededFuture(existing.token());
+            }
+            if (existing != null && existing.isResolving()) {
+                return existing.inflight();
+            }
+            var promise = Promise.<String>promise();
+            var entry = VertexTokenEntry.resolving(promise.future());
+            if (vertexToken.compareAndSet(existing, entry)) {
+                vertx.<String>executeBlocking(() -> fetchGcloudToken(), false)
+                        .onComplete(ar -> {
+                            if (ar.succeeded()) {
+                                vertexToken.set(VertexTokenEntry.resolved(ar.result()));
+                                promise.complete(ar.result());
+                            } else {
+                                vertexToken.compareAndSet(entry, null);
+                                promise.fail(ar.cause());
+                            }
+                        });
+                return promise.future();
+            }
         }
+    }
+
+    private String fetchGcloudToken() {
         try {
             var pb = new ProcessBuilder("gcloud", "auth", "print-access-token");
             var process = pb.start();
-            // Bounded wait: the health endpoint calls this without any container
-            // traffic, so a gcloud that blocks (wedged network, a reauth prompt it
-            // cannot show) must not hang the caller. Output is a single short token,
-            // far below the pipe buffer, so waiting before reading cannot deadlock.
             if (!process.waitFor(GCLOUD_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 throw new RuntimeException("gcloud auth print-access-token timed out after "
                         + GCLOUD_TIMEOUT_SECONDS + "s");
             }
-            // Read stdout and stderr separately — gcloud may print warnings to
-            // stderr (e.g. credential refresh notices) which would corrupt the token
             var stdout = new String(process.getInputStream().readAllBytes()).strip();
             var stderr = new String(process.getErrorStream().readAllBytes()).strip();
             var exitCode = process.exitValue();
@@ -1827,27 +1859,22 @@ public class MitmProxy {
                 throw new RuntimeException("gcloud auth print-access-token failed (exit " + exitCode + "): " + stderr);
             }
             if (stdout.isBlank()) {
-                // Caching a blank token would send an empty Bearer header and turn a
-                // credential problem into an opaque upstream 401.
                 throw new RuntimeException("gcloud auth print-access-token returned an empty token");
             }
-            cachedVertexToken = stdout;
-            vertexTokenExpiryMs = System.currentTimeMillis() + 50 * 60 * 1000L; // refresh every 50 min
-            return cachedVertexToken;
+            return stdout;
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException("Failed to obtain GCP access token: " + e.getMessage() +
                     ". Ensure 'gcloud' is installed and 'gcloud auth login' has been run.", e);
         }
     }
 
-    /** True when a cached token is still valid, so a re-check would learn nothing. */
-    synchronized boolean hasFreshVertexToken() {
-        return cachedVertexToken != null && System.currentTimeMillis() < vertexTokenExpiryMs;
+    boolean hasFreshVertexToken() {
+        var entry = vertexToken.get();
+        return entry != null && entry.isValid();
     }
 
-    private synchronized void invalidateVertexToken() {
-        cachedVertexToken = null;
-        vertexTokenExpiryMs = 0;
+    private void invalidateVertexToken() {
+        vertexToken.set(null);
     }
 
     private static final long AUTH_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000L;
@@ -2076,18 +2103,13 @@ public class MitmProxy {
             sendHealthResponse(req);
             return;
         }
-        vertx.<Void>executeBlocking(() -> {
-            try {
-                getVertexAccessToken();
-                clearAuthError();
-            } catch (Exception e) {
-                recordProbeAuthError(e.getMessage());
-            }
-            return null;
-        }, false).onComplete(ar -> {
-            releaseAuthRevalidation();
-            sendHealthResponse(req);
-        });
+        acquireVertexAccessToken()
+                .onSuccess(token -> clearAuthError())
+                .onFailure(e -> recordProbeAuthError(e.getMessage()))
+                .onComplete(ar -> {
+                    releaseAuthRevalidation();
+                    sendHealthResponse(req);
+                });
     }
 
     /**
@@ -2107,8 +2129,7 @@ public class MitmProxy {
      */
     boolean claimAuthRevalidation() {
         if (!credentials.useVertex()) return false;
-        // Read outside authLock: this acquires the instance monitor, and taking the
-        // two in the other order (traffic path) would risk a deadlock.
+        // Lock-free: hasFreshVertexToken() reads an AtomicReference, no monitor.
         var tokenFresh = hasFreshVertexToken();
         synchronized (authLock) {
             if (authError != null && !VERTEX_AUTH_HINT.equals(authErrorHint)) return false;
