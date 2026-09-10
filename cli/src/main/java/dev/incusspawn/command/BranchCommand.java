@@ -14,6 +14,7 @@ import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.lifecycle.KvmPassthrough;
+import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
@@ -25,6 +26,7 @@ import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
 
 import java.nio.file.Path;
+import java.util.Map;
 
 @CommandDefinition(
         name = "branch",
@@ -68,6 +70,9 @@ public class BranchCommand extends BaseCommand {
 
     @Option(name = "no-start", description = "Don't start the instance after creation", hasValue = false)
     boolean noStart;
+
+    @Option(name = "shell", description = "Open a plain shell instead of running the default action", hasValue = false)
+    boolean shell;
 
     private IncusClient incus;
 
@@ -191,7 +196,14 @@ public class BranchCommand extends BaseCommand {
         }
 
         BuildOutput.success(name + " is ready.");
-        incus.interactiveShell(name, "agentuser", prefetched.toShellPrep());
+        var shellPrep = prefetched.toShellPrep();
+        if (!shell) {
+            var defaultCmd = resolveDefaultCommand(resolvedSource, defs);
+            if (defaultCmd != null) {
+                shellPrep = shellPrep.withCommand(defaultCmd);
+            }
+        }
+        incus.interactiveShell(name, "agentuser", shellPrep);
         return CommandResult.SUCCESS;
     }
 
@@ -219,6 +231,25 @@ public class BranchCommand extends BaseCommand {
         System.err.println("Error: no --from specified and no incus-spawn.yaml found in current directory.");
         System.err.println("Usage: isx branch <name> --from <source-instance>");
         return null;
+    }
+
+    private String resolveDefaultCommand(String source, Map<String, ImageDef> defs) {
+        var templateName = source;
+        if (!defs.containsKey(templateName)) {
+            var profile = incus.configGet(source, Metadata.PROFILE);
+            if (profile != null && !profile.isEmpty()) {
+                templateName = profile;
+            }
+        }
+
+        var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                RuntimeServices.toolSetups(), defs);
+        var installedTools = resolver.collectInstalledTools(templateName);
+        var repos = resolver.collectRepos(templateName);
+        var action = resolver.findDefaultAction(name, templateName, installedTools, repos);
+        if (action.isEmpty()) return null;
+
+        return action.get().shellCommand(null).orElse(null);
     }
 
     private boolean configureGui() {

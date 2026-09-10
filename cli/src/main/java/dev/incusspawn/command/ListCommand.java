@@ -4859,10 +4859,7 @@ public class ListCommand extends BaseCommand {
         var shellPrep = prefetched.toShellPrep();
         var defaultCmd = resolveDefaultCommandFromTemplate(source);
         if (defaultCmd != null) {
-            shellPrep = new IncusClient.ShellPrep(
-                    shellPrep.workdir(), defaultCmd,
-                    false, shellPrep.autoAttachZmx(),
-                    shellPrep.subnetDiagnostic(), shellPrep.terminfoHandled());
+            shellPrep = shellPrep.withCommand(defaultCmd);
         }
         incus.interactiveShell(name, "agentuser", shellPrep);
         System.out.println();
@@ -5033,12 +5030,8 @@ public class ListCommand extends BaseCommand {
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             if (commandOverride != null) {
-                var prep = IncusClient.ShellPrep.from(incus, name);
-                var withCommand = new IncusClient.ShellPrep(
-                        prep.workdir(), commandOverride,
-                        false, prep.autoAttachZmx(),
-                        prep.subnetDiagnostic(), prep.terminfoHandled());
-                incus.interactiveShell(name, "agentuser", withCommand);
+                var prep = IncusClient.ShellPrep.from(incus, name).withCommand(commandOverride);
+                incus.interactiveShell(name, "agentuser", prep);
             } else {
                 incus.interactiveShell(name, "agentuser");
             }
