@@ -68,6 +68,33 @@ class ToolDefValidatorTest {
     }
 
     @Test
+    void downloadWithDestinationFileDoesNotRequireExtract(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                downloads:
+                  - url: https://example.com/completion.sh
+                    destination_file: ~/.bashrc.d/completion.sh
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertFalse(result.hasErrors());
+    }
+
+    @Test
+    void downloadRequiresExtractOrDestinationFile(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: my-tool
+                downloads:
+                  - url: https://example.com/tool.tar.gz
+                """);
+        var result = ToolDefValidator.validate(file);
+        assertTrue(result.hasErrors());
+        assertTrue(result.errors().stream().anyMatch(e -> e.contains("extract")
+                && e.contains("destination_file")));
+    }
+
+    @Test
     void invalidParameterTypeWarns(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """

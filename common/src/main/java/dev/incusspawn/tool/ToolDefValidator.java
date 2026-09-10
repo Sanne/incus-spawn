@@ -48,6 +48,13 @@ public class ToolDefValidator {
             if (dl.getUrl() == null || dl.getUrl().isBlank()) {
                 warnings.add("download entry in '" + def.getName() + "' is missing a 'url'");
             }
+            var hasExtract = dl.getExtract() != null && !dl.getExtract().isBlank();
+            var hasDestinationFile = dl.getDestinationFile() != null
+                    && !dl.getDestinationFile().isBlank();
+            if (!hasExtract && !hasDestinationFile) {
+                errors.add("download entry in '" + def.getName()
+                        + "' must set 'extract', 'destination_file', or both");
+            }
         }
 
         for (var entry : def.getParameters().entrySet()) {

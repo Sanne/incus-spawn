@@ -99,6 +99,21 @@ class ToolDefTest {
     }
 
     @Test
+    void parseDownloadWithDestinationFileAndNoExtract() throws Exception {
+        var yaml = """
+                name: maven-completion
+                downloads:
+                  - url: https://example.com/bash_completion.bash
+                    destination_file: ~/.bashrc.d/maven-bash-completion.sh
+                """;
+        var def = ToolDef.loadFromStream(toStream(yaml));
+
+        var dl = def.getDownloads().get(0);
+        assertEquals("~/.bashrc.d/maven-bash-completion.sh", dl.getDestinationFile());
+        assertNull(dl.getExtract());
+    }
+
+    @Test
     void parseToolWithExtractInContainer() throws Exception {
         var yaml = """
                 name: idea-backend
@@ -540,6 +555,23 @@ class ToolDefTest {
                   - url: https://example.com/tool.tar.gz
                     sha256: abc123
                     extract: /usr/local
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenDownloadDestinationFileChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.zip
+                    destination_file: /opt/tool.zip
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                downloads:
+                  - url: https://example.com/tool.zip
+                    destination_file: /tmp/tool.zip
                 """));
         assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
     }

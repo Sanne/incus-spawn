@@ -47,6 +47,8 @@ Three Maven modules under a parent POM:
 
 Both `cli` and `proxy` are independent Quarkus applications that produce separate native binaries. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
 
+**YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both. Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways. VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
+
 **Native image: host paths belong in the run-time-initialized classes.** Quarkus initializes
 application classes at image-build time unless they are listed in `--initialize-at-run-time`, and
 Linux native builds run as **root inside the GraalVM builder container** — so a field holding an

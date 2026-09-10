@@ -44,4 +44,4 @@ Before building, `HostRepoRefresh` (`git/HostRepoRefresh.java`) fetches host-sid
 
 # Download Caching
 
-`DownloadCache` handles host-side download caching with SHA256 verification. Archives are downloaded and extracted on the host, then pushed into containers. This avoids needing tar/curl inside containers.
+`DownloadCache` handles host-side download caching with SHA256 verification. YAML tool downloads may be exposed as a file via `destination_file`, extracted, or both. Containers receive files directly and host-extracted archive contents recursively; VMs use temporary read-only mounts and copy locally to avoid slow incus-agent file transfers over vsock. This avoids needing curl inside containers, while `extract_in_container` remains available when extraction must happen there.
