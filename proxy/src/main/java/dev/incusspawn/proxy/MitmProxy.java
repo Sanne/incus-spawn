@@ -1831,7 +1831,7 @@ public class MitmProxy {
                 vertx.<String>executeBlocking(() -> fetchGcloudToken(), false)
                         .onComplete(ar -> {
                             if (ar.succeeded()) {
-                                vertexToken.set(VertexTokenEntry.resolved(ar.result()));
+                                vertexToken.compareAndSet(entry, VertexTokenEntry.resolved(ar.result()));
                                 promise.complete(ar.result());
                             } else {
                                 vertexToken.compareAndSet(entry, null);
