@@ -480,6 +480,7 @@ Tool schema fields (all optional except `name`):
 - `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies; see below)
 - `verify` -- verification command (logged, non-fatal)
 - `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
+- `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
 Download entry fields:
 - `url` (required) -- download URL
@@ -531,6 +532,78 @@ env:
     value: "true"
     strategy: set-if-unset
 ```
+
+#### Proxy Credentials
+
+Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, and `codex` tools use this mechanism -- but you can declare the same for your own tools.
+
+A `proxy:` block has three parts: a `config-namespace` that scopes config paths, a `configuration` map that declares what credentials are needed, and `auth` entries that map domains to authentication rules.
+
+```yaml
+# ~/.config/incus-spawn/tools/artifactory.yaml
+name: artifactory
+description: JFrog Artifactory
+
+proxy:
+  config-namespace: artifactory
+  configuration:
+    token:
+      config-path: "token"
+      description: "Artifactory API token"
+      secret: true
+  auth:
+    - domains:
+        - artifactory.internal.example.com
+      type: bearer
+      token: "${token}"
+```
+
+After placing this file, `isx init` will prompt for the Artifactory token alongside other credentials. The token is stored in `~/.config/incus-spawn/config.yaml` under `artifactory.token` (the namespace prefixes the config path). Inside containers, HTTPS requests to `artifactory.internal.example.com` get a `Authorization: Bearer <token>` header injected automatically -- no configuration inside the container needed.
+
+Three auth types are supported:
+
+| Type | Injected header | Required fields |
+|------|----------------|-----------------|
+| `bearer` | `Authorization: Bearer <token>` | `token` |
+| `basic` | `Authorization: Basic <base64(username:password)>` | `username`, `password` |
+| `header` | Custom header | `name`, `value` |
+
+Auth fields can be literal values (e.g. `username: "deploy-bot"`) or `${configKey}` references resolved against the `configuration` map. A tool with all three types:
+
+```yaml
+proxy:
+  config-namespace: myService
+  configuration:
+    api-key:
+      config-path: "apiKey"
+      description: "API key for myservice.com"
+      secret: true
+    password:
+      config-path: "password"
+      description: "Registry password"
+      secret: true
+  auth:
+    - domains:
+        - api.myservice.com
+      type: bearer
+      token: "${api-key}"
+    - domains:
+        - registry.myservice.com
+      type: basic
+      username: "deploy-bot"
+      password: "${password}"
+    - domains:
+        - "*.internal.myservice.com"
+      type: header
+      name: X-API-Key
+      value: "${api-key}"
+```
+
+Wildcard domains (`*.internal.myservice.com`) match any subdomain. The most specific wildcard wins when multiple tools register overlapping suffixes.
+
+Configuration entries can also use `value` for hardcoded literals (no prompt during `isx init`) and `type: confirm` for yes/no prompts like license acceptance.
+
+Tool YAML files with `proxy:` blocks must be placed in `~/.config/incus-spawn/tools/` or a configured search path -- project-local tools (`.incus-spawn/tools/`) cannot declare proxy rules because the proxy daemon runs independently of any project directory.
 
 ### Remote IDE Access
 
