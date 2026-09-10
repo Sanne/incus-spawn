@@ -162,6 +162,7 @@ public class DoctorCommand extends BaseCommand {
             findings.add(incusFinding);
             incusUp = incusFinding.status() == Status.OK;
             findings.add(checkForwarderLeak());
+            findings.add(checkApplianceVersion());
             findings.add(checkVmDiskHeadroom());
         }
 
@@ -706,6 +707,17 @@ public class DoctorCommand extends BaseCommand {
                             false, DoctorCommand::restartForwarderViaAgent));
         }
         return new Finding(base.status(), base.label(), detail, base.remediation());
+    }
+
+    private Finding checkApplianceVersion() {
+        var running = VmManager.runningApplianceVersion();
+        if (running == null) return Finding.ok("Appliance version", "(unknown)");
+        var installed = VmManager.applianceVersion();
+        if (running.equals(installed)) return Finding.ok("Appliance version", running);
+        return Finding.warn("Appliance outdated",
+                "running " + running + ", installed " + installed,
+                new Remediation("Restart the VM to apply appliance " + installed
+                        + " (stops running containers)", true, DoctorCommand::restartVm));
     }
 
     private Finding checkVmDiskHeadroom() {

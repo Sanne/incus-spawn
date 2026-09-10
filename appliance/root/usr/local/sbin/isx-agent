@@ -53,6 +53,9 @@ case "$verb" in
     ping)
         echo ok
         ;;
+    version)
+        if [ -r /etc/isx-version ]; then cat /etc/isx-version; else echo "error: no version"; fi
+        ;;
     socat-count)
         # In-guest count of forwarder socat processes (parent + per-connection children).
         # Compared against the host-side vfkit fd count, this locates where streams leak:

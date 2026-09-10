@@ -26,11 +26,22 @@ public final class VmAgentClient {
 
     private static final int TIMEOUT_SECONDS = 5;
 
+    private static final String VERSION_UNAVAILABLE = "";
+    private static volatile String cachedApplianceVersion;
+
     private VmAgentClient() {}
 
     /** Send a raw verb; returns the trimmed response, or empty if the agent is unreachable. */
     public static Optional<String> send(String verb) {
-        return send(Environment.vmAgentSocket(), verb);
+        var result = send(Environment.vmAgentSocket(), verb);
+        if (result.isPresent() && result.get().equals("error: unknown verb")) {
+            var ver = cachedApplianceVersion;
+            if (ver != null && ver != VERSION_UNAVAILABLE) {
+                dev.incusspawn.ClientLog.debug("agent verb '" + verb + "' unsupported "
+                        + "(appliance " + ver + ", CLI " + dev.incusspawn.BuildInfo.instance().version() + ")");
+            }
+        }
+        return result;
     }
 
     /** Package-private overload so tests can point at a fake agent socket. */
@@ -78,6 +89,29 @@ public final class VmAgentClient {
     /** Whether the agent is reachable at all. */
     public static boolean ping() {
         return send("ping").map("ok"::equals).orElse(false);
+    }
+
+    /**
+     * The appliance version reported by the running VM agent ({@code /etc/isx-version}).
+     * Cached for the process lifetime (both positive and negative results) — the running
+     * appliance doesn't change until a VM restart. Returns empty if the agent is unreachable
+     * or predates the {@code version} verb.
+     */
+    public static Optional<String> applianceVersion() {
+        var cached = cachedApplianceVersion;
+        if (cached != null) return cached == VERSION_UNAVAILABLE ? Optional.empty() : Optional.of(cached);
+        var resp = send("version");
+        if (resp.isEmpty() || resp.get().isBlank() || resp.get().startsWith("error:")) {
+            cachedApplianceVersion = VERSION_UNAVAILABLE;
+            return Optional.empty();
+        }
+        cachedApplianceVersion = resp.get();
+        return Optional.of(resp.get());
+    }
+
+    /** Clear cached appliance version (called on VM restart to pick up the new version). */
+    public static void clearVersionCache() {
+        cachedApplianceVersion = null;
     }
 
     /**
