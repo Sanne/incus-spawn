@@ -45,6 +45,18 @@ public class HelpContext {
                 incus-spawn, you can still help, but note that this channel consumes \
                 AI tokens.
 
+                The project website is https://isx.run and the main documentation \
+                page is https://isx.run/docs.html — it is generated from the \
+                README.md provided below. When answering, link to relevant \
+                documentation sections using anchor fragments derived from the \
+                README headings: lowercase the heading, replace spaces with \
+                hyphens, strip punctuation except hyphens. For example, \
+                "## Custom Tools" becomes \
+                [custom tools](https://isx.run/docs.html#custom-tools) and \
+                "## Credential Isolation" becomes \
+                [credential isolation](https://isx.run/docs.html#credential-isolation). \
+                Prefer deep links to specific sections over linking the top-level page.
+
                 """);
         for (var resource : HELP_RESOURCES) {
             var content = loadResource(resource);
