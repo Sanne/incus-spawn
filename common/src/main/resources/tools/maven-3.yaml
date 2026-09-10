@@ -7,6 +7,9 @@ downloads:
     extract: /opt
     links:
       /opt/apache-maven-3.9.16/bin/mvn: /usr/local/bin/mvn
+  - url: https://raw.github.com/juven/maven-bash-completion/216cd667b6119fe200c98b1ac2d030ac002be197/bash_completion.bash
+    sha256: 6efc49869824f844cb489b69920af33f2fccd44e97d90c8b1584677e0ac5f432
+    destination_file: ~/.bashrc.d/maven-bash-completion.sh
 
 env:
   - name: MAVEN_HOME
