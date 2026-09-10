@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.ai.AiHelpClient;
+import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
@@ -18,6 +20,7 @@ import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
+import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -115,7 +118,7 @@ public class ListCommand extends BaseCommand {
     private static final long REFRESH_DEBOUNCE_MS = 1000;
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -169,6 +172,17 @@ public class ListCommand extends BaseCommand {
     private int instanceDetailScrollOffset;
     // Info modal state
     private int infoScrollOffset;
+    // AI Help modal state
+    private TextInputState helpInput;
+    private boolean helpIncludeTemplates;
+    private int helpFieldIndex;
+    private volatile boolean helpLoading;
+    private volatile Thread helpThread;
+    private volatile List<String> helpResponseLines;
+    private volatile String helpError;
+    private int helpScrollOffset;
+    private String helpProviderLabel;
+    private SpawnConfig helpConfig;
     // Actions modal state
     private java.util.List<ToolAction> actionsList;
     private int actionsSelectedIndex;
@@ -1039,7 +1053,8 @@ public class ListCommand extends BaseCommand {
                 setStatusMessage("Proxy restart failed. Try: isx proxy start");
             }
             return needsRefresh.get() || pendingStatusMessage.get() != null
-                    || !backgroundTasks.getActiveTasks().isEmpty();
+                    || !backgroundTasks.getActiveTasks().isEmpty()
+                    || helpLoading;
         }
         if (!(event instanceof KeyEvent key)) return false;
         if (searchActive) return handleSearchEvent(key, tableState);
@@ -1055,6 +1070,7 @@ public class ListCommand extends BaseCommand {
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> handleInfoEvent(key);
+            case HELP_CHAT -> handleHelpChatEvent(key);
             case ERROR -> { mode = Mode.BROWSE; yield true; }
             case CLEAN_CONFIRM -> handleCleanConfirmEvent(key, tui, tableState);
             case CLEAN_RESULT -> { mode = Mode.BROWSE; yield true; }
@@ -1111,6 +1127,24 @@ public class ListCommand extends BaseCommand {
         }
         if (key.isChar('/')) {
             activateSearch();
+            return true;
+        }
+        if (!key.hasCtrl() && key.isChar('?')) {
+            var config = SpawnConfig.load();
+            if (AiHelpClient.detectProvider(config) == null) {
+                statusMessage = "No AI credentials configured. Run 'isx init' first.";
+                return true;
+            }
+            helpInput = new TextInputState();
+            helpIncludeTemplates = false;
+            helpFieldIndex = 0;
+            helpLoading = false;
+            helpResponseLines = null;
+            helpError = null;
+            helpScrollOffset = 0;
+            helpProviderLabel = null;
+            helpConfig = config;
+            mode = Mode.HELP_CHAT;
             return true;
         }
 
@@ -2687,6 +2721,7 @@ public class ListCommand extends BaseCommand {
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
+            case HELP_CHAT -> renderHelpChatModal(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
             case CLEAN_CONFIRM -> renderCleanConfirmModal(frame, screen);
@@ -3001,6 +3036,120 @@ public class ListCommand extends BaseCommand {
         }
         if (key.isKey(KeyCode.END) || key.isChar('G')) {
             infoScrollOffset = Integer.MAX_VALUE;
+            return true;
+        }
+        if (key.isChar('?')) {
+            var config = SpawnConfig.load();
+            if (AiHelpClient.detectProvider(config) == null) {
+                statusMessage = "No AI credentials configured. Run 'isx init' first.";
+                mode = Mode.BROWSE;
+                return true;
+            }
+            helpInput = new TextInputState();
+            helpIncludeTemplates = false;
+            helpFieldIndex = 0;
+            helpLoading = false;
+            helpResponseLines = null;
+            helpError = null;
+            helpScrollOffset = 0;
+            helpProviderLabel = null;
+            helpConfig = config;
+            mode = Mode.HELP_CHAT;
+            return true;
+        }
+        return true;
+    }
+
+    private boolean handleHelpChatEvent(KeyEvent key) {
+        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
+            if (helpLoading) {
+                var t = helpThread;
+                if (t != null) t.interrupt();
+                helpLoading = false;
+                helpError = "Cancelled.";
+                return true;
+            }
+            mode = Mode.BROWSE;
+            return true;
+        }
+
+        // Response mode: scrollable response or error
+        if (helpResponseLines != null || helpError != null) {
+            if (key.isKey(KeyCode.DOWN) || key.isChar('j')) { helpScrollOffset++; return true; }
+            if (key.isKey(KeyCode.UP) || key.isChar('k')) {
+                if (helpScrollOffset > 0) helpScrollOffset--;
+                return true;
+            }
+            if (key.isKey(KeyCode.HOME) || key.isChar('g')) { helpScrollOffset = 0; return true; }
+            if (key.isKey(KeyCode.END) || key.isChar('G')) {
+                helpScrollOffset = Integer.MAX_VALUE;
+                return true;
+            }
+            if (key.isCharIgnoreCase('n') && !key.hasCtrl()) {
+                helpInput = new TextInputState();
+                helpResponseLines = null;
+                helpError = null;
+                helpScrollOffset = 0;
+                helpFieldIndex = 0;
+                return true;
+            }
+            if (key.isCharIgnoreCase('q') && !key.hasCtrl()) {
+                mode = Mode.BROWSE;
+                return true;
+            }
+            return true;
+        }
+
+        if (helpLoading) return true;
+
+        // Input mode
+        if (key.isKey(KeyCode.ENTER)) {
+            var question = helpInput.text().strip();
+            if (question.isEmpty()) return true;
+            helpLoading = true;
+            var includeTemplates = helpIncludeTemplates;
+            helpProviderLabel = switch (AiHelpClient.detectProvider(helpConfig)) {
+                case ANTHROPIC -> "Anthropic";
+                case VERTEX -> "Vertex AI";
+                case OPENAI -> "OpenAI";
+            };
+            helpThread = Thread.startVirtualThread(() -> {
+                try {
+                    var systemPrompt = HelpContext.buildSystemPrompt(includeTemplates);
+                    var response = AiHelpClient.ask(question, systemPrompt, helpConfig);
+                    helpResponseLines = response.content().lines().toList();
+                } catch (Exception e) {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        var msg = e.getMessage();
+                        helpError = msg != null ? msg : e.getClass().getSimpleName();
+                    }
+                }
+                helpLoading = false;
+                helpThread = null;
+                needsRefresh.set(true);
+            });
+            return true;
+        }
+        if (key.isKey(KeyCode.TAB)) {
+            helpFieldIndex = helpFieldIndex == 0 ? 1 : 0;
+            return true;
+        }
+        if (helpFieldIndex == 1) {
+            if (key.isChar(' ')) {
+                helpIncludeTemplates = !helpIncludeTemplates;
+                return true;
+            }
+            return true;
+        }
+        // Text input handling (field 0)
+        if (key.isKey(KeyCode.BACKSPACE)) { helpInput.deleteBackward(); return true; }
+        if (key.isKey(KeyCode.DELETE))    { helpInput.deleteForward(); return true; }
+        if (key.isKey(KeyCode.LEFT))      { helpInput.moveCursorLeft(); return true; }
+        if (key.isKey(KeyCode.RIGHT))     { helpInput.moveCursorRight(); return true; }
+        if (key.isKey(KeyCode.HOME))      { helpInput.moveCursorToStart(); return true; }
+        if (key.isKey(KeyCode.END))       { helpInput.moveCursorToEnd(); return true; }
+        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
+            helpInput.insert(key.character());
             return true;
         }
         return true;
@@ -3323,6 +3472,7 @@ public class ListCommand extends BaseCommand {
                 Line.styled("Keyboard shortcuts:", Style.EMPTY.fg(modal.fg()).bg(modal.bg())),
                 Line.styled("", Style.EMPTY),
                 shortcutRow("Enter", "Default instance action", null, null),
+                shortcutRow("?", "AI Help — ask a question", null, null),
                 shortcutRow("Tab", "Switch panels", "⇧Tab", "Reverse"),
                 shortcutRow("F1", "This dialog", null, null),
                 shortcutRow("F2", "Shell into instance", null, null),
@@ -3368,7 +3518,110 @@ public class ListCommand extends BaseCommand {
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F1/Esc", "Close");
+        modal.addKey(hintSpans, "?", "AI-assisted help");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+    }
+
+    private void renderHelpChatModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
+        boolean showResponse = helpResponseLines != null || helpError != null;
+        int width = showResponse ? Math.min(76, screen.width() - 4) : 62;
+        int maxHeight = screen.height() - 2;
+        int height = showResponse ? Math.min(maxHeight, 24) : 11;
+
+        var modalArea = ModalRenderer.centerRect(screen, width, height);
+        var titleText = helpProviderLabel != null
+                ? " AI Help — " + helpProviderLabel + " "
+                : " AI Help ";
+        var block = Block.builder()
+                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
+                .title(modal.styledTitle(titleText, modal.border()))
+                .borderStyle(Style.EMPTY.fg(modal.border()))
+                .style(Style.EMPTY.bg(modal.bg()))
+                .padding(dev.tamboui.layout.Padding.horizontal(1))
+                .build();
+        modal.renderBlock(frame, block, modalArea);
+        var inner = block.inner(modalArea);
+
+        if (showResponse) {
+            var rows = Layout.vertical()
+                    .constraints(Constraint.fill(), Constraint.length(1))
+                    .split(inner);
+
+            var contentLines = new ArrayList<Line>();
+            int wrapWidth = rows.get(0).width() - 1;
+            if (helpError != null) {
+                contentLines.add(Line.styled("Error: " + helpError,
+                        Style.EMPTY.fg(modal.warn()).bg(modal.bg())));
+            } else {
+                for (var line : helpResponseLines) {
+                    if (line.length() <= wrapWidth || wrapWidth <= 0) {
+                        contentLines.add(Line.styled(line, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+                    } else {
+                        for (var wrapped : wordWrap(line, wrapWidth)) {
+                            contentLines.add(Line.styled(wrapped, Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
+                        }
+                    }
+                }
+            }
+            helpScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, helpScrollOffset);
+
+            var hintSpans = new ArrayList<Span>();
+            modal.addKey(hintSpans, "n", "New question");
+            modal.addKey(hintSpans, "q/Esc", "Close");
+            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
+            return;
+        }
+
+        if (helpLoading) {
+            var rows = Layout.vertical()
+                    .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
+                    .split(inner);
+            var spinnerFrames = TerminalProgress.SPINNER;
+            var spin = spinnerFrames[(int) ((System.currentTimeMillis() / 100) % spinnerFrames.length)];
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    spin + " Thinking…", Style.EMPTY.fg(modal.accent()).bg(modal.bg()))), rows.get(0));
+            var hintSpans = new ArrayList<Span>();
+            modal.addKey(hintSpans, "Esc", "Cancel");
+            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
+            return;
+        }
+
+        // Input mode
+        var rows = Layout.vertical()
+                .constraints(
+                        Constraint.length(1), // disclaimer
+                        Constraint.length(1), // spacer
+                        Constraint.length(1), // label
+                        Constraint.length(1), // text input
+                        Constraint.length(1), // spacer
+                        Constraint.length(1), // checkbox
+                        Constraint.length(1), // spacer
+                        Constraint.fill())     // hints
+                .split(inner);
+
+        frame.renderWidget(Paragraph.from(Line.styled(
+                "Uses your configured AI credentials — tokens will be consumed.",
+                Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))), rows.get(0));
+        frame.renderWidget(Paragraph.from(Line.styled(
+                "Question:", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(2));
+
+        var inputStyle = helpFieldIndex == 0
+                ? Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg())
+                : Style.EMPTY.fg(modal.fg()).bg(theme.inputInactiveBg());
+        TextInput.builder()
+                .placeholder("ask anything about incus-spawn…")
+                .style(inputStyle)
+                .build()
+                .renderWithCursor(rows.get(3), frame.buffer(), helpInput, frame);
+
+        modal.renderToggle(frame, rows.get(5),
+                "Include template definitions", helpIncludeTemplates, helpFieldIndex == 1);
+
+        var hintSpans = new ArrayList<Span>();
+        modal.addKey(hintSpans, "Enter", "Ask");
+        modal.addKey(hintSpans, "Tab", "Toggle");
+        modal.addKey(hintSpans, "Esc", "Close");
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(7));
     }
 
     private int renderScrollableContent(dev.tamboui.terminal.Frame frame,
@@ -3411,6 +3664,23 @@ public class ListCommand extends BaseCommand {
             frame.renderStatefulWidget(scrollbar, scrollbarArea, state);
         }
         return scrollOffset;
+    }
+
+    private static List<String> wordWrap(String text, int width) {
+        var result = new ArrayList<String>();
+        int pos = 0;
+        while (pos < text.length()) {
+            if (pos + width >= text.length()) {
+                result.add(text.substring(pos));
+                break;
+            }
+            int breakAt = text.lastIndexOf(' ', pos + width);
+            if (breakAt <= pos) breakAt = pos + width;
+            result.add(text.substring(pos, breakAt));
+            pos = breakAt;
+            if (pos < text.length() && text.charAt(pos) == ' ') pos++;
+        }
+        return result;
     }
 
     private static String buildStatusMessage(String[] args, boolean success) {

@@ -50,7 +50,7 @@ public class ImageDef {
     // Hardcoded list of built-in image filenames. Classpath directory scanning
     // is unreliable in GraalVM native image, so we enumerate explicitly.
     // Update this list when adding a new built-in image definition.
-    private static final List<String> BUILTIN_FILES = List.of(
+    public static final List<String> BUILTIN_FILES = List.of(
             "minimal.yaml", "dev.yaml", "java.yaml"
     );
 

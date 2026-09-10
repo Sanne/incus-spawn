@@ -373,6 +373,7 @@ public class CompletionCommand extends BaseCommand {
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
                     'doctor:run health checks and offer to fix problems'
+                    'help:AI-powered help — ask any question about incus-spawn'
                   )
                   _describe -t commands 'isx command' cmds ;;
                 args)
@@ -385,6 +386,7 @@ public class CompletionCommand extends BaseCommand {
                     clean)      _isx_clean ;;
                     destroy)    _isx_destroy ;;
                     doctor)     _isx_doctor ;;
+                    help)       _arguments '(-h --help)'{-h,--help}'[Show help]' '--with-templates[Include template definitions in AI context]' '*:question' ;;
                     list)       _isx_list ;;
                     shell)      _isx_shell ;;
                     run)        _isx_run ;;
@@ -421,14 +423,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy doctor"
+              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor)
+                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -621,6 +623,9 @@ public class CompletionCommand extends BaseCommand {
                 doctor)
                   COMPREPLY=( $(compgen -W "--help --bundle --deep" -- "$cur") )
                   ;;
+                help)
+                  COMPREPLY=( $(compgen -W "--help --with-templates" -- "$cur") )
+                  ;;
                 init|update-all|instances|git-remote-helper)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
@@ -647,7 +652,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -676,6 +681,11 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
             complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
             complete -c isx -f -n __isx_no_subcommand -a doctor          -d 'Run health checks and offer to fix problems'
+            complete -c isx -f -n __isx_no_subcommand -a help            -d 'AI-powered help — ask any question about incus-spawn'
+
+            # ── help ────────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand help' -l with-templates -d 'Include template definitions in AI context'
 
             # ── branch ───────────────────────────────────────────────────────────────────
 

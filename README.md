@@ -898,6 +898,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | `isx vm status` | Show VM status and system diagnostics (macOS only) |
 | `isx vm resize <size>` | Grow the VM data disk that backs the storage pool (macOS only) |
 | `isx vm console` | Follow VM serial console output (macOS only) |
+| `isx help <question>` | AI-powered help — ask any question about incus-spawn (`--with-templates`) |
 | `isx completion <shell>` | Print shell completion script (bash, zsh, fish) |
 
 Use `isx <command> --help` for detailed options on any command.
