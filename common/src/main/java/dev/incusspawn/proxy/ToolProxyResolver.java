@@ -135,13 +135,25 @@ public final class ToolProxyResolver {
         var sb = new StringBuilder();
         for (var tp : sorted) {
             sb.append(tp.toolName()).append('\t')
-                    .append(tp.domain()).append('\t')
-                    .append(tp.auth() != null ? tp.auth().getType() : "").append('\t');
+                    .append(tp.domain()).append('\t');
+            if (tp.auth() != null) {
+                var a = tp.auth();
+                sb.append(nullSafe(a.getType())).append('\t')
+                        .append(nullSafe(a.getUsername())).append('\t')
+                        .append(nullSafe(a.getPassword())).append('\t')
+                        .append(nullSafe(a.getToken())).append('\t')
+                        .append(nullSafe(a.getName())).append('\t')
+                        .append(nullSafe(a.getValue())).append('\t');
+            }
             new TreeMap<>(tp.configValues()).forEach((k, v) ->
                     sb.append(k).append('=').append(v).append(','));
             sb.append('\n');
         }
         return sb.toString();
+    }
+
+    private static String nullSafe(String s) {
+        return s != null ? s : "";
     }
 
     private static void rejectProjectLocalProxy(Set<String> projectLocal, Map<String, ToolSetup> tools) {
