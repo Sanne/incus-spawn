@@ -133,7 +133,7 @@ verify: mvn --version
 
 Schema fields (all optional except `name`):
 - `packages` — dnf install
-- `downloads` — artifacts to download, cache on the host, and extract into the container (with optional SHA256 verification and symlink creation)
+- `downloads` — artifacts to download and cache on the host, then extract into the container or expose as a file, or both (with optional SHA256 verification and symlink creation)
 - `requires` — list of other tool names that must be installed first (resolved transitively)
 - `run` — shell commands as root
 - `run_as_user` — shell commands as agentuser
@@ -185,7 +185,7 @@ When `type` is `vm` or `kvm` (set in the definition or via `--type`), `buildFrom
 - **Disk expansion**: runs `growpart` + `resize2fs`/`xfs_growfs` before package install (both for pre-baked images that ship at 10G and the final build which defaults to 100G)
 - **Security config**: container-specific security settings (raw.idmap, nesting, setxattr interception) are skipped — VMs have their own kernel and don't need them
 - **No restart**: VMs don't need the container restart that applies security config changes
-- **Tool downloads**: large file pushes over vsock are slow, so `YamlToolSetup` uses a mount-and-copy strategy — the extracted archive is attached as a disk device and copied locally inside the VM
+- **Tool downloads**: large file pushes over vsock are slow, so `YamlToolSetup` uses a mount-and-copy strategy for both extracted archive and downloaded files exposed via `destination_file`
 - **KVM passthrough**: when `type: kvm`, `/dev/kvm` is passed through to the VM for nested virtualization
 
 **`buildFromParent` (derived image):**

@@ -423,6 +423,7 @@ public class ToolDef {
         for (var d : downloads) {
             sb.append("dl=").append(d.url).append(',').append(d.sha256)
                     .append(',').append(d.extract)
+                    .append(',').append(d.destinationFile)
                     .append(',').append(d.extractInContainer)
                     .append(',').append(d.arch);
             new TreeMap<>(d.links).forEach((k, v) -> sb.append(',').append(k).append('=').append(v));
