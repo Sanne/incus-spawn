@@ -1,6 +1,6 @@
 package dev.incusspawn.tool;
 
-import dev.incusspawn.Environment;
+import dev.incusspawn.RuntimeConstants;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -22,14 +22,10 @@ import java.util.HexFormat;
  */
 public class DownloadCache {
 
-    private static Path defaultCacheDir() {
-        return Environment.downloadCacheDir();
-    }
-
     private final Path cacheDir;
 
     public DownloadCache() {
-        this(defaultCacheDir());
+        this(RuntimeConstants.DOWNLOAD_CACHE_DIR);
     }
 
     /** Constructor for testing with a custom cache directory. */
@@ -43,7 +39,13 @@ public class DownloadCache {
      * If sha256 is null, the file is always re-downloaded.
      */
     public Path download(String url, String sha256) throws IOException {
-        Files.createDirectories(cacheDir);
+        try {
+            Files.createDirectories(cacheDir);
+        } catch (IOException e) {
+            // NIO filesystem exceptions carry the path as their entire message, which reads as a
+            // mystery path inside a caller's "failed to install <tool>" wrapper.
+            throw new IOException("Cannot create download cache directory " + cacheDir, e);
+        }
 
         var filename = cacheFilename(url);
         var cached = cacheDir.resolve(filename);

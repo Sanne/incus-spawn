@@ -8,7 +8,7 @@ paths:
   - "common/src/main/java/dev/incusspawn/config/HostResourceSetup.java"
   - "common/src/main/java/dev/incusspawn/git/**"
   - "common/src/main/java/dev/incusspawn/incus/**"
-  - "common/src/main/java/dev/incusspawn/util/DownloadCache.java"
+  - "common/src/main/java/dev/incusspawn/tool/DownloadCache.java"
   - "common/src/main/java/dev/incusspawn/util/CpuInfo.java"
   - "common/src/main/java/dev/incusspawn/util/TerminalProgress.java"
   - "common/src/main/resources/images/**"

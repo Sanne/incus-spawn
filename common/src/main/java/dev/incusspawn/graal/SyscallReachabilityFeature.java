@@ -34,6 +34,17 @@ import java.util.Set;
  * When a resolver IS legitimately needed, the fix is to add it to this
  * class's allowed list and document why the syscall is acceptable.
  *
+ * <h2>Currently inconclusive — read the build output, not this javadoc</h2>
+ * The targets below name methods on the <em>abstract</em> {@code SystemPropertiesSupport},
+ * while the analysis reaches the concrete {@code PosixSystemPropertiesSupport} /
+ * {@code LinuxSystemPropertiesSupport} overrides. On GraalVM 25.x {@code isReachable} therefore
+ * answers {@code false} for every target whether or not the resolver is reachable, so this guard
+ * cannot currently fail and its report is not evidence. It says so out loud per target
+ * ({@code ??  INCONCLUSIVE}) rather than printing a reassuring {@code ok}. Fixing it means
+ * resolving the concrete subclasses <em>and</em> adding the allowed list promised above — the CLI
+ * legitimately reads {@code user.home} and {@code user.name} at runtime, so a working version
+ * would fail the build on correct code until those are allowed with a rationale.
+ *
  * <h2>How it works</h2>
  * Hooks into {@code afterAnalysis} and calls the public
  * {@link Feature.AfterAnalysisAccess#isReachable} API.  If a resolver is
@@ -97,8 +108,15 @@ public class SyscallReachabilityFeature implements Feature {
             Method method = sysPropClass.getDeclaredMethod(target.method);
 
             if (!access.isReachable(method)) {
-                System.err.printf("[isx-syscall-guard]   ok  %-16s (%s) — not reachable, no %s at runtime%n",
-                        target.method + "()", target.property, target.syscall);
+                // An abstract declaration is never reported reachable even when its concrete
+                // override is, so "not reachable" here means "this guard cannot tell" — say that
+                // instead of implying the syscall is absent.
+                boolean conclusive = !java.lang.reflect.Modifier.isAbstract(method.getModifiers());
+                System.err.printf("[isx-syscall-guard]   %s %-16s (%s) — %s%n",
+                        conclusive ? "ok " : "?? ", target.method + "()", target.property,
+                        conclusive ? "not reachable, no " + target.syscall + " at runtime"
+                                : "INCONCLUSIVE: declaration is abstract, reachability of the"
+                                        + " concrete override is not checked (see javadoc)");
                 return false;
             }
 
