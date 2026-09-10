@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
@@ -89,11 +90,8 @@ public class InstancePrep {
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return false;
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
-                var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
-                System.err.println(sep);
-                System.err.println("\033[1;33mStatic IP mismatch\033[0m"
-                        + " — reassigned to current bridge subnet.");
-                System.err.println(sep);
+                BuildOutput.warnBanner("Static IP mismatch",
+                        "Reassigned to current bridge subnet.");
                 return true;
             }
         } catch (Exception e) {
@@ -107,10 +105,8 @@ public class InstancePrep {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         try {
             if (ProxyConfig.fixResolvConfIfNeeded(incus, name)) {
-                var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
-                System.err.println(sep);
-                System.err.println("\033[1;33mDNS configuration mismatch\033[0m — updated /etc/resolv.conf automatically.");
-                System.err.println(sep);
+                BuildOutput.warnBanner("DNS configuration mismatch",
+                        "Updated /etc/resolv.conf automatically.");
             }
         } catch (Exception ignored) {
         }
@@ -125,10 +121,8 @@ public class InstancePrep {
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {
-            var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
-            System.err.println(sep);
-            System.err.println("\033[1;33mCA certificate mismatch\033[0m — updated automatically.");
-            System.err.println(sep);
+            BuildOutput.warnBanner("CA certificate mismatch",
+                    "Updated automatically.");
         }
     }
 }

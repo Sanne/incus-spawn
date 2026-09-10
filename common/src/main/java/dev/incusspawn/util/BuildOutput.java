@@ -33,6 +33,16 @@ public final class BuildOutput {
 
     public static final String STEP_INDENT = "    ";
 
+    /**
+     * Print a section title at the left margin, preceded by a blank line for visual
+     * separation. Use this to introduce a block of work (e.g. "Refreshing 8 host repos:")
+     * that isn't a bold-bullet {@link #header} for a single named operation.
+     */
+    public static void section(String msg) {
+        System.out.println();
+        System.out.println(msg);
+    }
+
     /** Print a complete indented step line. */
     public static void step(String msg) {
         System.out.println(STEP_INDENT + msg);
@@ -159,5 +169,19 @@ public final class BuildOutput {
     public static void success(String msg) {
         System.out.println();
         System.out.println(STEP_INDENT + GREEN + "✓" + RESET + " " + msg);
+    }
+
+    /**
+     * Print a yellow-bordered warning banner to stderr with a bold title and optional body lines.
+     * Use for diagnostic warnings that need to stand out (subnet conflicts, CA mismatches, etc.).
+     */
+    public static void warnBanner(String title, String... lines) {
+        var sep = YELLOW + "─".repeat(60) + RESET;
+        System.err.println(sep);
+        System.err.println(BOLD + YELLOW + title + RESET);
+        for (var line : lines) {
+            System.err.println(line);
+        }
+        System.err.println(sep);
     }
 }

@@ -34,7 +34,7 @@ public final class HostRepoRefresh {
         if (classified.toFetch.isEmpty() && classified.toClone.isEmpty()) return;
 
         if (!classified.toFetch.isEmpty()) {
-            BuildOutput.step("Refreshing " + classified.toFetch.size() + " host " + (classified.toFetch.size() == 1 ? "repo:" : "repos:"));
+            BuildOutput.section("Refreshing " + classified.toFetch.size() + " host " + (classified.toFetch.size() == 1 ? "repo:" : "repos:"));
             fetchInParallel(classified.toFetch, output);
         }
 

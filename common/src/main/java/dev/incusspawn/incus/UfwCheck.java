@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.BuildOutput;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -63,10 +65,7 @@ public final class UfwCheck {
         try {
             var diagnostic = detectDiagnostic();
             if (diagnostic == null) return false;
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
-            System.err.println("\033[1;33mUFW is not active:\033[0m");
-            System.err.println(diagnostic);
-            System.err.println("\033[33m" + "─".repeat(60) + "\033[0m");
+            BuildOutput.warnBanner("UFW is not active:", diagnostic);
             return true;
         } catch (Exception e) {
             return false;
