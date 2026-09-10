@@ -127,7 +127,7 @@ public final class VmManager {
 
     // --- Appliance version resolution ---
 
-    static String applianceVersion() {
+    public static String applianceVersion() {
         var cached = resolvedApplianceVersion;
         if (cached != null) return cached;
 
@@ -311,6 +311,7 @@ public final class VmManager {
         }
 
         cleanupStaleFiles();
+        VmAgentClient.clearVersionCache();
         BuildOutput.stepDone();
     }
 
@@ -326,6 +327,15 @@ public final class VmManager {
                 } catch (IOException ignored) {}
             }
             sb.append("\n  Log: ").append(Environment.vmLogFile());
+            var running = runningApplianceVersion();
+            if (running != null) {
+                sb.append("\n  Appliance: ").append(running);
+                var installed = applianceVersion();
+                if (!running.equals(installed)) {
+                    sb.append("  (installed: ").append(installed)
+                            .append(" — restart to apply)");
+                }
+            }
             int vsockConns = vsockForwarderConnectionCount();
             if (vsockConns >= 0) {
                 sb.append("\n  vsock forwarder connections: ").append(vsockConns);
@@ -452,7 +462,10 @@ public final class VmManager {
      */
     public static boolean ensureRunning() {
         if (isRunning()) {
-            if (IncusClient.isReachable()) return true;
+            if (IncusClient.isReachable()) {
+                warnIfApplianceStale();
+                return true;
+            }
             System.err.println("VM is running but Incus is not reachable; attempting recovery...");
             return recoverReachability();
         }
@@ -480,6 +493,45 @@ public final class VmManager {
         System.err.println("Warning: VM started but Incus daemon did not become reachable within 60s.");
         System.err.println("Check 'isx vm console' for boot logs.");
         return false;
+    }
+
+    private static final long SKEW_WARN_INTERVAL_MS = 60_000;
+
+    /**
+     * The version of the appliance actually running in the VM. Prefers the live agent response
+     * ({@code /etc/isx-version}); falls back to the host-side {@code disk.version} file.
+     */
+    public static String runningApplianceVersion() {
+        var agentVer = VmAgentClient.applianceVersion();
+        if (agentVer.isPresent()) return agentVer.get();
+        var diskVer = readVersionFile();
+        return diskVer.isEmpty() ? null : diskVer;
+    }
+
+    public static String skewMessage(String running, String installed) {
+        return "VM is running appliance " + running + "; " + installed
+                + " is installed — run 'isx vm stop && isx vm start' to apply it.";
+    }
+
+    private static void warnIfApplianceStale() {
+        try {
+            var running = runningApplianceVersion();
+            if (running == null) return;
+            var installed = applianceVersion();
+            if (running.equals(installed)) return;
+
+            var marker = Environment.vmStateDir().resolve(".appliance-skew-warned");
+            if (Files.exists(marker)) {
+                long age = System.currentTimeMillis() - Files.getLastModifiedTime(marker).toMillis();
+                if (age < SKEW_WARN_INTERVAL_MS) return;
+            }
+
+            System.err.println(skewMessage(running, installed));
+            Files.createDirectories(marker.getParent());
+            Files.writeString(marker, "");
+        } catch (Exception ignored) {
+            // Best-effort; never block a command for a stale-version warning.
+        }
     }
 
     // --- Internal: vfkit ---

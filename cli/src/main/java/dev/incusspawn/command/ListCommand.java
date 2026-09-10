@@ -37,6 +37,7 @@ import dev.incusspawn.tui.ShiftTabBindings;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
 import dev.incusspawn.tui.FastPanamaBackend;
+import dev.incusspawn.vm.VmManager;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Flex;
 import dev.tamboui.layout.Layout;
@@ -264,6 +265,8 @@ public class ListCommand extends BaseCommand {
     // so the reminder doesn't clobber every other status message on each refresh.
     private boolean storageWarningShown;
     private volatile ProxyHealthCheck.ProxyInfo proxyInfo;
+    private volatile String applianceSkewMessage;
+    private boolean applianceSkewFirstLoad = true;
     // Defer the first proxy health check so the TUI renders immediately instead of
     // stalling up to 500ms on the connect timeout when the proxy isn't running.
     private static final long PROXY_AUTH_INITIAL_DEFER_MS = 500;
@@ -604,6 +607,7 @@ public class ListCommand extends BaseCommand {
         }
 
         refreshProxyAuthError();
+        refreshApplianceSkew();
         refreshAccountingStatus();
         // Stamps taken from consistent accounting stay valid whatever the flag says now (templates
         // are immutable), so the delta model keeps running through a repair. What must wait for the
@@ -671,6 +675,20 @@ public class ListCommand extends BaseCommand {
             proxyInfo = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus), 500);
         } catch (Exception e) {
             proxyInfo = null;
+        }
+    }
+
+    private void refreshApplianceSkew() {
+        if (!Platform.isMacOS()) { applianceSkewMessage = null; return; }
+        if (applianceSkewFirstLoad) { applianceSkewFirstLoad = false; return; }
+        try {
+            var running = VmManager.runningApplianceVersion();
+            if (running == null) { applianceSkewMessage = null; return; }
+            var installed = VmManager.applianceVersion();
+            if (running.equals(installed)) { applianceSkewMessage = null; return; }
+            applianceSkewMessage = "Appliance " + running + " — restart VM for " + installed;
+        } catch (Exception e) {
+            applianceSkewMessage = null;
         }
     }
 
@@ -2020,6 +2038,17 @@ public class ListCommand extends BaseCommand {
             if (area.width() - leftW - gaugeW - need >= 1) {
                 centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
                 centreW = need;
+            }
+        }
+        if (centreW == 0) {
+            var skew = applianceSkewMessage;
+            if (skew != null) {
+                var label = "  !! " + skew;
+                int need = label.length();
+                if (area.width() - leftW - gaugeW - need >= 1) {
+                    centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
+                    centreW = need;
+                }
             }
         }
         if (centreW == 0) {

@@ -24,7 +24,8 @@ import java.nio.file.Files;
                 VmCommand.Stop.class,
                 VmCommand.Status.class,
                 VmCommand.Resize.class,
-                VmCommand.Console.class
+                VmCommand.Console.class,
+                VmCommand.CheckVersion.class
         }
 )
 public class VmCommand extends BaseCommand {
@@ -223,6 +224,24 @@ public class VmCommand extends BaseCommand {
             } catch (IOException | InterruptedException e) {
                 System.err.println("Failed to tail log file: " + e.getMessage());
             }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(
+            name = "check-version",
+            description = "Check whether the running appliance matches the installed version",
+            generateHelp = true
+    )
+    public static class CheckVersion extends BaseCommand {
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (!VmManager.isRunning()) return CommandResult.SUCCESS;
+            var running = VmManager.runningApplianceVersion();
+            if (running == null) return CommandResult.SUCCESS;
+            var installed = VmManager.applianceVersion();
+            if (running.equals(installed)) return CommandResult.SUCCESS;
+            System.out.println(VmManager.skewMessage(running, installed));
             return CommandResult.SUCCESS;
         }
     }
