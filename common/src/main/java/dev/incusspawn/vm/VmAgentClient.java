@@ -36,7 +36,7 @@ public final class VmAgentClient {
         var result = send(Environment.vmAgentSocket(), verb);
         if (result.isPresent() && result.get().equals("error: unknown verb")) {
             var ver = cachedApplianceVersion;
-            if (ver != null && ver != VERSION_UNAVAILABLE) {
+            if (ver != null && !ver.isEmpty()) {
                 dev.incusspawn.ClientLog.debug("agent verb '" + verb + "' unsupported "
                         + "(appliance " + ver + ", CLI " + dev.incusspawn.BuildInfo.instance().version() + ")");
             }
@@ -99,7 +99,7 @@ public final class VmAgentClient {
      */
     public static Optional<String> applianceVersion() {
         var cached = cachedApplianceVersion;
-        if (cached != null) return cached == VERSION_UNAVAILABLE ? Optional.empty() : Optional.of(cached);
+        if (cached != null) return cached.isEmpty() ? Optional.empty() : Optional.of(cached);
         var resp = send("version");
         if (resp.isEmpty() || resp.get().isBlank() || resp.get().startsWith("error:")) {
             cachedApplianceVersion = VERSION_UNAVAILABLE;
