@@ -124,6 +124,10 @@ public class BuildCommand extends BaseCommand {
         return true;
     }
     private static final String DNF_CACHE_DEVICE = "dnf-cache";
+    // 4 WebSocket fds (stdin, stdout, stderr, control) + 1 /wait long-poll per non-PTY exec
+    private static final int CONNECTIONS_PER_EXEC = 5;
+    // Half the 48-connection valve, leaving room for concurrent TUI/status activity
+    private static final int MACOS_TUNNEL_BUDGET = 24;
     static final String REBUILDING_SUFFIX = "-rebuilding";
 
     private int buildIndex;
@@ -2459,8 +2463,9 @@ public class BuildCommand extends BaseCommand {
     /**
      * Clone git repos declared in the image definition as agentuser.
      *
-     * <p>Repos are cloned concurrently (bounded to the host's high-performance
-     * core count) with an animated per-repo progress display. Each repo's
+     * <p>Repos are cloned concurrently (bounded to high-performance core count
+     * and, on macOS, a vsock tunnel connection budget) with an animated
+     * per-repo progress display. Each repo's
      * declared {@code prime} command runs in the same worker as soon as that
      * repo's clone finishes, so priming pipelines with the remaining clones
      * instead of waiting for the whole clone batch to complete. Incus config
@@ -2513,7 +2518,11 @@ public class BuildCommand extends BaseCommand {
         for (int i = 0; i < repos.size(); i++) {
             states.set(i, StepProgress.running("Cloning"));
         }
-        int concurrency = Math.min(repos.size(), CpuInfo.highPerfCores());
+        int maxFromTunnel = Platform.isMacOS()
+                ? MACOS_TUNNEL_BUDGET / CONNECTIONS_PER_EXEC
+                : Integer.MAX_VALUE;
+        int concurrency = Math.min(repos.size(),
+                Math.min(CpuInfo.highPerfCores(), maxFromTunnel));
         var failureSeen = new AtomicBoolean(false);
         try {
             TerminalProgress.run(repos.size(), concurrency,
