@@ -232,14 +232,15 @@ class VmManagerTest {
         assertTrue(ex.getMessage().contains("no valid btrfs superblock"));
     }
 
-    // --- recoverReachability orchestration (grace -> forwarder restart -> backstop) ---
+    // --- recoverReachability orchestration (grace -> layer check -> forwarder restart -> backstop) ---
 
     @Test
     void recoverReachabilityReturnsEarlyWhenGraceClears() {
         var restarts = new java.util.concurrent.atomic.AtomicInteger();
         boolean ok = VmManager.recoverReachability(
                 secs -> true,                                       // reachable on the grace probe
-                () -> { restarts.incrementAndGet(); return true; });
+                () -> { restarts.incrementAndGet(); return true; },
+                java.util.Optional::empty);
         assertTrue(ok);
         assertEquals(0, restarts.get(), "must not restart the forwarder if the grace probe succeeds");
     }
@@ -250,10 +251,34 @@ class VmManagerTest {
         var restarts = new java.util.concurrent.atomic.AtomicInteger();
         boolean ok = VmManager.recoverReachability(
                 secs -> probes.poll(),
-                () -> { restarts.incrementAndGet(); return true; });
+                () -> { restarts.incrementAndGet(); return true; },
+                java.util.Optional::empty);                         // unknown layer — attempt restart
         assertTrue(ok);
         assertEquals(1, restarts.get());
         assertTrue(probes.isEmpty(), "must not fall through to the backstop probe once recovery succeeds");
+    }
+
+    @Test
+    void recoverReachabilityRestartsWhenLayerIsForwarder() {
+        var probes = new java.util.ArrayDeque<>(java.util.List.of(false, true)); // grace fails, post-restart succeeds
+        var restarts = new java.util.concurrent.atomic.AtomicInteger();
+        boolean ok = VmManager.recoverReachability(
+                secs -> probes.poll(),
+                () -> { restarts.incrementAndGet(); return true; },
+                () -> java.util.Optional.of(VmManager.LeakLayer.FORWARDER));
+        assertTrue(ok);
+        assertEquals(1, restarts.get(), "forwarder-layer wedge should attempt a restart");
+    }
+
+    @Test
+    void recoverReachabilityFailsFastWhenLayerIsVfkit() {
+        var restarts = new java.util.concurrent.atomic.AtomicInteger();
+        boolean ok = VmManager.recoverReachability(
+                secs -> false,                                      // grace fails
+                () -> { restarts.incrementAndGet(); return true; },
+                () -> java.util.Optional.of(VmManager.LeakLayer.VFKIT));
+        assertFalse(ok, "vfkit wedge cannot be fixed by a forwarder restart — must fail fast");
+        assertEquals(0, restarts.get(), "must not attempt a forwarder restart for a vfkit wedge");
     }
 
     @Test
@@ -261,14 +286,37 @@ class VmManagerTest {
         var probes = new java.util.ArrayDeque<>(java.util.List.of(false, true)); // grace fails, backstop succeeds
         boolean ok = VmManager.recoverReachability(
                 secs -> probes.poll(),
-                () -> false);                                       // agent unreachable or unconfirmed
+                () -> false,                                        // agent unreachable or unconfirmed
+                java.util.Optional::empty);
         assertTrue(ok);
         assertTrue(probes.isEmpty(), "must probe the backstop after the restart cannot be confirmed");
     }
 
     @Test
     void recoverReachabilityGivesUpWhenNothingRecovers() {
-        boolean ok = VmManager.recoverReachability(secs -> false, () -> false);
+        boolean ok = VmManager.recoverReachability(secs -> false, () -> false, java.util.Optional::empty);
         assertFalse(ok, "must return false so the caller can surface an actionable error");
+    }
+
+    // --- leakLayer (moved from DoctorCommandTest — canonical location is VmManager) ---
+
+    @Test
+    void leakLayerLocatesVfkitWhenGuestCountStaysLow() {
+        assertEquals(VmManager.LeakLayer.VFKIT, VmManager.leakLayer(300, 5));
+        assertEquals(VmManager.LeakLayer.VFKIT, VmManager.leakLayer(100, 50), "boundary: guest*2 == host");
+    }
+
+    @Test
+    void leakLayerLocatesForwarderWhenBothCountsClimb() {
+        assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(300, 280));
+        assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(100, 51));
+    }
+
+    @Test
+    void leakLayerTreatsZeroGuestAsForwarderNotRunning() {
+        assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(0, 0),
+                "both zero: forwarder not running, not a vfkit wedge");
+        assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(5, 0),
+                "host fds leaked but forwarder gone: restarting it is the correct fix");
     }
 }
