@@ -194,6 +194,59 @@ class PiSetupTest {
     }
 
     @Test
+    void envEntriesSetsOpenaiKeyForOpenaiProvider() {
+        var entries = new PiSetup().envEntries(Map.of("provider", "openai"));
+
+        assertTrue(entries.stream().anyMatch(e ->
+                        "OPENAI_API_KEY".equals(e.getName()) && "sk-placeholder".equals(e.getValue())),
+                "Should set OPENAI_API_KEY for openai provider");
+    }
+
+    @Test
+    void envEntriesSkipsAnthropicKeysForOpenaiProvider() {
+        var entries = new PiSetup().envEntries(Map.of("provider", "openai"));
+
+        assertFalse(entries.stream().anyMatch(e ->
+                        "ANTHROPIC_API_KEY".equals(e.getName())),
+                "Should not set ANTHROPIC_API_KEY for openai provider");
+        assertFalse(entries.stream().anyMatch(e ->
+                        "ANTHROPIC_OAUTH_TOKEN".equals(e.getName())),
+                "Should not set ANTHROPIC_OAUTH_TOKEN for openai provider");
+    }
+
+    @Test
+    void envEntriesSkipsVertexVarsForOpenaiProvider() {
+        var entries = new PiSetup().envEntries(Map.of("provider", "openai"));
+
+        assertFalse(entries.stream().anyMatch(e ->
+                        "GOOGLE_CLOUD_PROJECT".equals(e.getName())),
+                "Should not set GOOGLE_CLOUD_PROJECT for openai provider");
+    }
+
+    @Test
+    void envEntriesSetsSkipVersionCheckForOpenaiProvider() {
+        var entries = new PiSetup().envEntries(Map.of("provider", "openai"));
+
+        assertTrue(entries.stream().anyMatch(e ->
+                        "PI_SKIP_VERSION_CHECK".equals(e.getName()) && "1".equals(e.getValue())),
+                "PI_SKIP_VERSION_CHECK should be set for openai provider");
+    }
+
+    @Test
+    void installWritesOpenaiProviderAndModel() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new PiSetup().install(new Container(incus, CONTAINER),
+                Map.of("provider", "openai", "model", "gpt-4.1"));
+
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), argThat(arg ->
+                        arg.contains("\"defaultProvider\": \"openai\"") &&
+                        arg.contains("\"defaultModel\": \"gpt-4.1\"")));
+    }
+
+    @Test
     void envEntriesSetsSkipVersionCheckForNonAnthropicProvider() {
         var entries = new PiSetup().envEntries(Map.of("provider", "vertex"));
 

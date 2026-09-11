@@ -192,22 +192,40 @@ public class SpawnConfig {
     public static String checkCredentials(ImageDef imageDef, java.util.Map<String, ImageDef> allDefs,
                                            java.util.function.Predicate<String> existsCheck) {
         var config = load();
-        var missing = new java.util.ArrayList<String>();
+        var missing = new java.util.LinkedHashSet<String>();
 
-        // Collect tools from this image and any unbuilt ancestors
-        var tools = new java.util.HashSet<String>();
+        // Collect tools from this image and any unbuilt ancestors (first occurrence wins,
+        // so child overrides take precedence over ancestor tool refs).
+        var toolRefs = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolDef.ToolRef>();
         var current = imageDef;
         while (current != null) {
             for (var toolRef : current.getTools()) {
-                tools.add(toolRef.getName());
+                toolRefs.putIfAbsent(toolRef.getName(), toolRef);
             }
             if (current.isRoot() || existsCheck.test(current.getParent())) break;
             current = allDefs.get(current.getParent());
         }
+        var tools = toolRefs.keySet();
 
-        if (tools.contains("claude") || tools.contains("pi")) {
+        if (tools.contains("claude")) {
             if (!config.getClaude().hasAuth()) {
                 missing.add("Anthropic API key, OAuth token, or Vertex AI");
+            }
+        }
+        if (tools.contains("pi")) {
+            var piProvider = toolRefs.get("pi").getParams().getOrDefault("provider", "anthropic");
+            if ("openai".equals(piProvider)) {
+                if (!config.getOpenai().hasAuth()) {
+                    missing.add("OpenAI API key");
+                }
+            } else if ("vertex".equals(piProvider) || "google".equals(piProvider)) {
+                if (!config.getClaude().isUseVertex()) {
+                    missing.add("Vertex AI configuration");
+                }
+            } else {
+                if (!config.getClaude().hasAuth()) {
+                    missing.add("Anthropic API key, OAuth token, or Vertex AI");
+                }
             }
         }
         if (tools.contains("gh")) {
