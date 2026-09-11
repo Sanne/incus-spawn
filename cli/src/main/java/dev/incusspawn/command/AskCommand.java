@@ -43,8 +43,7 @@ public class AskCommand extends BaseCommand {
         var provider = AiHelpClient.detectProvider(config);
 
         if (provider == null) {
-            System.err.println("No AI credentials configured.");
-            System.err.println("Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.");
+            System.err.println(AiHelpClient.noProviderMessage(config));
             return CommandResult.valueOf(1);
         }
 
