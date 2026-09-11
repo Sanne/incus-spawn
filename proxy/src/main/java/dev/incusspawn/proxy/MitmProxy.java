@@ -1195,6 +1195,7 @@ public class MitmProxy {
                 upResp.exceptionHandler(err -> {
                     asyncFile.close();
                     if (!clientResp.headWritten()) {
+                        clientResp.headers().remove("Content-Length");
                         sendError(clientResp, 502, "Upstream stream error");
                     } else {
                         clientResp.reset();
