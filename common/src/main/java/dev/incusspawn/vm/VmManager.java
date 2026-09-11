@@ -17,9 +17,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -186,6 +189,49 @@ public final class VmManager {
         return Backend.QEMU;
     }
 
+    // --- VM lifecycle lock ---
+
+    private static class VmLockHolder implements AutoCloseable {
+        private final FileChannel channel;
+        private final FileLock lock;
+        VmLockHolder(FileChannel channel, FileLock lock) {
+            this.channel = channel;
+            this.lock = lock;
+        }
+        @Override public void close() {
+            try { lock.release(); } catch (IOException ignored) {}
+            try { channel.close(); } catch (IOException ignored) {}
+        }
+    }
+
+    private static final int VM_LOCK_TIMEOUT_SECONDS = 30;
+
+    private static VmLockHolder acquireVmLock() {
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            var path = Environment.vmStateDir().resolve("vm.lock");
+            var channel = FileChannel.open(path,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            var lock = channel.tryLock();
+            if (lock != null) return new VmLockHolder(channel, lock);
+
+            System.err.println("Another isx process is managing the VM — waiting...");
+            long deadline = System.nanoTime() + VM_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
+            while (System.nanoTime() < deadline) {
+                try { Thread.sleep(500); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                lock = channel.tryLock();
+                if (lock != null) return new VmLockHolder(channel, lock);
+            }
+            channel.close();
+            throw new VmException("Timed out waiting for another isx process to finish managing the VM.");
+        } catch (IOException e) {
+            throw new VmException("Failed to acquire VM lock: " + e.getMessage());
+        }
+    }
+
     // --- Process lifecycle ---
 
     public static boolean isRunning() {
@@ -219,6 +265,15 @@ public final class VmManager {
     }
 
     public static boolean start() {
+        try (var ignored = acquireVmLock()) {
+            return startLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean startLocked() {
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
             return true;
@@ -261,7 +316,32 @@ public final class VmManager {
         }
     }
 
+    /**
+     * Restart the VM, applying any pending appliance disk update via {@link #ensureDisk()}.
+     */
+    public static boolean restart() {
+        try (var ignored = acquireVmLock()) {
+            if (!isRunning()) {
+                BuildOutput.note("VM not running — starting.");
+            } else {
+                stopLocked();
+            }
+            return startLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
     public static void stop() {
+        try (var ignored = acquireVmLock()) {
+            stopLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    private static void stopLocked() {
         if (!isRunning()) {
             BuildOutput.note("VM not running.");
             cleanupStaleFiles();
@@ -458,9 +538,19 @@ public final class VmManager {
 
     /**
      * Auto-start hook: ensure VM is running and Incus is reachable.
-     * Prints progress to stderr so it doesn't interfere with command output.
+     * Holds the VM lifecycle lock for the full check-then-start window so a concurrent
+     * restart cannot race between the isRunning() check and the start attempt.
      */
     public static boolean ensureRunning() {
+        try (var ignored = acquireVmLock()) {
+            return ensureRunningLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean ensureRunningLocked() {
         if (isRunning()) {
             if (IncusClient.isReachable()) {
                 warnIfApplianceStale();
@@ -483,7 +573,7 @@ public final class VmManager {
         }
 
         System.err.print("Starting incus-spawn VM... ");
-        if (!start()) return false;
+        if (!startLocked()) return false;
 
         System.err.println("Waiting for Incus daemon...");
         if (waitUntilReady(60)) {
@@ -510,7 +600,7 @@ public final class VmManager {
 
     public static String skewMessage(String running, String installed) {
         return "VM is running appliance " + running + "; " + installed
-                + " is installed — run 'isx vm stop && isx vm start' to apply it.";
+                + " is installed — run 'isx vm restart' to apply it.";
     }
 
     private static void warnIfApplianceStale() {

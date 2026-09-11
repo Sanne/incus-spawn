@@ -2480,7 +2480,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Skipped. Start manually with: isx vm start && isx proxy start");
             return;
         }
-        ProxyService.installMacOs();
+        ProxyService.install();
     }
 
     private boolean offerProxyService() {

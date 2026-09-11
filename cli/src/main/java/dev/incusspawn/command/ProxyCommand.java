@@ -25,6 +25,7 @@ import java.nio.file.Path;
         groupCommands = {
                 ProxyStartCommand.class,
                 ProxyCommand.Stop.class,
+                ProxyCommand.Restart.class,
                 ProxyCommand.Status.class,
                 ProxyCommand.Install.class,
                 ProxyCommand.Uninstall.class,
@@ -125,6 +126,22 @@ public class ProxyCommand extends BaseCommand {
         protected CommandResult doExecute() throws Exception {
             ProxyService.stop();
             return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(
+            name = "restart",
+            description = "Restart the proxy service",
+            generateHelp = true
+    )
+    public static class Restart extends BaseCommand {
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (!ProxyService.isInstalled() && !ProxyService.isActive()) {
+                System.out.println("Proxy is not installed or running. Use 'isx proxy start' or 'isx proxy install'.");
+                return CommandResult.SUCCESS;
+            }
+            return ProxyService.restart() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
     }
 
