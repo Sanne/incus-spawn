@@ -1050,11 +1050,11 @@ public class MitmProxy {
                     pipeResponse(upResp, clientResp);
                 }
             }).onFailure(err -> {
-                System.err.println("Upstream error fetching " + ref + ": " + err.getMessage());
+                ProxyLog.warn("Upstream error fetching " + ref + ": " + err.getMessage());
                 sendError(clientReq.response(), 502, "Upstream error");
             });
         }).onFailure(err -> {
-            System.err.println("Connect error fetching " + ref + ": " + err.getMessage());
+            ProxyLog.warn("Connect error fetching " + ref + ": " + err.getMessage());
             sendError(clientReq.response(), 502, "Upstream connection failed");
         });
     }
@@ -1120,7 +1120,7 @@ public class MitmProxy {
                 } else if (statusCode >= 300 && statusCode < 400) {
                     followRedirect(clientReq, redResp, digest, cacheFile, ref, depth + 1);
                 } else {
-                    System.err.println("Redirect target " + redirectHost + " returned " +
+                    ProxyLog.warn("Redirect target " + redirectHost + " returned " +
                             statusCode + " for " + ref + " (Location: " + location + ")");
                     var clientResp = clientReq.response();
                     clientResp.setStatusCode(statusCode);
@@ -1129,11 +1129,11 @@ public class MitmProxy {
                     pipeResponse(redResp, clientResp);
                 }
             }).onFailure(err -> {
-                System.err.println("Redirect fetch error for " + ref + ": " + err.getMessage());
+                ProxyLog.warn("Redirect fetch error for " + ref + ": " + err.getMessage());
                 sendError(clientReq.response(), 502, "Redirect fetch failed");
             });
         }).onFailure(err -> {
-            System.err.println("Redirect connect error for " + ref + ": " + err.getMessage());
+            ProxyLog.warn("Redirect connect error for " + ref + ": " + err.getMessage());
             sendError(clientReq.response(), 502, "Redirect connection failed");
         });
     }
@@ -1194,16 +1194,20 @@ public class MitmProxy {
 
                 upResp.exceptionHandler(err -> {
                     asyncFile.close();
-                    clientResp.end();
+                    if (!clientResp.headWritten()) {
+                        sendError(clientResp, 502, "Upstream stream error");
+                    } else {
+                        clientResp.reset();
+                    }
                     vertx.executeBlocking(() -> {
                         Files.deleteIfExists(tempFile);
                         return null;
                     });
-                    System.err.println("Stream error caching " + ref + ": " + err.getMessage());
+                    ProxyLog.warn("Stream error caching " + ref + ": " + err.getMessage());
                 });
 
                 asyncFile.exceptionHandler(err -> {
-                    System.err.println("Disk write error caching " + ref + ": " + err.getMessage());
+                    ProxyLog.warn("Disk write error caching " + ref + ": " + err.getMessage());
                     asyncFile.close();
                     vertx.executeBlocking(() -> {
                         Files.deleteIfExists(tempFile);
@@ -1213,12 +1217,12 @@ public class MitmProxy {
 
                 upResp.resume();
             }).onFailure(err -> {
-                System.err.println("Failed to open temp file for caching: " + err.getMessage());
+                ProxyLog.warn("Failed to open temp file for caching: " + err.getMessage());
                 upResp.resume();
                 pipeResponse(upResp, clientResp);
             });
         }).onFailure(err -> {
-            System.err.println("Failed to create temp file: " + err.getMessage());
+            ProxyLog.warn("Failed to create temp file: " + err.getMessage());
             upResp.resume();
             pipeResponse(upResp, clientResp);
         });
@@ -2263,8 +2267,16 @@ public class MitmProxy {
             }
         });
         upResp.endHandler(v -> clientResp.end());
-        upResp.exceptionHandler(err ->
-                System.err.println("Relay stream error: " + err.getMessage()));
+        upResp.exceptionHandler(err -> {
+            ProxyLog.warn("Relay stream error: " + err.getMessage());
+            if (!clientResp.ended() && !clientResp.closed()) {
+                if (!clientResp.headWritten()) {
+                    sendError(clientResp, 502, "Upstream stream error");
+                } else {
+                    clientResp.reset();
+                }
+            }
+        });
     }
 
     private void sendError(HttpServerResponse resp, int statusCode, String message) {
