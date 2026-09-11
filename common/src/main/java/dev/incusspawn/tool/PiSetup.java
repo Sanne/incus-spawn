@@ -24,7 +24,7 @@ public class PiSetup implements ToolSetup {
 
         var provider = new ToolDef.ParameterDef();
         provider.setType("string");
-        provider.setDescription("Pi provider (e.g. anthropic, vertex, google)");
+        provider.setDescription("Pi provider (e.g. anthropic, openai, vertex, google)");
         provider.setPattern("^[a-z][a-z0-9_-]*$");
         provider.setOptional(true);
         provider.setReconfigurable(true);
@@ -33,7 +33,7 @@ public class PiSetup implements ToolSetup {
 
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("Model ID (e.g. claude-sonnet-4-6, gemini-3.7-flash)");
+        model.setDescription("Model ID (e.g. claude-sonnet-4-6, gpt-4.1, gemini-3.7-flash)");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
@@ -65,7 +65,9 @@ public class PiSetup implements ToolSetup {
         var entries = new ArrayList<EnvEntry>();
         var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
 
-        if ("vertex".equals(provider) || "google".equals(provider)) {
+        if ("openai".equals(provider)) {
+            entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
+        } else if ("vertex".equals(provider) || "google".equals(provider)) {
             var claude = SpawnConfig.load().getClaude();
             if (claude.isUseVertex()) {
                 entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", claude.getVertexProjectId()));
