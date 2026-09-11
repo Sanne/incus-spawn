@@ -42,17 +42,7 @@ class DoctorCommandTest {
                 "label should report the actual count");
     }
 
-    @Test
-    void leakLayerLocatesVfkitWhenGuestCountStaysLow() {
-        assertEquals(DoctorCommand.LeakLayer.VFKIT, DoctorCommand.leakLayer(300, 5));
-        assertEquals(DoctorCommand.LeakLayer.VFKIT, DoctorCommand.leakLayer(100, 50), "boundary: guest*2 == host");
-    }
-
-    @Test
-    void leakLayerLocatesForwarderWhenBothCountsClimb() {
-        assertEquals(DoctorCommand.LeakLayer.FORWARDER, DoctorCommand.leakLayer(300, 280));
-        assertEquals(DoctorCommand.LeakLayer.FORWARDER, DoctorCommand.leakLayer(100, 51));
-    }
+    // leakLayer tests are canonical in VmManagerTest (the method now lives in VmManager).
 
     // ---- Storage pool usage evaluation ----
 
