@@ -1391,23 +1391,9 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        // Offer to keep existing config on re-run
-        if (config.getClaude().hasAuth()) {
-            String desc;
-            if (config.getClaude().isUseVertex()) {
-                var region = config.getClaude().getCloudMlRegion();
-                var project = config.getClaude().getVertexProjectId();
-                desc = "Google Cloud Vertex AI (region: " + (region.isBlank() ? "<not set>" : region)
-                        + ", project: " + (project.isBlank() ? "<not set>" : project) + ")";
-            } else if (config.getClaude().isOauthMode()) {
-                desc = "Claude Pro/Max OAuth token (" + maskSecret(config.getClaude().getOauthToken()) + ")";
-            } else {
-                desc = "Anthropic API key (" + maskSecret(config.getClaude().getApiKey()) + ")";
-            }
-            System.out.println("  Claude auth: " + desc);
-            if (askConfirmation(console, "  Keep current?", true, true)) {
-                return;
-            }
+        // Offer to keep, extend or re-point the configured accounts on re-run
+        if (config.getClaude().hasAuth() && !manageClaudeAccounts(config, console)) {
+            return;
         }
 
         System.out.println("  How do you authenticate with Claude?");
@@ -1498,6 +1484,117 @@ public class InitCommand extends BaseCommand {
             }
         } else {
             System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
+        }
+    }
+
+    /** One line per account: marker, name, what it is, and a masked credential. */
+    private static String describeClaudeAccount(String name, SpawnConfig.ClaudeAccount account, boolean isDefault) {
+        var secret = switch (account.effectiveType()) {
+            case API_KEY -> " (" + maskSecret(account.getApiKey()) + ")";
+            case OAUTH -> " (" + maskSecret(account.getOauthToken()) + ")";
+            case VERTEX -> "";
+        };
+        return (isDefault ? "  * " : "    ") + name + "  —  " + account.describe() + secret
+                + (isDefault ? "  [default]" : "");
+    }
+
+    /**
+     * Shows the configured Claude accounts and lets the user keep, add, re-point or remove one.
+     *
+     * @return true when the caller should go on to prompt for a credential (for the account now
+     *         named by {@code claudeAccountTarget}), false when there is nothing left to do.
+     */
+    private boolean manageClaudeAccounts(SpawnConfig config, Console console) {
+        var claude = config.getClaude();
+        while (true) {
+            var accounts = claude.effectiveAccounts();
+            var defaultName = claude.accountName();
+            System.out.println("  Claude accounts:");
+            accounts.forEach((name, account) ->
+                    System.out.println(describeClaudeAccount(name, account, name.equals(defaultName))));
+            if (claude.accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) == null) {
+                System.out.println("    (none of these can answer 'isx ask' — add an API key or Vertex account)");
+            }
+            System.out.println();
+            System.out.println("    a. Add another account");
+            System.out.println("    r. Replace all with a single account");
+            if (accounts.size() > 1) {
+                System.out.println("    d. Change which account is the default");
+                System.out.println("    x. Remove an account");
+            }
+            System.out.print("  Choice (Enter to keep as-is): ");
+            var choice = console.readLine().strip().toLowerCase(java.util.Locale.ROOT);
+
+            switch (choice) {
+                case "" -> {
+                    return false;
+                }
+                case "a" -> {
+                    var name = askAccountName(console, accounts.keySet());
+                    if (name.isEmpty()) return false;
+                    claudeAccountTarget = name;
+                    claudeReplaceAccounts = false;
+                    return true;
+                }
+                case "r" -> {
+                    claudeAccountTarget = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
+                    claudeReplaceAccounts = true;
+                    return true;
+                }
+                case "d" -> {
+                    if (accounts.size() > 1) {
+                        System.out.print("  Name of the account to make default: ");
+                        var name = console.readLine().strip();
+                        if (accounts.containsKey(name)) {
+                            claude.setDefaultAccount(name);
+                            config.save();
+                            System.out.println("  Default account is now '" + name + "'.");
+                        } else if (!name.isEmpty()) {
+                            System.out.println("  No account named '" + name + "'.");
+                        }
+                        continue;
+                    }
+                }
+                case "x" -> {
+                    if (accounts.size() > 1) {
+                        System.out.print("  Name of the account to remove: ");
+                        var name = console.readLine().strip();
+                        if (accounts.containsKey(name)) {
+                            claude.getAccounts().remove(name);
+                            if (name.equals(claude.getDefaultAccount())) {
+                                // Never leave the default pointing at an account that is gone.
+                                claude.setDefaultAccount(claude.accountName());
+                            }
+                            config.save();
+                            System.out.println("  Removed account '" + name + "'.");
+                            if (!claude.hasAuth()) return false;
+                        } else if (!name.isEmpty()) {
+                            System.out.println("  No account named '" + name + "'.");
+                        }
+                        continue;
+                    }
+                }
+                default -> { }
+            }
+            System.out.println("  Please choose one of the listed options.");
+        }
+    }
+
+    /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
+    private static String askAccountName(Console console, java.util.Set<String> taken) {
+        while (true) {
+            System.out.print("  Name for this account (e.g. personal, work — Enter to cancel): ");
+            var name = console.readLine().strip();
+            if (name.isEmpty()) return "";
+            if (taken.contains(name)) {
+                System.out.println("  There is already an account named '" + name + "'.");
+                continue;
+            }
+            if (!name.matches("[A-Za-z0-9._-]+")) {
+                System.out.println("  Use letters, digits, '.', '_' or '-' only.");
+                continue;
+            }
+            return name;
         }
     }
 
@@ -1594,24 +1691,48 @@ public class InitCommand extends BaseCommand {
         return secret.substring(0, prefixEnd) + "..." + secret.substring(secret.length() - 4);
     }
 
-    private static void saveVertexConfig(SpawnConfig config, String region, String projectId) {
-        config.getClaude().clearAuth();
-        config.getClaude().setUseVertex(true);
-        config.getClaude().setCloudMlRegion(region);
-        config.getClaude().setVertexProjectId(projectId);
-        config.save();
+    private void saveDirectConfig(SpawnConfig config, String apiKey) {
+        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofApiKey(apiKey));
     }
 
-    private static void saveDirectConfig(SpawnConfig config, String apiKey) {
-        config.getClaude().clearAuth();
-        config.getClaude().setApiKey(apiKey);
-        config.save();
+    private void saveOauthConfig(SpawnConfig config, String oauthToken) {
+        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
     }
 
-    private static void saveOauthConfig(SpawnConfig config, String oauthToken) {
-        config.getClaude().clearAuth();
-        config.getClaude().setOauthToken(oauthToken);
+    private void saveVertexConfig(SpawnConfig config, String region, String projectId) {
+        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofVertex(region, projectId));
+    }
+
+    /** Name of the Claude account being configured, and whether it replaces the others. */
+    private String claudeAccountTarget = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
+    private boolean claudeReplaceAccounts = true;
+
+    /**
+     * Writes the account currently being configured. Replacing is the default so that a plain
+     * re-run of 'isx init' still leaves exactly one account, as it always has; only the
+     * explicit "add another" path keeps the existing ones.
+     */
+    private void saveClaudeAccount(SpawnConfig config, SpawnConfig.ClaudeAccount account) {
+        if (claudeReplaceAccounts) {
+            config.getClaude().setSingleAccount(claudeAccountTarget, account);
+        } else {
+            config.getClaude().putAccount(claudeAccountTarget, account);
+        }
         config.save();
+        noteAiHelpNeedsDirectApiAccount(config);
+    }
+
+    /**
+     * A Pro/Max token cannot answer 'isx ask' -- it is only valid for Claude Code itself. Say so
+     * when the account is saved, rather than letting the feature fail later with an API error.
+     */
+    private void noteAiHelpNeedsDirectApiAccount(SpawnConfig config) {
+        if (config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi) != null) return;
+        if (config.getOpenai().hasAuth()) return;
+        System.out.println();
+        System.out.println("  Note: 'isx ask' and '?' in the TUI cannot use a Pro/Max token — it is");
+        System.out.println("  only valid for Claude Code itself. Add an Anthropic API key or a Vertex");
+        System.out.println("  AI account as a second Claude account to enable them.");
     }
 
     private AuthResult verifyAnthropicApiKey(String key) {

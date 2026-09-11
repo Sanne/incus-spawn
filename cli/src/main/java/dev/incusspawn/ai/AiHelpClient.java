@@ -41,19 +41,30 @@ public class AiHelpClient {
     public static final String OPENAI_MODEL = "gpt-4o-mini";
 
     /**
-     * Picks the provider to answer with, or null when nothing usable is configured.
+     * Picks the provider to answer with, or null when no configured account can.
      *
-     * <p>A Claude Pro/Max OAuth token is deliberately not a candidate. Such a token is only
-     * valid for Claude Code itself -- the Messages API answers anything else with an opaque
-     * HTTP 429 {@code rate_limit_error} -- so isx only ever forwards it into instances, where
-     * real Claude Code uses it. It is not a credential this command can spend.
+     * <p>Selection is by what an account <em>is</em>, not by any designation: a Claude Pro/Max
+     * OAuth account cannot serve this, because such a token is only valid for Claude Code
+     * itself and the Messages API answers anything else with an opaque HTTP 429. So a Pro/Max
+     * account keeps serving instances while an API-key or Vertex account answers here, without
+     * either being set aside for the purpose.
      */
     public static Provider detectProvider(SpawnConfig config) {
-        var claude = config.getClaude();
-        if (!claude.getApiKey().isBlank()) return Provider.ANTHROPIC;
-        if (claude.isUseVertex()) return Provider.VERTEX;
+        var account = config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi);
+        if (account != null) {
+            return switch (account.effectiveType()) {
+                case API_KEY -> Provider.ANTHROPIC;
+                case VERTEX -> Provider.VERTEX;
+                case OAUTH -> null; // unreachable: servesDirectApi() excludes it
+            };
+        }
         if (config.getOpenai().hasAuth()) return Provider.OPENAI;
         return null;
+    }
+
+    /** The Claude account {@link #detectProvider} resolved to, or null when none can serve. */
+    private static SpawnConfig.ClaudeAccount directApiAccount(SpawnConfig config) {
+        return config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi);
     }
 
     /**
@@ -62,9 +73,13 @@ public class AiHelpClient {
      * confusing thing to tell that user -- name the real reason instead.
      */
     public static String noProviderMessage(SpawnConfig config) {
-        if (config.getClaude().isOauthMode()) {
-            return "A Claude Pro/Max OAuth token is only valid for Claude Code itself, not for AI help. "
-                    + "Run 'isx init' to set an Anthropic or OpenAI API key.";
+        var claude = config.getClaude();
+        if (!claude.effectiveAccounts().isEmpty()) {
+            return "The configured Claude account"
+                    + (claude.effectiveAccounts().size() > 1 ? "s are" : " is")
+                    + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
+                    + " itself and cannot answer here.\n"
+                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.";
         }
         return "No AI credentials configured. "
                 + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
@@ -86,8 +101,8 @@ public class AiHelpClient {
                                   SpawnConfig config, Provider provider,
                                   Consumer<String> onChunk) throws IOException {
         switch (provider) {
-            case ANTHROPIC -> streamAnthropic(question, systemPrompt, config.getClaude(), onChunk);
-            case VERTEX -> streamVertex(question, systemPrompt, config.getClaude(), onChunk);
+            case ANTHROPIC -> streamAnthropic(question, systemPrompt, directApiAccount(config), onChunk);
+            case VERTEX -> streamVertex(question, systemPrompt, directApiAccount(config), onChunk);
             case OPENAI -> streamOpenAI(question, systemPrompt, config.getOpenai(), onChunk);
         }
     }
@@ -101,7 +116,7 @@ public class AiHelpClient {
     }
 
     private static void streamAnthropic(String question, String systemPrompt,
-                                         SpawnConfig.ClaudeConfig claude,
+                                         SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
         var body = JSON.createObjectNode();
         body.put("model", ANTHROPIC_MODEL);
@@ -120,13 +135,13 @@ public class AiHelpClient {
                 .timeout(Duration.ofSeconds(120))
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
 
-        builder.header("x-api-key", claude.getApiKey());
+        builder.header("x-api-key", account.getApiKey());
 
         processStream(sendStream(builder.build()), onChunk);
     }
 
     private static void streamVertex(String question, String systemPrompt,
-                                      SpawnConfig.ClaudeConfig claude,
+                                      SpawnConfig.ClaudeAccount account,
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
 
@@ -140,8 +155,8 @@ public class AiHelpClient {
         msg.put("role", "user");
         msg.put("content", question);
 
-        var region = claude.getCloudMlRegion();
-        var project = claude.getVertexProjectId();
+        var region = account.getCloudMlRegion();
+        var project = account.getVertexProjectId();
         var host = ProxyConfig.vertexHost(region);
         var uri = "https://" + host + "/v1/projects/" + project
                 + "/locations/" + region + "/publishers/anthropic/models/"
