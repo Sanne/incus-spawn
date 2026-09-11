@@ -1194,12 +1194,7 @@ public class MitmProxy {
 
                 upResp.exceptionHandler(err -> {
                     asyncFile.close();
-                    if (!clientResp.headWritten()) {
-                        clientResp.headers().remove("Content-Length");
-                        sendError(clientResp, 502, "Upstream stream error");
-                    } else {
-                        clientResp.reset();
-                    }
+                    sendError(clientResp, 502, "Upstream stream error");
                     vertx.executeBlocking(() -> {
                         Files.deleteIfExists(tempFile);
                         return null;
@@ -1209,7 +1204,12 @@ public class MitmProxy {
 
                 asyncFile.exceptionHandler(err -> {
                     ProxyLog.warn("Disk write error caching " + ref + ": " + err.getMessage());
+                    upResp.handler(null);
+                    upResp.endHandler(null);
+                    upResp.exceptionHandler(null);
+                    upResp.request().reset();
                     asyncFile.close();
+                    sendError(clientResp, 502, "Cache write error");
                     vertx.executeBlocking(() -> {
                         Files.deleteIfExists(tempFile);
                         return null;
@@ -2270,13 +2270,7 @@ public class MitmProxy {
         upResp.endHandler(v -> clientResp.end());
         upResp.exceptionHandler(err -> {
             ProxyLog.warn("Relay stream error: " + err.getMessage());
-            if (!clientResp.ended() && !clientResp.closed()) {
-                if (!clientResp.headWritten()) {
-                    sendError(clientResp, 502, "Upstream stream error");
-                } else {
-                    clientResp.reset();
-                }
-            }
+            sendError(clientResp, 502, "Upstream stream error");
         });
     }
 
@@ -2284,14 +2278,15 @@ public class MitmProxy {
         try {
             if (!resp.ended() && !resp.closed()) {
                 if (resp.headWritten()) {
-                    resp.end();
+                    resp.reset();
                 } else {
+                    resp.headers().remove("Content-Length");
+                    resp.headers().remove("Content-Encoding");
                     resp.setStatusCode(statusCode).end(message);
                 }
             }
         } catch (Exception e) {
-            System.err.println("Failed to send error response: " + e.getMessage());
-            e.printStackTrace(System.err);
+            ProxyLog.warn("Failed to send error response: " + e.getMessage());
         }
     }
 
