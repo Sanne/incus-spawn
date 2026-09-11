@@ -42,35 +42,290 @@ public class SpawnConfig {
     private String autoCloneRepos = "";
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
+    /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
+    public enum ClaudeAccountType {
+        API_KEY("api-key"),
+        OAUTH("oauth"),
+        VERTEX("vertex");
+
+        private final String wireName;
+
+        ClaudeAccountType(String wireName) { this.wireName = wireName; }
+
+        @com.fasterxml.jackson.annotation.JsonValue
+        public String wireName() { return wireName; }
+
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public static ClaudeAccountType fromWire(String value) {
+            if (value == null) return null;
+            var normalized = value.strip().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+            for (var type : values()) {
+                if (type.wireName.equals(normalized)) return type;
+            }
+            throw new IllegalArgumentException("Unknown Claude account type '" + value
+                    + "'. Expected one of: api-key, oauth, vertex.");
+        }
+    }
+
+    /**
+     * One Claude credential. Several may be configured at once so that different instances can
+     * run as different accounts; {@link ClaudeConfig#account()} picks the one to use.
+     */
+    @RegisterForReflection
     @JsonIgnoreProperties(ignoreUnknown = true)
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(
+            fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY,
+            getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE,
+            isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+    public static class ClaudeAccount {
+        private ClaudeAccountType type;
+        private String apiKey = "";
+        private String oauthToken = "";
+        private String cloudMlRegion = "";
+        private String vertexProjectId = "";
+
+        public ClaudeAccount() {}
+
+        public static ClaudeAccount ofApiKey(String apiKey) {
+            var account = new ClaudeAccount();
+            account.setType(ClaudeAccountType.API_KEY);
+            account.setApiKey(apiKey);
+            return account;
+        }
+
+        public static ClaudeAccount ofOauth(String oauthToken) {
+            var account = new ClaudeAccount();
+            account.setType(ClaudeAccountType.OAUTH);
+            account.setOauthToken(oauthToken);
+            return account;
+        }
+
+        public static ClaudeAccount ofVertex(String cloudMlRegion, String vertexProjectId) {
+            var account = new ClaudeAccount();
+            account.setType(ClaudeAccountType.VERTEX);
+            account.setCloudMlRegion(cloudMlRegion);
+            account.setVertexProjectId(vertexProjectId);
+            return account;
+        }
+
+        public ClaudeAccountType getType() { return type; }
+        public void setType(ClaudeAccountType type) { this.type = type; }
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
+        public String getOauthToken() { return oauthToken; }
+        public void setOauthToken(String oauthToken) { this.oauthToken = oauthToken == null ? "" : oauthToken.strip(); }
+        public String getCloudMlRegion() { return cloudMlRegion; }
+        public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion.strip(); }
+        public String getVertexProjectId() { return vertexProjectId; }
+        public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId.strip(); }
+
+        /**
+         * Infers the type when a hand-written account omits it, so the field stays optional for
+         * the unambiguous cases rather than forcing boilerplate.
+         */
+        public ClaudeAccountType effectiveType() {
+            if (type != null) return type;
+            if (!vertexProjectId.isBlank() || !cloudMlRegion.isBlank()) return ClaudeAccountType.VERTEX;
+            if (!oauthToken.isBlank()) return ClaudeAccountType.OAUTH;
+            if (!apiKey.isBlank()) return ClaudeAccountType.API_KEY;
+            return null;
+        }
+
+        /** True when this account carries the credential its type needs. */
+        public boolean isComplete() {
+            var resolved = effectiveType();
+            if (resolved == null) return false;
+            return switch (resolved) {
+                case API_KEY -> !apiKey.isBlank();
+                case OAUTH -> !oauthToken.isBlank();
+                case VERTEX -> !cloudMlRegion.isBlank() && !vertexProjectId.isBlank();
+            };
+        }
+
+        /**
+         * True when isx can call the Anthropic API with this account directly (`isx ask`).
+         *
+         * <p>An OAuth account cannot: a Claude Pro/Max token is only valid for Claude Code
+         * itself, and the Messages API rejects it with an opaque HTTP 429 otherwise. That is a
+         * property of the credential, not of any particular feature.
+         */
+        public boolean servesDirectApi() {
+            return isComplete() && effectiveType() != ClaudeAccountType.OAUTH;
+        }
+
+        /** Human-readable description of what this account is, for init and doctor. */
+        public String describe() {
+            var resolved = effectiveType();
+            if (resolved == null) return "incomplete account";
+            return switch (resolved) {
+                case API_KEY -> "Anthropic API key";
+                case OAUTH -> "Claude Pro/Max OAuth token";
+                case VERTEX -> "Google Cloud Vertex AI (region: " + orNotSet(cloudMlRegion)
+                        + ", project: " + orNotSet(vertexProjectId) + ")";
+            };
+        }
+
+        private static String orNotSet(String value) { return value.isBlank() ? "<not set>" : value; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @com.fasterxml.jackson.annotation.JsonAutoDetect(
+            fieldVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY,
+            getterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE,
+            isGetterVisibility = com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE)
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
     public static class ClaudeConfig {
         /** Prefix of tokens minted by 'claude setup-token'. */
         public static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
         public static final String PLACEHOLDER_OAUTH_TOKEN = OAUTH_TOKEN_PREFIX + "placeholder";
 
+        /** Name given to the account synthesized from a pre-accounts config.yaml. */
+        public static final String LEGACY_ACCOUNT_NAME = "default";
+
+        // Pre-accounts layout. Still read, and still written until credentials next change,
+        // so a config.yaml written by an older isx (or copied between machines) keeps working.
+        // NON_DEFAULT rather than NON_EMPTY: a primitive false is not "empty", and a stray
+        // 'useVertex: false' alongside an accounts block reads like a contradiction.
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_DEFAULT)
         private boolean useVertex;
         private String cloudMlRegion = "";
         private String vertexProjectId = "";
         private String apiKey = "";
         private String oauthToken = "";
 
-        public boolean isUseVertex() { return useVertex; }
+        private Map<String, ClaudeAccount> accounts = new java.util.LinkedHashMap<>();
+        @JsonProperty("default")
+        private String defaultAccount = "";
+
         public void setUseVertex(boolean useVertex) { this.useVertex = useVertex; }
-        public String getCloudMlRegion() { return cloudMlRegion; }
         public void setCloudMlRegion(String cloudMlRegion) { this.cloudMlRegion = cloudMlRegion == null ? "" : cloudMlRegion.strip(); }
-        public String getVertexProjectId() { return vertexProjectId; }
         public void setVertexProjectId(String vertexProjectId) { this.vertexProjectId = vertexProjectId == null ? "" : vertexProjectId.strip(); }
-        public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
-        public String getOauthToken() { return oauthToken; }
         public void setOauthToken(String oauthToken) { this.oauthToken = oauthToken == null ? "" : oauthToken.strip(); }
 
-        public boolean hasAuth() { return useVertex || !oauthToken.isBlank() || !apiKey.isBlank(); }
+        public Map<String, ClaudeAccount> getAccounts() { return accounts; }
+        public void setAccounts(Map<String, ClaudeAccount> accounts) {
+            this.accounts = accounts == null ? new java.util.LinkedHashMap<>() : new java.util.LinkedHashMap<>(accounts);
+        }
+
+        public String getDefaultAccount() { return defaultAccount; }
+        public void setDefaultAccount(String defaultAccount) {
+            this.defaultAccount = defaultAccount == null ? "" : defaultAccount.strip();
+        }
+
+        /**
+         * Every configured account, in file order. A pre-accounts config.yaml contributes a
+         * single synthesized entry so the rest of isx only ever deals with accounts.
+         */
+        public Map<String, ClaudeAccount> effectiveAccounts() {
+            if (!accounts.isEmpty()) {
+                var complete = new java.util.LinkedHashMap<String, ClaudeAccount>();
+                accounts.forEach((name, account) -> {
+                    if (account != null && account.isComplete()) complete.put(name, account);
+                });
+                return complete;
+            }
+            var legacy = legacyAccount();
+            return legacy == null ? Map.of() : Map.of(LEGACY_ACCOUNT_NAME, legacy);
+        }
+
+        private ClaudeAccount legacyAccount() {
+            if (useVertex) return ClaudeAccount.ofVertex(cloudMlRegion, vertexProjectId);
+            if (!oauthToken.isBlank()) return ClaudeAccount.ofOauth(oauthToken);
+            if (!apiKey.isBlank()) return ClaudeAccount.ofApiKey(apiKey);
+            return null;
+        }
+
+        /** The account to use when nothing narrower applies -- today, for every instance. */
+        public ClaudeAccount account() {
+            return accountFor(a -> true);
+        }
+
+        /** Name of the account {@link #account()} resolves to, or "" when none is configured. */
+        public String accountName() {
+            return accountNameFor(a -> true);
+        }
+
+        /**
+         * The configured default when it can do the job, otherwise the first account that can.
+         * A Pro/Max default still serves instances while 'isx ask' quietly uses an API-key or
+         * Vertex account, without either having to be designated for that purpose.
+         */
+        public ClaudeAccount accountFor(java.util.function.Predicate<ClaudeAccount> usable) {
+            var name = accountNameFor(usable);
+            return name.isEmpty() ? null : effectiveAccounts().get(name);
+        }
+
+        public String accountNameFor(java.util.function.Predicate<ClaudeAccount> usable) {
+            var available = effectiveAccounts();
+            if (available.isEmpty()) return "";
+            var preferred = available.get(defaultAccount);
+            if (preferred != null && usable.test(preferred)) return defaultAccount;
+            for (var entry : available.entrySet()) {
+                if (usable.test(entry.getValue())) return entry.getKey();
+            }
+            return "";
+        }
+
+        /** Replaces every configured account with a single one, keeping the file in one shape. */
+        public void setSingleAccount(String name, ClaudeAccount account) {
+            clearAuth();
+            accounts.put(name, account);
+            defaultAccount = name;
+        }
+
+        public void putAccount(String name, ClaudeAccount account) {
+            // Adding an account must not silently re-point the default at it.
+            if (accounts.isEmpty() && defaultAccount.isBlank()) defaultAccount = name;
+            accounts.put(name, account);
+            clearLegacyFields();
+        }
+
+        // Effective accessors. Kept so callers that only ever need "the" account -- container
+        // env, the proxy, doctor -- read the resolved one without knowing about the map.
+        public boolean isUseVertex() {
+            var account = account();
+            return account != null && account.effectiveType() == ClaudeAccountType.VERTEX;
+        }
+
+        public String getCloudMlRegion() {
+            var account = account();
+            return account == null ? "" : account.getCloudMlRegion();
+        }
+
+        public String getVertexProjectId() {
+            var account = account();
+            return account == null ? "" : account.getVertexProjectId();
+        }
+
+        public String getApiKey() {
+            var account = account();
+            return account == null || account.effectiveType() != ClaudeAccountType.API_KEY
+                    ? "" : account.getApiKey();
+        }
+
+        public String getOauthToken() {
+            var account = account();
+            return account == null || account.effectiveType() != ClaudeAccountType.OAUTH
+                    ? "" : account.getOauthToken();
+        }
+
+        public boolean hasAuth() { return account() != null; }
 
         /** True when the container's tools should authenticate via a Claude Pro/Max OAuth token rather than a direct API key. */
-        public boolean isOauthMode() { return !useVertex && !oauthToken.isBlank(); }
+        public boolean isOauthMode() {
+            var account = account();
+            return account != null && account.effectiveType() == ClaudeAccountType.OAUTH;
+        }
 
         public void clearAuth() {
+            accounts.clear();
+            defaultAccount = "";
+            clearLegacyFields();
+        }
+
+        private void clearLegacyFields() {
             useVertex = false;
             apiKey = "";
             oauthToken = "";
