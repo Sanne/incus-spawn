@@ -22,6 +22,7 @@ import java.nio.file.Files;
         groupCommands = {
                 VmCommand.Start.class,
                 VmCommand.Stop.class,
+                VmCommand.Restart.class,
                 VmCommand.Status.class,
                 VmCommand.Resize.class,
                 VmCommand.Console.class,
@@ -60,6 +61,36 @@ public class VmCommand extends BaseCommand {
             BuildOutput.header("Stopping VM");
             VmManager.stop();
             return CommandResult.SUCCESS;
+        }
+    }
+
+    @CommandDefinition(
+            name = "restart",
+            description = "Stop and restart the VM (applies pending appliance updates)",
+            generateHelp = true
+    )
+    public static class Restart extends BaseCommand {
+        @Option(name = "yes", shortName = 'y', hasValue = false,
+                description = "Skip the confirmation prompt")
+        boolean yes;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (!VmManager.isRunning()) {
+                System.out.println("VM is not running. Use 'isx vm start' to start it.");
+                return CommandResult.SUCCESS;
+            }
+            var running = VmManager.runningApplianceVersion();
+            var installed = VmManager.applianceVersion();
+            if (running != null && !running.equals(installed)) {
+                System.out.println("Appliance update pending (" + running + " → " + installed + ").");
+            }
+            System.out.println("Running containers will be stopped.");
+            if (!CleanCommand.confirm("Restart the VM?", yes)) {
+                return CommandResult.SUCCESS;
+            }
+            BuildOutput.header("Restarting VM");
+            return VmManager.restart() ? CommandResult.SUCCESS : CommandResult.valueOf(1);
         }
     }
 

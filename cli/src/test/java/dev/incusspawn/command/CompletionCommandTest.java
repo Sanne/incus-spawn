@@ -73,7 +73,7 @@ class CompletionCommandTest {
         assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.zsh)
                 .contains("'resize:grow the VM data disk that backs the storage pool'"));
         assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.bash)
-                .contains("start stop status resize console"));
+                .contains("start stop restart status resize console"));
         assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.fish)
                 .contains("-a resize"));
     }

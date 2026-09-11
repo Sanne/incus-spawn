@@ -241,6 +241,7 @@ public class CompletionCommand extends BaseCommand {
               _proxy_subcmds=(
                 'start:start the MITM authentication proxy'
                 'stop:stop the proxy'
+                'restart:restart the proxy service'
                 'status:check if the proxy is running'
                 'install:install the proxy as a systemd user service'
                 'uninstall:stop and remove the systemd proxy service'
@@ -263,7 +264,7 @@ public class CompletionCommand extends BaseCommand {
                       _arguments \\
                         '(-h --help)'{-h,--help}'[Show help]' \\
                         '--port=[Local HTTP port]:port' ;;
-                    stop|status|install|uninstall|logs)
+                    stop|restart|status|install|uninstall|logs)
                       _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                   esac ;;
               esac
@@ -313,6 +314,7 @@ public class CompletionCommand extends BaseCommand {
               _vm_subcmds=(
                 'start:start the VM (creates disk image on first run)'
                 'stop:stop the VM (graceful shutdown)'
+                'restart:stop and restart the VM (applies pending appliance updates)'
                 'status:show VM status and system diagnostics'
                 'resize:grow the VM data disk that backs the storage pool'
                 'console:follow VM serial console output'
@@ -542,12 +544,12 @@ public class CompletionCommand extends BaseCommand {
                   fi
                   ;;
                 proxy)
-                  local proxy_subcmds="start stop status install uninstall logs dump"
+                  local proxy_subcmds="start stop restart status install uninstall logs dump"
                   local proxy_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      start|stop|status|install|uninstall|logs|dump) proxy_cmd="${words[j]}"; break ;;
+                      start|stop|restart|status|install|uninstall|logs|dump) proxy_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$proxy_cmd" ]]; then
@@ -603,12 +605,12 @@ public class CompletionCommand extends BaseCommand {
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
                 vm)
-                  local vm_subcmds="start stop status resize console"
+                  local vm_subcmds="start stop restart status resize console"
                   local vm_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      start|stop|status|resize|console) vm_cmd="${words[j]}"; break ;;
+                      start|stop|restart|status|resize|console) vm_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$vm_cmd" ]]; then
@@ -763,13 +765,14 @@ public class CompletionCommand extends BaseCommand {
 
             # ── proxy ────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
-            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a dump      -d 'Run a local pass-through proxy for API traffic capture'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a start     -d 'Start the MITM authentication proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a stop      -d 'Stop the proxy'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a restart   -d 'Restart the proxy service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a status    -d 'Check if the proxy is running'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a install   -d 'Install the proxy as a systemd user service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a uninstall -d 'Stop and remove the systemd proxy service'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a logs      -d 'Follow the proxy log file in real time'
+            complete -c isx -f -n '__isx_using_subcommand proxy; and not string match -qr -- "\\b(start|stop|restart|status|install|uninstall|logs|dump)\\b" (commandline -opc)' -a dump      -d 'Run a local pass-through proxy for API traffic capture'
 
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l port        -d 'MITM TLS proxy port'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l health-port -d 'Health check HTTP port'
@@ -788,11 +791,12 @@ public class CompletionCommand extends BaseCommand {
 
             # ── vm ──────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|status|resize|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (applies pending appliance updates)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
 
             # ── update-base ─────────────────────────────────────────────────────────────
 

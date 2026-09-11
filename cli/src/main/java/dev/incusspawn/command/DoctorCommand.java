@@ -806,8 +806,7 @@ public class DoctorCommand extends BaseCommand {
 
     private static void restartVm() {
         BuildOutput.header("Restarting VM");
-        VmManager.stop();
-        if (!VmManager.start()) throw new RuntimeException("VM failed to start");
+        if (!VmManager.restart()) throw new RuntimeException("VM failed to start");
     }
 
     // ---- Layer 4: Proxy ----
