@@ -10,6 +10,11 @@ on:
       - 'appliance/**'
   workflow_dispatch:
   workflow_call:
+    inputs:
+      version:
+        description: 'Version tag to embed in the appliance (e.g. v0.3.7 — the v prefix is stripped). Defaults to Maven project.version.'
+        required: false
+        type: string
     outputs:
       cache_key_x86_64:
         description: Cache key for x86_64 appliance image
@@ -29,7 +34,9 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-x86_64-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Restore cached image
         id: cache
@@ -60,7 +67,11 @@ jobs:
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache appliance/build.sh appliance/build
+        run: |
+          VER="${INPUT_VERSION#v}"
+          sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache ${VER:+ISX_VERSION=$VER} appliance/build.sh appliance/build
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Cache kernel source
         if: steps.cache.outputs.cache-hit != 'true'
@@ -71,6 +82,19 @@ jobs:
 
       - name: Report image size
         run: ls -lh appliance/build/
+
+      - name: Verify embedded version
+        if: inputs.version != ''
+        run: |
+          EXPECTED="${INPUT_VERSION#v}"
+          ACTUAL=$(zstd -d appliance/build/rootfs.tar.zst --stdout | tar xf - --to-stdout ./etc/isx-version 2>/dev/null || echo "NOT FOUND")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Appliance version mismatch: expected '$EXPECTED', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "Appliance version verified: $ACTUAL"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'
@@ -96,7 +120,9 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-aarch64-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Restore cached image
         id: cache
@@ -129,7 +155,11 @@ jobs:
 
       - name: Build appliance image
         if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache appliance/build.sh appliance/build
+        run: |
+          VER="${INPUT_VERSION#v}"
+          sudo env KERNEL_CACHE_DIR=/tmp/kernel-cache ${VER:+ISX_VERSION=$VER} appliance/build.sh appliance/build
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Cache kernel source
         if: steps.cache.outputs.cache-hit != 'true'
@@ -140,6 +170,19 @@ jobs:
 
       - name: Report image size
         run: ls -lh appliance/build/
+
+      - name: Verify embedded version
+        if: inputs.version != ''
+        run: |
+          EXPECTED="${INPUT_VERSION#v}"
+          ACTUAL=$(zstd -d appliance/build/rootfs.tar.zst --stdout | tar xf - --to-stdout ./etc/isx-version 2>/dev/null || echo "NOT FOUND")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::Appliance version mismatch: expected '$EXPECTED', got '$ACTUAL'"
+            exit 1
+          fi
+          echo "Appliance version verified: $ACTUAL"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
 
       - name: Cache built image
         if: steps.cache.outputs.cache-hit != 'true'
