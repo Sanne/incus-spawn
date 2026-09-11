@@ -40,12 +40,34 @@ public class AiHelpClient {
     public static final String VERTEX_MODEL = "claude-sonnet-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
 
+    /**
+     * Picks the provider to answer with, or null when nothing usable is configured.
+     *
+     * <p>A Claude Pro/Max OAuth token is deliberately not a candidate. Such a token is only
+     * valid for Claude Code itself -- the Messages API answers anything else with an opaque
+     * HTTP 429 {@code rate_limit_error} -- so isx only ever forwards it into instances, where
+     * real Claude Code uses it. It is not a credential this command can spend.
+     */
     public static Provider detectProvider(SpawnConfig config) {
         var claude = config.getClaude();
-        if (!claude.getApiKey().isBlank() || claude.isOauthMode()) return Provider.ANTHROPIC;
+        if (!claude.getApiKey().isBlank()) return Provider.ANTHROPIC;
         if (claude.isUseVertex()) return Provider.VERTEX;
         if (config.getOpenai().hasAuth()) return Provider.OPENAI;
         return null;
+    }
+
+    /**
+     * Explains why {@link #detectProvider} found nothing usable. A Claude Pro/Max OAuth token
+     * counts as configured credentials to the rest of isx, so "no credentials" would be a
+     * confusing thing to tell that user -- name the real reason instead.
+     */
+    public static String noProviderMessage(SpawnConfig config) {
+        if (config.getClaude().isOauthMode()) {
+            return "A Claude Pro/Max OAuth token is only valid for Claude Code itself, not for AI help. "
+                    + "Run 'isx init' to set an Anthropic or OpenAI API key.";
+        }
+        return "No AI credentials configured. "
+                + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
     }
 
     public static AiResponse ask(String question, String systemPrompt, SpawnConfig config) throws IOException {
@@ -73,8 +95,7 @@ public class AiHelpClient {
     private static Provider requireProvider(SpawnConfig config) throws IOException {
         var provider = detectProvider(config);
         if (provider == null) {
-            throw new IOException(
-                    "No AI credentials configured. Run 'isx init' to set up Anthropic or OpenAI credentials.");
+            throw new IOException(noProviderMessage(config));
         }
         return provider;
     }
@@ -99,11 +120,7 @@ public class AiHelpClient {
                 .timeout(Duration.ofSeconds(120))
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
 
-        if (claude.isOauthMode()) {
-            builder.header("Authorization", "Bearer " + claude.getOauthToken());
-        } else {
-            builder.header("x-api-key", claude.getApiKey());
-        }
+        builder.header("x-api-key", claude.getApiKey());
 
         processStream(sendStream(builder.build()), onChunk);
     }
@@ -235,22 +252,42 @@ public class AiHelpClient {
         }
     }
 
+    /**
+     * Renders an error response as a diagnosable one-liner. Providers sometimes answer with a
+     * deliberately unhelpful {@code message} (an OAuth token used outside Claude Code returns a
+     * bare "Error"), so the error type and request id carry the signal and must survive.
+     */
+    private static String describeError(int status, String body) {
+        var detail = new StringBuilder("API error (").append(status);
+        String message = null;
+        try {
+            var tree = JSON.readTree(body);
+            message = tree.path("error").path("message").asText(null);
+            var type = tree.path("error").path("type").asText(null);
+            if (type != null) detail.append(", ").append(type);
+            var requestId = tree.path("request_id").asText(null);
+            if (requestId != null) detail.append(", ").append(requestId);
+        } catch (IOException e) {
+            // Not JSON -- fall through and report the raw body below.
+        }
+        detail.append("): ");
+        if (message != null && !message.isBlank()) {
+            detail.append(message);
+        } else if (!body.isBlank()) {
+            detail.append(body.length() > 200 ? body.substring(0, 200) + "..." : body);
+        } else {
+            detail.append("no response body");
+        }
+        return detail.toString();
+    }
+
     private static InputStream sendStream(HttpRequest request) throws IOException {
         try {
             var response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 try (var errStream = response.body()) {
                     var errBody = new String(errStream.readAllBytes(), StandardCharsets.UTF_8);
-                    try {
-                        var tree = JSON.readTree(errBody);
-                        var msg = tree.path("error").path("message").asText(null);
-                        if (msg != null) {
-                            throw new IOException("API error (" + response.statusCode() + "): " + msg);
-                        }
-                    } catch (IOException e) {
-                        if (e.getMessage().startsWith("API error")) throw e;
-                    }
-                    throw new IOException("API request failed with status " + response.statusCode());
+                    throw new IOException(describeError(response.statusCode(), errBody));
                 }
             }
             return response.body();

@@ -1146,7 +1146,7 @@ public class ListCommand extends BaseCommand {
         if (!key.hasCtrl() && key.isChar('?')) {
             var config = SpawnConfig.load();
             if (AiHelpClient.detectProvider(config) == null) {
-                statusMessage = "No AI credentials configured. Run 'isx init' first.";
+                statusMessage = AiHelpClient.noProviderMessage(config);
                 return true;
             }
             helpInput = new TextInputState();
@@ -3033,7 +3033,7 @@ public class ListCommand extends BaseCommand {
         if (key.isChar('?')) {
             var config = SpawnConfig.load();
             if (AiHelpClient.detectProvider(config) == null) {
-                statusMessage = "No AI credentials configured. Run 'isx init' first.";
+                statusMessage = AiHelpClient.noProviderMessage(config);
                 mode = Mode.BROWSE;
                 return true;
             }
