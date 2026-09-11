@@ -472,7 +472,7 @@ Extraction happens on the host -- the container doesn't need `tar`, `unzip`, or 
 
 Tool schema fields (all optional except `name`):
 - `packages` -- dnf packages to install
-- `downloads` -- artifacts to download, cache on the host, and extract into the container
+- `downloads` -- artifacts to download, cache on the host, and copy and/or extract into the container
 - `requires` -- list of other tool names that must be installed first (resolved transitively; circular dependencies are detected and rejected)
 - `run` -- shell commands as root
 - `run_as_user` -- shell commands as agentuser
@@ -485,10 +485,12 @@ Tool schema fields (all optional except `name`):
 Download entry fields:
 - `url` (required) -- download URL
 - `sha256` (recommended) -- SHA-256 checksum; enables cache reuse and verifies integrity
-- `extract` (required) -- directory in the container to extract into
+- `extract` (optional) -- directory in the container to extract into
+- `destination_file` (optional) -- exact path at which to expose the downloaded file in the container; `~/` resolves to `/home/agentuser/`
+- `extract_in_container` (optional) -- extract inside the container instead of on the host
 - `links` (optional) -- map of `source_path: symlink_path` to create after extraction
 
-Supported archive formats: `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
+Each download must set `extract`, `destination_file`, or both. Setting both preserves the downloaded archive at `destination_file` and also exposes its extracted contents. Supported archive formats for `extract` are `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
 Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `verify`. Environment variables are collected from all tools and the template chain after install, then written centrally. Resolution follows the same order as templates (see [Configuration](#configuration)).
 
