@@ -244,7 +244,7 @@ Backend selection: vfkit on macOS, QEMU on Linux (with KVM when available). Crea
 
 ### CI (`.github/workflows/`)
 
-**Build** (`build-appliance.yml`): separate jobs for x86_64 (`ubuntu-latest`) and aarch64 (`ubuntu-24.04-arm`). Artifacts cached by content hash of `appliance/**` files. Includes kernel compilation (~3-5 minutes with minimal config).
+**Build** (`build-appliance.yml`): separate jobs for x86_64 (`ubuntu-latest`) and aarch64 (`ubuntu-24.04-arm`). Artifacts cached by version + content hash of `appliance/**` files (release builds get a unique cache key per version so two releases with identical appliance sources don't share a stale image). The release workflow passes the tag via a `version` input; `build.sh` embeds it in `/etc/isx-version`, and a post-build step verifies the embedded version matches. Includes kernel compilation (~3-5 minutes with minimal config).
 
 **Integration** (`test-integration.yml`): restores cached build artifacts, creates a btrfs disk image from the tarball, boots via QEMU with KVM, verifies the VM reaches `ISX READY` state, and runs the Incus smoke test.
 
