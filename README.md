@@ -19,7 +19,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), p
 
 ## Quick Start
 
-Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|status|resize`. Windows is not yet supported.
+Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize`. Windows is not yet supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
@@ -1068,6 +1068,7 @@ Manage the MITM authentication proxy.
 |------------|-------------|
 | `start` | Start the proxy |
 | `stop` | Stop the proxy (handles both systemd and manual processes) |
+| `restart` | Restart the proxy service |
 | `status` | Check if the proxy is running |
 | `install` | Install as a systemd user service (auto-starts on boot) |
 | `uninstall` | Stop and remove the systemd proxy service |
@@ -1135,10 +1136,21 @@ Manage the incus-spawn VM appliance. macOS only.
 |------------|-------------|
 | `start` | Start the VM (creates disk image on first run) |
 | `stop` | Stop the VM (graceful shutdown) |
+| `restart` | Stop and restart the VM (applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |
 | `console` | Follow VM serial console output |
 | `check-version` | Check whether the running appliance matches the installed version |
+
+#### `isx vm restart`
+
+    isx vm restart [options]
+
+Stops and restarts the VM, applying any pending appliance updates. Running containers will be stopped.
+
+| Option | Description |
+|--------|-------------|
+| `-y`, `--yes` | Skip the confirmation prompt |
 
 #### `isx vm resize`
 

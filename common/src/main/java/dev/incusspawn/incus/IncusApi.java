@@ -112,6 +112,11 @@ class IncusApi {
             try (var ch = SocketChannel.open(StandardProtocolFamily.UNIX)) {
                 ch.connect(UnixDomainSocketAddress.of(vsockSocket));
                 return "vsock socket at " + vsockSocket + " is accessible — please retry.";
+            } catch (ConnectException e) {
+                return "vsock socket at " + vsockSocket
+                        + " is not accepting connections — the tunnel is not set up."
+                        + "\nThe VM may still be booting. Wait a few seconds and retry,"
+                        + " or run 'isx vm restart'.";
             } catch (IOException e) {
                 return "vsock socket exists at " + vsockSocket
                         + " but connection failed: " + e.getMessage()

@@ -17,14 +17,19 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
+import java.util.function.Supplier;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -37,6 +42,64 @@ public final class VmManager {
     private VmManager() {}
 
     public enum Backend { VFKIT, QEMU }
+
+    /** Where forwarder streams are leaking, inferred from host vs in-guest connection counts. */
+    public enum LeakLayer {
+        FORWARDER("forwarder is lingering children (link 3) — the in-VM forwarder-restart clears it"),
+        VFKIT("vfkit is not reaping host fds (link 2) — a VM restart is required");
+        public final String description;
+        LeakLayer(String description) { this.description = description; }
+    }
+
+    public static LeakLayer leakLayer(int hostCount, int guestCount) {
+        if (guestCount <= 0) return LeakLayer.FORWARDER;
+        return guestCount * 2 <= hostCount ? LeakLayer.VFKIT : LeakLayer.FORWARDER;
+    }
+
+    /**
+     * Determine which tunnel layer is responsible for a leak using the host-side vfkit fd count
+     * and the in-guest forwarder socat count. Returns empty if either count is unavailable.
+     */
+    public static Optional<LeakLayer> detectLeakLayer() {
+        int host = vsockForwarderConnectionCount();
+        if (host < 0) return Optional.empty();
+        var guest = VmAgentClient.socatCount();
+        if (guest.isEmpty()) return Optional.empty();
+        return Optional.of(leakLayer(host, guest.getAsInt()));
+    }
+
+    /** Overall tunnel health, for proactive detection of wedged tunnels. */
+    public enum TunnelHealth {
+        HEALTHY,
+        VFKIT_WEDGED,
+        FORWARDER_ISSUE,
+        UNKNOWN
+    }
+
+    /**
+     * Probe the vsock tunnel's health. Intended for periodic checks from the TUI or during
+     * long-running operations (builds). When the Incus tunnel is dead but the agent lane answers,
+     * the host-side tunnel (vfkit) is wedged and only {@code isx vm restart} can fix it.
+     */
+    public static TunnelHealth probeTunnelHealth() {
+        if (!Platform.isMacOS()) return TunnelHealth.HEALTHY;
+        if (!isRunning()) return TunnelHealth.UNKNOWN;
+        if (IncusClient.isReachable()) return TunnelHealth.HEALTHY;
+        // API is unreachable — try to determine which layer is at fault.
+        // detectLeakLayer() talks to the agent (socatCount), so a successful result
+        // also confirms the agent lane is healthy — no separate ping() needed.
+        var layer = detectLeakLayer();
+        if (layer.isPresent()) {
+            return switch (layer.get()) {
+                case VFKIT -> TunnelHealth.VFKIT_WEDGED;
+                case FORWARDER -> TunnelHealth.FORWARDER_ISSUE;
+            };
+        }
+        // Layer detection unavailable (lsof or socatCount failed); a bare ping only proves
+        // the agent lane is alive — it cannot distinguish a vfkit wedge from a stopped Incus
+        // daemon or a crashed forwarder, so we cannot safely claim VFKIT_WEDGED here.
+        return TunnelHealth.UNKNOWN;
+    }
 
     private static final String DEFAULT_GATEWAY = "10.166.11.1";
     private static final String DEFAULT_MITM_PORT = "18443";
@@ -186,6 +249,49 @@ public final class VmManager {
         return Backend.QEMU;
     }
 
+    // --- VM lifecycle lock ---
+
+    private static class VmLockHolder implements AutoCloseable {
+        private final FileChannel channel;
+        private final FileLock lock;
+        VmLockHolder(FileChannel channel, FileLock lock) {
+            this.channel = channel;
+            this.lock = lock;
+        }
+        @Override public void close() {
+            try { lock.release(); } catch (IOException ignored) {}
+            try { channel.close(); } catch (IOException ignored) {}
+        }
+    }
+
+    private static final int VM_LOCK_TIMEOUT_SECONDS = 30;
+
+    private static VmLockHolder acquireVmLock() {
+        try {
+            Files.createDirectories(Environment.vmStateDir());
+            var path = Environment.vmStateDir().resolve("vm.lock");
+            var channel = FileChannel.open(path,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            var lock = channel.tryLock();
+            if (lock != null) return new VmLockHolder(channel, lock);
+
+            System.err.println("Another isx process is managing the VM — waiting...");
+            long deadline = System.nanoTime() + VM_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
+            while (System.nanoTime() < deadline) {
+                try { Thread.sleep(500); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                lock = channel.tryLock();
+                if (lock != null) return new VmLockHolder(channel, lock);
+            }
+            channel.close();
+            throw new VmException("Timed out waiting for another isx process to finish managing the VM.");
+        } catch (IOException e) {
+            throw new VmException("Failed to acquire VM lock: " + e.getMessage());
+        }
+    }
+
     // --- Process lifecycle ---
 
     public static boolean isRunning() {
@@ -219,6 +325,15 @@ public final class VmManager {
     }
 
     public static boolean start() {
+        try (var ignored = acquireVmLock()) {
+            return startLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean startLocked() {
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
             return true;
@@ -261,7 +376,32 @@ public final class VmManager {
         }
     }
 
+    /**
+     * Restart the VM, applying any pending appliance disk update via {@link #ensureDisk()}.
+     */
+    public static boolean restart() {
+        try (var ignored = acquireVmLock()) {
+            if (!isRunning()) {
+                BuildOutput.note("VM not running — starting.");
+            } else {
+                stopLocked();
+            }
+            return startLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
     public static void stop() {
+        try (var ignored = acquireVmLock()) {
+            stopLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    private static void stopLocked() {
         if (!isRunning()) {
             BuildOutput.note("VM not running.");
             cleanupStaleFiles();
@@ -360,6 +500,11 @@ public final class VmManager {
      * forwarder closes its end; a steadily climbing count is the signature of the
      * forwarder leak. Returns -1 if the count can't be determined (non-macOS, no
      * socket, or lsof unavailable).
+     *
+     * <p>The raw lsof count includes the LISTEN fd (vfkit's listener on the socket),
+     * which is always present while the VM runs. We subtract 1 so the return value
+     * reflects actual forwarded connections only — a healthy idle tunnel reads 0,
+     * not 1.
      */
     public static int vsockForwarderConnectionCount() {
         var sock = Environment.vmVsockSocket();
@@ -378,7 +523,10 @@ public final class VmManager {
                 proc.destroyForcibly();
                 return -1;
             }
-            return future.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            if (proc.exitValue() != 0) return -1;
+            int raw = future.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            if (raw < 0) return -1;
+            return Math.max(0, raw - 1);
         } catch (IOException | InterruptedException | java.util.concurrent.ExecutionException
                  | java.util.concurrent.TimeoutException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
@@ -427,27 +575,41 @@ public final class VmManager {
      * independent vsock port that answers even when the Incus tunnel is wedged, so recovery is
      * ~1 s. Restarting only drops connections that are already stalled (nothing is getting through,
      * or we would not be here), so it is safe to trigger even for other isx processes.
+     *
+     * <p>Before attempting a forwarder restart, the recovery path now checks which tunnel layer is
+     * wedged (see {@link LeakLayer}). A host-side (vfkit) wedge cannot be fixed by restarting the
+     * guest forwarder — the recovery skips the restart and fails fast with an actionable message.
      */
     private static boolean recoverReachability() {
-        return recoverReachability(VmManager::waitUntilReady, VmAgentClient::restartForwarder);
+        return recoverReachability(VmManager::waitUntilReady, VmAgentClient::restartForwarder,
+                VmManager::detectLeakLayer);
     }
 
     /**
      * Testable core of {@link #recoverReachability()}. {@code waitUntilReady} probes reachability
      * for a given number of seconds; {@code restartForwarder} asks the control agent to restart the
-     * forwarder and returns whether it confirmed. Split out so the grace / restart / backstop
+     * forwarder and returns whether it confirmed; {@code detectLayer} identifies whether the wedge
+     * is on the host (vfkit) or guest (forwarder) side. Split out so the grace / restart / backstop
      * orchestration can be unit-tested without a live VM.
      */
-    static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder) {
+    static boolean recoverReachability(IntPredicate waitUntilReady, BooleanSupplier restartForwarder,
+                                       Supplier<Optional<LeakLayer>> detectLayer) {
         // A momentary blip (e.g. the daemon finishing a burst of work) may clear on its own.
         if (waitUntilReady.test(REACHABILITY_GRACE_SECONDS)) return true;
 
-        // Still unreachable after the grace window: restart the wedged forwarder in place.
+        // Determine which layer is wedged before attempting the wrong remedy.
+        var layer = detectLayer.get();
+        if (layer.isPresent() && layer.get() == LeakLayer.VFKIT) {
+            System.err.println("The host-side tunnel (vfkit) is wedged — a forwarder restart cannot fix this.");
+            System.err.println("Run 'isx vm restart' to restore connectivity.");
+            return false;
+        }
+
+        // Forwarder-layer issue or unknown layer: restart the wedged forwarder in place.
         if (restartForwarder.getAsBoolean()) {
             System.err.println("Restarted the vsock forwarder; waiting for Incus...");
             if (waitUntilReady.test(FORWARDER_RECOVERY_WAIT_SECONDS)) return true;
         } else {
-            // False covers both an unreachable agent and an unexpected reply — we cannot tell which.
             System.err.println("The control agent did not confirm a forwarder restart.");
         }
 
@@ -458,9 +620,19 @@ public final class VmManager {
 
     /**
      * Auto-start hook: ensure VM is running and Incus is reachable.
-     * Prints progress to stderr so it doesn't interfere with command output.
+     * Holds the VM lifecycle lock for the full check-then-start window so a concurrent
+     * restart cannot race between the isRunning() check and the start attempt.
      */
     public static boolean ensureRunning() {
+        try (var ignored = acquireVmLock()) {
+            return ensureRunningLocked();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean ensureRunningLocked() {
         if (isRunning()) {
             if (IncusClient.isReachable()) {
                 warnIfApplianceStale();
@@ -483,7 +655,7 @@ public final class VmManager {
         }
 
         System.err.print("Starting incus-spawn VM... ");
-        if (!start()) return false;
+        if (!startLocked()) return false;
 
         System.err.println("Waiting for Incus daemon...");
         if (waitUntilReady(60)) {
@@ -510,7 +682,7 @@ public final class VmManager {
 
     public static String skewMessage(String running, String installed) {
         return "VM is running appliance " + running + "; " + installed
-                + " is installed — run 'isx vm stop && isx vm start' to apply it.";
+                + " is installed — run 'isx vm restart' to apply it.";
     }
 
     private static void warnIfApplianceStale() {

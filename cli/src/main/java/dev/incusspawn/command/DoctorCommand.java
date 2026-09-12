@@ -697,9 +697,9 @@ public class DoctorCommand extends BaseCommand {
             return new Finding(Status.OK, base.label(), detail, null);
         }
         if (guest.isPresent()) {
-            var layer = leakLayer(host, guest.getAsInt());
+            var layer = VmManager.leakLayer(host, guest.getAsInt());
             detail = append(detail, "— " + layer.description);
-            if (layer == LeakLayer.FORWARDER && VmAgentClient.ping()) {
+            if (layer == VmManager.LeakLayer.FORWARDER && VmAgentClient.ping()) {
                 return Finding.warn(base.label(), detail,
                         new Remediation("Restart the forwarder in the VM (no reboot — running containers keep going)",
                                 false, DoctorCommand::restartForwarderViaAgent));
@@ -770,18 +770,6 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    /** Where forwarder streams are leaking, inferred from host vs in-guest connection counts. */
-    enum LeakLayer {
-        FORWARDER("forwarder is lingering children (link 3) — the in-VM forwarder-restart clears it"),
-        VFKIT("vfkit is not reaping host fds (link 2) — a VM restart is required");
-        final String description;
-        LeakLayer(String description) { this.description = description; }
-    }
-
-    static LeakLayer leakLayer(int hostCount, int guestCount) {
-        return guestCount * 2 <= hostCount ? LeakLayer.VFKIT : LeakLayer.FORWARDER;
-    }
-
     private static String append(String detail, String extra) {
         if (detail == null || detail.isBlank()) return extra;
         return detail + " " + extra;
@@ -806,8 +794,7 @@ public class DoctorCommand extends BaseCommand {
 
     private static void restartVm() {
         BuildOutput.header("Restarting VM");
-        VmManager.stop();
-        if (!VmManager.start()) throw new RuntimeException("VM failed to start");
+        if (!VmManager.restart()) throw new RuntimeException("VM failed to start");
     }
 
     // ---- Layer 4: Proxy ----

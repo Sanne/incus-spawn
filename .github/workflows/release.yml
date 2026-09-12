@@ -12,6 +12,8 @@ concurrency:
 jobs:
   appliance:
     uses: ./.github/workflows/build-appliance.yml
+    with:
+      version: ${{ github.ref_name }}
 
   channel:
     runs-on: ubuntu-latest

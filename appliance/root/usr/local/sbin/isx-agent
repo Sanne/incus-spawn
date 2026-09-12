@@ -72,14 +72,26 @@ case "$verb" in
         # socat (parent + children, freeing the host fds vfkit pinned) and relaunch it.
         # The agent's own listener is untouched (different cmdline).
         #
-        # Detach the relaunch with setsid + std fds to /dev/null so the new forwarder neither
-        # inherits this connection's socket fds (which would leave a dangling dup) nor shares
-        # our process group (so socat tearing this connection down can't signal it). The agent
-        # connection then closes cleanly when this script exits — no lingering fd.
+        # Detach the relaunch with setsid so the new forwarder neither inherits this
+        # connection's socket fds (which would leave a dangling dup) nor shares our process
+        # group (so socat tearing this connection down can't signal it). Stderr goes to
+        # /dev/console (the virtio-serial that feeds vm.log) so socat startup failures are
+        # visible — the boot-time launch inherits the console naturally, but earlier versions
+        # of this restart redirected to /dev/null, hiding any bind/socket errors.
         pkill -f "$FORWARDER_MATCH" 2>/dev/null || true
         sleep 1
-        setsid /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" </dev/null >/dev/null 2>&1 &
-        echo restarted
+        setsid /usr/local/sbin/isx-start-vsock-forwarder "$INCUS_VSOCK_PORT" </dev/null >/dev/console 2>&1 &
+        # Verify the forwarder survived startup (bind, missing socket, etc.) before confirming.
+        i=0
+        while [ $i -lt 4 ]; do
+            sleep 0.5
+            if pgrep -f "$FORWARDER_MATCH" >/dev/null 2>&1; then
+                echo restarted
+                exit 0
+            fi
+            i=$((i + 1))
+        done
+        echo "error: forwarder process not found after restart"
         ;;
     btrfs-usage)
         # Per-subvolume referenced/exclusive sizes for a btrfs pool. Runs here because the pool

@@ -6,8 +6,11 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +36,49 @@ public final class ProxyService {
     static final String RESTART_PREVENT_LINE = "RestartPreventExitStatus=" + EXIT_CONFIG;
 
     private ProxyService() {}
+
+    // --- Lifecycle lock ---
+
+    private static class ProxyLockHolder implements AutoCloseable {
+        private final FileChannel channel;
+        private final FileLock lock;
+        ProxyLockHolder(FileChannel channel, FileLock lock) {
+            this.channel = channel;
+            this.lock = lock;
+        }
+        @Override public void close() {
+            try { lock.release(); } catch (IOException ignored) {}
+            try { channel.close(); } catch (IOException ignored) {}
+        }
+    }
+
+    private static final int PROXY_LOCK_TIMEOUT_SECONDS = 30;
+
+    private static ProxyLockHolder acquireProxyLock() {
+        try {
+            Files.createDirectories(Environment.configDir());
+            var path = Environment.configDir().resolve("proxy.lock");
+            var channel = FileChannel.open(path,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            var lock = channel.tryLock();
+            if (lock != null) return new ProxyLockHolder(channel, lock);
+
+            System.err.println("Another isx process is managing the proxy — waiting...");
+            long deadline = System.nanoTime() + PROXY_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
+            while (System.nanoTime() < deadline) {
+                try { Thread.sleep(500); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                lock = channel.tryLock();
+                if (lock != null) return new ProxyLockHolder(channel, lock);
+            }
+            channel.close();
+            throw new RuntimeException("Timed out waiting for another isx process to finish managing the proxy.");
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to acquire proxy lock: " + e.getMessage());
+        }
+    }
 
     /** The systemd unit written by {@link #install()}. Package-private so tests can assert on it. */
     static String serviceUnitContent() {
@@ -114,6 +160,12 @@ public final class ProxyService {
     private static final int REQUIRED_JAVA_MAJOR = 25;
 
     public static boolean install() {
+        try (var ignored = acquireProxyLock()) {
+            return installLocked();
+        }
+    }
+
+    private static boolean installLocked() {
         if (Platform.isMacOS()) {
             return installMacOs();
         }
@@ -167,6 +219,12 @@ public final class ProxyService {
     }
 
     public static boolean uninstall() {
+        try (var ignored = acquireProxyLock()) {
+            return uninstallLocked();
+        }
+    }
+
+    private static boolean uninstallLocked() {
         if (Platform.isMacOS()) {
             uninstallMacOs();
             return true;
@@ -194,10 +252,22 @@ public final class ProxyService {
     }
 
     public static boolean restart() {
-        return restart(System.err::println);
+        try (var ignored = acquireProxyLock()) {
+            return restartLocked();
+        }
     }
 
     public static boolean restart(java.util.function.Consumer<String> log) {
+        try (var ignored = acquireProxyLock()) {
+            return restartLocked(log);
+        }
+    }
+
+    private static boolean restartLocked() {
+        return restartLocked(System.err::println);
+    }
+
+    private static boolean restartLocked(java.util.function.Consumer<String> log) {
         ProxyLog.info("Service restarting");
         log.accept("Restarting proxy service...");
         if (Platform.isMacOS()) {
@@ -206,12 +276,9 @@ public final class ProxyService {
             waitForProxyExit();
             runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
         } else {
-            // Clear any prior failure before starting. A unit halted by RestartPreventExitStatus
-            // sits in 'failed' state, and repeated restart attempts can trip systemd's start rate
-            // limit (StartLimitBurst), after which even a valid start is refused until the state
-            // is reset. 'restart' alone recovers from plain 'failed', but not from a tripped rate
-            // limit — this makes recovery unconditional once the user has fixed the config.
-            // No-op when the unit is healthy.
+            // A unit halted by RestartPreventExitStatus sits in 'failed' state, and repeated
+            // restart attempts can trip systemd's start rate limit — reset makes recovery
+            // unconditional once the user has fixed the config. No-op when the unit is healthy.
             runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
             runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
         }
@@ -230,19 +297,27 @@ public final class ProxyService {
     public static boolean startService() {
         if (!isInstalled()) return false;
         if (isActive()) return true;
-
-        if (Platform.isMacOS()) {
-            var uid = getUid();
-            runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
-            runQuiet("launchctl", "kickstart", "gui/" + uid + "/" + PROXY_LABEL);
-        } else {
-            runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
-            runQuiet("systemctl", "--user", "start", SERVICE_NAME);
+        try (var ignored = acquireProxyLock()) {
+            if (isActive()) return true;
+            if (Platform.isMacOS()) {
+                var uid = getUid();
+                runQuiet("launchctl", "bootstrap", "gui/" + uid, proxyPlistFile().toString());
+                runQuiet("launchctl", "kickstart", "gui/" + uid + "/" + PROXY_LABEL);
+            } else {
+                runQuiet("systemctl", "--user", "reset-failed", SERVICE_NAME);
+                runQuiet("systemctl", "--user", "start", SERVICE_NAME);
+            }
+            return isActive();
         }
-        return isActive();
     }
 
     public static void stop() {
+        try (var ignored = acquireProxyLock()) {
+            stopLocked();
+        }
+    }
+
+    private static void stopLocked() {
         if (isActive()) {
             System.out.println("Stopping proxy service...");
             if (Platform.isMacOS()) {
@@ -271,25 +346,27 @@ public final class ProxyService {
      * and restart if so. Returns true if a restart was performed.
      */
     public static boolean reinstallIfChanged(IncusClient incus) {
-        boolean needsReinstall;
-        if (Platform.isMacOS()) {
-            needsReinstall = needsMacOsPlistUpdate();
-        } else {
-            needsReinstall = regenerateServiceFiles();
-        }
-
-        if (!needsReinstall) {
-            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            needsReinstall = !ProxyHealthCheck.checkDrift(info).isEmpty();
-        }
-
-        if (needsReinstall) {
+        try (var ignored = acquireProxyLock()) {
+            boolean needsReinstall;
             if (Platform.isMacOS()) {
-                updateMacOsProxyPlist();
+                needsReinstall = needsMacOsPlistUpdate();
+            } else {
+                needsReinstall = regenerateServiceFiles();
             }
-            return restart();
+
+            if (!needsReinstall) {
+                var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+                needsReinstall = !ProxyHealthCheck.checkDrift(info).isEmpty();
+            }
+
+            if (needsReinstall) {
+                if (Platform.isMacOS()) {
+                    updateMacOsProxyPlist();
+                }
+                return restartLocked();
+            }
+            return false;
         }
-        return false;
     }
 
     /**
@@ -363,16 +440,18 @@ public final class ProxyService {
     }
 
     public static void upgradeIfNeeded() {
-        if (Platform.isMacOS()) {
-            if (needsMacOsPlistUpdate()) {
-                updateMacOsProxyPlist();
-                restart();
+        try (var ignored = acquireProxyLock()) {
+            if (Platform.isMacOS()) {
+                if (needsMacOsPlistUpdate()) {
+                    updateMacOsProxyPlist();
+                    restartLocked();
+                }
+                return;
             }
-            return;
-        }
-        if (regenerateServiceFiles()) {
-            System.out.println("Updated proxy service configuration.");
-            runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+            if (regenerateServiceFiles()) {
+                System.out.println("Updated proxy service configuration.");
+                runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+            }
         }
     }
 
