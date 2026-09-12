@@ -623,7 +623,7 @@ public final class ProxyService {
     }
 
     private static String execStartLine() {
-        return "ExecStart=/usr/bin/sg incus-admin -c " + Container.shellQuote(proxyStartScript().toString());
+        return "ExecStart=" + Container.shellQuote(proxyStartScript().toString());
     }
 
     // --- macOS launchd support ---

@@ -183,4 +183,10 @@ class ProxyServiceTest {
         // The restart policy lines belong together.
         assertTrue(unit.contains("Restart=on-failure\nRestartPreventExitStatus=78\nRestartSec=5"));
     }
+
+    @Test
+    void generatedUnitDoesNotRequireSg() {
+        assertFalse(ProxyService.serviceUnitContent().contains("sg incus-admin"),
+                "the proxy service should run with the user's existing incus-admin membership");
+    }
 }
