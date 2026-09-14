@@ -134,6 +134,7 @@ public class BobSetup implements ToolSetup {
     }
 
     private void configureSettings(Container c) {
+        BuildOutput.stepStart("Configuring Bob Shell...");
         var bobConfig = SpawnConfig.load().getBob();
 
         var userSettings = new StringBuilder();
@@ -153,5 +154,6 @@ public class BobSetup implements ToolSetup {
                 {"general":{"disableAutoUpdate":true,"disableUpdateNag":true}}""";
         c.sh("mkdir -p /etc/bobshell");
         c.writeFile("/etc/bobshell/settings.json", systemSettings);
+        BuildOutput.stepDone();
     }
 }
