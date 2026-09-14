@@ -5,6 +5,9 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.util.BuildOutput;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
@@ -14,6 +17,7 @@ import java.util.regex.Pattern;
 
 public class BobSetup implements ToolSetup {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String PLACEHOLDER_API_KEY = "bob-placeholder";
     private static final String VERSION_URL =
             "https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell/bobshell2-version.txt";
@@ -81,6 +85,35 @@ public class BobSetup implements ToolSetup {
     }
 
     @Override
+    public Map<String, ToolDef.ParameterDef> parameters() {
+        var params = new LinkedHashMap<String, ToolDef.ParameterDef>();
+
+        var maxTurns = new ToolDef.ParameterDef();
+        maxTurns.setType("integer");
+        maxTurns.setDescription("Maximum session turns (-1 for unlimited)");
+        maxTurns.setOptional(true);
+        maxTurns.setReconfigurable(true);
+        params.put("max-session-turns", maxTurns);
+
+        var compression = new ToolDef.ParameterDef();
+        compression.setType("string");
+        compression.setDescription("Context compression threshold (0.0–1.0)");
+        compression.setPattern("^[01]?\\.\\d+$");
+        compression.setOptional(true);
+        compression.setReconfigurable(true);
+        params.put("compression-threshold", compression);
+
+        var checkpointing = new ToolDef.ParameterDef();
+        checkpointing.setType("boolean");
+        checkpointing.setDescription("Enable safety checkpoints");
+        checkpointing.setOptional(true);
+        checkpointing.setReconfigurable(true);
+        params.put("checkpointing", checkpointing);
+
+        return params;
+    }
+
+    @Override
     public List<String> packages() {
         return List.of("nodejs");
     }
@@ -103,7 +136,12 @@ public class BobSetup implements ToolSetup {
     @Override
     public void install(Container c, Map<String, String> resolvedParams) {
         installBinary(c);
-        configureSettings(c);
+        configureSettings(c, resolvedParams);
+    }
+
+    @Override
+    public void reconfigure(Container c, Map<String, String> resolvedParams) {
+        configureSettings(c, resolvedParams);
     }
 
     private void installBinary(Container c) {
@@ -133,7 +171,7 @@ public class BobSetup implements ToolSetup {
         }
     }
 
-    private void configureSettings(Container c) {
+    private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Bob Shell...");
         var bobConfig = SpawnConfig.load().getBob();
 
@@ -150,10 +188,36 @@ public class BobSetup implements ToolSetup {
                 "{\"/home/agentuser\":\"TRUST_FOLDER\"}");
         c.chown("/home/agentuser/.bob", "agentuser:agentuser");
 
-        var systemSettings = """
-                {"general":{"disableAutoUpdate":true,"disableUpdateNag":true}}""";
         c.sh("mkdir -p /etc/bobshell");
-        c.writeFile("/etc/bobshell/settings.json", systemSettings);
+        c.writeFile("/etc/bobshell/settings.json", buildSystemSettings(resolvedParams));
         BuildOutput.stepDone();
+    }
+
+    static String buildSystemSettings(Map<String, String> params) {
+        var root = JSON.createObjectNode();
+        var general = root.putObject("general");
+        general.put("disableAutoUpdate", true);
+        general.put("disableUpdateNag", true);
+        var checkpointing = params.get("checkpointing");
+        if (checkpointing != null) {
+            general.putObject("checkpointing").put("enabled", Boolean.parseBoolean(checkpointing));
+        }
+        var model = (ObjectNode) null;
+        var maxTurns = params.get("max-session-turns");
+        if (maxTurns != null) {
+            model = root.putObject("model");
+            model.put("maxSessionTurns", Integer.parseInt(maxTurns));
+        }
+        var compression = params.get("compression-threshold");
+        if (compression != null) {
+            if (model == null) model = root.putObject("model");
+            model.putObject("chatCompression")
+                    .put("contextPercentageThreshold", Double.parseDouble(compression));
+        }
+        try {
+            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root) + "\n";
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to serialize Bob system settings", e);
+        }
     }
 }
