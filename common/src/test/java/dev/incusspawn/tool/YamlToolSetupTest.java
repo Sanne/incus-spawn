@@ -11,8 +11,11 @@ import org.mockito.InOrder;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -218,13 +221,16 @@ class YamlToolSetupTest {
     }
 
     @Test
-    void destinationFileUsesMountAndCopyForVm(@TempDir Path tempDir) throws IOException {
+    void destinationFileStagesCopyForVmWithoutChangingCachePermissions(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
         when(incus.isVm(CONTAINER)).thenReturn(true);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
-        var downloaded = tempDir.resolve("tool.zip").toAbsolutePath();
+        var cacheDir = Files.createDirectory(tempDir.resolve("downloads"));
+        var downloaded = cacheDir.resolve("tool.zip").toAbsolutePath();
         Files.writeString(downloaded, "fake");
+        var cachePermissions = EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+        Files.setPosixFilePermissions(downloaded, cachePermissions);
 
         var downloadCache = mock(DownloadCache.class);
         when(downloadCache.download(anyString(), any())).thenReturn(downloaded);
@@ -237,6 +243,18 @@ class YamlToolSetupTest {
         def.setName("vm-file");
         def.setDownloads(List.of(dl));
 
+        var mountedSource = new AtomicReference<Path>();
+        doAnswer(invocation -> {
+            var sourceArg = (String) invocation.getArgument(3);
+            var source = Path.of(sourceArg.substring("source=".length()));
+            mountedSource.set(source);
+            assertNotEquals(cacheDir, source);
+            assertEquals("fake", Files.readString(source.resolve(downloaded.getFileName())));
+            var permissions = Files.getPosixFilePermissions(source.resolve(downloaded.getFileName()));
+            assertTrue(permissions.contains(PosixFilePermission.OTHERS_READ));
+            return null;
+        }).when(incus).deviceAdd(eq(CONTAINER), eq("dl-file-vm-file"), eq("disk"), any(String[].class));
+
         new YamlToolSetup(def, downloadCache).install(new Container(incus, CONTAINER), Map.of());
 
         verify(incus).deviceAdd(eq(CONTAINER), eq("dl-file-vm-file"), eq("disk"), any(String[].class));
@@ -244,6 +262,8 @@ class YamlToolSetupTest {
                 "/opt/downloads/tool.zip");
         verify(incus).deviceRemove(CONTAINER, "dl-file-vm-file");
         verify(incus, never()).filePush(any(), any(), any());
+        assertEquals(cachePermissions, Files.getPosixFilePermissions(downloaded));
+        assertFalse(Files.exists(mountedSource.get()));
     }
 
     @Test

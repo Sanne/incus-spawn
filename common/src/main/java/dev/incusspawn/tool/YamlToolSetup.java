@@ -187,7 +187,6 @@ public class YamlToolSetup implements ToolSetup {
             container.exec("mkdir", "-p", parent.toString());
         }
 
-        ensureWorldReadable(cached);
         if (vm) {
             copyFileViaMount(cached, destination, container);
         } else {
@@ -196,20 +195,24 @@ public class YamlToolSetup implements ToolSetup {
         container.exec("chmod", "a+r", destination);
     }
 
-    private void copyFileViaMount(Path cached, String destination, Container container) {
+    private void copyFileViaMount(Path cached, String destination, Container container) throws IOException {
         var absoluteCached = cached.toAbsolutePath();
+        var stagingDir = Files.createTempDirectory(absoluteCached.getParent(), "isx-mount-");
+        var staged = stagingDir.resolve(absoluteCached.getFileName());
         var deviceName = "dl-file-" + def.getName();
         var mountPath = "/mnt/isx-download-file";
         try {
+            Files.copy(absoluteCached, staged);
+            ensureWorldReadable(stagingDir);
             container.exec("rm", "-rf", mountPath);
-            container.addDiskDevice(deviceName, HostResourceSetup.translateForVm(absoluteCached.getParent().toString()),
-                    mountPath, true);
+            container.addDiskDevice(deviceName, HostResourceSetup.translateForVm(stagingDir.toString()), mountPath, true);
             container.waitForPath(mountPath);
             container.runQuiet("Failed to copy download for " + def.getName(),
-                    "cp", mountPath + "/" + absoluteCached.getFileName(), destination);
+                    "cp", mountPath + "/" + staged.getFileName(), destination);
         } finally {
             try { container.removeDiskDevice(deviceName); } catch (Exception ignored) {}
             try { container.exec("rm", "-rf", mountPath); } catch (Exception ignored) {}
+            deleteRecursive(stagingDir);
         }
     }
 
