@@ -98,7 +98,7 @@ public class BobSetup implements ToolSetup {
         var compression = new ToolDef.ParameterDef();
         compression.setType("string");
         compression.setDescription("Context compression threshold (0.0–1.0)");
-        compression.setPattern("^[01]?\\.\\d+$");
+        compression.setPattern("^(0?\\.\\d+|1\\.0)$");
         compression.setOptional(true);
         compression.setReconfigurable(true);
         params.put("compression-threshold", compression);
@@ -171,7 +171,7 @@ public class BobSetup implements ToolSetup {
         }
     }
 
-    private void configureSettings(Container c, Map<String, String> resolvedParams) {
+    void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Bob Shell...");
         var bobConfig = SpawnConfig.load().getBob();
 
