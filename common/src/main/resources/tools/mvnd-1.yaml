@@ -2,13 +2,13 @@ name: mvnd-1
 description: Apache Maven Daemon 1.x
 
 downloads:
-  - url: https://downloads.apache.org/maven/mvnd/1.0.6/maven-mvnd-1.0.6-linux-amd64.zip
+  - url: https://archive.apache.org/dist/maven/mvnd/1.0.6/maven-mvnd-1.0.6-linux-amd64.zip
     sha256: 1a1c2ad0de53669c6d2bf64e2b6bcc7cb96f592c543230f00b4209002b19083c
     arch: x86_64
     extract: /opt
     links:
       /opt/maven-mvnd-1.0.6-linux-amd64/bin/mvnd: /usr/local/bin/mvnd
-  - url: https://downloads.apache.org/maven/mvnd/1.0.6/maven-mvnd-1.0.6-linux-aarch64.zip
+  - url: https://archive.apache.org/dist/maven/mvnd/1.0.6/maven-mvnd-1.0.6-linux-aarch64.zip
     sha256: f23c319112f9f1ac50082eed2768f24551420fd2f31773045679de1e831588b7
     arch: aarch64
     extract: /opt
