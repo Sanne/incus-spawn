@@ -87,6 +87,28 @@ class ClaudeSetupTest {
     }
 
     @Test
+    void configureSettingsDeploysStatusline() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new ClaudeSetup().configureSettings(new Container(incus, CONTAINER),
+                new SpawnConfig.ClaudeConfig(), Map.of());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), captor.capture());
+
+        var commands = captor.getAllValues();
+
+        assertTrue(commands.stream().anyMatch(cmd ->
+                        cmd.contains("managed-settings.json") && cmd.contains("statusLine") && cmd.contains("statusline.sh")),
+                "Managed settings should configure statusline command");
+        assertTrue(commands.stream().anyMatch(cmd ->
+                        cmd.contains("statusline.sh") && cmd.contains("Running unconstrained in isx")),
+                "Statusline script should render isx status banner");
+    }
+
+    @Test
     void configureSettingsUserSettingsDoNotContainBypassPermissions() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);

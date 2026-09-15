@@ -1626,6 +1626,7 @@ public class BuildCommand extends BaseCommand {
 
         resolver.add(EnvEntry.raw("export ISX_CONTAINER=\"${HOSTNAME}\""), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
+        resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
         var ancestors = ImageDef.ancestors(imageDef, defs);
         for (int i = ancestors.size() - 1; i >= 0; i--) {
             var ancestor = ancestors.get(i);
