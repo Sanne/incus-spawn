@@ -253,6 +253,7 @@ public class ClaudeSetup implements ToolSetup {
 
     static final String MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
     static final String USER_SETTINGS_PATH = "/home/agentuser/.claude/settings.json";
+    private static final String STATUSLINE_PATH = "/etc/claude-code/statusline.sh";
 
     void configureSettings(Container c, SpawnConfig.ClaudeConfig claudeConfig) {
         configureSettings(c, claudeConfig, Map.of());
@@ -284,11 +285,17 @@ public class ClaudeSetup implements ToolSetup {
                   "skipDangerousModePermissionPrompt": true,
                   "sandbox": {
                     "enabled": false
+                  },
+                  "statusLine": {
+                    "type": "command",
+                    "command": "%s"
                   }
                 }
-                """;
+                """.formatted(STATUSLINE_PATH);
         c.sh("mkdir -p /etc/claude-code");
         c.writeFile(MANAGED_SETTINGS_PATH, managedSettingsJson);
+        c.writeFile(STATUSLINE_PATH, STATUSLINE_SH);
+        c.exec("chmod", "+x", STATUSLINE_PATH);
 
         var settingsJson = buildUserSettings(params);
         var claudeJsonBuilder = new StringBuilder();
@@ -328,6 +335,11 @@ public class ClaudeSetup implements ToolSetup {
         c.chown("/home/agentuser/.claude.json", "agentuser:agentuser");
         BuildOutput.stepDone();
     }
+
+    private static final String STATUSLINE_SH = """
+            #!/bin/bash
+            printf '\\033[1;32mRunning unconstrained in isx %s \\033[22m[%s]\\033[0m' "${ISX_VERSION:-dev}" "${ISX_CONTAINER:-container}"
+            """;
 
     static String buildUserSettings(Map<String, String> params) {
         var root = JSON.createObjectNode();
