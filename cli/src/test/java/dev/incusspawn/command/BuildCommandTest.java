@@ -2,18 +2,23 @@ package dev.incusspawn.command;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -265,6 +270,60 @@ class BuildCommandTest {
     void resolveSkillSourceShortNameBlankRepoThrows() {
         assertThrows(IllegalArgumentException.class,
                 () -> BuildCommand.resolveSkillSource("security-review", ""));
+    }
+
+    // --- reportBuildFailure ---
+
+    /**
+     * The in-container report is unreachable whenever the build container is stopped, crashed, or
+     * its exec channel is wedged. The host copy has to survive that, or the failure the user most
+     * needs to read about is the one that leaves no trace.
+     */
+    @Test
+    void reportBuildFailureWritesHostLogWhenContainerWriteFails(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.shellExec(anyString(), any(String[].class)))
+                    .thenThrow(new IncusException("exec channel wedged"));
+            var cmd = new BuildCommand();
+            cmd.incus = incus;
+
+            cmd.reportBuildFailure("tpl-minimal-rebuilding", "tpl-minimal",
+                    "Build failed for tpl-minimal: boom");
+
+            var log = Environment.buildFailureLogFile("tpl-minimal");
+            assertTrue(Files.exists(log), "host log should exist at " + log);
+            assertTrue(assertDoesNotThrow(() -> Files.readString(log))
+                    .contains("Build failed for tpl-minimal: boom"));
+        });
+    }
+
+    /**
+     * The final swap is where an orphaned subvolume ("file exists") surfaces, after the whole build.
+     * It must fail like any other build step: a real report, the container kept for inspection, and
+     * a BuildFailedException so --all skips dependents instead of aborting on a raw IncusException.
+     */
+    @Test
+    void failedSwapIsReportedAndPromotedLikeAnyBuildFailure(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            doThrow(new IncusException("Failed to rename tpl-minimal-rebuilding to tpl-minimal: file exists"))
+                    .when(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            var log = Environment.buildFailureLogFile("tpl-minimal");
+            assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("file exists"),
+                    "the report should carry the swap's real error");
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal-failed-build");
+        });
     }
 
     // --- collectEffectiveSkills ---

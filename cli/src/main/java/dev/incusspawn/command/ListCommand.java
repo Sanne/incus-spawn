@@ -439,11 +439,22 @@ public class ListCommand extends BaseCommand {
                         returnToTemplate = buildTarget;
                     }
                     try {
+                        // Delete any stale report so freshFailureReport cannot mistake it for this build's.
+                        // The build writes a new one on failure; on success no report should be shown.
+                        // If the delete fails, suppress the report path entirely (buildStart = null)
+                        // rather than risk showing a stale report from the same filesystem second.
+                        java.time.Instant buildStart = null;
+                        if (!buildTarget.startsWith("--")) {
+                            try {
+                                java.nio.file.Files.deleteIfExists(Environment.buildFailureLogFile(buildTarget));
+                                buildStart = java.time.Instant.now();
+                            } catch (Exception ignored) {}
+                        } else {
+                            buildStart = java.time.Instant.now();
+                        }
                         var buildResult = org.aesh.AeshRuntimeRunner.builder().command(BuildCommand.class).args(args).execute();
                         int exitCode = buildResult != null ? buildResult.getResultValue() : 1;
-                        statusMessage = exitCode == 0
-                                ? buildStatusMessage(pendingBuildArgs, true)
-                                : buildStatusMessage(pendingBuildArgs, false);
+                        statusMessage = buildStatusMessage(pendingBuildArgs, exitCode == 0, buildStart);
                         if (exitCode != 0) pendingAction = PendingAction.BUILD_TEMPLATE;
                     } catch (Exception e) {
                         statusMessage = "Build failed: " + e.getMessage();
@@ -3698,7 +3709,7 @@ public class ListCommand extends BaseCommand {
         return result;
     }
 
-    private static String buildStatusMessage(String[] args, boolean success) {
+    private static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
         var firstArg = args[0];
         boolean hasWithParents = java.util.Arrays.asList(args).contains("--with-parents");
         boolean hasWithDescendants = java.util.Arrays.asList(args).contains("--with-descendants");
@@ -3715,9 +3726,28 @@ public class ListCommand extends BaseCommand {
             return success ? "Rebuilt " + firstArg + " with descendants successfully"
                     : "Failed to build " + firstArg + " with descendants";
         } else {
-            return success ? "Built " + firstArg + " successfully"
-                    : "Failed to build " + firstArg
-                            + ". Check '" + firstArg + "-failed-build' — see ~/inbox/BUILD_FAILURE.txt for details.";
+            if (success) return "Built " + firstArg + " successfully";
+            var report = freshFailureReport(firstArg, buildStart);
+            return "Failed to build " + firstArg + (report != null ? ". Details: " + report : ".");
+        }
+    }
+
+    /**
+     * The template's host failure report, but only if this build wrote it. The build runs through
+     * AeshRuntimeRunner, so all that comes back is an exit code -- and a non-zero exit need not
+     * come from a failure that writes a report (conflicting definitions, a missing parent). An
+     * older report left from an unrelated failure would then be named as the explanation.
+     * {@code since} is floored to the second so a coarse-mtime filesystem cannot hide a report
+     * written in the same second the build started.
+     */
+    static java.nio.file.Path freshFailureReport(String template, java.time.Instant since) {
+        if (since == null) return null;
+        var report = Environment.buildFailureLogFile(template);
+        try {
+            var written = java.nio.file.Files.getLastModifiedTime(report).toInstant();
+            return written.isBefore(since.truncatedTo(java.time.temporal.ChronoUnit.SECONDS)) ? null : report;
+        } catch (java.io.IOException e) {
+            return null; // no report at all
         }
     }
 

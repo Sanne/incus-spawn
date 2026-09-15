@@ -158,6 +158,21 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/api-debug");
     }
 
+    /**
+     * Host-side copy of a template's build failure report. The in-container copy under
+     * {@code ~agentuser/inbox} is unreachable whenever the build container is stopped, crashed,
+     * or has a wedged exec channel -- exactly the failures worth reading about -- so the host copy
+     * is the one the user is always pointed at.
+     */
+    public static Path buildFailureLogFile(String template) {
+        var dir = home().resolve(".local/state/incus-spawn/build-failures");
+        var file = dir.resolve(template + ".log").normalize();
+        if (!file.startsWith(dir)) {
+            throw new IllegalArgumentException("Template name escapes build-failures directory: " + template);
+        }
+        return file;
+    }
+
     // --- VM state paths (under ~/.local/state/incus-spawn/) ---
 
     public static Path vmStateDir() {

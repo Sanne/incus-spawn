@@ -129,10 +129,12 @@ public class BuildCommand extends BaseCommand {
     // Half the 48-connection valve, leaving room for concurrent TUI/status activity
     private static final int MACOS_TUNNEL_BUDGET = 24;
     static final String REBUILDING_SUFFIX = "-rebuilding";
+    private static final String INBOX_FAILURE_PATH = "/home/agentuser/inbox/BUILD_FAILURE.txt";
 
     private int buildIndex;
     private int buildTotal;
     private volatile boolean savedFailureSummary;
+    private volatile boolean savedHostReport;
 
     private volatile String[] activeBuild;
 
@@ -541,7 +543,7 @@ public class BuildCommand extends BaseCommand {
      * Assumes parent is already built and up-to-date.
      * Builds with a temporary name and swaps atomically on success.
      */
-    private void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
+    void buildSingleImage(ImageDef imageDef, Map<String, ImageDef> defs) {
         var canonicalName = imageDef.getName();
         var tempName = canonicalName + REBUILDING_SUFFIX;
 
@@ -558,14 +560,25 @@ public class BuildCommand extends BaseCommand {
         incus.deleteIfExists(tempName);
         activeBuild = new String[]{tempName, canonicalName};
 
+        long referenced;
         try {
-            boolean typeChange = !imageDef.isRoot()
-                    && effectiveVm(imageDef) != incus.isVm(imageDef.getParent());
-            if (imageDef.isRoot() || typeChange) {
-                buildFromScratch(imageDef, defs, tempName);
-            } else {
-                buildFromParent(imageDef, defs, tempName, imageDef.getParent());
-            }
+            buildInto(imageDef, defs, tempName);
+
+            // Measure the just-built template's referenced size BEFORE deleting the previous subvolume.
+            // Deleting a btrfs subvolume marks the pool's qgroup accounting inconsistent, so an rfer read
+            // taken after deleteIfExists (i.e. on every *rebuild*) can come back stale or zero — which
+            // drops the stamp and collapses the TUI's per-template delta model to the fold fallback
+            // (every template ~0, a shrunken base on the root). tempName's rfer is exactly what
+            // canonicalName reports after the rename: rfer is per-subvolume, unaffected by renaming it or
+            // by deleting a sibling subvolume.
+            referenced = probeReferencedSize(tempName);
+
+            // The swap is part of the build: when it fails the build has not produced a template, so it
+            // must go through the same report-and-promote path as any other failure.
+            incus.deleteIfExists(canonicalName);
+            incus.rename(tempName, canonicalName);
+            activeBuild = null;
+            buildDone(canonicalName);
         } catch (Exception e) {
             reportBuildFailure(tempName, canonicalName,
                     "Build failed for " + canonicalName + ": " + e.getMessage());
@@ -578,20 +591,18 @@ public class BuildCommand extends BaseCommand {
             throw new BuildFailedException(canonicalName);
         }
 
-        // Measure the just-built template's referenced size BEFORE deleting the previous subvolume.
-        // Deleting a btrfs subvolume marks the pool's qgroup accounting inconsistent, so an rfer read
-        // taken after deleteIfExists (i.e. on every *rebuild*) can come back stale or zero — which
-        // drops the stamp and collapses the TUI's per-template delta model to the fold fallback
-        // (every template ~0, a shrunken base on the root). tempName's rfer is exactly what
-        // canonicalName reports after the rename: rfer is per-subvolume, unaffected by renaming it or
-        // by deleting a sibling subvolume.
-        long referenced = probeReferencedSize(tempName);
-
-        incus.deleteIfExists(canonicalName);
-        incus.rename(tempName, canonicalName);
-        activeBuild = null;
-
         stampReferencedSize(canonicalName, referenced);
+    }
+
+    /** Builds the template under {@code tempName}, from scratch or from its parent. */
+    void buildInto(ImageDef imageDef, Map<String, ImageDef> defs, String tempName) {
+        boolean typeChange = !imageDef.isRoot()
+                && effectiveVm(imageDef) != incus.isVm(imageDef.getParent());
+        if (imageDef.isRoot() || typeChange) {
+            buildFromScratch(imageDef, defs, tempName);
+        } else {
+            buildFromParent(imageDef, defs, tempName, imageDef.getParent());
+        }
     }
 
     /**
@@ -840,7 +851,9 @@ public class BuildCommand extends BaseCommand {
                     Metadata.TYPE, Metadata.TYPE_FAILED_BUILD,
                     Metadata.PARENT, canonicalName,
                     Metadata.CREATED, Metadata.now()));
-            var hint = savedFailureSummary ? " (see ~/inbox/BUILD_FAILURE.txt)" : "";
+            var hint = savedHostReport
+                    ? " — see " + Environment.buildFailureLogFile(canonicalName)
+                    : (savedFailureSummary ? " — see ~/inbox/BUILD_FAILURE.txt inside the instance" : "");
             System.err.println("\033[1mContainer promoted to instance '" + promotedName
                     + "' for inspection" + hint + ".\033[0m");
         } catch (Exception promoteError) {
@@ -849,17 +862,60 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
+    void reportBuildFailure(String buildName, String canonicalName, String errorLine) {
         System.err.println("\n\033[33m" + "─".repeat(60) + "\033[0m");
         System.err.println("\033[1m" + errorLine + "\033[0m");
+
+        // Resolve the host log path first; the path-traversal guard in buildFailureLogFile can
+        // throw for a malformed template name, and that must not abort failure handling.
+        Path hostLog;
+        try {
+            hostLog = Environment.buildFailureLogFile(canonicalName);
+        } catch (Exception e) {
+            System.err.println("Could not resolve host failure log path: " + e.getMessage());
+            hostLog = null;
+        }
+
+        // Write the host report with just the error line BEFORE running diagnostics.
+        // printBuildDiagnostics can hang when the exec channel is wedged -- exactly the failures
+        // this host report exists for -- so the report must exist before those calls.
+        if (hostLog != null) {
+            try {
+                Files.createDirectories(hostLog.getParent());
+                Files.writeString(hostLog, errorLine + "\n");
+            } catch (Exception e) {
+                System.err.println("Could not save failure report to " + hostLog + ": " + e.getMessage());
+            }
+        }
+
         var diagnostics = printBuildDiagnostics(buildName);
+        var report = errorLine + "\n\n" + diagnostics;
+
+        // Update the host report with the full diagnostics. Write to a temp file and move so
+        // a failure (e.g. disk full) after truncation cannot erase the initial error-only report.
+        savedHostReport = false;
+        if (hostLog != null) {
+            var tmp = hostLog.resolveSibling(hostLog.getFileName() + ".tmp");
+            try {
+                Files.writeString(tmp, report);
+                Files.move(tmp, hostLog, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                savedHostReport = true;
+                System.err.println("Failure report saved to " + hostLog + ".");
+            } catch (Exception e) {
+                System.err.println("Could not save failure report to " + hostLog + ": " + e.getMessage());
+                try { Files.deleteIfExists(tmp); } catch (Exception ignored) {}
+            }
+        }
+
+        // The in-container copy is a convenience for poking around inside the promoted instance.
         savedFailureSummary = false;
         try {
-            new Container(incus, buildName)
-                    .writeFile("/home/agentuser/inbox/BUILD_FAILURE.txt",
-                            errorLine + "\n\n" + diagnostics);
+            new Container(incus, buildName).writeFile(INBOX_FAILURE_PATH, report);
             savedFailureSummary = true;
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("Could not write " + INBOX_FAILURE_PATH + " inside the container: "
+                    + e.getMessage());
+        }
     }
 
     /**
@@ -953,8 +1009,6 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
         BuildOutput.stepDone();
-
-        buildDone(canonicalName);
     }
 
     private boolean effectiveVm(ImageDef imageDef) {
@@ -1201,8 +1255,6 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
         BuildOutput.stepDone();
-
-        buildDone(canonicalName);
     }
 
     /**

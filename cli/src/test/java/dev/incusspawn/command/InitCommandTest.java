@@ -272,7 +272,7 @@ class InitCommandTest {
      * Runs {@code body} with {@code user.home} pointed at {@code home}, so the tests below
      * exercise the real {@link Environment#initCompleteMarker()} path.
      */
-    private static void withHome(Path home, Runnable body) {
+    static void withHome(Path home, Runnable body) {
         var original = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         try {
