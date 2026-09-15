@@ -820,17 +820,28 @@ public class DoctorCommand extends BaseCommand {
         return switch (status) {
             case RUNNING -> Finding.ok("Proxy running", "");
             case WAITING_FOR_DNS -> Finding.warn("Proxy running", "(waiting for DNS configuration)", null);
-            case NOT_RUNNING -> {
-                if (ProxyService.isInstalled()) {
-                    yield Finding.fail("Proxy not running", "(service installed but inactive)",
-                            new Remediation("Restart proxy service", false, () -> ProxyService.restart()));
-                }
-                yield Finding.fail("Proxy not running", "",
-                        new Remediation("Start with 'isx proxy start' or install service with 'isx init'", false, null));
-            }
+            case NOT_RUNNING -> proxyNotRunningFinding(
+                    ProxyService.isInstalled(), ProxyService.failedWithConfigError());
             case STALE_DNS -> Finding.fail("Proxy not running", "(stale DNS overrides still active)",
                     new Remediation("Start proxy to restore connectivity", false, null));
         };
+    }
+
+    static Finding proxyNotRunningFinding(boolean installed, boolean configError) {
+        if (installed) {
+            if (configError) {
+                return Finding.fail("Proxy not running",
+                        "(service failed with a configuration error — check 'journalctl --user -u "
+                                + Environment.PROXY_SERVICE_NAME + "' for details; "
+                                + "if the error is about incus-admin group membership, log out and back in)",
+                        new Remediation("Restart proxy service after fixing the issue", false,
+                                () -> ProxyService.restart()));
+            }
+            return Finding.fail("Proxy not running", "(service installed but inactive)",
+                    new Remediation("Restart proxy service", false, () -> ProxyService.restart()));
+        }
+        return Finding.fail("Proxy not running", "",
+                new Remediation("Start with 'isx proxy start' or install service with 'isx init'", false, null));
     }
 
     private List<Finding> checkProxyDrift(IncusClient incus) {
