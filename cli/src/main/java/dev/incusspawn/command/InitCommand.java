@@ -1531,9 +1531,12 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    (none of these can answer 'isx ask' — add an API key or Vertex account)");
             }
             System.out.println();
+            // 'd' and 'x' are reachable as raw keystrokes even when not listed, so the same
+            // fact gates both the menu and the handlers -- state it once.
+            var canManageMultiple = accounts.size() > 1;
             System.out.println("    a. Add another account");
             System.out.println("    r. Replace all with a single account");
-            if (accounts.size() > 1) {
+            if (canManageMultiple) {
                 System.out.println("    d. Change which account is the default");
                 System.out.println("    x. Remove an account");
             }
@@ -1557,7 +1560,7 @@ public class InitCommand extends BaseCommand {
                     return true;
                 }
                 case "d" -> {
-                    if (accounts.size() > 1) {
+                    if (canManageMultiple) {
                         System.out.print("  Name of the account to make default: ");
                         var name = console.readLine().strip();
                         if (accounts.containsKey(name)) {
@@ -1571,7 +1574,7 @@ public class InitCommand extends BaseCommand {
                     }
                 }
                 case "x" -> {
-                    if (accounts.size() > 1) {
+                    if (canManageMultiple) {
                         System.out.print("  Name of the account to remove: ");
                         var name = console.readLine().strip();
                         if (accounts.containsKey(name)) {

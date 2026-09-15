@@ -113,7 +113,6 @@ public class SpawnConfig {
             return account;
         }
 
-        public ClaudeAccountType getType() { return type; }
         public void setType(ClaudeAccountType type) { this.type = type; }
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
