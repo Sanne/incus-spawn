@@ -23,10 +23,4 @@ public enum NetworkMode {
     public String label() {
         return label;
     }
-
-    /** Cycle to the next mode in order: FULL -> PROXY_ONLY -> AIRGAP -> FULL. */
-    public NetworkMode next() {
-        var values = values();
-        return values[(ordinal() + 1) % values.length];
-    }
 }
