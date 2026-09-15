@@ -63,8 +63,12 @@ public class SpawnConfig {
             for (var type : values()) {
                 if (type.wireName.equals(normalized)) return type;
             }
-            throw new IllegalArgumentException("Unknown Claude account type '" + value
-                    + "'. Expected one of: api-key, oauth, vertex.");
+            // Lenient by design: load() answers a mapping error with a blank SpawnConfig, so a
+            // single typo here would otherwise discard host paths, tokens and all -- and the next
+            // save would persist those empty defaults over the real file. A null type falls back
+            // to effectiveType(), which infers from the fields that are set; an account that still
+            // cannot be identified is dropped by the isComplete() filter.
+            return null;
         }
     }
 
@@ -227,6 +231,11 @@ public class SpawnConfig {
                 });
                 return complete;
             }
+            // Deliberately unfiltered, unlike the map path above: a flat 'useVertex: true' with
+            // no region or project must still present as a Vertex account, because ProxyMain
+            // relies on isUseVertex() to report exactly that misconfiguration. Dropping it here
+            // would silently turn a diagnosable error into "no credentials". Such an account is
+            // still not complete(), so it never serves a direct API call.
             var legacy = legacyAccount();
             return legacy == null ? Map.of() : Map.of(LEGACY_ACCOUNT_NAME, legacy);
         }
@@ -254,12 +263,21 @@ public class SpawnConfig {
          * Vertex account, without either having to be designated for that purpose.
          */
         public ClaudeAccount accountFor(java.util.function.Predicate<ClaudeAccount> usable) {
-            var name = accountNameFor(usable);
-            return name.isEmpty() ? null : effectiveAccounts().get(name);
+            var available = effectiveAccounts();
+            var name = accountNameIn(available, usable);
+            return name.isEmpty() ? null : available.get(name);
         }
 
+        /**
+         * {@code effectiveAccounts()} rebuilds its map on every call, so resolve against a single
+         * snapshot rather than deriving it once to pick a name and again to look that name up.
+         */
         public String accountNameFor(java.util.function.Predicate<ClaudeAccount> usable) {
-            var available = effectiveAccounts();
+            return accountNameIn(effectiveAccounts(), usable);
+        }
+
+        private String accountNameIn(Map<String, ClaudeAccount> available,
+                                     java.util.function.Predicate<ClaudeAccount> usable) {
             if (available.isEmpty()) return "";
             var preferred = available.get(defaultAccount);
             if (preferred != null && usable.test(preferred)) return defaultAccount;
@@ -277,9 +295,23 @@ public class SpawnConfig {
         }
 
         public void putAccount(String name, ClaudeAccount account) {
+            // Materialize any pre-accounts credential first: clearLegacyFields() below would
+            // otherwise delete it outright, switching every instance to the newcomer -- the
+            // opposite of what "add another account" promises.
+            adoptLegacyAccount();
             // Adding an account must not silently re-point the default at it.
             if (accounts.isEmpty() && defaultAccount.isBlank()) defaultAccount = name;
             accounts.put(name, account);
+            clearLegacyFields();
+        }
+
+        /** Moves a pre-accounts credential into the map under its synthesized name, once. */
+        private void adoptLegacyAccount() {
+            if (!accounts.isEmpty()) return;
+            var legacy = legacyAccount();
+            if (legacy == null || !legacy.isComplete()) return;
+            accounts.put(LEGACY_ACCOUNT_NAME, legacy);
+            if (defaultAccount.isBlank()) defaultAccount = LEGACY_ACCOUNT_NAME;
             clearLegacyFields();
         }
 

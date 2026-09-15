@@ -50,7 +50,7 @@ public class AiHelpClient {
      * either being set aside for the purpose.
      */
     public static Provider detectProvider(SpawnConfig config) {
-        var account = config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi);
+        var account = directApiAccount(config);
         if (account != null) {
             return switch (account.effectiveType()) {
                 case API_KEY -> Provider.ANTHROPIC;
@@ -73,10 +73,18 @@ public class AiHelpClient {
      * confusing thing to tell that user -- name the real reason instead.
      */
     public static String noProviderMessage(SpawnConfig config) {
-        var claude = config.getClaude();
-        if (!claude.effectiveAccounts().isEmpty()) {
+        var configured = config.getClaude().effectiveAccounts();
+        // Describe what is actually configured rather than inferring it from the absence of a
+        // provider -- a confidently wrong explanation is worse than a vague one.
+        var allOauth = !configured.isEmpty() && configured.values().stream()
+                .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
+        if (!configured.isEmpty() && !allOauth) {
+            return "No configured Claude account can answer this. "
+                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
+        }
+        if (allOauth) {
             return "The configured Claude account"
-                    + (claude.effectiveAccounts().size() > 1 ? "s are" : " is")
+                    + (configured.size() > 1 ? "s are all" : " is")
                     + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
                     + " itself and cannot answer here.\n"
                     + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.";

@@ -124,19 +124,6 @@ class ClaudeAccountsTest {
     }
 
     @Test
-    void unknownTypeIsRejected() {
-        var yaml = """
-                claude:
-                  accounts:
-                    weird:
-                      type: carrier-pigeon
-                      apiKey: "x"
-                """;
-        var e = assertThrows(Exception.class, () -> YAML.readValue(yaml, SpawnConfig.class));
-        assertTrue(e.getMessage().contains("carrier-pigeon"), e.getMessage());
-    }
-
-    @Test
     void writingAnAccountDropsTheLegacyLayout() throws Exception {
         var yaml = """
                 claude:
@@ -163,5 +150,80 @@ class ClaudeAccountsTest {
         assertEquals("personal", reloaded.accountName());
         assertEquals("console", reloaded.accountNameFor(ClaudeAccount::servesDirectApi));
         assertEquals(ClaudeAccountType.OAUTH, reloaded.account().effectiveType());
+    }
+
+    @Test
+    void addingAnAccountKeepsAPreAccountsCredential() throws Exception {
+        // Regression: 'add another account' used to wipe the flat credential and re-point the
+        // default at the newcomer, losing the token and silently switching every instance.
+        var yaml = """
+                claude:
+                  oauthToken: "sk-ant-oat01-abc"
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        claude.putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
+
+        assertEquals(2, claude.effectiveAccounts().size());
+        assertEquals(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME, claude.accountName(),
+                "the pre-existing credential must stay the default");
+        assertEquals("sk-ant-oat01-abc", claude.getOauthToken());
+        assertEquals("console", claude.accountNameFor(ClaudeAccount::servesDirectApi));
+    }
+
+    @Test
+    void addingASecondNamedAccountDoesNotRepointTheDefault() {
+        var claude = new SpawnConfig().getClaude();
+        claude.putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
+        claude.putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
+        assertEquals("personal", claude.accountName());
+    }
+
+    @Test
+    void incompleteLegacyVertexStaysDiagnosable() throws Exception {
+        // ProxyMain reports "Vertex AI enabled but region or project ID not configured" off
+        // isUseVertex(); filtering this account out would turn that into "no credentials".
+        var yaml = """
+                claude:
+                  useVertex: true
+                  cloudMlRegion: europe-west1
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        assertTrue(claude.hasAuth());
+        assertTrue(claude.isUseVertex());
+        assertEquals("", claude.getVertexProjectId());
+        // ...but it cannot answer a direct API call, so it is never selected for one.
+        assertFalse(claude.account().isComplete());
+        assertNull(claude.accountFor(ClaudeAccount::servesDirectApi));
+    }
+
+    @Test
+    void unknownTypeIsIgnoredRatherThanDiscardingTheConfig() throws Exception {
+        // A typo in one account's type must not make Jackson reject the document: load() falls
+        // back to a blank SpawnConfig, and the next save would overwrite the real file.
+        var yaml = """
+                claude:
+                  accounts:
+                    typo:
+                      type: apikey
+                      apiKey: "sk-ant-api03-xyz"
+                github:
+                  token: "ghp_keepme"
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertEquals("ghp_keepme", config.getGithub().getToken(), "the rest of the config must survive");
+        // The fields still identify it, so the account stays usable.
+        assertEquals(ClaudeAccountType.API_KEY, config.getClaude().account().effectiveType());
+    }
+
+    @Test
+    void unknownTypeWithNothingToInferFromIsDropped() throws Exception {
+        var yaml = """
+                claude:
+                  accounts:
+                    weird:
+                      type: carrier-pigeon
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        assertTrue(claude.effectiveAccounts().isEmpty());
     }
 }
