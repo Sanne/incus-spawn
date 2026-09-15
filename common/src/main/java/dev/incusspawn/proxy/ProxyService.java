@@ -436,7 +436,9 @@ public final class ProxyService {
         if (!Files.exists(script)) return true;
         var content = Files.readString(script);
         if (!content.contains("export PATH=")) return true;
-        return !content.contains(execCommand(isxPath));
+        if (!content.contains(execCommand(isxPath))) return true;
+        if (Platform.isLinux() && !content.contains("command -v sg")) return true;
+        return false;
     }
 
     public static void upgradeIfNeeded() {
@@ -612,8 +614,49 @@ public final class ProxyService {
         var sb = new StringBuilder("#!/bin/bash\n");
         var effectivePath = (path != null && !path.isBlank()) ? path : LINUX_PATH_FALLBACK;
         sb.append("export PATH=").append(Container.shellQuote(effectivePath)).append('\n');
-        sb.append(execCommand(isxPath)).append('\n');
+        var cmd = execCommand(isxPath);
+        if (Platform.isLinux()) {
+            sb.append(sgFallbackBlock(cmd));
+        } else {
+            sb.append(cmd).append('\n');
+        }
         return sb.toString();
+    }
+
+    /**
+     * Shell block that ensures incus-admin group membership before exec'ing the proxy.
+     * Three cases:
+     * <ol>
+     *   <li>Group already active in this process → exec directly</li>
+     *   <li>Group configured in /etc/group but not active (e.g. systemd user manager
+     *       started before the user was added) → use {@code sg} to activate it, or
+     *       exit 78 if {@code sg} is unavailable (Arch-family distros removed it)</li>
+     *   <li>User not in the group at all → exit 78 with actionable guidance</li>
+     * </ol>
+     * {@code id -nG} (no argument) reports the current process's active groups;
+     * {@code id -nG "$user"} reads configured membership from /etc/group.
+     */
+    static String sgFallbackBlock(String execCmd) {
+        return """
+                if id -nG | tr ' ' '\\n' | grep -qx incus-admin; then
+                    %1$s
+                fi
+                if id -nG "$(id -un)" | tr ' ' '\\n' | grep -qx incus-admin; then
+                    if command -v sg >/dev/null 2>&1; then
+                        exec sg incus-admin -c %2$s
+                    fi
+                    echo "Cannot start proxy: your 'incus-admin' group membership is not active" >&2
+                    echo "in this session, and 'sg' is not available to activate it." >&2
+                    echo "" >&2
+                    echo "Fix: log out and log back in to activate the group for all sessions." >&2
+                    exit 78
+                fi
+                echo "Cannot start proxy: your user is not in the 'incus-admin' group." >&2
+                echo "" >&2
+                echo "Fix: run 'isx init' to set up Incus and add your user to the group," >&2
+                echo "     then log out and log back in." >&2
+                exit 78
+                """.formatted(execCmd, Container.shellQuote(execCmd));
     }
 
     static void writeProxyStartScript(Path script, String isxPath) throws IOException {
@@ -623,7 +666,7 @@ public final class ProxyService {
     }
 
     private static String execStartLine() {
-        return "ExecStart=/usr/bin/sg incus-admin -c " + Container.shellQuote(proxyStartScript().toString());
+        return "ExecStart=" + Container.shellQuote(proxyStartScript().toString());
     }
 
     // --- macOS launchd support ---

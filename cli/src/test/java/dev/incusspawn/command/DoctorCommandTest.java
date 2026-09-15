@@ -332,6 +332,36 @@ class DoctorCommandTest {
         }
     }
 
+    // ---- Proxy not-running finding selection ----
+
+    @Test
+    void proxyNotRunningConfigErrorShowsJournalHint() {
+        var f = DoctorCommand.proxyNotRunningFinding(true, true);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("journalctl"), "should point to journal for details");
+        assertTrue(f.detail().contains("incus-admin"), "should mention group membership");
+        assertNotNull(f.remediation());
+        assertTrue(f.remediation().description().contains("after fixing"));
+    }
+
+    @Test
+    void proxyNotRunningInstalledButInactiveIsGeneric() {
+        var f = DoctorCommand.proxyNotRunningFinding(true, false);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("installed but inactive"));
+        assertNotNull(f.remediation());
+        assertFalse(f.detail().contains("journalctl"),
+                "generic inactive should not suggest journal inspection");
+    }
+
+    @Test
+    void proxyNotRunningNotInstalledSuggestsInit() {
+        var f = DoctorCommand.proxyNotRunningFinding(false, false);
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertNotNull(f.remediation());
+        assertTrue(f.remediation().description().contains("isx init"));
+    }
+
     // ---- Sanitized config structural redaction ----
 
     @Test

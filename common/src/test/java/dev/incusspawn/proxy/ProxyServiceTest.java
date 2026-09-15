@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.Platform;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -8,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ProxyServiceTest {
 
@@ -142,6 +144,17 @@ class ProxyServiceTest {
     }
 
     @Test
+    void startScriptWithoutSgFallbackIsStaleOnLinux() throws IOException {
+        assumeTrue(Platform.isLinux());
+        var script = tempDir.resolve("proxy-start.sh");
+        // Old-format script: has PATH and exec command but no sg fallback block
+        Files.writeString(script, "#!/bin/bash\nexport PATH='/usr/bin'\n"
+                + "exec '/home/user/.local/bin/isx' proxy start\n");
+        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+                "scripts from before the sg fallback must be rewritten on upgrade");
+    }
+
+    @Test
     void unitTextCarriesNoBinaryPath() {
         // Pins the reason the script must be checked separately: two installations pointing at
         // different isx binaries produce byte-identical units, so comparing units can never
@@ -182,5 +195,77 @@ class ProxyServiceTest {
         assertFalse(unit.contains("%s"), "format placeholder left unsubstituted");
         // The restart policy lines belong together.
         assertTrue(unit.contains("Restart=on-failure\nRestartPreventExitStatus=78\nRestartSec=5"));
+    }
+
+    @Test
+    void generatedUnitDoesNotRequireSg() {
+        var unit = ProxyService.serviceUnitContent();
+        assertFalse(unit.contains("sg incus-admin"),
+                "sg belongs in the start script, not the systemd unit");
+    }
+
+    // --- sg fallback in start script ----------------------------------------------
+
+    @Test
+    void startScriptHasSgFallbackOnLinux() {
+        assumeTrue(Platform.isLinux());
+        var content = ProxyService.proxyStartScriptContent("/home/user/.local/bin/isx",
+                "/usr/bin:/usr/local/bin");
+        assertTrue(content.contains("command -v sg"),
+                "start script should check for sg availability");
+        assertTrue(content.contains("sg incus-admin"),
+                "start script should use sg when available");
+        assertTrue(content.contains("id -nG"),
+                "start script should check group membership when sg is absent");
+        assertTrue(content.contains("exit 78"),
+                "start script should exit with EX_CONFIG when group is missing");
+    }
+
+    @Test
+    void sgFallbackBlockContainsActionableErrors() {
+        var block = ProxyService.sgFallbackBlock("exec '/usr/bin/isx' proxy start");
+        assertTrue(block.contains("incus-admin"));
+        assertTrue(block.contains("log out and log back in"),
+                "both error paths should suggest re-login");
+        assertTrue(block.contains("isx init"),
+                "not-a-member path should suggest isx init");
+        // Two distinct exit 78 paths: configured-but-inactive and not-a-member
+        assertEquals(2, block.split("exit 78").length - 1,
+                "should have two exit 78 paths");
+    }
+
+    @Test
+    void sgFallbackBlockChecksActiveGroupThenConfiguredGroup() {
+        var block = ProxyService.sgFallbackBlock("exec '/usr/bin/isx' proxy start");
+        // Active-group check (id -nG, no argument) must come first for direct exec
+        int activeCheck = block.indexOf("id -nG |");
+        // Configured-group check (id -nG "$(id -un)") comes second for sg fallback
+        int configuredCheck = block.indexOf("id -nG \"$(id -un)\"");
+        assertTrue(activeCheck < configuredCheck,
+                "active-group check must precede configured-group check");
+        assertTrue(configuredCheck < block.indexOf("command -v sg"),
+                "configured-group check must precede sg attempt");
+        // sg branch: exec sg ... -c '<command>'
+        assertTrue(block.contains("exec sg incus-admin -c"));
+    }
+
+    @Test
+    void sgFallbackBlockDirectExecsWhenGroupActive() {
+        var block = ProxyService.sgFallbackBlock("exec '/usr/bin/isx' proxy start");
+        // The first branch (group already active) should exec the command directly
+        int activeCheck = block.indexOf("id -nG |");
+        int firstExecCmd = block.indexOf("exec '/usr/bin/isx' proxy start");
+        int sgCheck = block.indexOf("command -v sg");
+        assertTrue(firstExecCmd > activeCheck && firstExecCmd < sgCheck,
+                "direct exec should be in the active-group branch, before sg");
+    }
+
+    @Test
+    void sgFallbackBlockUsesExactGroupMatch() {
+        var block = ProxyService.sgFallbackBlock("exec '/usr/bin/isx' proxy start");
+        assertTrue(block.contains("grep -qx incus-admin"),
+                "must use exact-line match to avoid false positives on incus-admin-testing");
+        assertFalse(block.contains("grep -qw"),
+                "word-boundary match would false-positive on hyphenated group names");
     }
 }
