@@ -3,10 +3,10 @@ description: Base OS only
 image: fedora-44-base
 image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}.tar.xz
 vm_image_url: https://github.com/Sanne/incus-spawn-images/releases/download/{tag}/fedora-44-{arch}-vm.tar.xz
-image_tag: fedora-44-20260830
+image_tag: fedora-44-20260915
 image_sha256:
-  x86_64: 541bfeb27c5f7a2c35b2ef7be5e2c3755301ceab544e967b332e83688586bd1a
-  aarch64: e40538f4517e182d83822d88c9061ad10ba1e6abe85552a7c5de44b0fcdf16e6
+  x86_64: a3dc9b397a50cf3844ec9ce7c5852944e89c68197cbac3b2c5c1f58c4182cdd2
+  aarch64: c9af560a6b6033b5cda53ca83bf41c39a711aa7bbee77512a47776c1e6b32784
 vm_image_sha256:
-  x86_64: 889e195f1c754a92ebd7b3bc1f30d943e7476e71b7421ae90917ed08bf6a9209
-  aarch64: 6b2d5710dc0a731876549e5fedd192c317c74f0d499f87a7fac51ef2aabe608b
+  x86_64: 08cc7048d419ae2e55208213729d9a580442210fc3ecd224c8d457855f469c14
+  aarch64: fcfe544124a44ca084c6ff1a12597f11c111d107ea370a92bcece5372903db3e
