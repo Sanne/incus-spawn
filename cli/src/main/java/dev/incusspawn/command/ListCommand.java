@@ -59,9 +59,11 @@ import dev.tamboui.tui.event.TickEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.checkbox.CheckboxState;
 import dev.tamboui.widgets.input.TextInput;
 import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.select.SelectState;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import java.time.Duration;
@@ -125,9 +127,9 @@ public class ListCommand extends BaseCommand {
     private String pendingDeleteName;
     private String pendingDeleteNote = "";      // computed once when the confirm dialog opens
     private CleanCommand.CleanScan cleanScan;
-    private boolean cleanBuilds;
-    private boolean cleanImages;
-    private boolean cleanDnf;
+    private CheckboxState cleanBuildsCheck;
+    private CheckboxState cleanImagesCheck;
+    private CheckboxState cleanDnfCheck;
     private int cleanFieldIndex;
     private CleanCommand.CleanResult cleanResult;
     // Build menu state (computed once when F5 opens the menu)
@@ -138,10 +140,11 @@ public class ListCommand extends BaseCommand {
     // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
-    private boolean branchEnableGui;
-    private boolean branchEnableKvm;
-    private NetworkMode branchNetworkMode;
-    private boolean branchEnableInbox;
+    private CheckboxState branchGuiCheck;
+    private CheckboxState branchKvmCheck;
+    private NetworkMode[] branchNetworkModes;
+    private SelectState branchNetworkSelect;
+    private CheckboxState branchInboxCheck;
     private TextInputState branchInboxInput;
     private boolean branchSourceIsVm;
     private TextInputState vmCpuInput;
@@ -156,7 +159,7 @@ public class ListCommand extends BaseCommand {
     private TextInputState newTemplateParentInput;
     private record TemplateLocation(String label, java.nio.file.Path dir) {}
     private java.util.List<TemplateLocation> newTemplateLocations;
-    private int newTemplateLocationIndex;
+    private SelectState newTemplateLocationSelect;
     private int newTemplateFieldIndex;
     private String statusMessage;
     private boolean vmIpFixApplied;
@@ -175,7 +178,7 @@ public class ListCommand extends BaseCommand {
     private int infoScrollOffset;
     // AI Help modal state
     private TextInputState helpInput;
-    private boolean helpIncludeTemplates;
+    private CheckboxState helpTemplatesCheck;
     private int helpFieldIndex;
     private volatile boolean helpLoading;
     private volatile Thread helpThread;
@@ -420,8 +423,8 @@ public class ListCommand extends BaseCommand {
                     returnToInstance = pendingActionTarget;
                     try {
                         createBranch(branchSourceName, pendingActionTarget,
-                                branchEnableGui, branchEnableKvm, branchNetworkMode,
-                                branchEnableInbox ? branchInboxInput.text().strip() : null,
+                                branchGuiCheck.isChecked(), branchKvmCheck.isChecked(), branchNetworkMode(),
+                                branchInboxCheck.isChecked() ? branchInboxInput.text().strip() : null,
                                 branchSourceIsVm);
                         statusMessage = "Created branch " + pendingActionTarget;
                     } catch (Exception e) {
@@ -451,7 +454,7 @@ public class ListCommand extends BaseCommand {
                     returnToTemplate = pendingActionTarget;
                     try {
                         var parent = newTemplateParentInput.text().strip();
-                        var dir = newTemplateLocations.get(newTemplateLocationIndex).dir();
+                        var dir = newTemplateLocations.get(newTemplateLocationSelect.selectedIndex()).dir();
                         var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget, parent, dir);
                         TemplatesCommand.editLoop(targetPath, pendingActionTarget, false);
                         statusMessage = "Created template " + pendingActionTarget;
@@ -1117,9 +1120,9 @@ public class ListCommand extends BaseCommand {
             if (cleanScan == null) {
                 statusMessage = "No CoW storage pool found.";
             } else {
-                cleanBuilds = !cleanScan.failedBuilds().isEmpty();
-                cleanImages = !cleanScan.unusedImages().isEmpty();
-                cleanDnf = false;
+                cleanBuildsCheck = new CheckboxState(!cleanScan.failedBuilds().isEmpty());
+                cleanImagesCheck = new CheckboxState(!cleanScan.unusedImages().isEmpty());
+                cleanDnfCheck = new CheckboxState(false);
                 cleanFieldIndex = cleanConfirmFirstActionableIndex();
                 mode = Mode.CLEAN_CONFIRM;
             }
@@ -1136,7 +1139,7 @@ public class ListCommand extends BaseCommand {
                 return true;
             }
             helpInput = new TextInputState();
-            helpIncludeTemplates = false;
+            helpTemplatesCheck = new CheckboxState(false);
             helpFieldIndex = 0;
             helpLoading = false;
             helpResponseLines = null;
@@ -1448,7 +1451,7 @@ public class ListCommand extends BaseCommand {
         locations.add(new TemplateLocation("User (~/.config/incus-spawn/images/)",
                 dev.incusspawn.config.ImageDef.userImagesDir()));
         newTemplateLocations = locations;
-        newTemplateLocationIndex = 0;
+        newTemplateLocationSelect = new SelectState(locations.stream().map(TemplateLocation::label).toArray(String[]::new));
         newTemplateFieldIndex = 0;
         mode = Mode.NEW_TEMPLATE;
     }
@@ -1457,12 +1460,14 @@ public class ListCommand extends BaseCommand {
         branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestBranchName(sourceName));
         var def = imageDefs.get(sourceName);
-        branchEnableGui = (def != null && def.isGui())
-                || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED));
-        branchEnableKvm = (def != null && def.isKvm())
-                || "kvm".equals(incus.configGet(sourceName, Metadata.INSTANCE_MODE));
-        branchNetworkMode = NetworkMode.FULL;
-        branchEnableInbox = false;
+        branchGuiCheck = new CheckboxState((def != null && def.isGui())
+                || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED)));
+        branchKvmCheck = new CheckboxState((def != null && def.isKvm())
+                || "kvm".equals(incus.configGet(sourceName, Metadata.INSTANCE_MODE)));
+        branchNetworkModes = NetworkMode.values();
+        branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
+                .map(NetworkMode::label).toArray(String[]::new));
+        branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = runtime.toUpperCase().contains("VIRTUAL");
         var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
@@ -1472,6 +1477,10 @@ public class ListCommand extends BaseCommand {
         vmDiskInput = new TextInputState(adaptiveDisk);
         branchFieldIndex = 0;
         mode = Mode.BRANCH;
+    }
+
+    private NetworkMode branchNetworkMode() {
+        return branchNetworkModes[branchNetworkSelect.selectedIndex()];
     }
 
     private boolean handleBranchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
@@ -1488,7 +1497,7 @@ public class ListCommand extends BaseCommand {
                 mode = Mode.BROWSE;
                 return true;
             }
-            if (branchNetworkMode != NetworkMode.AIRGAP) {
+            if (branchNetworkMode() != NetworkMode.AIRGAP) {
                 if (showProxyError()) return true;
                 var def = imageDefs.get(branchSourceName);
                 if (def != null) {
@@ -1508,13 +1517,13 @@ public class ListCommand extends BaseCommand {
         // Space: toggle/cycle when on a toggle field
         if (key.code() == KeyCode.CHAR && key.character() == ' ' && isToggleField(branchFieldIndex)) {
             if (branchFieldIndex == guiFieldIndex()) {
-                branchEnableGui = !branchEnableGui;
+                branchGuiCheck.toggle();
             } else if (branchFieldIndex == kvmFieldIndex()) {
-                branchEnableKvm = !branchEnableKvm;
+                branchKvmCheck.toggle();
             } else if (branchFieldIndex == networkFieldIndex()) {
-                branchNetworkMode = branchNetworkMode.next();
+                branchNetworkSelect.selectNext();
             } else if (branchFieldIndex == inboxFieldIndex()) {
-                branchEnableInbox = !branchEnableInbox;
+                branchInboxCheck.toggle();
             }
             return true;
         }
@@ -1581,11 +1590,11 @@ public class ListCommand extends BaseCommand {
     }
 
     private int maxBranchField() {
-        return branchEnableInbox ? inboxPathFieldIndex() : inboxFieldIndex();
+        return branchInboxCheck.isChecked() ? inboxPathFieldIndex() : inboxFieldIndex();
     }
 
     private TextInputState activeBranchInput() {
-        if (branchFieldIndex == inboxPathFieldIndex() && branchEnableInbox) return branchInboxInput;
+        if (branchFieldIndex == inboxPathFieldIndex() && branchInboxCheck.isChecked()) return branchInboxInput;
         return switch (branchFieldIndex) {
             case 1 -> vmCpuInput;
             case 2 -> vmMemoryInput;
@@ -1620,15 +1629,15 @@ public class ListCommand extends BaseCommand {
             tui.quit();
             return true;
         }
-        // Location field: Up/Down/j/k move between options
+        // Location field: Space/Down/j cycle forward, Up/k cycle backward
         if (newTemplateFieldIndex == 2) {
-            int n = newTemplateLocations.size();
-            if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-                if (newTemplateLocationIndex < n - 1) newTemplateLocationIndex++;
+            if (key.isKey(KeyCode.DOWN) || key.isChar('j')
+                    || (key.code() == KeyCode.CHAR && key.character() == ' ')) {
+                newTemplateLocationSelect.selectNext();
                 return true;
             }
             if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-                if (newTemplateLocationIndex > 0) newTemplateLocationIndex--;
+                newTemplateLocationSelect.selectPrevious();
                 return true;
             }
         }
@@ -2778,9 +2787,9 @@ public class ListCommand extends BaseCommand {
         renderResourceFields(frame, rows.get(row++));
 
         row++;
-        modal.renderToggle(frame, rows.get(row++), "GUI passthrough", branchEnableGui, branchFieldIndex == guiFieldIndex());
-        modal.renderToggle(frame, rows.get(row++), "KVM passthrough", branchEnableKvm, branchFieldIndex == kvmFieldIndex());
-        modal.renderNetworkModeRadio(frame, rows.get(row++), branchNetworkMode, branchFieldIndex == networkFieldIndex());
+        modal.renderToggle(frame, rows.get(row++), "GUI passthrough", branchGuiCheck, branchFieldIndex == guiFieldIndex());
+        modal.renderToggle(frame, rows.get(row++), "KVM passthrough", branchKvmCheck, branchFieldIndex == kvmFieldIndex());
+        modal.renderSelect(frame, rows.get(row++), "Network", branchNetworkSelect, branchFieldIndex == networkFieldIndex());
         renderInboxField(frame, rows.get(row++));
 
         var hintSpans = new ArrayList<Span>();
@@ -2814,21 +2823,15 @@ public class ListCommand extends BaseCommand {
     private void renderInboxField(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
         boolean toggleFocused = branchFieldIndex == inboxFieldIndex();
         boolean pathFocused = branchFieldIndex == inboxPathFieldIndex();
-        var check = branchEnableInbox ? "☑" : "☐";
-        var checkColor = branchEnableInbox ? theme.checkEnabled() : theme.checkDisabled();
-        var prefix = toggleFocused ? "▸" : " ";
-        var labelColor = toggleFocused ? theme.focusedLabel() : modal.fg();
 
-        int labelWidth = 18;
-        var labelArea = new dev.tamboui.layout.Rect(area.x(), area.y(), labelWidth, 1);
-        frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + prefix + " ", Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(modal.bg())),
-                Span.styled("Inbox", Style.EMPTY.fg(labelColor).bg(modal.bg()))))), labelArea);
+        int toggleWidth = 3 + modal.checkbox().width() + 1 + 6;
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(toggleWidth), Constraint.fill())
+                .split(area);
+        modal.renderToggle(frame, cols.get(0), "Inbox", branchInboxCheck, toggleFocused);
 
-        var pathArea = new dev.tamboui.layout.Rect(
-                area.x() + labelWidth, area.y(), area.width() - labelWidth, 1);
-        if (pathFocused && branchEnableInbox) {
+        var pathArea = cols.get(1);
+        if (pathFocused && branchInboxCheck.isChecked()) {
             TextInput.builder()
                     .placeholder("/path/to/dir")
                     .style(Style.EMPTY.fg(theme.focusedLabel()).bg(modal.inputBg()))
@@ -2836,9 +2839,9 @@ public class ListCommand extends BaseCommand {
                     .renderWithCursor(pathArea, frame.buffer(), branchInboxInput, frame);
         } else {
             var display = branchInboxInput.text().isEmpty() ? "/path/to/dir" : branchInboxInput.text();
-            var inputBg = branchEnableInbox ? modal.inputBg() : modal.inputInactiveBg();
+            var inputBg = branchInboxCheck.isChecked() ? modal.inputBg() : modal.inputInactiveBg();
             var fg = branchInboxInput.text().isEmpty() ? modal.placeholderFg()
-                    : branchEnableInbox ? theme.textDim() : modal.placeholderFg();
+                    : branchInboxCheck.isChecked() ? theme.textDim() : modal.placeholderFg();
             frame.renderWidget(Paragraph.from(Line.styled(display, Style.EMPTY.fg(fg).bg(inputBg))), pathArea);
         }
     }
@@ -2864,9 +2867,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void renderNewTemplateModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        int locCount = newTemplateLocations.size();
-        int height = 8 + locCount;
-        var modalArea = ModalRenderer.centerRect(screen, 54, height);
+        var modalArea = ModalRenderer.centerRect(screen, 54, 9);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(modal.styledTitle(" New Template ", modal.border()))
@@ -2877,17 +2878,14 @@ public class ListCommand extends BaseCommand {
         modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
-        var constraints = new ArrayList<Constraint>();
-        constraints.add(Constraint.length(1)); // Name label
-        constraints.add(Constraint.length(1)); // Name input
-        constraints.add(Constraint.length(1)); // Parent label
-        constraints.add(Constraint.length(1)); // Parent input
-        constraints.add(Constraint.length(1)); // Location label
-        for (int i = 0; i < locCount; i++) constraints.add(Constraint.length(1));
-        constraints.add(Constraint.fill());    // hint bar
-
         var rows = Layout.vertical()
-                .constraints(constraints.toArray(new Constraint[0]))
+                .constraints(
+                        Constraint.length(1), // Name label
+                        Constraint.length(1), // Name input
+                        Constraint.length(1), // Parent label
+                        Constraint.length(1), // Parent input
+                        Constraint.length(1), // Location select
+                        Constraint.fill())     // hint bar
                 .split(inner);
 
         renderLabeledTextField(frame, rows.get(0), rows.get(1), "Name:", "my-app",
@@ -2895,31 +2893,14 @@ public class ListCommand extends BaseCommand {
         renderLabeledTextField(frame, rows.get(2), rows.get(3), "Parent:", "tpl-dev",
                 newTemplateParentInput, newTemplateFieldIndex == 1);
 
-        // Location radio buttons
-        boolean locationFocused = newTemplateFieldIndex == 2;
-        frame.renderWidget(Paragraph.from(Line.styled(
-                "Save to:", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(4));
-        for (int i = 0; i < locCount; i++) {
-            boolean selected = (i == newTemplateLocationIndex);
-            var symbol = selected ? "◉" : "○";
-            var checkColor = selected ? theme.checkEnabled() : theme.checkDisabled();
-            var prefix = (locationFocused && selected) ? "▸" : " ";
-            var labelColor = (locationFocused && selected) ? theme.focusedLabel() : modal.fg();
-            frame.renderWidget(Paragraph.from(Line.from(List.of(
-                    Span.styled(" " + prefix + " ", Style.EMPTY.fg(modal.accent()).bg(modal.bg())),
-                    Span.styled(symbol + " ", Style.EMPTY.fg(checkColor).bg(modal.bg())),
-                    Span.styled(newTemplateLocations.get(i).label(),
-                            Style.EMPTY.fg(labelColor).bg(modal.bg()))))),
-                    rows.get(5 + i));
-        }
+        modal.renderSelect(frame, rows.get(4), "Save to", newTemplateLocationSelect,
+                newTemplateFieldIndex == 2);
 
-        // Hint bar
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Enter", "Confirm");
         modal.addKey(hintSpans, "Esc", "Cancel");
         modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
-        if (locationFocused) modal.addKey(hintSpans, "↑↓", "Select");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(5 + locCount));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(5));
     }
 
     // --- Template detail modal ---
@@ -3046,7 +3027,7 @@ public class ListCommand extends BaseCommand {
                 return true;
             }
             helpInput = new TextInputState();
-            helpIncludeTemplates = false;
+            helpTemplatesCheck = new CheckboxState(false);
             helpFieldIndex = 0;
             helpLoading = false;
             helpResponseLines = null;
@@ -3107,7 +3088,7 @@ public class ListCommand extends BaseCommand {
             var question = helpInput.text().strip();
             if (question.isEmpty()) return true;
             helpLoading = true;
-            var includeTemplates = helpIncludeTemplates;
+            var includeTemplates = helpTemplatesCheck.isChecked();
             helpProviderLabel = switch (AiHelpClient.detectProvider(helpConfig)) {
                 case ANTHROPIC -> "Anthropic";
                 case VERTEX -> "Vertex AI";
@@ -3136,7 +3117,7 @@ public class ListCommand extends BaseCommand {
         }
         if (helpFieldIndex == 1) {
             if (key.isChar(' ')) {
-                helpIncludeTemplates = !helpIncludeTemplates;
+                helpTemplatesCheck.toggle();
                 return true;
             }
             return true;
@@ -3215,14 +3196,14 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            if (!cleanBuilds && !cleanImages && !cleanDnf) {
+            if (!cleanBuildsCheck.isChecked() && !cleanImagesCheck.isChecked() && !cleanDnfCheck.isChecked()) {
                 mode = Mode.BROWSE;
                 return true;
             }
             progressMessage = "Cleaning pool...";
             tui.draw(frame -> render(frame, tableState));
             try {
-                cleanResult = CleanCommand.cleanPool(incus, cleanBuilds, cleanImages, cleanDnf);
+                cleanResult = CleanCommand.cleanPool(incus, cleanBuildsCheck.isChecked(), cleanImagesCheck.isChecked(), cleanDnfCheck.isChecked());
             } catch (Exception e) {
                 progressMessage = null;
                 statusMessage = "Clean failed: " + e.getMessage();
@@ -3272,64 +3253,41 @@ public class ListCommand extends BaseCommand {
     private Runnable cleanConfirmOption(int index) {
         if (!cleanConfirmIsActionable(index)) return null;
         return switch (index) {
-            case 0 -> () -> cleanBuilds = !cleanBuilds;
-            case 1 -> () -> cleanImages = !cleanImages;
-            case 2 -> () -> cleanDnf = !cleanDnf;
+            case 0 -> () -> cleanBuildsCheck.toggle();
+            case 1 -> () -> cleanImagesCheck.toggle();
+            case 2 -> () -> cleanDnfCheck.toggle();
             default -> null;
         };
     }
 
     private void renderCleanConfirmModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var lines = new ArrayList<Line>();
         var usage = cleanScan.usage();
-
-        if (usage != null && usage.totalBytes() > 0) {
-            lines.add(Line.styled(gibShort(usage.usedBytes()) + " used / "
-                    + gibShort(usage.totalBytes()) + " (" + usage.percent() + "%)",
-                    Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
-            lines.add(Line.styled("", Style.EMPTY));
-        }
-
-        if (!cleanScan.failedBuilds().isEmpty()) {
-            var n = cleanScan.failedBuilds().size();
-            modal.renderToggleInto(lines, "Failed builds (" + n + ")",
-                    cleanBuilds, cleanFieldIndex == 0);
-        } else {
-            modal.renderDisabledLineInto(lines, "Failed builds", "none");
-        }
-        if (!cleanScan.unusedImages().isEmpty()) {
-            var n = cleanScan.unusedImages().size();
-            var size = CleanCommand.formatSize(cleanScan.unusedImagesBytes());
-            modal.renderToggleInto(lines, "Unused images (" + n + ", ~" + size + ")",
-                    cleanImages, cleanFieldIndex == 1);
-        } else {
-            modal.renderDisabledLineInto(lines, "Unused images", "all match a template");
-        }
-        if (cleanScan.dnfCacheExists()) {
-            modal.renderToggleInto(lines, "DNF build cache",
-                    cleanDnf, cleanFieldIndex == 2);
-        } else {
-            modal.renderDisabledLineInto(lines, "DNF build cache", "no cache volume");
-        }
-
+        boolean hasUsage = usage != null && usage.totalBytes() > 0;
         boolean nothingActionable = cleanConfirmActionableCount() == 0;
-        if (nothingActionable) {
-            lines.add(Line.styled("", Style.EMPTY));
-            lines.add(Line.styled("  Pool is clean.",
-                    Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg())));
-        }
-
         boolean showResizeHint = Platform.isMacOS() && usage != null
                 && usage.percent() >= STORAGE_WARN_PERCENT;
-        if (showResizeHint) {
-            lines.add(Line.styled("", Style.EMPTY));
-            lines.add(Line.styled("  Tip: isx vm resize can grow the storage pool",
-                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg())));
-        }
 
-        int width = 54;
-        int modalHeight = lines.size() + 5;
-        var modalArea = ModalRenderer.centerRect(screen, width, modalHeight);
+        var constraints = new ArrayList<Constraint>();
+        constraints.add(Constraint.length(1)); // top spacing
+        if (hasUsage) {
+            constraints.add(Constraint.length(1));
+            constraints.add(Constraint.length(1));
+        }
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        constraints.add(Constraint.length(1));
+        if (nothingActionable) {
+            constraints.add(Constraint.length(1));
+            constraints.add(Constraint.length(1));
+        }
+        if (showResizeHint) {
+            constraints.add(Constraint.length(1));
+            constraints.add(Constraint.length(1));
+        }
+        constraints.add(Constraint.fill());
+
+        int modalHeight = constraints.size() + 3;
+        var modalArea = ModalRenderer.centerRect(screen, 54, modalHeight);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(modal.styledTitle(" Pool cleanup ", modal.border()))
@@ -3340,11 +3298,50 @@ public class ListCommand extends BaseCommand {
         modal.renderBlock(frame, block, modalArea);
         var inner = block.inner(modalArea);
 
-        var rows = Layout.vertical()
-                .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
-                .split(inner);
+        var rows = Layout.vertical().constraints(constraints).split(inner);
+        int row = 1;
 
-        frame.renderWidget(Paragraph.from(Text.from(lines)), rows.get(1));
+        if (hasUsage) {
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    gibShort(usage.usedBytes()) + " used / "
+                            + gibShort(usage.totalBytes()) + " (" + usage.percent() + "%)",
+                    Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(row++));
+            row++;
+        }
+
+        if (!cleanScan.failedBuilds().isEmpty()) {
+            var n = cleanScan.failedBuilds().size();
+            modal.renderToggle(frame, rows.get(row++), "Failed builds (" + n + ")",
+                    cleanBuildsCheck, cleanFieldIndex == 0);
+        } else {
+            modal.renderDisabledLine(frame, rows.get(row++), "Failed builds", "none");
+        }
+        if (!cleanScan.unusedImages().isEmpty()) {
+            var n = cleanScan.unusedImages().size();
+            var size = CleanCommand.formatSize(cleanScan.unusedImagesBytes());
+            modal.renderToggle(frame, rows.get(row++), "Unused images (" + n + ", ~" + size + ")",
+                    cleanImagesCheck, cleanFieldIndex == 1);
+        } else {
+            modal.renderDisabledLine(frame, rows.get(row++), "Unused images", "all match a template");
+        }
+        if (cleanScan.dnfCacheExists()) {
+            modal.renderToggle(frame, rows.get(row++), "DNF build cache",
+                    cleanDnfCheck, cleanFieldIndex == 2);
+        } else {
+            modal.renderDisabledLine(frame, rows.get(row++), "DNF build cache", "no cache volume");
+        }
+
+        if (nothingActionable) {
+            row++;
+            frame.renderWidget(Paragraph.from(Line.styled("  Pool is clean.",
+                    Style.EMPTY.fg(theme.statusSuccess()).bg(modal.bg()))), rows.get(row++));
+        }
+        if (showResizeHint) {
+            row++;
+            frame.renderWidget(Paragraph.from(Line.styled(
+                    "  Tip: isx vm resize can grow the storage pool",
+                    Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))), rows.get(row++));
+        }
 
         var hintSpans = new ArrayList<Span>();
         if (nothingActionable) {
@@ -3354,7 +3351,7 @@ public class ListCommand extends BaseCommand {
             modal.addKey(hintSpans, "Enter", "Clean");
             modal.addKey(hintSpans, "Esc", "Cancel");
         }
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
+        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
     }
 
     private Line cleanCheckLine(String text) {
@@ -3616,7 +3613,7 @@ public class ListCommand extends BaseCommand {
                 .renderWithCursor(rows.get(3), frame.buffer(), helpInput, frame);
 
         modal.renderToggle(frame, rows.get(5),
-                "Include template definitions", helpIncludeTemplates, helpFieldIndex == 1);
+                "Include template definitions", helpTemplatesCheck, helpFieldIndex == 1);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Enter", "Ask");

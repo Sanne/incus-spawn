@@ -3,7 +3,6 @@ package dev.incusspawn.command;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.tui.TuiTheme;
 import dev.tamboui.buffer.Cell;
 import dev.tamboui.layout.Constraint;
@@ -19,17 +18,36 @@ import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.block.Title;
+import dev.tamboui.widgets.checkbox.Checkbox;
+import dev.tamboui.widgets.checkbox.CheckboxState;
 import dev.tamboui.widgets.input.TextInput;
 import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
+import dev.tamboui.widgets.select.Select;
+import dev.tamboui.widgets.select.SelectState;
 
 final class ModalRenderer {
 
     private final TuiTheme theme;
+    private final Checkbox checkbox;
+    private final Select select;
 
     ModalRenderer(TuiTheme theme) {
         this.theme = theme;
+        this.checkbox = Checkbox.builder()
+                .checkedColor(theme.checkEnabled())
+                .uncheckedColor(theme.checkDisabled())
+                .style(Style.EMPTY.bg(theme.modalBg()))
+                .build();
+        this.select = Select.builder()
+                .selectedColor(theme.focusedLabel())
+                .indicatorColor(theme.modalAccent())
+                .style(Style.EMPTY.bg(theme.modalBg()))
+                .build();
     }
+
+    Checkbox checkbox() { return checkbox; }
+    Select select() { return select; }
 
     Color bg() { return theme.modalBg(); }
     Color fg() { return theme.modalFg(); }
@@ -94,52 +112,39 @@ final class ModalRenderer {
     }
 
     void renderToggle(Frame frame, Rect area,
-                              String label, boolean enabled, boolean focused) {
-        var check = enabled ? "☑" : "☐";
-        var checkColor = enabled ? theme.checkEnabled() : theme.checkDisabled();
+                              String label, CheckboxState state, boolean focused) {
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(3), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
-        frame.renderWidget(Paragraph.from(Line.from(List.of(
-                Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(theme.modalBg())),
-                Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg()))))), area);
+        frame.renderWidget(Paragraph.from(Line.styled(" " + prefix + " ",
+                Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg()))), cols.get(0));
+        frame.renderStatefulWidget(checkbox, cols.get(1), state);
+        frame.renderWidget(Paragraph.from(Line.styled(label,
+                Style.EMPTY.fg(labelColor).bg(theme.modalBg()))), cols.get(2));
     }
 
-    void renderToggleInto(List<Line> lines, String label, boolean enabled, boolean focused) {
-        var check = enabled ? "☑" : "☐";
-        var checkColor = enabled ? theme.checkEnabled() : theme.checkDisabled();
+    void renderDisabledLine(Frame frame, Rect area, String label, String reason) {
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(3), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .split(area);
+        frame.renderWidget(Paragraph.from(Line.styled(label + " — " + reason,
+                Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(2));
+    }
+
+    void renderSelect(Frame frame, Rect area,
+                              String label, SelectState state, boolean focused) {
+        var cols = Layout.horizontal()
+                .constraints(Constraint.length(3), Constraint.length(label.length() + 1), Constraint.fill())
+                .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
-        lines.add(Line.from(List.of(
-                Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
-                Span.styled(check + " ", Style.EMPTY.fg(checkColor).bg(theme.modalBg())),
-                Span.styled(label, Style.EMPTY.fg(labelColor).bg(theme.modalBg())))));
-    }
-
-    void renderDisabledLineInto(List<Line> lines, String label, String reason) {
-        var dimColor = theme.textDim();
-        lines.add(Line.from(List.of(
-                Span.styled("     ", Style.EMPTY.bg(theme.modalBg())),
-                Span.styled(label + " — " + reason, Style.EMPTY.fg(dimColor).bg(theme.modalBg())))));
-    }
-
-    void renderNetworkModeRadio(Frame frame, Rect area,
-                                        NetworkMode selected, boolean focused) {
-        var spans = new ArrayList<Span>();
-        var prefix = focused ? "▸" : " ";
-        spans.add(Span.styled(" " + prefix + " ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())));
-        for (NetworkMode mode : NetworkMode.values()) {
-            boolean isSelected = (mode == selected);
-            var symbol = isSelected ? "◉" : "○";
-            var color = isSelected ? theme.checkEnabled() : theme.checkDisabled();
-            spans.add(Span.styled(symbol + " ", Style.EMPTY.fg(color).bg(theme.modalBg())));
-            var labelStyle = isSelected
-                    ? Style.EMPTY.bold().fg(focused ? theme.focusedLabel() : theme.modalFg()).bg(theme.modalBg())
-                    : Style.EMPTY.fg(theme.checkDisabled()).bg(theme.modalBg());
-            spans.add(Span.styled(mode.label(), labelStyle));
-            spans.add(Span.styled("  ", Style.EMPTY.bg(theme.modalBg())));
-        }
-        frame.renderWidget(Paragraph.from(Line.from(spans)), area);
+        frame.renderWidget(Paragraph.from(Line.styled(" " + prefix + " ",
+                Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg()))), cols.get(0));
+        frame.renderWidget(Paragraph.from(Line.styled(label + " ",
+                Style.EMPTY.fg(labelColor).bg(theme.modalBg()))), cols.get(1));
+        frame.renderStatefulWidget(select, cols.get(2), state);
     }
 
     void renderInlineField(List<Span> spans, String value, boolean disabled,
