@@ -284,6 +284,40 @@ class PiSetupTest {
     }
 
     @Test
+    void descriptionIsSet() {
+        assertFalse(new PiSetup().description().isBlank(),
+                "PiSetup should have a non-blank description for the credential menu");
+    }
+
+    @Test
+    void optionalProxyReturnsOpenaiConfig() {
+        var proxy = new PiSetup().optionalProxy();
+        assertNotNull(proxy, "optionalProxy should return a ProxyDef for OpenAI credentials");
+        assertEquals("openai", proxy.getConfigNamespace());
+        assertTrue(proxy.getConfiguration().containsKey("api-key"),
+                "Should declare an api-key config entry");
+        var apiKey = proxy.getConfiguration().get("api-key");
+        assertEquals("apiKey", apiKey.getConfigPath());
+        assertTrue(apiKey.isSecret(), "API key should be marked as secret");
+    }
+
+    @Test
+    void optionalProxyAuthTargetsOpenaiDomain() {
+        var proxy = new PiSetup().optionalProxy();
+        assertNotNull(proxy);
+        assertEquals(1, proxy.getAuth().size());
+        var auth = proxy.getAuth().get(0);
+        assertTrue(auth.getDomains().contains("api.openai.com"));
+        assertEquals("bearer", auth.getType());
+    }
+
+    @Test
+    void proxyRemainsNull() {
+        assertNull(new PiSetup().proxy(),
+                "PiSetup.proxy() should remain null — credentials are optional, not required");
+    }
+
+    @Test
     void parametersHavePatternValidation() {
         var params = new PiSetup().parameters();
 

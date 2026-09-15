@@ -19,6 +19,13 @@ public interface ToolSetup {
     /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
     default ToolDef.ProxyDef proxy() { return null; }
 
+    /**
+     * Optional proxy definition for credentials this tool can use but does not require.
+     * Tools with an optional proxy appear in the init credential menu (bypassing feature gates)
+     * so users can configure the credential even when no other tool provides it.
+     */
+    default ToolDef.ProxyDef optionalProxy() { return null; }
+
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
     default String feature() { return null; }
 

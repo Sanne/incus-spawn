@@ -1233,12 +1233,25 @@ public class InitCommand extends BaseCommand {
         var configTree = JSON.valueToTree(config);
 
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
+        var coveredNamespaces = new java.util.HashSet<String>();
         for (var entry : allTools.entrySet()) {
             var tool = entry.getValue();
             if (tool.feature() != null && !config.isFeatureEnabled(tool.feature())) continue;
             var proxyDef = tool.proxy();
             if (proxyDef == null || proxyDef.getConfiguration().isEmpty()) continue;
             toolsWithProxy.add(entry);
+            if (proxyDef.getConfigNamespace() != null) coveredNamespaces.add(proxyDef.getConfigNamespace());
+        }
+        var optionalTools = new java.util.HashSet<String>();
+        for (var entry : allTools.entrySet()) {
+            var tool = entry.getValue();
+            if (tool.proxy() != null) continue;
+            var optProxy = tool.optionalProxy();
+            if (optProxy == null || optProxy.getConfiguration().isEmpty()) continue;
+            if (optProxy.getConfigNamespace() != null && coveredNamespaces.contains(optProxy.getConfigNamespace())) continue;
+            toolsWithProxy.add(entry);
+            optionalTools.add(entry.getKey());
+            if (optProxy.getConfigNamespace() != null) coveredNamespaces.add(optProxy.getConfigNamespace());
         }
 
         if (toolsWithProxy.isEmpty()) {
@@ -1259,7 +1272,9 @@ public class InitCommand extends BaseCommand {
             var toolName = entry.getKey();
             var tool = entry.getValue();
             var desc = tool.description().isBlank() ? toolName : tool.description();
-            var tag = isToolConfigured(toolName, tool, config, configTree) ? " [configured]" : "";
+            var configured = isToolConfigured(toolName, tool, config, configTree);
+            var tag = configured ? " [configured]"
+                    : optionalTools.contains(toolName) ? " [optional]" : "";
             System.out.println("    " + (i + 1) + ". " + desc + tag);
         }
         System.out.println();
@@ -1291,6 +1306,7 @@ public class InitCommand extends BaseCommand {
             SpawnConfig config, com.fasterxml.jackson.databind.JsonNode configTree) {
         if ("claude".equals(toolName)) return config.getClaude().hasAuth();
         var proxyDef = tool.proxy();
+        if (proxyDef == null) proxyDef = tool.optionalProxy();
         if (proxyDef == null) return false;
         boolean anyChecked = false;
         for (var entry : proxyDef.getConfiguration().entrySet()) {
@@ -2141,6 +2157,7 @@ public class InitCommand extends BaseCommand {
         }
 
         var proxyDef = tool.proxy();
+        if (proxyDef == null) proxyDef = tool.optionalProxy();
         if (proxyDef == null) return;
 
         var configTree = JSON.valueToTree(config);

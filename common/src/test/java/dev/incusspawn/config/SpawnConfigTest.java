@@ -2,7 +2,16 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.tool.ToolDef;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -217,5 +226,114 @@ class SpawnConfigTest {
         config.setConfigByPath("myTool.secret", "s3cret");
         assertEquals("s3cret", config.getExtras().get("myTool")
                 instanceof java.util.Map m ? m.get("secret") : null);
+    }
+
+    @Nested
+    class CheckCredentialsTest {
+
+        @TempDir
+        Path tempDir;
+        private String originalUserHome;
+
+        @BeforeEach
+        void setup() {
+            originalUserHome = System.getProperty("user.home");
+            System.setProperty("user.home", tempDir.toString());
+        }
+
+        @AfterEach
+        void tearDown() {
+            if (originalUserHome != null) {
+                System.setProperty("user.home", originalUserHome);
+            }
+        }
+
+        private ImageDef imageWithTools(ToolDef.ToolRef... refs) {
+            var def = new ImageDef();
+            def.setName("test-image");
+            def.setTools(List.of(refs));
+            return def;
+        }
+
+        @Test
+        void noToolsReturnsEmpty() {
+            var def = imageWithTools();
+            assertEquals("", SpawnConfig.checkCredentials(def, Map.of(), n -> false));
+        }
+
+        @Test
+        void claudeToolRequiresAnthropicAuth() {
+            var def = imageWithTools(new ToolDef.ToolRef("claude"));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("Anthropic"), result);
+        }
+
+        @Test
+        void claudeToolPassesWhenApiKeyConfigured() {
+            var config = SpawnConfig.load();
+            config.getClaude().setApiKey("sk-ant-test");
+            config.save();
+
+            var def = imageWithTools(new ToolDef.ToolRef("claude"));
+            assertEquals("", SpawnConfig.checkCredentials(def, Map.of(), n -> false));
+        }
+
+        @Test
+        void ghToolRequiresGithubToken() {
+            var def = imageWithTools(new ToolDef.ToolRef("gh"));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("GitHub"), result);
+        }
+
+        @Test
+        void piDefaultProviderRequiresAnthropicAuth() {
+            var def = imageWithTools(new ToolDef.ToolRef("pi"));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("Anthropic"), result);
+        }
+
+        @Test
+        void piOpenaiProviderRequiresOpenaiAuth() {
+            var def = imageWithTools(new ToolDef.ToolRef("pi", Map.of("provider", "openai")));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("OpenAI"), result);
+            assertFalse(result.contains("Anthropic"), "Should not require Anthropic for openai provider");
+        }
+
+        @Test
+        void piOpenaiProviderPassesWhenKeyConfigured() {
+            var config = SpawnConfig.load();
+            config.getOpenai().setApiKey("sk-test");
+            config.save();
+
+            var def = imageWithTools(new ToolDef.ToolRef("pi", Map.of("provider", "openai")));
+            assertEquals("", SpawnConfig.checkCredentials(def, Map.of(), n -> false));
+        }
+
+        @Test
+        void piVertexProviderRequiresVertexConfig() {
+            var def = imageWithTools(new ToolDef.ToolRef("pi", Map.of("provider", "vertex")));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("Vertex"), result);
+        }
+
+        @Test
+        void claudeAndPiDeduplicateAnthropicRequirement() {
+            var def = imageWithTools(new ToolDef.ToolRef("claude"), new ToolDef.ToolRef("pi"));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            // "Anthropic" should appear only once thanks to LinkedHashSet dedup
+            int count = result.split("Anthropic").length - 1;
+            assertEquals(1, count, "Anthropic requirement should not be duplicated: " + result);
+        }
+
+        @Test
+        void claudeAndPiOpenaiRequireBothCredentials() {
+            var def = imageWithTools(
+                    new ToolDef.ToolRef("claude"),
+                    new ToolDef.ToolRef("pi", Map.of("provider", "openai")));
+            var result = SpawnConfig.checkCredentials(def, Map.of(), n -> false);
+            assertTrue(result.contains("Anthropic"), "Should require Anthropic for claude: " + result);
+            assertTrue(result.contains("OpenAI"), "Should require OpenAI for pi: " + result);
+        }
     }
 }

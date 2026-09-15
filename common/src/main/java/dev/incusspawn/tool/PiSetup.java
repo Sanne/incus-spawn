@@ -19,6 +19,40 @@ public class PiSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Pi — coding agent";
+    }
+
+    @Override
+    public ToolDef.ProxyDef optionalProxy() {
+        var apiKey = new ToolDef.ConfigEntry();
+        apiKey.setConfigPath("apiKey");
+        apiKey.setDescription("OpenAI API key");
+        apiKey.setSecret(true);
+        apiKey.setHelp(List.of(
+                "Pi can use OpenAI as a provider (configure with provider: openai).",
+                "",
+                "To create an API key:",
+                "  1. Go to https://platform.openai.com/api-keys",
+                "  2. Click 'Create new secret key'",
+                "  3. Copy the generated key (it is only shown once)",
+                "",
+                "Note: API usage requires billing credits, even on free accounts.",
+                "Add credits at https://platform.openai.com/settings/organization/billing"));
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("api.openai.com"));
+        auth.setType("bearer");
+        auth.setToken("${api-key}");
+
+        var proxy = new ToolDef.ProxyDef();
+        proxy.setConfigNamespace("openai");
+        proxy.setConfiguration(java.util.Map.of("api-key", apiKey));
+        proxy.setAuth(List.of(auth));
+        return proxy;
+    }
+
+    @Override
     public java.util.Map<String, ToolDef.ParameterDef> parameters() {
         var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
 
