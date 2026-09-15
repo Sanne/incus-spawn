@@ -74,14 +74,16 @@ public class AiHelpClient {
      */
     public static String noProviderMessage(SpawnConfig config) {
         var configured = config.getClaude().effectiveAccounts();
-        // Describe what is actually configured rather than inferring it from the absence of a
-        // provider -- a confidently wrong explanation is worse than a vague one.
-        var allOauth = !configured.isEmpty() && configured.values().stream()
-                .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
-        if (!configured.isEmpty() && !allOauth) {
-            return "No configured Claude account can answer this. "
-                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
+        if (configured.isEmpty()) {
+            return "No AI credentials configured. "
+                    + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
         }
+        // Describe what is actually configured rather than inferring it from the absence of a
+        // provider -- a confidently wrong explanation is worse than a vague one. Both branches
+        // are reachable: an account can be present but unusable (a flat 'useVertex: true'
+        // missing its project is kept so ProxyMain can report it, but is not complete()).
+        var allOauth = configured.values().stream()
+                .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
         if (allOauth) {
             return "The configured Claude account"
                     + (configured.size() > 1 ? "s are all" : " is")
@@ -89,8 +91,8 @@ public class AiHelpClient {
                     + " itself and cannot answer here.\n"
                     + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.";
         }
-        return "No AI credentials configured. "
-                + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
+        return "No configured Claude account can answer this. "
+                + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
     }
 
     public static AiResponse ask(String question, String systemPrompt, SpawnConfig config) throws IOException {

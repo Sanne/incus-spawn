@@ -25,12 +25,19 @@ public record ProxyCredentials(
     public static ProxyCredentials fromConfig(SpawnConfig config) {
         var claude = config.getClaude();
         var resolved = ToolProxyResolver.resolve(config);
+        // Each ClaudeConfig accessor re-resolves the account, rebuilding the account map every
+        // time; resolve once and read the fields off it. Also makes it explicit that all five
+        // values describe a single account rather than being independently sourced.
+        var account = claude.account();
+        var vertex = account != null && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX;
+        var oauth = account != null && account.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH;
+        var apiKey = account != null && account.effectiveType() == SpawnConfig.ClaudeAccountType.API_KEY;
         return new ProxyCredentials(
-                claude.getApiKey(),
-                claude.getOauthToken(),
-                claude.isUseVertex(),
-                claude.getCloudMlRegion(),
-                claude.getVertexProjectId(),
+                apiKey ? account.getApiKey() : "",
+                oauth ? account.getOauthToken() : "",
+                vertex,
+                account == null ? "" : account.getCloudMlRegion(),
+                account == null ? "" : account.getVertexProjectId(),
                 resolved
         );
     }
