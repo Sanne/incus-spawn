@@ -1322,6 +1322,14 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
+        // An environment credential configures the *default* account. These branches return on
+        // success without reaching the account menu, so aim them explicitly: left at the
+        // replace-all default they would delete every other configured account.
+        if (config.getClaude().hasAuth()) {
+            claudeAccountTarget = config.getClaude().accountName();
+            claudeReplaceAccounts = false;
+        }
+
         // Detect existing env vars
         var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
         var envApiKey = Environment.strippedEnv("ANTHROPIC_API_KEY");
@@ -1342,7 +1350,7 @@ public class InitCommand extends BaseCommand {
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                    if (askConfirmation(console, "  Use this configuration?", true)) {
+                    if (askConfirmation(console, envAccountPrompt(config, "  Use this configuration?"), true)) {
                         saveVertexConfig(config, region, projectId);
                         System.out.println("  Claude auth configuration saved.");
                         return;
@@ -1363,7 +1371,7 @@ public class InitCommand extends BaseCommand {
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
-                if (askConfirmation(console, "  Use this token?", true)) {
+                if (askConfirmation(console, envAccountPrompt(config, "  Use this token?"), true)) {
                     saveOauthConfig(config, envOauthToken);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1379,7 +1387,7 @@ public class InitCommand extends BaseCommand {
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                if (askConfirmation(console, "  Use this key?", true)) {
+                if (askConfirmation(console, envAccountPrompt(config, "  Use this key?"), true)) {
                     saveDirectConfig(config, envApiKey);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1485,6 +1493,13 @@ public class InitCommand extends BaseCommand {
         } else {
             System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
         }
+    }
+
+    /** Names the account an environment credential will overwrite, when there is a choice. */
+    private String envAccountPrompt(SpawnConfig config, String question) {
+        var accounts = config.getClaude().effectiveAccounts();
+        if (accounts.size() < 2) return question;
+        return question + " (replaces account '" + claudeAccountTarget + "'; the others are kept)";
     }
 
     /** One line per account: marker, name, what it is, and a masked credential. */
