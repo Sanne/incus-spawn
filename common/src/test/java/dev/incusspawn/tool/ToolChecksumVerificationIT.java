@@ -30,7 +30,7 @@ class ToolChecksumVerificationIT {
 
     private static final List<String> BUILTIN_TOOLS = List.of(
             "tools/maven-3.yaml",
-            "tools/mvnd-1.yaml",
+            "tools/mvnd.yaml",
             "tools/idea-backend.yaml",
             "tools/starship.yaml"
     );

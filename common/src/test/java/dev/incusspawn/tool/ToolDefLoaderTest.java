@@ -29,9 +29,9 @@ class ToolDefLoaderTest {
     @Test
     void findsBuiltinMvnd() {
         var loader = new ToolDefLoader();
-        var tool = loader.find("mvnd-1");
-        assertNotNull(tool, "mvnd-1 should be found as a built-in YAML tool");
-        assertEquals("mvnd-1", tool.name());
+        var tool = loader.find("mvnd");
+        assertNotNull(tool, "mvnd should be found as a built-in YAML tool");
+        assertEquals("mvnd", tool.name());
     }
 
     @Test

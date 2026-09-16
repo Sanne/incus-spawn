@@ -36,7 +36,7 @@ public class ToolDefLoader {
             "headroom.yaml",
             "podman.yaml",
             "maven-3.yaml",
-            "mvnd-1.yaml",
+            "mvnd.yaml",
             "sshd.yaml",
             "idea-backend.yaml",
             "vscode-remote.yaml",

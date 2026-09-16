@@ -16,7 +16,7 @@ class ToolDefValidationTest {
 
     private static final String[] BUILTIN_TOOLS = {
             "tools/maven-3.yaml",
-            "tools/mvnd-1.yaml",
+            "tools/mvnd.yaml",
             "tools/idea-backend.yaml",
             "tools/starship.yaml",
             "tools/podman.yaml",
