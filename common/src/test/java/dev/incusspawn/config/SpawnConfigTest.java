@@ -82,15 +82,16 @@ class SpawnConfigTest {
     }
 
     @Test
-    void bothHostPathAndHostPathsThrowsException() throws Exception {
+    void bothHostPathAndHostPathsMergedOnDeserialize() throws Exception {
         var yaml = """
                 host-path: ~/projects
                 host-paths:
                   - ~/workspace
                 """;
         var config = YAML.readValue(yaml, SpawnConfig.class);
-        var exception = assertThrows(IllegalStateException.class, config::validate);
-        assertTrue(exception.getMessage().contains("Cannot specify both"));
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/projects", "~/workspace"), config.getHostPaths());
     }
 
     @Test
@@ -218,4 +219,103 @@ class SpawnConfigTest {
         assertEquals("s3cret", config.getExtras().get("myTool")
                 instanceof java.util.Map m ? m.get("secret") : null);
     }
+
+    // --- host-path migration tests ---
+
+    @Test
+    void migrateHostPathMovesToHostPaths() {
+        var config = new SpawnConfig();
+        config.setHostPath("~/projects");
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
+    }
+
+    @Test
+    void migrateHostPathNoOpWhenAlreadyEmpty() {
+        var config = new SpawnConfig();
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertTrue(config.getHostPaths().isEmpty());
+    }
+
+    @Test
+    void migrateHostPathNoOpWhenHostPathsAlreadySet() {
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of("~/workspace"));
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/workspace"), config.getHostPaths());
+    }
+
+    @Test
+    void migrateHostPathMergesBothWithDedup() {
+        var config = new SpawnConfig();
+        config.setHostPath("~/old");
+        config.setHostPaths(java.util.List.of("~/new"));
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/old", "~/new"), config.getHostPaths());
+    }
+
+    @Test
+    void migrateHostPathDeduplicatesWhenAlreadyInList() {
+        var config = new SpawnConfig();
+        config.setHostPath("~/same");
+        config.setHostPaths(java.util.List.of("~/same", "~/other"));
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/same", "~/other"), config.getHostPaths());
+    }
+
+    @Test
+    void serializationOmitsHostPath() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(java.util.List.of("~/projects"));
+        var yaml = YAML.writeValueAsString(config);
+        assertFalse(yaml.contains("host-path:"), "host-path (singular) should not appear in output");
+        assertTrue(yaml.contains("host-paths:"), "host-paths (plural) should appear in output");
+    }
+
+    @Test
+    void legacyHostPathRoundTripsToHostPaths() throws Exception {
+        var yaml = """
+                host-path: ~/projects
+                incus-bridge-gateway: "10.166.11.1"
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        assertEquals("~/projects", config.getHostPath());
+        assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
+
+        config.migrateHostPath();
+        assertEquals("", config.getHostPath());
+        assertEquals(java.util.List.of("~/projects"), config.getHostPaths());
+
+        var written = YAML.writeValueAsString(config);
+        assertFalse(written.contains("host-path:"), "re-serialized config should not contain host-path");
+        assertTrue(written.contains("host-paths:"));
+
+        var reloaded = YAML.readValue(written, SpawnConfig.class);
+        assertEquals("", reloaded.getHostPath());
+        assertEquals(java.util.List.of("~/projects"), reloaded.getHostPaths());
+        assertEquals("10.166.11.1", reloaded.getIncusBridgeGateway());
+    }
+
+    @Test
+    void modernHostPathsRoundTripsCleanly() throws Exception {
+        var yaml = """
+                host-paths:
+                  - ~/projects
+                  - ~/workspace
+                """;
+        var config = YAML.readValue(yaml, SpawnConfig.class);
+        config.migrateHostPath();
+        var written = YAML.writeValueAsString(config);
+        assertFalse(written.contains("host-path:"), "should not produce host-path singular");
+        assertTrue(written.contains("host-paths:"));
+
+        var reloaded = YAML.readValue(written, SpawnConfig.class);
+        assertEquals(java.util.List.of("~/projects", "~/workspace"), reloaded.getHostPaths());
+    }
+
 }
