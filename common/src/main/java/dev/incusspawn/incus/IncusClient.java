@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
@@ -1457,7 +1458,7 @@ public class IncusClient {
                 if (volResp.isSuccess()) {
                     var delResp = http().requestAndWait("DELETE", volPath, null);
                     if (!delResp.isSuccess()) {
-                        System.err.println("Warning: failed to remove stale volume "
+                        ClientLog.warn("Failed to remove stale volume "
                                 + instanceName + " from pool " + poolName);
                     }
                 }

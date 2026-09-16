@@ -73,7 +73,7 @@ public final class AutoRemoteService {
             try {
                 removeMatchingRemotes(dir, isxPrefix, output);
             } catch (Exception e) {
-                System.err.println("Warning: remote cleanup failed for " + dir + ": " + e.getMessage());
+                output.accept("Warning: remote cleanup failed for " + dir + ": " + e.getMessage());
             }
         }
     }
