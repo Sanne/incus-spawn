@@ -445,6 +445,30 @@ If `path` is omitted, it defaults to the same relative path under `/home/agentus
 
 **VM note:** VMs mount disk devices via virtiofs (asynchronously, after the incus-agent starts). For overlay mode, the build waits up to 15 seconds for the device to appear before mounting. File-level host resources (single files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for VMs.
 
+## Built-in Tools
+
+These tools ship with incus-spawn and can be referenced by name in a template's `tools:` list:
+
+| Tool | Description |
+|------|-------------|
+| `claude` | Claude Code: AI coding assistant |
+| `gh` | GitHub: PAT for git operations |
+| `pi` | Pi: AI coding assistant |
+| `bob` | Bob Shell: IBM AI coding assistant |
+| `codex` | Codex CLI: OpenAI coding assistant (requires `openai` feature) |
+| `maven-3` | Apache Maven |
+| `mvnd` | Apache Maven Daemon |
+| `podman` | Podman container runtime configured for Testcontainers |
+| `sshd` | OpenSSH server for remote access |
+| `idea-backend` | JetBrains IntelliJ IDEA Remote Development backend |
+| `vscode-remote` | VS Code Remote Development via SSH |
+| `starship` | Starship cross-shell prompt with incus-spawn indicator |
+| `tmux` | Terminal multiplexer with incus-spawn session integration |
+| `zmx` | zmx: session attach/detach for the terminal |
+| `headroom` | Headroom context optimization for Claude Code |
+
+Run `isx tools list -v` to see all available tools including user-defined and project-local definitions. Use `isx tools show <name>` to inspect a tool's dependencies, packages, configurable parameters, downloads, TUI actions, and proxy domains.
+
 ## Custom Tools
 
 Template inheritance forms a single chain -- a template has exactly one parent. Tools provide composition: reusable capabilities that any template can mix in independently. A `gradle` tool can be added to a Java template, a Kotlin template, or a project-local template without duplicating definitions or creating diamond inheritance.
@@ -882,6 +906,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | [`isx update-base`](#isx-update-base) | Check for and install base image updates |
 | [`isx update-all`](#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](#isx-templates) | Manage template definitions |
+| [`isx tools`](#isx-tools) | List and inspect available tool definitions |
 | [`isx project`](#isx-project) | Manage project templates |
 | [`isx proxy`](#isx-proxy) | Manage the MITM authentication proxy |
 | [`isx doctor`](#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
@@ -1032,6 +1057,29 @@ Manage template definitions. Running bare `isx templates` defaults to `list`.
 #### `isx templates edit`
 
     isx templates edit <name>
+
+### `isx tools`
+
+List and inspect available tool definitions. Running bare `isx tools` defaults to `list`.
+
+    isx tools <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | List available tools |
+| `show` | Show details of a tool definition |
+
+#### `isx tools list`
+
+    isx tools list [options]
+
+| Option | Description |
+|--------|-------------|
+| `-v`, `--verbose` | Show source and description |
+
+#### `isx tools show`
+
+    isx tools show <name>
 
 ### `isx project`
 

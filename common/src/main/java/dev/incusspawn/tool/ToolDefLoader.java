@@ -83,6 +83,12 @@ public class ToolDefLoader {
         return load().overrides();
     }
 
+    /** Source of a tool definition: "built-in" or an absolute path. */
+    public String getSource(String name) {
+        var source = load().getSource(name);
+        return source != null ? source : "built-in";
+    }
+
     /**
      * Return the names of tools whose resolved definition came from the project-local directory.
      * These tools are CWD-dependent and invisible to the proxy daemon.

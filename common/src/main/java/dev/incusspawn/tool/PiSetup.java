@@ -19,6 +19,11 @@ public class PiSetup implements ToolSetup {
     }
 
     @Override
+    public String description() {
+        return "Pi — AI coding assistant";
+    }
+
+    @Override
     public java.util.Map<String, ToolDef.ParameterDef> parameters() {
         var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
 
