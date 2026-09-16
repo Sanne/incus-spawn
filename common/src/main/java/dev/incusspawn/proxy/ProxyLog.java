@@ -14,8 +14,17 @@ public final class ProxyLog {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private static volatile Boolean debugOverride;
+    private static volatile boolean stderrSuppressed;
 
     private ProxyLog() {}
+
+    /**
+     * Suppress stderr output while the TUI owns the terminal.  File logging continues
+     * unconditionally so the lifecycle log stays complete.
+     */
+    public static void setSuppressStderr(boolean suppress) {
+        stderrSuppressed = suppress;
+    }
 
     public static boolean isDebugEnabled() {
         var v = debugOverride;
@@ -45,7 +54,7 @@ public final class ProxyLog {
 
     private static void log(String level, String message) {
         var line = LocalDateTime.now().format(FMT) + " [" + level + "] " + message;
-        System.err.println(line);
+        if (!stderrSuppressed) System.err.println(line);
         writeToFile(line);
     }
 

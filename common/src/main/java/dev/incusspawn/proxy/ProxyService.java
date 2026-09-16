@@ -63,7 +63,7 @@ public final class ProxyService {
             var lock = channel.tryLock();
             if (lock != null) return new ProxyLockHolder(channel, lock);
 
-            System.err.println("Another isx process is managing the proxy — waiting...");
+            ProxyLog.info("Another isx process is managing the proxy — waiting...");
             long deadline = System.nanoTime() + PROXY_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
             while (System.nanoTime() < deadline) {
                 try { Thread.sleep(500); } catch (InterruptedException e) {
