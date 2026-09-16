@@ -10,6 +10,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 
 import java.io.IOException;
 import java.util.Map;
+import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -240,10 +241,10 @@ public class SpawnConfig {
             config.validate();
             return config;
         } catch (IOException e) {
-            System.err.println("Warning: " + YamlErrors.friendly("config.yaml", e));
+            ClientLog.warn(YamlErrors.friendly("config.yaml", e));
             return new SpawnConfig();
         } catch (IllegalStateException e) {
-            System.err.println("Error: invalid config: " + e.getMessage());
+            ClientLog.warn("Invalid config: " + e.getMessage());
             return new SpawnConfig();
         }
     }
