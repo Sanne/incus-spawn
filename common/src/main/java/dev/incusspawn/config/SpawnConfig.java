@@ -31,7 +31,7 @@ public class SpawnConfig {
     private OpenaiConfig openai = new OpenaiConfig();
     private java.util.List<String> features = java.util.List.of();
     private java.util.List<String> searchPaths = java.util.List.of();
-    @JsonProperty("host-path")
+    @JsonProperty(value = "host-path", access = JsonProperty.Access.WRITE_ONLY)
     private String hostPath = "";
     @JsonProperty("host-paths")
     private java.util.List<String> hostPaths = java.util.List.of();
@@ -238,25 +238,29 @@ public class SpawnConfig {
         }
         try {
             var config = YAML.readValue(configFile.toFile(), SpawnConfig.class);
-            config.validate();
+            config.migrateHostPath();
             return config;
         } catch (IOException e) {
             ClientLog.warn(YamlErrors.friendly("config.yaml", e));
             return new SpawnConfig();
-        } catch (IllegalStateException e) {
-            ClientLog.warn("Invalid config: " + e.getMessage());
-            return new SpawnConfig();
         }
     }
 
-    void validate() {
-        if (!hostPath.isEmpty() && !hostPaths.isEmpty()) {
-            throw new IllegalStateException("Cannot specify both 'host-path' and 'host-paths' in config.yaml");
+    void migrateHostPath() {
+        if (hostPath.isEmpty()) return;
+        if (hostPaths.isEmpty()) {
+            hostPaths = java.util.List.of(hostPath);
+        } else if (!hostPaths.contains(hostPath)) {
+            var merged = new java.util.ArrayList<>(hostPaths);
+            merged.add(0, hostPath);
+            hostPaths = java.util.List.copyOf(merged);
         }
+        hostPath = "";
     }
 
     public void save() {
         try {
+            migrateHostPath();
             var configFile = configDir().resolve("config.yaml");
             Files.createDirectories(configFile.getParent());
             YAML.writeValue(configFile.toFile(), this);
