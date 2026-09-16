@@ -182,23 +182,14 @@ public class VmCommand extends BaseCommand {
             VmManager.resizeDataDisk(size);
             BuildOutput.stepDone();
 
-            // start() prints its own steps (root-disk replacement, launch); the boot is only needed
-            // so the guest can expand btrfs and we can verify.
-            if (!VmManager.start()) {
-                System.err.println("Failed to start VM after resize.");
-                return CommandResult.valueOf(1);
-            }
-            // Once the VM is up, restore its prior state on every exit path (below): a later failure
-            // must not leave a previously-stopped VM running.
+            // start() prints its own steps (root-disk replacement, launch, readiness); the boot is
+            // only needed so the guest can expand btrfs and we can verify. Wrap in try/finally so a
+            // previously-stopped VM is restored even when start fails after launching (readiness timeout).
             try {
-                BuildOutput.stepStart("Waiting for Incus daemon...");
-                if (!VmManager.waitUntilReady(60)) {
-                    BuildOutput.stepFail("VM started but Incus did not become reachable within 60s.");
-                    System.err.println("Check 'isx vm console' for boot logs.");
+                if (!VmManager.start()) {
+                    System.err.println("Failed to start VM after resize.");
                     return CommandResult.valueOf(1);
                 }
-                BuildOutput.stepDone();
-
                 // Verify the guest actually grew the pool to fill the larger device.
                 var incus = RuntimeServices.incus();
                 var pool = incus.findUsablePool();
