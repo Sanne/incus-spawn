@@ -326,17 +326,22 @@ public final class VmManager {
 
     public static boolean start() {
         try (var ignored = acquireVmLock()) {
-            return startLocked();
+            var result = startLocked();
+            if (result == StartResult.FAILED) return false;
+            if (result == StartResult.ALREADY_RUNNING) return true;
+            return awaitReady();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
             return false;
         }
     }
 
-    private static boolean startLocked() {
+    private enum StartResult { LAUNCHED, ALREADY_RUNNING, FAILED }
+
+    private static StartResult startLocked() {
         if (isRunning()) {
             BuildOutput.note("VM already running (pid=" + readPid() + ").");
-            return true;
+            return StartResult.ALREADY_RUNNING;
         }
         try {
             checkArtifacts();
@@ -345,7 +350,7 @@ public final class VmManager {
             ensureSwap();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
-            return false;
+            return StartResult.FAILED;
         }
 
         var backend = detectBackend();
@@ -369,11 +374,22 @@ public final class VmManager {
                 case VFKIT -> startVfkit(cpus, memoryMiB);
                 case QEMU -> startQemu(cpus, memoryMiB);
             }
-            return true;
+            return StartResult.LAUNCHED;
         } catch (Exception e) {
             BuildOutput.stepFail("Failed to start VM: " + e.getMessage());
-            return false;
+            return StartResult.FAILED;
         }
+    }
+
+    private static boolean awaitReady() {
+        BuildOutput.stepStart("Waiting for Incus daemon...");
+        if (waitUntilReady(60)) {
+            BuildOutput.stepDone();
+            return true;
+        }
+        BuildOutput.stepFail("Incus daemon did not become reachable within 60s.");
+        System.err.println("Check 'isx vm console' for boot logs.");
+        return false;
     }
 
     /**
@@ -386,7 +402,8 @@ public final class VmManager {
             } else {
                 stopLocked();
             }
-            return startLocked();
+            if (startLocked() != StartResult.LAUNCHED) return false;
+            return awaitReady();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
             return false;
@@ -655,7 +672,7 @@ public final class VmManager {
         }
 
         System.err.print("Starting incus-spawn VM... ");
-        if (!startLocked()) return false;
+        if (startLocked() == StartResult.FAILED) return false;
 
         System.err.println("Waiting for Incus daemon...");
         if (waitUntilReady(60)) {
