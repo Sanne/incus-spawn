@@ -117,6 +117,12 @@ public class CompletionCommand extends BaseCommand {
               _describe -t templates 'template' templates
             }
 
+            _isx_tool_names() {
+              local -a tools
+              tools=(${(f)"$(isx tools list 2>/dev/null)"})
+              _describe -t tools 'tool' tools
+            }
+
             _isx_templates() {
               local state line; typeset -A opt_args
               _arguments -C \\
@@ -342,6 +348,30 @@ public class CompletionCommand extends BaseCommand {
                 '--deep[Run per-instance checks (DNS, TLS, resolv.conf)]'
             }
 
+            _isx_tools() {
+              local state line; typeset -A opt_args
+              _arguments -C \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '1: :->subcmd' \\
+                '*:: :->args'
+
+              local -a _tools_subcmds
+              _tools_subcmds=(
+                'list:list available tools'
+                'show:show details of a tool definition'
+              )
+
+              case $state in
+                subcmd)
+                  _describe -t subcmds 'tools subcommand' _tools_subcmds ;;
+                args)
+                  case $line[1] in
+                    list) _arguments '(-v --verbose)'{-v,--verbose}'[Show source and description]' ;;
+                    show) _arguments '1:tool name:_isx_tool_names' ;;
+                  esac ;;
+              esac
+            }
+
             _isx() {
               local context state state_descr line
               typeset -A opt_args
@@ -369,6 +399,7 @@ public class CompletionCommand extends BaseCommand {
                     'proxy:manage the MITM authentication proxy'
                     'completion:print shell completion script'
                     'templates:manage template definitions'
+                    'tools:list and inspect available tool definitions'
                     'instances:list connectable instance names'
                     'git-remote-helper:git remote helper for isx:// URLs (used by git)'
                     'ssh-proxy:SSH ProxyCommand that tunnels through Incus exec API'
@@ -396,6 +427,7 @@ public class CompletionCommand extends BaseCommand {
                     proxy)      _isx_proxy ;;
                     completion) _isx_completion ;;
                     templates)  _isx_templates ;;
+                    tools)      _isx_tools ;;
                     instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
                     git-remote-helper) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance' '2:service' '3:path' ;;
                     ssh-proxy) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance:_isx_instances' ;;
@@ -421,18 +453,22 @@ public class CompletionCommand extends BaseCommand {
               isx templates 2>/dev/null
             }
 
+            _isx_list_tools() {
+              isx tools list 2>/dev/null
+            }
+
             _isx() {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates instances vm git-remote-helper ssh-proxy doctor help"
+              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates tools instances vm git-remote-helper ssh-proxy doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
+                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -596,6 +632,31 @@ public class CompletionCommand extends BaseCommand {
                     esac
                   fi
                   ;;
+                tools)
+                  local tools_subcmds="list show"
+                  local tools_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      list|show) tools_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  if [[ -z "$tools_cmd" ]]; then
+                    COMPREPLY=( $(compgen -W "$tools_subcmds --help" -- "$cur") )
+                  else
+                    case "$tools_cmd" in
+                      list) COMPREPLY=( $(compgen -W "--help --verbose -v" -- "$cur") ) ;;
+                      show)
+                        case "$prev" in
+                          show)
+                            COMPREPLY=( $(compgen -W "$(_isx_list_tools) --help" -- "$cur") )
+                            return ;;
+                        esac
+                        COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                        ;;
+                    esac
+                  fi
+                  ;;
                 ssh-proxy)
                   case "$prev" in
                     ssh-proxy)
@@ -652,9 +713,14 @@ public class CompletionCommand extends BaseCommand {
               isx templates 2>/dev/null
             end
 
+            # Helper: list available tool definitions
+            function __isx_tools
+              isx tools list 2>/dev/null
+            end
+
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -677,6 +743,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
             complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
+            complete -c isx -f -n __isx_no_subcommand -a tools        -d 'List and inspect available tool definitions'
             complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
             complete -c isx -f -n __isx_no_subcommand -a git-remote-helper -d 'Git remote helper for isx:// URLs (used by git)'
             complete -c isx -f -n __isx_no_subcommand -a ssh-proxy       -d 'SSH ProxyCommand that tunnels through Incus exec API'
@@ -762,6 +829,14 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand edit' -a '(__isx_templates)' -d 'Template name'
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand new' -l project -d 'Create in project-local directory'
+
+            # ── tools ────────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand tools; and not string match -qr -- "\\b(list|show)\\b" (commandline -opc)' -a list -d 'List available tools'
+            complete -c isx -f -n '__isx_using_subcommand tools; and not string match -qr -- "\\b(list|show)\\b" (commandline -opc)' -a show -d 'Show details of a tool definition'
+
+            complete -c isx -f -n '__isx_using_subcommand tools; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
+            complete -c isx -f -n '__isx_using_subcommand tools; and __isx_using_subcommand show' -a '(__isx_tools)' -d 'Tool name'
 
             # ── proxy ────────────────────────────────────────────────────────────────────
 

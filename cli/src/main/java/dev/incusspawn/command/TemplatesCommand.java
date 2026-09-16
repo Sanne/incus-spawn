@@ -320,8 +320,7 @@ public class TemplatesCommand extends BaseCommand {
             #   - htop
             #   - ripgrep
 
-            # Tool definitions to set up
-            # Available tools (non-exhaustive): podman, maven-3, gh, claude, codex, pi, bob, sshd, headroom
+            # Tool definitions to set up (run 'isx tools list' for all available tools)
             # tools:
             #   - podman
 
