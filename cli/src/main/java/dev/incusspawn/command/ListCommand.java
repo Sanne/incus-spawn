@@ -26,6 +26,7 @@ import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
@@ -392,6 +393,7 @@ public class ListCommand extends BaseCommand {
                 focusedPanel = Panel.TEMPLATES;
             }
 
+            ProxyLog.setSuppressStderr(true);
             try (var runner = TuiRunner.create(TuiConfig.builder()
                     .backend(new PanamaBackend())
                     .bindings(ShiftTabBindings.createWithBacktab())
@@ -404,6 +406,8 @@ public class ListCommand extends BaseCommand {
                 System.err.println("TUI unavailable: " + e.getMessage());
                 printPlain(entries);
                 return;
+            } finally {
+                ProxyLog.setSuppressStderr(false);
             }
 
             // Remember template selection for when we re-enter the TUI
