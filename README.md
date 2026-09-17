@@ -1167,7 +1167,7 @@ Remove cached data, state, or configuration.
 | `state` | Remove VM state, logs, and appliance artifacts |
 | `config` | Remove configuration, SSH keys, and CA certificate |
 | `pool` | Reclaim space from the storage pool (failed builds, unused images) |
-| `all` | Remove all incus-spawn data (cache, state, and configuration) |
+| `all` | Remove cache, state, and configuration (does not touch Incus templates or instances) |
 
 All subcommands accept these options:
 

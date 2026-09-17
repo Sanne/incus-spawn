@@ -43,17 +43,6 @@ public class CleanCommand extends BaseCommand {
 
     // -- shared helpers --
 
-    static boolean confirm(String prompt, boolean skipConfirmation) {
-        if (skipConfirmation) return true;
-        var console = System.console();
-        if (console == null) return true;
-        if (!askConfirmation(console, prompt, false)) {
-            System.out.println("Aborted.");
-            return false;
-        }
-        return true;
-    }
-
     static long dirSize(Path dir) {
         if (!Files.isDirectory(dir)) return 0;
         long[] size = {0};
@@ -299,7 +288,7 @@ public class CleanCommand extends BaseCommand {
 
     @CommandDefinition(
             name = "all",
-            description = "Remove all incus-spawn data (cache, state, and configuration)",
+            description = "Remove cache, state, and configuration (does not touch Incus templates or instances)",
             generateHelp = true
     )
     public static class All extends BaseCommand {
@@ -337,13 +326,15 @@ public class CleanCommand extends BaseCommand {
                 return CommandResult.SUCCESS;
             }
 
-            System.out.println("Will delete ALL incus-spawn data:");
+            System.out.println("Will delete incus-spawn cache, state, and configuration:");
             printSummary(infos);
             System.out.println();
             System.out.println("WARNING: This includes your SSH keys, CA certificate, and configuration.");
             System.out.println("You will need to run 'isx init' again and rebuild all templates.");
+            System.out.println("Note: Built templates and instances in the Incus storage pool are not affected.");
+            System.out.println("Use 'isx clean pool' to reclaim pool space.");
 
-            if (!confirm("Delete everything?", skipConfirmation)) return CommandResult.SUCCESS;
+            if (!confirm("Delete all listed directories?", skipConfirmation)) return CommandResult.SUCCESS;
 
             for (var info : infos) {
                 deleteDir(info.path);
