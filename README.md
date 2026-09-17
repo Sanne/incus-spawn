@@ -911,6 +911,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | [`isx proxy`](#isx-proxy) | Manage the MITM authentication proxy |
 | [`isx doctor`](#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
 | [`isx clean`](#isx-clean) | Remove cached data, state, or configuration |
+| [`isx reset`](#isx-reset) | Reset to a clean slate |
 | [`isx vm`](#isx-vm) | Manage the VM appliance (macOS only) |
 | [`isx help`](#isx-help) | AI-powered help |
 | [`isx completion`](#isx-completion) | Print shell completion script |
@@ -1182,6 +1183,31 @@ All subcommands accept these options:
 | Option | Description |
 |--------|-------------|
 | `--dry-run` | Show what would be deleted without deleting |
+| `--skip-confirmation` | Skip the confirmation prompt |
+
+### `isx reset`
+
+Return incus-spawn to a freshly-installed state. The command surveys your system,
+shows a detailed plan of what will be removed, and asks for confirmation before proceeding.
+
+It removes everything incus-spawn manages:
+
+- **Containers and templates** — all instances (branches) and built templates in the
+  Incus storage pool, plus any failed builds, unused images, and the DNF cache volume.
+- **Proxy service** — stops and uninstalls the systemd/launchd proxy service, clears the
+  bridge DNS overrides, and removes the iptables/UFW PREROUTING redirect rule (443 → 18443).
+- **VM appliance** (macOS) — stops the VM and deletes its disk images (`disk.img`, `data.img`).
+- **Host data** — cached downloads, registry blobs, build caches (`~/.cache/incus-spawn/`),
+  VM state and logs (`~/.local/state/incus-spawn/`), appliance artifacts
+  (`~/.local/share/incus-spawn/`), and configuration including SSH keys and the CA certificate
+  (`~/.config/incus-spawn/`).
+
+Run `isx init` afterwards to set up again.
+
+    isx reset
+
+| Option | Description |
+|--------|-------------|
 | `--skip-confirmation` | Skip the confirmation prompt |
 
 ### `isx vm`

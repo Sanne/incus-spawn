@@ -239,7 +239,9 @@ public final class UfwCheck {
     }
 
     public static String deriveSubnetFromNatBlock(String beforeRules) {
-        for (var line : beforeRules.split("\n")) {
+        var block = extractBlock(beforeRules, MARKER_NAT_BEGIN, MARKER_NAT_END);
+        if (block.isEmpty()) return null;
+        for (var line : block.split("\n")) {
             if (line.contains("MASQUERADE") && line.contains("-s ")) {
                 int idx = line.indexOf("-s ") + 3;
                 int end = line.indexOf(' ', idx);
