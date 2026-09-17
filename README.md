@@ -987,9 +987,17 @@ Run the default action or a specific action on an instance.
 
 ### `isx destroy`
 
-Destroy an instance.
+Destroy an instance, or bulk-destroy all templates or instances.
 
     isx destroy <instance>
+    isx destroy --all-templates      # destroy all built templates (derived first)
+    isx destroy --all-instances      # destroy all instances
+
+| Option | Description |
+|--------|-------------|
+| `--all-templates` | Destroy all built templates (reverse order, derived first) |
+| `--all-instances` | Destroy all instances |
+| `--skip-confirmation` | Skip the confirmation prompt |
 
 ### `isx list`
 
