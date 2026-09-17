@@ -159,6 +159,7 @@ public class ResetCommand extends BaseCommand {
                 if (result.dnfCacheDeleted())
                     System.out.println("  Removed DNF cache volume");
                 for (var w : result.warnings()) System.err.println("  Warning: " + w);
+                if (!result.warnings().isEmpty()) failed = true;
             }
         }
 
@@ -176,7 +177,7 @@ public class ResetCommand extends BaseCommand {
             if (incusReachable) {
                 ProxyConfig.clearBridgeDns(incus);
             }
-            ProxyConfig.clearRedirectRules();
+            if (!ProxyConfig.clearRedirectRules()) failed = true;
         }
 
         // 5. Stop the VM (must happen before host dir deletion removes disk images)

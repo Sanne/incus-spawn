@@ -891,4 +891,19 @@ public final class ProxyService {
             process.waitFor();
         } catch (Exception ignored) {}
     }
+
+    static int runQuietChecked(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            process.getInputStream().readAllBytes();
+            return process.waitFor();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
 }

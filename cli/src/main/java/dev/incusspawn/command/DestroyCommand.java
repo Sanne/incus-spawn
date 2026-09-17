@@ -5,6 +5,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -14,6 +15,7 @@ import org.aesh.command.option.Option;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 @CommandDefinition(
         name = "destroy",
@@ -74,10 +76,22 @@ public class DestroyCommand extends BaseCommand {
             BuildOutput.note("until you rebuild it. Existing branches are not affected.");
         }
 
-        BuildOutput.stepStart("Removing instance...");
-        incus.delete(target, true);
-        InstanceLifecycle.removeHostIntegration(target);
-        BuildOutput.stepDone();
+        var lockOpt = tryAcquireLock(target);
+        if (lockOpt.isEmpty()) {
+            System.err.println("Error: '" + target + "' is locked by another process.");
+            return CommandResult.valueOf(1);
+        }
+        try (var lock = lockOpt.get()) {
+            incus.setPendingOperation(target, Metadata.OP_DELETING);
+            try {
+                BuildOutput.stepStart("Removing instance...");
+                incus.delete(target, true);
+                InstanceLifecycle.removeHostIntegration(target);
+                BuildOutput.stepDone();
+            } finally {
+                incus.clearPendingOperation(target);
+            }
+        }
 
         BuildOutput.success("Destroyed " + target + ".");
         return CommandResult.SUCCESS;
@@ -125,24 +139,66 @@ public class DestroyCommand extends BaseCommand {
     }
 
     static List<String> listBuiltTemplates(IncusClient incus) {
-        var allNames = new ArrayList<>(ImageDef.loadAll().keySet());
-        Collections.reverse(allNames);
-        return allNames.stream().filter(incus::exists).toList();
+        var definedNames = new ArrayList<>(ImageDef.loadAll().keySet());
+        Collections.reverse(definedNames);
+
+        // Start with YAML-defined names that actually exist as Incus instances.
+        var result = new java.util.LinkedHashSet<String>();
+        for (var name : definedNames) {
+            if (incus.exists(name)) result.add(name);
+        }
+
+        // Also discover templates that exist in Incus but have no on-disk definition
+        // (e.g. the YAML was deleted or renamed after the template was built).
+        for (var inst : incus.list()) {
+            var name = inst.get("name");
+            if (name.endsWith(BuildCommand.REBUILDING_SUFFIX)) continue;
+            if (!result.contains(name)) {
+                var type = Metadata.getType(incus, name);
+                if (Metadata.TYPE_BASE.equals(type) || Metadata.TYPE_PROJECT.equals(type)) {
+                    result.add(name);
+                }
+            }
+        }
+
+        return List.copyOf(result);
     }
 
     static int destroyNames(IncusClient incus, List<String> names) {
         int failures = 0;
         for (var n : names) {
             BuildOutput.stepStart("Destroying " + n + "...");
-            try {
-                incus.delete(n, true);
-                InstanceLifecycle.removeHostIntegration(n);
-                BuildOutput.stepDone();
-            } catch (Exception e) {
-                BuildOutput.stepFail(e.getMessage());
+            var lockOpt = tryAcquireLock(n);
+            if (lockOpt.isEmpty()) {
+                BuildOutput.stepFail("locked by another process");
                 failures++;
+                continue;
+            }
+            try (var lock = lockOpt.get()) {
+                incus.setPendingOperation(n, Metadata.OP_DELETING);
+                try {
+                    incus.delete(n, true);
+                    InstanceLifecycle.removeHostIntegration(n);
+                    BuildOutput.stepDone();
+                } catch (Exception e) {
+                    BuildOutput.stepFail(e.getMessage());
+                    failures++;
+                } finally {
+                    incus.clearPendingOperation(n);
+                }
             }
         }
         return failures;
+    }
+
+    private static Optional<InstanceLockManager.LockHandle> tryAcquireLock(String name) {
+        try {
+            return RuntimeServices.lockManager().tryAcquire(name, Metadata.OP_DELETING);
+        } catch (java.io.UncheckedIOException e) {
+            System.err.println("Warning: could not acquire lock for '" + name + "': " + e.getMessage());
+            return Optional.empty();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 }
