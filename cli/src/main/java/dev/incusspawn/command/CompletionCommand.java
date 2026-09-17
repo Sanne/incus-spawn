@@ -183,7 +183,16 @@ public class CompletionCommand extends BaseCommand {
             _isx_destroy() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '1:environment name:_isx_instances'
+                '--all-templates[Destroy all built templates (reverse order, derived first)]' \\
+                '--all-instances[Destroy all instances]' \\
+                '--skip-confirmation[Skip the confirmation prompt]' \\
+                '1::environment name:_isx_instances'
+            }
+
+            _isx_reset() {
+              _arguments \\
+                '(-h --help)'{-h,--help}'[Show help]' \\
+                '--skip-confirmation[Skip the confirmation prompt]'
             }
 
             _isx_list() {
@@ -395,6 +404,7 @@ public class CompletionCommand extends BaseCommand {
                     'run:run the default action or a specific action on an instance'
                     'list:list all incus-spawn environments'
                     'destroy:destroy a clone environment'
+                    'reset:return to a freshly-installed state'
                     'update-all:update all templates (packages, git repos, dependencies)'
                     'proxy:manage the MITM authentication proxy'
                     'completion:print shell completion script'
@@ -418,6 +428,7 @@ public class CompletionCommand extends BaseCommand {
                     build)      _isx_build ;;
                     clean)      _isx_clean ;;
                     destroy)    _isx_destroy ;;
+                    reset)      _isx_reset ;;
                     doctor)     _isx_doctor ;;
                     help)       _arguments '(-h --help)'{-h,--help}'[Show help]' '--with-templates[Include template definitions in AI context]' '*:question' ;;
                     list)       _isx_list ;;
@@ -461,14 +472,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy update-all update-base proxy completion templates tools instances vm git-remote-helper ssh-proxy doctor help"
+              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy completion templates tools instances vm git-remote-helper ssh-proxy doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
+                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -529,10 +540,13 @@ public class CompletionCommand extends BaseCommand {
                 destroy)
                   case "$prev" in
                     destroy)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help --all-templates --all-instances --skip-confirmation" -- "$cur") )
                       return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --all-templates --all-instances --skip-confirmation" -- "$cur") )
+                  ;;
+                reset)
+                  COMPREPLY=( $(compgen -W "--help --skip-confirmation" -- "$cur") )
                   ;;
                 list)
                   COMPREPLY=( $(compgen -W "--help --plain" -- "$cur") )
@@ -720,7 +734,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -739,6 +753,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a run          -d 'Run the default action or a specific action on an instance'
             complete -c isx -f -n __isx_no_subcommand -a list         -d 'List all incus-spawn environments'
             complete -c isx -f -n __isx_no_subcommand -a destroy      -d 'Destroy a clone environment'
+            complete -c isx -f -n __isx_no_subcommand -a reset        -d 'Return to a freshly-installed state'
             complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
             complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
             complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
@@ -796,6 +811,13 @@ public class CompletionCommand extends BaseCommand {
             # ── destroy ──────────────────────────────────────────────────────────────────
 
             complete -c isx -f -n '__isx_using_subcommand destroy' -a '(__isx_instances)' -d 'Environment name'
+            complete -c isx -f -n '__isx_using_subcommand destroy' -l all-templates      -d 'Destroy all built templates (reverse order, derived first)'
+            complete -c isx -f -n '__isx_using_subcommand destroy' -l all-instances       -d 'Destroy all instances'
+            complete -c isx -f -n '__isx_using_subcommand destroy' -l skip-confirmation   -d 'Skip the confirmation prompt'
+
+            # ── reset ───────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand reset' -l skip-confirmation -d 'Skip the confirmation prompt'
 
             # ── list ─────────────────────────────────────────────────────────────────────
 

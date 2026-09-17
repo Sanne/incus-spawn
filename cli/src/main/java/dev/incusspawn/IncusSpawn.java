@@ -69,7 +69,7 @@ public class IncusSpawn implements QuarkusApplication {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
                 BranchCommand.class, ShellCommand.class, RunCommand.class, ListCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
-                CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
+                CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
                 VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class,
                 AskCommand.class, ToolsCommand.class
@@ -91,7 +91,7 @@ public class IncusSpawn implements QuarkusApplication {
                 InitCommand.class, BuildCommand.class, ProjectCommand.class,
                 BranchCommand.class, ShellCommand.class, RunCommand.class, ListCommand.class,
                 DestroyCommand.class, UpdateAllCommand.class, ProxyCommand.class,
-                CleanCommand.class, CompletionCommand.class, TemplatesCommand.class,
+                CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
                 UpdateBaseCommand.class, DoctorCommand.class,
                 AskCommand.class, ToolsCommand.class
