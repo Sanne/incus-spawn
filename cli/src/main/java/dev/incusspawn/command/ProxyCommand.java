@@ -185,10 +185,7 @@ public class ProxyCommand extends BaseCommand {
 
         @Override
         protected CommandResult doExecute() throws Exception {
-            var incus = RuntimeServices.incus();
-            if (ProxyService.uninstall()) {
-                ProxyConfig.clearBridgeDns(incus);
-            }
+            ProxyService.uninstall(RuntimeServices.incus());
             return CommandResult.SUCCESS;
         }
     }
