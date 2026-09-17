@@ -218,10 +218,17 @@ public final class ProxyService {
         }
     }
 
-    public static boolean uninstall() {
+    private static boolean uninstall() {
         try (var ignored = acquireProxyLock()) {
             return uninstallLocked();
         }
+    }
+
+    public static boolean uninstall(IncusClient incus) {
+        var serviceRemoved = uninstall();
+        ProxyConfig.clearBridgeDns(incus);
+        ProxyConfig.clearRedirectRules();
+        return serviceRemoved;
     }
 
     private static boolean uninstallLocked() {
@@ -875,7 +882,7 @@ public final class ProxyService {
         }
     }
 
-    private static void runQuiet(String... command) {
+    static void runQuiet(String... command) {
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);

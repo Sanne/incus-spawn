@@ -1,9 +1,13 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.UfwCheck;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -204,6 +208,70 @@ public final class ProxyConfig {
             incus.networkConfigSet("incusbr0", "raw.dnsmasq", servers);
         } catch (Exception e) {
             System.err.println("Warning: could not clear bridge DNS overrides: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Remove the PREROUTING redirect rule (443 → 18443) from firewalld or UFW.
+     * The MASQUERADE and FORWARD rules are left in place — they are general
+     * networking rules that Incus containers need regardless of the proxy.
+     */
+    public static void clearRedirectRules() {
+        if (FirewalldCheck.isInstalled() && FirewalldCheck.isActive()) {
+            clearFirewalldRedirect();
+        } else if (UfwCheck.isInstalled()) {
+            clearUfwRedirect();
+        }
+    }
+
+    private static void clearFirewalldRedirect() {
+        try {
+            var pb = new ProcessBuilder("firewall-cmd", "--direct", "--get-all-rules");
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes());
+            if (process.waitFor() != 0) return;
+
+            var ip = FirewalldCheck.extractRedirectGatewayIp(output, DEFAULT_MITM_PORT);
+            if (ip == null) return;
+
+            System.out.println("Removing PREROUTING redirect rule (" + ip + ":443 -> " + DEFAULT_MITM_PORT + ")...");
+            ProxyService.runQuiet("sudo", "firewall-cmd", "--permanent", "--direct",
+                    "--remove-rule", "ipv4", "nat", "PREROUTING", "0",
+                    "-i", "incusbr0", "-d", ip, "-p", "tcp", "--dport",
+                    String.valueOf(CONTAINER_FACING_PORT),
+                    "-j", "REDIRECT", "--to-port",
+                    String.valueOf(DEFAULT_MITM_PORT));
+            ProxyService.runQuiet("sudo", "firewall-cmd", "--reload");
+        } catch (Exception e) {
+            System.err.println("Warning: could not remove firewalld redirect rule: " + e.getMessage());
+        }
+    }
+
+    private static void clearUfwRedirect() {
+        try {
+            var beforeRules = UfwCheck.readBeforeRules();
+            if (beforeRules.isEmpty()) return;
+
+            var ip = UfwCheck.extractRedirectGatewayIp(beforeRules, DEFAULT_MITM_PORT);
+            if (ip == null) return;
+
+            System.out.println("Removing PREROUTING redirect from UFW before.rules...");
+            var subnet = UfwCheck.deriveSubnetFromNatBlock(beforeRules);
+            String updated;
+            if (subnet != null) {
+                var cleanBlock = UfwCheck.generateNatBlockWithoutRedirect(subnet);
+                updated = UfwCheck.insertNatBlock(beforeRules, cleanBlock);
+            } else {
+                updated = UfwCheck.removeBlock(beforeRules, UfwCheck.MARKER_NAT_BEGIN, UfwCheck.MARKER_NAT_END);
+            }
+            var tempFile = Files.createTempFile("isx-before-rules-", ".tmp");
+            Files.writeString(tempFile, updated);
+            ProxyService.runQuiet("sudo", "cp", tempFile.toString(), UfwCheck.BEFORE_RULES.toString());
+            Files.deleteIfExists(tempFile);
+            ProxyService.runQuiet("sudo", "ufw", "reload");
+        } catch (Exception e) {
+            System.err.println("Warning: could not remove UFW redirect rule: " + e.getMessage());
         }
     }
 

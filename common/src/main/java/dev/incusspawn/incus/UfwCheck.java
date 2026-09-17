@@ -10,8 +10,8 @@ import java.util.List;
 public final class UfwCheck {
 
     public static final Path BEFORE_RULES = Path.of("/etc/ufw/before.rules");
-    static final String MARKER_NAT_BEGIN = "# BEGIN incus-spawn-nat";
-    static final String MARKER_NAT_END = "# END incus-spawn-nat";
+    public static final String MARKER_NAT_BEGIN = "# BEGIN incus-spawn-nat";
+    public static final String MARKER_NAT_END = "# END incus-spawn-nat";
     static final String MARKER_FWD_BEGIN = "# BEGIN incus-spawn-forward";
     static final String MARKER_FWD_END = "# END incus-spawn-forward";
 
@@ -224,12 +224,29 @@ public final class UfwCheck {
         int end = content.indexOf(endMarker);
         if (start < 0 || end < 0) return content;
         end += endMarker.length();
-        // Consume trailing newline if present
-        if (end < content.length() && content.charAt(end) == '\n') {
-            end++;
-        }
+        if (end < content.length() && content.charAt(end) == '\n') end++;
         return content.substring(0, start) + replacement + "\n"
                 + content.substring(end);
+    }
+
+    public static String removeBlock(String content, String beginMarker, String endMarker) {
+        int start = content.indexOf(beginMarker);
+        int end = content.indexOf(endMarker);
+        if (start < 0 || end < 0) return content;
+        end += endMarker.length();
+        if (end < content.length() && content.charAt(end) == '\n') end++;
+        return content.substring(0, start) + content.substring(end);
+    }
+
+    public static String deriveSubnetFromNatBlock(String beforeRules) {
+        for (var line : beforeRules.split("\n")) {
+            if (line.contains("MASQUERADE") && line.contains("-s ")) {
+                int idx = line.indexOf("-s ") + 3;
+                int end = line.indexOf(' ', idx);
+                if (end > idx) return line.substring(idx, end);
+            }
+        }
+        return null;
     }
 
     public static String readBeforeRules() {
