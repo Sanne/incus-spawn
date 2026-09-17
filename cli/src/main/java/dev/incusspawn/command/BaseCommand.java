@@ -61,6 +61,17 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         }
     }
 
+    protected static boolean confirm(String prompt, boolean skipConfirmation) {
+        if (skipConfirmation) return true;
+        var console = System.console();
+        if (console == null) return true;
+        if (!askConfirmation(console, prompt, false)) {
+            System.out.println("Aborted.");
+            return false;
+        }
+        return true;
+    }
+
     static Boolean parseConfirmation(String answer, boolean defaultValue) {
         if (answer == null) return null;
         var normalized = answer.strip();
