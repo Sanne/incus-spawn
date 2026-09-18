@@ -882,13 +882,15 @@ public final class ProxyService {
         }
     }
 
-    static void runQuiet(String... command) {
+    static boolean runQuiet(String... command) {
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
             var process = pb.start();
             process.getInputStream().readAllBytes();
-            process.waitFor();
-        } catch (Exception ignored) {}
+            return process.waitFor() == 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 }
