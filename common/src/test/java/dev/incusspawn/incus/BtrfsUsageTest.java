@@ -210,8 +210,10 @@ class BtrfsUsageTest {
         // auto-repair silently stops working after MAX_RESCAN_TRIGGERS for the rest of the session.
         BtrfsUsage.resetThrottleStateForTest();
         assertEquals(0, BtrfsUsage.rescanTriggerCountForTest());
-        // An unreadable pool yields an unavailable status: neither a trigger nor a reset.
-        BtrfsUsage.repairIfInconsistent("no-such-pool-for-tests");
+        // A name that fails the safety check yields UNAVAILABLE on any host, regardless of
+        // the host filesystem (a safe-but-nonexistent name can resolve to the root btrfs mount
+        // inside btrfs containers, returning the root's qgroup state instead of UNAVAILABLE).
+        BtrfsUsage.repairIfInconsistent("not/a/pool");
         assertEquals(0, BtrfsUsage.rescanTriggerCountForTest());
     }
 
