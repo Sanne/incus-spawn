@@ -6,10 +6,21 @@ import io.quarkus.runtime.annotations.QuarkusMain;
 import org.aesh.AeshRuntimeRunner;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
+import org.aesh.command.impl.LazyHelp;
 import org.aesh.command.option.Option;
+
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @QuarkusMain
 public class IncusSpawn implements QuarkusApplication {
+
+    static final Set<String> HIDDEN_COMMANDS = Set.of(
+            "completion", "instances", "git-remote-helper", "ssh-proxy"
+    );
+    private static final Pattern ANSI_ESCAPE = Pattern.compile("\033\\[[^m]*m");
+
     @Override
     public int run(String... args) {
         try {
@@ -28,6 +39,13 @@ public class IncusSpawn implements QuarkusApplication {
             var topCommand = Platform.isMacOS()
                     ? IncusSpawnCommand.class
                     : IncusSpawnLinuxCommand.class;
+            if (isTopLevelHelp(args)) {
+                var help = LazyHelp.render(topCommand, args);
+                if (help != null) {
+                    System.out.println(filterHiddenCommands(help));
+                    return 0;
+                }
+            }
             var result = AeshRuntimeRunner.builder()
                     .command(topCommand)
                     .args(args)
@@ -37,6 +55,20 @@ public class IncusSpawn implements QuarkusApplication {
             System.err.println("Error: " + e.getMessage());
             return 1;
         }
+    }
+
+    private static boolean isTopLevelHelp(String[] args) {
+        return args.length == 1 && (args[0].equals("--help") || args[0].equals("-h"));
+    }
+
+    static String filterHiddenCommands(String help) {
+        return help.lines()
+                .filter(line -> {
+                    var stripped = ANSI_ESCAPE.matcher(line).replaceAll("").stripLeading();
+                    return HIDDEN_COMMANDS.stream()
+                            .noneMatch(cmd -> stripped.startsWith(cmd + " ") || stripped.equals(cmd));
+                })
+                .collect(Collectors.joining("\n"));
     }
 
     private static boolean looksLikeHelpQuestion(String[] args) {

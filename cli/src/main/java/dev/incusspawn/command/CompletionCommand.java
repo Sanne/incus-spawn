@@ -61,12 +61,12 @@ public class CompletionCommand extends BaseCommand {
                     // Drop the unreachable _isx_vm() function (ends at the first standalone brace).
                     .replaceAll("(?sm)^[ \\t]*_isx_vm\\(\\) \\{.*?^[ \\t]*\\}\\R", "");
             case bash -> script
-                    .replace("instances vm git-remote-helper", "instances git-remote-helper")
-                    .replace("instances|vm|git-remote-helper", "instances|git-remote-helper")
+                    .replace("tools vm doctor", "tools doctor")
+                    .replace("tools|vm|doctor", "tools|doctor")
                     // Drop the unreachable vm) case (ends at the first standalone ";;").
                     .replaceAll("(?sm)^[ \\t]*vm\\)\\R.*?^[ \\t]*;;\\R", "");
             case fish -> script
-                    .replace("instances|vm|git-remote-helper", "instances|git-remote-helper")
+                    .replace("tools|vm|doctor", "tools|doctor")
                     .replaceAll("(?m)^.*-n __isx_no_subcommand -a vm .*\\R", "")
                     .replaceAll("(?m)^\\s*# ── vm ─.*\\R", "")
                     .replaceAll("(?m)^.*__isx_using_subcommand vm.*\\R", "");
@@ -285,13 +285,6 @@ public class CompletionCommand extends BaseCommand {
               esac
             }
 
-            _isx_completion() {
-              _arguments \\
-                '(-h --help)'{-h,--help}'[Show help]' \\
-                '--install[Print installation instructions]' \\
-                '1::shell:(bash zsh fish)'
-            }
-
             _isx_clean() {
               local state line; typeset -A opt_args
               _arguments -C \\
@@ -407,12 +400,8 @@ public class CompletionCommand extends BaseCommand {
                     'reset:return to a freshly-installed state'
                     'update-all:update all templates (packages, git repos, dependencies)'
                     'proxy:manage the MITM authentication proxy'
-                    'completion:print shell completion script'
                     'templates:manage template definitions'
                     'tools:list and inspect available tool definitions'
-                    'instances:list connectable instance names'
-                    'git-remote-helper:git remote helper for isx:// URLs (used by git)'
-                    'ssh-proxy:SSH ProxyCommand that tunnels through Incus exec API'
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
                     'doctor:run health checks and offer to fix problems'
@@ -436,12 +425,8 @@ public class CompletionCommand extends BaseCommand {
                     run)        _isx_run ;;
                     project)    _isx_project ;;
                     proxy)      _isx_proxy ;;
-                    completion) _isx_completion ;;
                     templates)  _isx_templates ;;
                     tools)      _isx_tools ;;
-                    instances)  _arguments '(-h --help)'{-h,--help}'[Show help]' ;;
-                    git-remote-helper) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance' '2:service' '3:path' ;;
-                    ssh-proxy) _arguments '(-h --help)'{-h,--help}'[Show help]' '1:instance:_isx_instances' ;;
                     vm)         _isx_vm ;;
                     update-base) _isx_update_base ;;
                   esac ;;
@@ -472,14 +457,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy completion templates tools instances vm git-remote-helper ssh-proxy doctor help"
+              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates tools vm doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)
+                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|tools|vm|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -612,14 +597,6 @@ public class CompletionCommand extends BaseCommand {
                     esac
                   fi
                   ;;
-                completion)
-                  case "$prev" in
-                    completion)
-                      COMPREPLY=( $(compgen -W "bash zsh fish --help --install" -- "$cur") )
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help --install" -- "$cur") )
-                  ;;
                 templates)
                   local tpl_subcmds="list edit new"
                   local tpl_cmd=""
@@ -671,14 +648,6 @@ public class CompletionCommand extends BaseCommand {
                     esac
                   fi
                   ;;
-                ssh-proxy)
-                  case "$prev" in
-                    ssh-proxy)
-                      COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
-                      return ;;
-                  esac
-                  COMPREPLY=( $(compgen -W "--help" -- "$cur") )
-                  ;;
                 vm)
                   local vm_subcmds="start stop restart status resize console"
                   local vm_cmd=""
@@ -703,7 +672,7 @@ public class CompletionCommand extends BaseCommand {
                 help)
                   COMPREPLY=( $(compgen -W "--help --with-templates" -- "$cur") )
                   ;;
-                init|update-all|instances|git-remote-helper)
+                init|update-all)
                   COMPREPLY=( $(compgen -W "--help" -- "$cur") )
                   ;;
               esac
@@ -734,7 +703,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|completion|templates|tools|instances|vm|git-remote-helper|ssh-proxy|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -756,12 +725,8 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a reset        -d 'Return to a freshly-installed state'
             complete -c isx -f -n __isx_no_subcommand -a update-all   -d 'Update all templates (packages, git repos, dependencies)'
             complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
-            complete -c isx -f -n __isx_no_subcommand -a completion   -d 'Print shell completion script'
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a tools        -d 'List and inspect available tool definitions'
-            complete -c isx -f -n __isx_no_subcommand -a instances    -d 'List connectable instance names'
-            complete -c isx -f -n __isx_no_subcommand -a git-remote-helper -d 'Git remote helper for isx:// URLs (used by git)'
-            complete -c isx -f -n __isx_no_subcommand -a ssh-proxy       -d 'SSH ProxyCommand that tunnels through Incus exec API'
             complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
             complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
             complete -c isx -f -n __isx_no_subcommand -a doctor          -d 'Run health checks and offer to fix problems'
@@ -876,15 +841,6 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l gateway-ip  -d 'Incus bridge gateway IP (skips Incus API lookup)'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand start' -l debug       -d 'Log full API request/response details'
             complete -c isx -f -n '__isx_using_subcommand proxy; and __isx_using_subcommand dump'  -l port        -d 'Local HTTP port'
-
-            # ── completion ───────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand completion' -a 'bash zsh fish' -d 'Shell type'
-            complete -c isx -f -n '__isx_using_subcommand completion' -l install -d 'Print installation instructions'
-
-            # ── ssh-proxy ────────────────────────────────────────────────────────────────
-
-            complete -c isx -f -n '__isx_using_subcommand ssh-proxy' -a '(__isx_instances)' -d 'Instance name'
 
             # ── vm ──────────────────────────────────────────────────────────────────────
 
