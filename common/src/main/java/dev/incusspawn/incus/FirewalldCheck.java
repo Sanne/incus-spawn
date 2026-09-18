@@ -54,13 +54,31 @@ public final class FirewalldCheck {
         }
     }
 
+    /**
+     * Whether a line matches the PREROUTING redirect rule pattern (incusbr0, port 443 → mitmPort).
+     * Works for both {@code firewall-cmd --direct --get-all-rules} output and persistent
+     * {@code /etc/firewalld/direct.xml} element text.
+     */
+    public static boolean isRedirectRule(String line, int mitmPort) {
+        return line.contains("PREROUTING")
+                && line.contains("incusbr0")
+                && containsToken(line, "--dport", "443")
+                && line.contains("REDIRECT")
+                && containsToken(line, "--to-port", String.valueOf(mitmPort));
+    }
+
+    private static boolean containsToken(String line, String flag, String value) {
+        var token = flag + " " + value;
+        int idx = line.indexOf(token);
+        if (idx < 0) return false;
+        int end = idx + token.length();
+        return end >= line.length() || !Character.isDigit(line.charAt(end));
+    }
+
     public static boolean isPreRoutingRulePresent(String firewalldOutput, int mitmPort, String gatewayIp) {
         for (var line : firewalldOutput.split("\n")) {
-            if (line.contains("nat") && line.contains("PREROUTING")
-                    && line.contains("incusbr0") && line.contains("-d " + gatewayIp)
-                    && line.contains("--dport 443")
-                    && line.contains("REDIRECT")
-                    && line.contains("--to-port " + mitmPort)) {
+            if (line.contains("nat") && isRedirectRule(line, mitmPort)
+                    && line.contains("-d " + gatewayIp)) {
                 return true;
             }
         }
@@ -70,11 +88,8 @@ public final class FirewalldCheck {
     /** Extract the gateway IP from an existing PREROUTING redirect rule, or null if none found. */
     public static String extractRedirectGatewayIp(String firewalldOutput, int mitmPort) {
         for (var line : firewalldOutput.split("\n")) {
-            if (line.contains("nat") && line.contains("PREROUTING")
-                    && line.contains("incusbr0") && line.contains("-d ")
-                    && line.contains("--dport 443")
-                    && line.contains("REDIRECT")
-                    && line.contains("--to-port " + mitmPort)) {
+            if (line.contains("nat") && isRedirectRule(line, mitmPort)
+                    && line.contains("-d ")) {
                 int idx = line.indexOf("-d ");
                 if (idx >= 0) {
                     var rest = line.substring(idx + 3).strip();

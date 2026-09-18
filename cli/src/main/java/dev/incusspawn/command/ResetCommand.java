@@ -138,13 +138,15 @@ public class ResetCommand extends BaseCommand {
         // 1. Instances first (they depend on templates)
         if (!clones.isEmpty()) {
             BuildOutput.header("Destroying instances");
-            if (DestroyCommand.destroyNames(incus, clones) > 0) failed = true;
+            var dr = DestroyCommand.destroyNames(incus, clones);
+            if (dr.failed() > 0 || dr.skipped() > 0) failed = true;
         }
 
         // 2. Templates (reverse order, derived first)
         if (!builtTemplates.isEmpty()) {
             BuildOutput.header("Destroying templates");
-            if (DestroyCommand.destroyNames(incus, builtTemplates) > 0) failed = true;
+            var dr = DestroyCommand.destroyNames(incus, builtTemplates);
+            if (dr.failed() > 0 || dr.skipped() > 0) failed = true;
         }
 
         // 3. Pool artifacts
@@ -159,6 +161,7 @@ public class ResetCommand extends BaseCommand {
                 if (result.dnfCacheDeleted())
                     System.out.println("  Removed DNF cache volume");
                 for (var w : result.warnings()) System.err.println("  Warning: " + w);
+                if (!result.warnings().isEmpty()) failed = true;
             }
         }
 
@@ -176,7 +179,7 @@ public class ResetCommand extends BaseCommand {
             if (incusReachable) {
                 ProxyConfig.clearBridgeDns(incus);
             }
-            ProxyConfig.clearRedirectRules();
+            if (!ProxyConfig.clearRedirectRules()) failed = true;
         }
 
         // 5. Stop the VM (must happen before host dir deletion removes disk images)
