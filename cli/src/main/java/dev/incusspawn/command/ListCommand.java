@@ -2351,7 +2351,7 @@ public class ListCommand extends BaseCommand {
                 .header(Row.from("NAME", "BUILT", "DISK", "DESCRIPTION")
                         .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(templateRows)
-                .widths(Constraint.min(20), Constraint.length(20), Constraint.length(8), Constraint.fill())
+                .widths(Constraint.min(14), Constraint.length(20), Constraint.length(8), Constraint.fill())
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
@@ -2444,9 +2444,9 @@ public class ListCommand extends BaseCommand {
                 .header(Row.from("NAME", "STATUS", "IP", "PARENT", "RUNTIME", "AGE", "DISK")
                         .style(Style.EMPTY.bold().fg(focused ? theme.panelBorderFocused() : theme.panelBorderUnfocused())))
                 .rows(tableRows)
-                .widths(Constraint.fill(), Constraint.length(9),
-                        Constraint.length(16), Constraint.length(14),
-                        Constraint.length(12), Constraint.length(10), Constraint.length(8))
+                .widths(Constraint.min(10), Constraint.min(7),
+                        Constraint.min(11), Constraint.min(10),
+                        Constraint.length(10), Constraint.min(8), Constraint.length(6))
                 .highlightSymbol(focused ? "\u25b8 " : "  ");
 
         if (focused) {
