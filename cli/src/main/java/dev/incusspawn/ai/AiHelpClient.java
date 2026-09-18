@@ -40,12 +40,59 @@ public class AiHelpClient {
     public static final String VERTEX_MODEL = "claude-sonnet-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
 
+    /**
+     * Picks the provider to answer with, or null when no configured account can.
+     *
+     * <p>Selection is by what an account <em>is</em>, not by any designation: a Claude Pro/Max
+     * OAuth account cannot serve this, because such a token is only valid for Claude Code
+     * itself and the Messages API answers anything else with an opaque HTTP 429. So a Pro/Max
+     * account keeps serving instances while an API-key or Vertex account answers here, without
+     * either being set aside for the purpose.
+     */
     public static Provider detectProvider(SpawnConfig config) {
-        var claude = config.getClaude();
-        if (!claude.getApiKey().isBlank() || claude.isOauthMode()) return Provider.ANTHROPIC;
-        if (claude.isUseVertex()) return Provider.VERTEX;
+        var account = directApiAccount(config);
+        if (account != null) {
+            return switch (account.effectiveType()) {
+                case API_KEY -> Provider.ANTHROPIC;
+                case VERTEX -> Provider.VERTEX;
+                case OAUTH -> null; // unreachable: servesDirectApi() excludes it
+            };
+        }
         if (config.getOpenai().hasAuth()) return Provider.OPENAI;
         return null;
+    }
+
+    /** The Claude account {@link #detectProvider} resolved to, or null when none can serve. */
+    private static SpawnConfig.ClaudeAccount directApiAccount(SpawnConfig config) {
+        return config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi);
+    }
+
+    /**
+     * Explains why {@link #detectProvider} found nothing usable. A Claude Pro/Max OAuth token
+     * counts as configured credentials to the rest of isx, so "no credentials" would be a
+     * confusing thing to tell that user -- name the real reason instead.
+     */
+    public static String noProviderMessage(SpawnConfig config) {
+        var configured = config.getClaude().effectiveAccounts();
+        if (configured.isEmpty()) {
+            return "No AI credentials configured. "
+                    + "Run 'isx init' to set up Anthropic, Vertex AI, or OpenAI credentials.";
+        }
+        // Describe what is actually configured rather than inferring it from the absence of a
+        // provider -- a confidently wrong explanation is worse than a vague one. Both branches
+        // are reachable: an account can be present but unusable (a flat 'useVertex: true'
+        // missing its project is kept so ProxyMain can report it, but is not complete()).
+        var allOauth = configured.values().stream()
+                .allMatch(a -> a.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH);
+        if (allOauth) {
+            return "The configured Claude account"
+                    + (configured.size() > 1 ? "s are all" : " is")
+                    + " a Claude Pro/Max subscription, whose token is only valid for Claude Code"
+                    + " itself and cannot answer here.\n"
+                    + "Run 'isx init' to add an Anthropic API key or Vertex AI account alongside it.";
+        }
+        return "No configured Claude account can answer this. "
+                + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
     }
 
     public static AiResponse ask(String question, String systemPrompt, SpawnConfig config) throws IOException {
@@ -64,8 +111,8 @@ public class AiHelpClient {
                                   SpawnConfig config, Provider provider,
                                   Consumer<String> onChunk) throws IOException {
         switch (provider) {
-            case ANTHROPIC -> streamAnthropic(question, systemPrompt, config.getClaude(), onChunk);
-            case VERTEX -> streamVertex(question, systemPrompt, config.getClaude(), onChunk);
+            case ANTHROPIC -> streamAnthropic(question, systemPrompt, directApiAccount(config), onChunk);
+            case VERTEX -> streamVertex(question, systemPrompt, directApiAccount(config), onChunk);
             case OPENAI -> streamOpenAI(question, systemPrompt, config.getOpenai(), onChunk);
         }
     }
@@ -73,14 +120,13 @@ public class AiHelpClient {
     private static Provider requireProvider(SpawnConfig config) throws IOException {
         var provider = detectProvider(config);
         if (provider == null) {
-            throw new IOException(
-                    "No AI credentials configured. Run 'isx init' to set up Anthropic or OpenAI credentials.");
+            throw new IOException(noProviderMessage(config));
         }
         return provider;
     }
 
     private static void streamAnthropic(String question, String systemPrompt,
-                                         SpawnConfig.ClaudeConfig claude,
+                                         SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
         var body = JSON.createObjectNode();
         body.put("model", ANTHROPIC_MODEL);
@@ -99,17 +145,13 @@ public class AiHelpClient {
                 .timeout(Duration.ofSeconds(120))
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
 
-        if (claude.isOauthMode()) {
-            builder.header("Authorization", "Bearer " + claude.getOauthToken());
-        } else {
-            builder.header("x-api-key", claude.getApiKey());
-        }
+        builder.header("x-api-key", account.getApiKey());
 
         processStream(sendStream(builder.build()), onChunk);
     }
 
     private static void streamVertex(String question, String systemPrompt,
-                                      SpawnConfig.ClaudeConfig claude,
+                                      SpawnConfig.ClaudeAccount account,
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
 
@@ -123,8 +165,8 @@ public class AiHelpClient {
         msg.put("role", "user");
         msg.put("content", question);
 
-        var region = claude.getCloudMlRegion();
-        var project = claude.getVertexProjectId();
+        var region = account.getCloudMlRegion();
+        var project = account.getVertexProjectId();
         var host = ProxyConfig.vertexHost(region);
         var uri = "https://" + host + "/v1/projects/" + project
                 + "/locations/" + region + "/publishers/anthropic/models/"
@@ -235,22 +277,42 @@ public class AiHelpClient {
         }
     }
 
+    /**
+     * Renders an error response as a diagnosable one-liner. Providers sometimes answer with a
+     * deliberately unhelpful {@code message} (an OAuth token used outside Claude Code returns a
+     * bare "Error"), so the error type and request id carry the signal and must survive.
+     */
+    private static String describeError(int status, String body) {
+        var detail = new StringBuilder("API error (").append(status);
+        String message = null;
+        try {
+            var tree = JSON.readTree(body);
+            message = tree.path("error").path("message").asText(null);
+            var type = tree.path("error").path("type").asText(null);
+            if (type != null) detail.append(", ").append(type);
+            var requestId = tree.path("request_id").asText(null);
+            if (requestId != null) detail.append(", ").append(requestId);
+        } catch (IOException e) {
+            // Not JSON -- fall through and report the raw body below.
+        }
+        detail.append("): ");
+        if (message != null && !message.isBlank()) {
+            detail.append(message);
+        } else if (!body.isBlank()) {
+            detail.append(body.length() > 200 ? body.substring(0, 200) + "..." : body);
+        } else {
+            detail.append("no response body");
+        }
+        return detail.toString();
+    }
+
     private static InputStream sendStream(HttpRequest request) throws IOException {
         try {
             var response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() >= 400) {
                 try (var errStream = response.body()) {
                     var errBody = new String(errStream.readAllBytes(), StandardCharsets.UTF_8);
-                    try {
-                        var tree = JSON.readTree(errBody);
-                        var msg = tree.path("error").path("message").asText(null);
-                        if (msg != null) {
-                            throw new IOException("API error (" + response.statusCode() + "): " + msg);
-                        }
-                    } catch (IOException e) {
-                        if (e.getMessage().startsWith("API error")) throw e;
-                    }
-                    throw new IOException("API request failed with status " + response.statusCode());
+                    throw new IOException(describeError(response.statusCode(), errBody));
                 }
             }
             return response.body();
