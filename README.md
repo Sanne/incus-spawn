@@ -913,7 +913,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | [`isx clean`](#isx-clean) | Remove cached data, state, or configuration |
 | [`isx reset`](#isx-reset) | Reset to a clean slate |
 | [`isx vm`](#isx-vm) | Manage the VM appliance (macOS only) |
-| [`isx help`](#isx-help) | AI-powered help |
+| [`isx ask`](#isx-ask) | AI-powered help |
 | [`isx completion`](#isx-completion) | Print shell completion script |
 
 Use `isx <command> --help` for detailed options on any command.
@@ -1246,11 +1246,11 @@ Size must be larger than the current disk (grow-only), e.g. `100G`.
 |--------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
 
-### `isx help`
+### `isx ask`
 
 AI-powered help. Ask any question about incus-spawn (uses AI tokens).
 
-    isx help <question...>
+    isx ask <question...>
 
 | Option | Description |
 |--------|-------------|
