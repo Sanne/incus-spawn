@@ -176,7 +176,8 @@ class ToolDefValidatorTest {
     void builtinToolsPassValidation() throws Exception {
         var builtins = new String[]{
                 "tools/maven-3.yaml", "tools/mvnd.yaml", "tools/idea-backend.yaml",
-                "tools/starship.yaml", "tools/podman.yaml", "tools/sshd.yaml", "tools/tmux.yaml"
+                "tools/starship.yaml", "tools/podman.yaml", "tools/sshd.yaml", "tools/tmux.yaml",
+                "tools/typesafe.yaml"
         };
         for (var resource : builtins) {
             try (var is = getClass().getClassLoader().getResourceAsStream(resource)) {

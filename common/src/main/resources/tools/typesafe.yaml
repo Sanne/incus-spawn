@@ -1,0 +1,25 @@
+name: typesafe
+description: "TypeSafe Jev — calibrated decision model"
+feature: typesafe
+env:
+  - name: TYPESAFE_API_KEY
+    value: ts-placeholder
+proxy:
+  config-namespace: typesafe
+  configuration:
+    api-key:
+      config-path: apiKey
+      description: "TypeSafe AI API key"
+      secret: true
+      help:
+        - "To create an API key:"
+        - "  1. Go to https://console.typesafe.ai"
+        - "  2. Create a new API key"
+        - "  3. Copy the generated key"
+        - ""
+        - "API docs: https://github.com/typesafe-ai/typesafe-sdk-js"
+  auth:
+    - domains:
+        - api.typesafe.ai
+      type: bearer
+      token: "${api-key}"

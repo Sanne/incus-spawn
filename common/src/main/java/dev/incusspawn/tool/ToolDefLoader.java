@@ -42,6 +42,7 @@ public class ToolDefLoader {
             "vscode-remote.yaml",
             "starship.yaml",
             "tmux.yaml",
+            "typesafe.yaml",
             "zmx.yaml"
     );
 
