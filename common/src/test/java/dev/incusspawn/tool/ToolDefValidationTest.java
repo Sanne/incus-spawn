@@ -21,7 +21,8 @@ class ToolDefValidationTest {
             "tools/starship.yaml",
             "tools/podman.yaml",
             "tools/sshd.yaml",
-            "tools/tmux.yaml"
+            "tools/tmux.yaml",
+            "tools/typesafe.yaml"
     };
 
     @Test
