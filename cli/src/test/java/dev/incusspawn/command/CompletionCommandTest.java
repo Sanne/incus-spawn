@@ -19,16 +19,16 @@ class CompletionCommandTest {
     @Test
     void bashDropsVmFromCommandList() {
         String mac = CompletionCommand.rawScript(CompletionCommand.Shell.bash);
-        assertTrue(mac.contains("instances vm git-remote-helper"), "precondition: mac lists vm");
+        assertTrue(mac.contains("tools vm doctor"), "precondition: mac lists vm");
 
         String linux = linux(CompletionCommand.Shell.bash);
-        assertFalse(linux.contains("instances vm git-remote-helper"));
-        assertFalse(linux.contains("instances|vm|git-remote-helper"));
+        assertFalse(linux.contains("tools vm doctor"));
+        assertFalse(linux.contains("tools|vm|doctor"));
         // The now-unreachable vm) case block is removed too — no dead code left behind.
         assertFalse(linux.contains("vm_subcmds"), "dead vm) case block must be stripped");
         // Neighbours survive.
-        assertTrue(linux.contains("instances git-remote-helper"));
-        assertTrue(linux.contains("instances|git-remote-helper"));
+        assertTrue(linux.contains("tools doctor"));
+        assertTrue(linux.contains("tools|doctor"));
         assertTrue(linux.contains("doctor)"), "neighbouring case blocks must survive");
     }
 
@@ -60,10 +60,42 @@ class CompletionCommandTest {
         String linux = linux(CompletionCommand.Shell.fish);
         assertFalse(linux.contains("-a vm "), "top-level vm suggestion removed");
         assertFalse(linux.contains("__isx_using_subcommand vm"), "vm subcommand rules removed");
-        assertFalse(linux.contains("instances|vm|git-remote-helper"));
+        assertFalse(linux.contains("tools|vm|doctor"));
         // Unrelated commands and the --type vm value survive.
         assertTrue(linux.contains("-a doctor"));
         assertTrue(linux.contains("container vm kvm"));
+    }
+
+    // --- internal commands hidden from all shells ---
+
+    @Test
+    void hiddenCommandsNotOfferedAsTopLevelCompletions() {
+        for (var shell : CompletionCommand.Shell.values()) {
+            String script = CompletionCommand.rawScript(shell);
+            switch (shell) {
+                case zsh -> {
+                    assertFalse(script.contains("'completion:"), "zsh must not suggest completion");
+                    assertFalse(script.contains("'instances:"), "zsh must not suggest instances");
+                    assertFalse(script.contains("'git-remote-helper:"), "zsh must not suggest git-remote-helper");
+                    assertFalse(script.contains("'ssh-proxy:"), "zsh must not suggest ssh-proxy");
+                }
+                case bash -> {
+                    String commands = script.lines()
+                            .filter(l -> l.stripLeading().startsWith("local commands="))
+                            .findFirst().orElseThrow();
+                    assertFalse(commands.contains("completion"), "bash must not list completion");
+                    assertFalse(commands.contains("instances"), "bash must not list instances");
+                    assertFalse(commands.contains("git-remote-helper"), "bash must not list git-remote-helper");
+                    assertFalse(commands.contains("ssh-proxy"), "bash must not list ssh-proxy");
+                }
+                case fish -> {
+                    assertFalse(script.contains("-a completion"), "fish must not suggest completion");
+                    assertFalse(script.contains("-a instances"), "fish must not suggest instances");
+                    assertFalse(script.contains("-a git-remote-helper"), "fish must not suggest git-remote-helper");
+                    assertFalse(script.contains("-a ssh-proxy"), "fish must not suggest ssh-proxy");
+                }
+            }
+        }
     }
 
     // --- macOS scripts keep vm (and the new resize subcommand) ---
