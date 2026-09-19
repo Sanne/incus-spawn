@@ -125,6 +125,8 @@ public class ImageDef {
     private List<EnvEntry> env = List.of();
     @JsonProperty("default-action")
     private String defaultAction;
+    @JsonProperty("agent_note")
+    private String agentNote;
 
     @JsonIgnore
     private String source = "unknown";
@@ -181,6 +183,8 @@ public class ImageDef {
     public void setEnv(List<EnvEntry> env) { this.env = env; }
     public String getDefaultAction() { return defaultAction; }
     public void setDefaultAction(String defaultAction) { this.defaultAction = defaultAction; }
+    public String getAgentNote() { return agentNote; }
+    public void setAgentNote(String agentNote) { this.agentNote = agentNote; }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
 
@@ -203,7 +207,7 @@ public class ImageDef {
      * </pre>
      */
     public static class SkillsDef {
-        static final SkillsDef EMPTY = new SkillsDef(null, List.of());
+        public static final SkillsDef EMPTY = new SkillsDef(null, List.of());
 
         private final String repo;
         private final List<String> list;
@@ -391,6 +395,11 @@ public class ImageDef {
                 .sorted()
                 .forEach(e -> sb.append(e).append('\n'));
         if (gui) sb.append("gui=true\n");
+        // Included (unlike description) because the note is baked into the image:
+        // a stale footgun warning is worse than an extra rebuild.
+        if (agentNote != null && !agentNote.isBlank()) {
+            sb.append("agent_note=").append(agentNote).append('\n');
+        }
         if (type != null) sb.append("type=").append(type).append('\n');
         if (workdir != null && !workdir.isEmpty()) sb.append("workdir=").append(workdir).append('\n');
         if (shellCommand != null && !shellCommand.isEmpty()) sb.append("shell-command=").append(shellCommand).append('\n');
@@ -434,6 +443,18 @@ public class ImageDef {
             parentName = parent.getParent();
         }
         return result;
+    }
+
+    /**
+     * Return the full inheritance chain root-first, ending with {@code start} itself.
+     * This is the order layers are applied during a build, so it is also the order
+     * their contributions (env, notes, repos) should be collected in. For a root
+     * image the list contains only {@code start}.
+     */
+    public static List<ImageDef> chain(ImageDef start, Map<String, ImageDef> defs) {
+        var chain = new ArrayList<>(ancestors(start, defs).reversed());
+        chain.add(start);
+        return chain;
     }
 
     /**

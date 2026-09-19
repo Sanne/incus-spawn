@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.baseimage.BaseImageReleases;
+import dev.incusspawn.config.AgentContextGenerator;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.EnvResolver;
@@ -994,10 +995,13 @@ public class BuildCommand extends BaseCommand {
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
         maskServices(container, imageDef);
-        installSkills(container, imageDef, defs);
+        // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
+        installSkills(container, imageDef, defs, toolResolution.effective());
         cloneRepos(container, imageDef, effectiveVm);
         updateClaudeJsonTrust(container, imageDef);
         updateCodexTrust(container, imageDef);
+        // After the repos it lists have actually been cloned, matching buildFromScratch.
+        writeAgentContext(container, imageDef, defs, allTools, canonicalName);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
@@ -1214,14 +1218,8 @@ public class BuildCommand extends BaseCommand {
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
         }
 
-        // Build the full ancestor chain (root first) so that each layer's
-        // packages, tools, repos, and skills are applied in order. For root
-        // images this list contains only imageDef itself.
-        var chain = new ArrayList<ImageDef>();
-        for (int i = ancestors.size() - 1; i >= 0; i--) {
-            chain.add(ancestors.get(i));
-        }
-        chain.add(imageDef);
+        // Root-first, so each layer's packages, tools, repos and skills are applied in order.
+        var chain = ImageDef.chain(imageDef, defs);
 
         var allTools = new ArrayList<ResolvedTool>();
         for (var layer : chain) {
@@ -1236,12 +1234,13 @@ public class BuildCommand extends BaseCommand {
             runToolSetup(container, toolResolution.effective());
             allTools.addAll(toolResolution.effective());
             maskServices(container, layer);
-            installSkills(container, layer, defs);
+            installSkills(container, layer, defs, toolResolution.effective());
             cloneRepos(container, layer, effectiveVm);
             updateClaudeJsonTrust(container, layer);
             updateCodexTrust(container, layer);
         }
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+        writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
@@ -1679,12 +1678,9 @@ public class BuildCommand extends BaseCommand {
         resolver.add(EnvEntry.raw("export ISX_CONTAINER=\"${HOSTNAME}\""), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
         resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
-        var ancestors = ImageDef.ancestors(imageDef, defs);
-        for (int i = ancestors.size() - 1; i >= 0; i--) {
-            var ancestor = ancestors.get(i);
-            resolver.addAll(ancestor.getEnv(), "template " + ancestor.getName());
+        for (var layer : ImageDef.chain(imageDef, defs)) {
+            resolver.addAll(layer.getEnv(), "template " + layer.getName());
         }
-        resolver.addAll(imageDef.getEnv(), "template " + imageDef.getName());
 
         for (var resolved : allTools) {
             var entries = resolved.setup().envEntries(resolved.parameters());
@@ -1693,6 +1689,51 @@ public class BuildCommand extends BaseCommand {
 
         var script = resolver.resolve();
         container.writeFile("/etc/profile.d/isx-env.sh", script);
+    }
+
+    /**
+     * Write the managed-policy CLAUDE.md that tells an agent what this box already
+     * provides. Runs once per build, after the chain loop, so it sees the fully
+     * resolved image rather than one layer at a time.
+     *
+     * <p>Written to {@code /etc/claude-code/CLAUDE.md} — Claude Code's managed policy
+     * layer, beside the managed-settings.json that {@code ClaudeSetup} already owns.
+     * That layer loads ahead of, and concatenates with, {@code ~/.claude/CLAUDE.md} and
+     * any project CLAUDE.md, so isx never merges with or overwrites a file someone else
+     * owns. Root ownership is correct here; no chown.
+     */
+    void writeAgentContext(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                           List<ResolvedTool> allTools, String canonicalName) {
+        var chain = ImageDef.chain(imageDef, defs);
+
+        // generate() drops blanks and repeats, so collect freely here.
+        var notes = new ArrayList<String>();
+        var repos = new ArrayList<AgentContextGenerator.Repo>();
+        var seenRepoPaths = new HashSet<String>();
+        for (var layer : chain) {
+            notes.add(layer.getAgentNote());
+            // Ancestor repos are in the final image too: buildFromScratch clones them
+            // per-layer in the chain loop, buildFromParent inherits them with the copy.
+            for (var repo : layer.getRepos()) {
+                // getPath() derives ~/<name> from the url, but yields null for an entry
+                // with neither — nothing was cloned for it, so there is nothing to list.
+                var path = repo.getPath();
+                if (path == null || path.isBlank()) continue;
+                // Dedupe on the resolved path: ~/jdk and /home/agentuser/jdk are one clone.
+                if (seenRepoPaths.add(expandHome(path))) {
+                    repos.add(new AgentContextGenerator.Repo(path, repo.getUrl()));
+                }
+            }
+        }
+
+        var toolNames = new ArrayList<String>(allTools.size());
+        for (var resolved : allTools) {
+            toolNames.add(resolved.name());
+            notes.add(resolved.setup().agentNote());
+        }
+
+        var content = AgentContextGenerator.generate(canonicalName, toolNames, repos, notes);
+        container.writeFile(ClaudeSetup.MANAGED_MEMORY_PATH, content);
     }
 
     private static void linkJavaTrustStores(Container container) {
@@ -2227,22 +2268,31 @@ public class BuildCommand extends BaseCommand {
      * Fetches SKILL.md files on the host and writes them directly into the container.
      * Deduplicates against skills already declared by ancestor images.
      */
-    void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
-        var skillSources = collectEffectiveSkills(imageDef, defs);
-        if (skillSources.isEmpty()) return;
-
-        var repo = imageDef.getSkills().getRepo();
-
-        var resolvedNames = new ArrayList<String>(skillSources.size());
-        for (var entry : skillSources) {
-            try {
-                resolvedNames.add(resolveSkillSource(entry, repo));
-            } catch (IllegalArgumentException e) {
-                System.err.println("Error: " + e.getMessage());
-                System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in your image definition.");
-                throw new BuildFailedException();
+    void installSkills(Container container, ImageDef imageDef, Map<String, ImageDef> defs,
+                       List<ResolvedTool> tools) {
+        // A skill can be declared by the image or by a tool it installs. Tools carry the
+        // procedures that drive them, so the skill travels with the tool into every
+        // template using it. Dedupe: two sources can name the same skill.
+        var resolvedSet = new LinkedHashSet<String>();
+        for (var entry : collectEffectiveSkills(imageDef, defs)) {
+            resolvedSet.add(resolveSkillOrFail(entry, imageDef.getSkills().getRepo(),
+                    "image definition"));
+        }
+        for (var tool : tools) {
+            // A reconfigureOnly tool was installed by an ancestor, so its skills came with
+            // it: in buildFromParent they arrived with the CoW copy, in buildFromScratch
+            // the ancestor's own installSkills ran earlier in the chain loop. Re-fetching
+            // would make a parameter-only rebuild depend on the skill source still being
+            // reachable. This mirrors collectEffectiveSkills subtracting ancestor skills.
+            if (tool.reconfigureOnly()) continue;
+            var toolSkills = tool.setup().skills();
+            for (var entry : toolSkills.getList()) {
+                resolvedSet.add(resolveSkillOrFail(entry, toolSkills.getRepo(),
+                        "tool '" + tool.name() + "'"));
             }
         }
+        if (resolvedSet.isEmpty()) return;
+        var resolvedNames = new ArrayList<>(resolvedSet);
 
         BuildOutput.stepWithList("Installing " + resolvedNames.size() + " skill"
                 + (resolvedNames.size() == 1 ? "" : "s") + ":", resolvedNames);
@@ -2477,6 +2527,20 @@ public class BuildCommand extends BaseCommand {
      *   <li>Plain name → prepend {@code skillsRepo@}; throws if no skillsRepo set</li>
      * </ul>
      */
+    /**
+     * Resolve one skill source, naming the declaring definition if a bare name can't be
+     * resolved — otherwise the error sends you to the image YAML for a tool's typo.
+     */
+    private String resolveSkillOrFail(String entry, String repo, String source) {
+        try {
+            return resolveSkillSource(entry, repo);
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage() + " (declared by " + source + ")");
+            System.err.println("Use the fully qualified form 'owner/repo@skill-name', or set 'skills.repo' in the " + source + ".");
+            throw new BuildFailedException();
+        }
+    }
+
     static String resolveSkillSource(String skill, String skillsRepo) {
         if (skill.contains("://") || skill.startsWith(".") || skill.startsWith("/")) {
             return skill;
@@ -2486,7 +2550,7 @@ public class BuildCommand extends BaseCommand {
         }
         if (skillsRepo == null || skillsRepo.isBlank()) {
             throw new IllegalArgumentException(
-                    "Skill '" + skill + "' is a short name but no skills.repo is defined in the image definition.");
+                    "Skill '" + skill + "' is a short name but no skills.repo is defined.");
         }
         return skillsRepo + "@" + skill;
     }

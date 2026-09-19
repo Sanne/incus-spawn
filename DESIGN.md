@@ -75,6 +75,7 @@ Each image definition specifies:
 - `parent` — parent image name (omit for root images)
 - `packages` — dnf packages to install
 - `tools` — tool names to run (resolved from YAML or Java)
+- `agent_note` — always-true fact an agent must know before acting, rendered into the generated agent context file (see below)
 
 Building an image automatically builds missing parents recursively. `isx build --all` rebuilds every defined image from scratch.
 
@@ -174,8 +175,9 @@ Before building templates or running `isx update-all`, `HostRepoRefresh` fetches
 9. Clone declared repos (with reference optimization — see below)
 10. Configure terminal title (`PROMPT_COMMAND` in `.bashrc` sets `isx:<hostname>`)
 11. Pre-trust cloned repo directories in `.claude.json` (if Claude Code is installed)
-12. Clean caches (dnf, /tmp)
-13. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
+12. Write the agent context file (`/etc/claude-code/CLAUDE.md`) — see below
+13. Clean caches (dnf, /tmp)
+14. Tag metadata (version, SHA, definition fingerprint, CA fingerprint, build source), stop
 
 **VM-specific build behavior:**
 
@@ -192,8 +194,22 @@ When `type` is `vm` or `kvm` (set in the definition or via `--type`), `buildFrom
 1. Copy parent image, start, wait for network
 2. Install image-defined packages via dnf (deduplicated — see below)
 3. Install image-defined tools (with transitive `requires` resolution)
-4. Clean caches
-5. Tag metadata, stop
+4. Install skills, clone declared repos, pre-trust repo directories
+5. Write the agent context file (`/etc/claude-code/CLAUDE.md`) — see below
+6. Clean caches
+7. Tag metadata, stop
+
+### Agent Context File
+
+Every build regenerates `/etc/claude-code/CLAUDE.md`, a short always-loaded primer for agents running inside the box. Generation happens once per build, in both `buildFromScratch` and `buildFromParent`, and in each path after all layer work is finished — so it sees the fully resolved image (every ancestor's tools and repos) rather than one layer at a time, and the repos it lists have actually been cloned by the time it is written. Do not move the call earlier to sit beside `writeEnvFile`: in `buildFromParent` that is before `cloneRepos`. Content comes from `AgentContextGenerator` (module `common`), a pure function that `BuildCommand.writeAgentContext()` feeds and writes — the same split as `EnvResolver`/`writeEnvFile`, and the reason the whole format is unit-testable without Incus.
+
+**Why the managed-policy layer.** That path is Claude Code's *managed policy* memory location on Linux: it loads ahead of the user layer (`~/.claude/CLAUDE.md`) and the project layer (`./CLAUDE.md`), all layers concatenate rather than override, and it cannot be suppressed via `claudeMdExcludes`. Writing there means isx never merges with, prepends to, or overwrites a file a user or a template owns — no marker blocks and no read-modify-write logic, which the obvious alternative (generating into the user layer) would have required. It also sits beside the `managed-settings.json` and `statusline.sh` that `ClaudeSetup` already owns in that directory, and root ownership is correct, so no `chown` is needed.
+
+**What goes in it.** One test governs every line: *would omitting it cause a wrong action?* That admits four framework-level facts (passwordless sudo, so a missing tool gets installed rather than worked around; credentials for proxied services are held by the proxy rather than stored in the box, so they are not worth hunting for (stated in exactly those terms — `host-resources` can mount real credentials in, so a blanket "there are no credentials here" would be false for some templates); autonomy is for investigation, not for scope or outward-facing action such as opening a PR unbidden; and the "already installed / already cloned" lists, which stop an agent re-running `dnf install` or `git clone` for things the template already provides). It excludes anything the agent would treat identically whether or not it was told — template descriptions, env vars already exported into every login shell via `/etc/profile.d/isx-env.sh`, and host-resource mount semantics.
+
+**Names and paths, never descriptions.** `ImageDef.contentFingerprint()` covers tool names and repo url/path, so those cannot drift away from the built image. `description` is deliberately *not* fingerprinted (editing one must not trigger rebuilds), so rendering it could assert something that stopped being true. `agent_note` *is* fingerprinted on both `ImageDef` and `ToolDef`, because a stale warning baked into an image is worse than an extra rebuild.
+
+**`agent_note` vs `skills`.** Notes are for always-true constraints and traps that must be known *before* the first relevant action; procedures belong in `skills`, which load on demand when the model recognizes a matching task. Both are declarable on a tool as well as an image, so they travel with the tool into every template that installs it — `mvnd` is the worked example: the note is what gets it reached for at all (the name alone says nothing), and a skill would carry the procedure without spending context in sessions that never build anything. Tool skills are installed by `installSkills` alongside the image's, deduplicated against them, and bare names resolve against the *tool's* `skills.repo`, since the tool reaches templates that have never heard of its catalog. Most tools declare neither.
 
 **Package deduplication**: Before installing packages, the build walks the parent chain and collects all packages from ancestor images and their tools. These are subtracted from the current image's package list so derived images only install what's new. The build logs both the count being installed and the count already present in ancestors.
 
@@ -735,7 +751,8 @@ evidence; `.claude/rules/native-image.md` records what fixing it involves.
 - `ToolDefLoaderTest` — resolution order (builtins, user overrides, unknown tools)
 - `YamlToolSetupTest` — execution order with mocked Container
 - `ImageDefTest` — image definition loading, parent chain, descriptions, fingerprinting
-- `BuildCommandTest` — `.claude.json` trust configuration, skill deduplication across inheritance chains, shell quoting, GitHub URL parsing
+- `BuildCommandTest` — `.claude.json` trust configuration, skill deduplication across inheritance chains, agent context collection (notes root-first, ancestor repos), shell quoting, GitHub URL parsing
+- `AgentContextGeneratorTest` — generated `/etc/claude-code/CLAUDE.md` content: preamble, empty-section omission, note ordering, heredoc-marker neutralization
 - `GitRemoteUtilsTest` — URL normalization (SSH/HTTPS/case), protocol-lenient matching, reference device naming (hash-based, truncation, collision resistance), host repo matching across multiple remotes
 - `IncusApiTest` — REST API request/response parsing, exec body format, default exec environment, LOGIN_PATH_PREFIX
 
@@ -745,7 +762,7 @@ evidence; `.claude/rules/native-image.md` records what fixing it involves.
 - `BuildPipelineSmokeTest` — full buildFromScratch + buildFromParent operation sequence
 
 **Integration tests** (`mvn verify -DskipITs=false`, requires Incus):
-- `TemplateBuildIT` — builds actual images, verifies metadata and agentuser
+- `TemplateBuildIT` — builds actual images, verifies metadata, agentuser, and that the generated agent context file lands without touching the user-layer CLAUDE.md
 
 ## Technical Tradeoffs
 

@@ -243,10 +243,17 @@ Image schema fields (all optional except `name`):
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install
+- `remove_packages` -- dnf packages to remove before installing
+- `package_repos` -- additional package repositories to enable (e.g. COPR)
 - `tools` -- tool names to run (resolved from YAML or Java, see [Custom Tools](#custom-tools))
 - `repos` -- git repositories to clone as agentuser (see below)
 - `skills` -- Claude Code skills to bake into the image (see below); accepts a list shorthand or an object with `repo` and `list` sub-fields
+- `agent_note` -- always-true fact an agent must know before acting (see [Agent Environment Context](#agent-environment-context))
 - `host-resources` -- host files/directories to share with containers (see below)
+- `mask_services` -- systemd units to mask in the image
+- `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (see [Environment Variables](#environment-variables))
+- `gui` -- enable GUI support
+- `pinned` -- pin the base image to `image_tag` instead of tracking the newest release
 - `workdir` -- default working directory when shelling into a container (see below)
 - `shell-command` -- command to run instead of the login shell (see below)
 - `default-action` -- tool action to run when pressing Enter on an instance in the TUI (see below)
@@ -416,6 +423,77 @@ Skill source formats:
 
 To find available skills, browse [skills.sh](https://skills.sh).
 
+### Agent Environment Context
+
+Every build writes a short primer to `/etc/claude-code/CLAUDE.md` inside the image. Claude Code loads it at the start of every session, so an agent begins already aware of the environment it is running in. The file is regenerated on each build from the fully resolved template, so it stays in step with what was actually installed.
+
+The primer covers the facts that hold in any instance: the box is disposable, `sudo` needs no password, credentials for proxied services are held by the MITM proxy rather than stored in the box, and outward-facing actions such as opening a pull request are not taken unless asked for. It also lists the tools and repositories the template already provides, so an agent does not reinstall or re-clone them.
+
+This is the managed policy layer, which Claude Code reads in addition to `~/.claude/CLAUDE.md` and any project `CLAUDE.md`. All layers load together, and `isx` never reads, modifies, or overwrites the other two.
+
+Templates and tools can contribute their own content with `agent_note`:
+
+```yaml
+name: tpl-openjdk
+parent: tpl-dev
+agent_note: |
+  The build needs a boot JDK of 26/27/28. This box ships 26 at $JAVA_HOME and
+  deliberately omits 25.
+```
+
+A tool's note travels with the tool, so any template installing it inherits the note:
+
+```yaml
+name: jtreg
+description: OpenJDK regression test harness
+agent_note: |
+  configure has no env auto-detect for jtreg -- `--with-jtreg=/opt/jtreg` is the
+  only way to wire it in.
+```
+
+Tools can also ship `skills`, installed with the tool and inherited the same way. Use the two together when a tool is worth reaching for but non-obvious to drive: the note is the one line that gets it picked up, the skill carries the procedure and loads only when it is relevant.
+
+```yaml
+name: mvnd
+description: Apache Maven Daemon 1.x
+agent_note: |
+  `mvnd` is Maven running as a resident daemon: prefer it over `mvn` for repeated
+  builds in the same repo. It takes the same goals and flags as `mvn`.
+skills:
+  repo: myorg/catalog
+  list:
+    - mvnd-builds
+```
+
+Bare skill names in a tool resolve against that tool's own `skills.repo`, not the image's -- the tool travels into templates that have never heard of its catalog. Most tools need neither field; `zmx` and `starship` are not things an agent has to know about.
+
+#### When to write a note
+
+A note costs tokens in every session, and the agent follows it in every session -- including tasks it was not written for. Add one only when leaving it out would cause a wrong action: a flag that must be set, a version that must not be used, an action that must not be taken, or a failure whose obvious fix is the wrong one.
+
+```yaml
+agent_note: |
+  Run configure with CC=/usr/bin/gcc CXX=/usr/bin/g++. Without them it aborts on
+  /usr/lib64/ccache/gcc being a symlink; dropping --enable-ccache "fixes" it and
+  silently costs every later rebuild.
+```
+
+Write them after seeing an agent get something wrong -- the examples above all come from real failures. A guessed note wastes context, and a wrong one is still obeyed.
+
+Some content is better placed elsewhere:
+
+| Instead of | Use |
+| --- | --- |
+| `agent_note: Maven 3.9 build tool` | `description`, which is what template and tool listings show |
+| `agent_note: maven, podman and jtreg are installed` | Nothing -- the generated file already lists installed tools and cloned repos |
+| `agent_note: Build with 'make images', test with 'make test TEST=tier1'` | A [skill](#claude-code-skills), which loads on demand rather than in every session |
+| `agent_note: Be careful when editing the parser` | A specific constraint, or nothing at all |
+| `agent_note: Follow the Quarkus code style` | The repository's own `CLAUDE.md`, which applies only to work in that repo |
+
+Be specific: "Run configure with `CC=/usr/bin/gcc`" rather than "watch out for compiler wrappers".
+
+Editing an `agent_note` changes the fingerprint and triggers a rebuild, so a stale note never stays baked into an image. Editing a tool's note marks every template installing that tool as out of sync, so all of them rebuild.
+
 ### Host Resources
 
 Template images can declare host files and directories to make available inside containers. This is useful for sharing configuration files, pre-populating caches, or providing large datasets without copying them into every template.
@@ -504,6 +582,8 @@ Tool schema fields (all optional except `name`):
 - `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies; see below)
 - `verify` -- verification command (logged, non-fatal)
 - `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
+- `agent_note` -- always-true fact about this tool that an agent must know before acting (see [Agent Environment Context](#agent-environment-context))
+- `skills` -- skills to install alongside the tool, teaching an agent how to drive it; same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`
 - `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
 Download entry fields:
