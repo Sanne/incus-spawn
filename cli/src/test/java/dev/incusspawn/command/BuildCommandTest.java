@@ -117,22 +117,7 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.updateClaudeJsonTrust(container, imageDef);
 
-        // Capture the writeFile call (sh -c "cat > ...")
-        var captor = ArgumentCaptor.forClass(String.class);
-        verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), captor.capture());
-
-        // Find the cat > .claude.json call
-        String writtenJson = null;
-        for (var call : captor.getAllValues()) {
-            if (call.contains(".claude.json")) {
-                // Extract the content between heredoc markers
-                var start = call.indexOf('\n') + 1;
-                var end = call.lastIndexOf("\nINCUS_EOF");
-                if (start > 0 && end > start) {
-                    writtenJson = call.substring(start, end);
-                }
-            }
-        }
+        var writtenJson = capturedWrite(incus, ".claude.json");
         assertNotNull(writtenJson, "Expected .claude.json to be written");
 
         var mapper = new ObjectMapper();
@@ -390,6 +375,196 @@ class BuildCommandTest {
 
         assertEquals(List.of("child-skill"), effective,
                 "Only child-skill should remain after deduplication");
+    }
+
+    // --- writeAgentContext ---
+
+    /** Pull the heredoc body out of the last writeFile call that targeted {@code path}. */
+    private static String capturedWrite(IncusClient incus, String path) {
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), captor.capture());
+        String written = null;
+        for (var call : captor.getAllValues()) {
+            if (call.contains(path)) {
+                var start = call.indexOf('\n') + 1;
+                var end = call.lastIndexOf("\nINCUS_EOF");
+                if (start > 0 && end > start) {
+                    written = call.substring(start, end);
+                }
+            }
+        }
+        return written;
+    }
+
+    private static ToolSetup namedTool(String name, String agentNote) {
+        return new ToolSetup() {
+            @Override public String name() { return name; }
+            @Override public String agentNote() { return agentNote; }
+            @Override public void install(Container c, Map<String, String> p) {}
+        };
+    }
+
+    private static ToolSetup toolWithSkills(String name, ImageDef.SkillsDef skills) {
+        return new ToolSetup() {
+            @Override public String name() { return name; }
+            @Override public ImageDef.SkillsDef skills() { return skills; }
+            @Override public void install(Container c, Map<String, String> p) {}
+        };
+    }
+
+    @Test
+    void toolSkillsDefaultToNone() {
+        assertTrue(namedTool("zmx", null).skills().getList().isEmpty(),
+                "skills must stay opt-in: most tools need none");
+    }
+
+    @Test
+    void toolSkillsResolveAgainstTheirOwnRepo() {
+        // A bare name in a tool must resolve against the tool's skills.repo, not the
+        // image's — the tool travels into templates that never heard of its catalog.
+        var skills = new ImageDef.SkillsDef("owner/catalog", List.of("mvnd-builds"));
+        var tool = toolWithSkills("mvnd", skills);
+        assertEquals("owner/catalog@mvnd-builds",
+                BuildCommand.resolveSkillSource(tool.skills().getList().get(0), tool.skills().getRepo()));
+    }
+
+    @Test
+    void installSkillsIsANoOpWhenNeitherImageNorToolsDeclareAny() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-bare");
+
+        new BuildCommand().installSkills(container, imageDef, Map.of(),
+                List.of(new BuildCommand.ResolvedTool("zmx", namedTool("zmx", null), Map.of())));
+
+        verifyNoInteractions(incus);
+    }
+
+    @Test
+    void reconfigureOnlyToolsDoNotRefetchTheirSkills() {
+        // A reconfigureOnly tool was installed by an ancestor, so its skills are already
+        // in the image. Re-fetching would make a parameter-only rebuild fail whenever the
+        // skill source happens to be unreachable.
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-child");
+
+        var tool = toolWithSkills("mvnd", new ImageDef.SkillsDef("owner/catalog", List.of("mvnd-builds")));
+        new BuildCommand().installSkills(container, imageDef, Map.of(),
+                List.of(new BuildCommand.ResolvedTool("mvnd", tool, Map.of("version", "1.1"), true)));
+
+        // No mkdir, no write, and crucially no fetch — it never got past collection.
+        verifyNoInteractions(incus);
+    }
+
+    @Test
+    void writeAgentContextWritesManagedPolicyPath() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        var container = new Container(incus, "test");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-solo");
+
+        new BuildCommand().writeAgentContext(container, imageDef, Map.of(), List.of(), "tpl-solo");
+
+        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        assertNotNull(written, "should write to the managed policy location");
+        assertTrue(written.contains("built from the `tpl-solo` template"));
+    }
+
+    @Test
+    void writeAgentContextCollectsNotesFromAncestorsImageAndTools() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        var container = new Container(incus, "test");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setAgentNote("parent-level note");
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+        child.setAgentNote("child-level note");
+
+        var tools = List.of(
+                new BuildCommand.ResolvedTool("jtreg", namedTool("jtreg", "tool-level note"), Map.of()));
+
+        new BuildCommand().writeAgentContext(container, child,
+                Map.of("tpl-parent", parent, "tpl-child", child), tools, "tpl-child");
+
+        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        assertNotNull(written);
+        // Root-first: ancestors, then the image, then tools.
+        assertTrue(written.indexOf("parent-level note") < written.indexOf("child-level note"));
+        assertTrue(written.indexOf("child-level note") < written.indexOf("tool-level note"));
+        assertTrue(written.contains("Already installed, don't reinstall: jtreg"));
+    }
+
+    @Test
+    void writeAgentContextIncludesAncestorRepos() {
+        // cloneRepos runs per-layer, so an ancestor's clones exist in the built image
+        // even though they are absent from the leaf's own repo list.
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        var container = new Container(incus, "test");
+
+        var parentRepo = new ImageDef.RepoEntry();
+        parentRepo.setUrl("https://github.com/openjdk/jdk.git");
+        parentRepo.setPath("~/jdk");
+
+        var parent = new ImageDef();
+        parent.setName("tpl-parent");
+        parent.setRepos(List.of(parentRepo));
+
+        var child = new ImageDef();
+        child.setName("tpl-child");
+        child.setParent("tpl-parent");
+
+        new BuildCommand().writeAgentContext(container, child,
+                Map.of("tpl-parent", parent, "tpl-child", child), List.of(), "tpl-child");
+
+        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        assertNotNull(written);
+        assertTrue(written.contains("Already cloned, work in these rather than cloning again:"));
+        assertTrue(written.contains("- https://github.com/openjdk/jdk.git is checked out at `~/jdk`"));
+    }
+
+    @Test
+    void writeAgentContextDerivesRepoPathFromUrlAndSkipsUnclonable() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(OK);
+        var container = new Container(incus, "test");
+
+        var derived = new ImageDef.RepoEntry();
+        derived.setUrl("https://github.com/quarkusio/quarkus.git"); // no explicit path
+        var broken = new ImageDef.RepoEntry();                      // neither url nor path
+        var blank = new ImageDef.RepoEntry();
+        blank.setUrl("https://github.com/owner/repo.git");
+        blank.setPath("");
+        // Same clone as `derived`, written the long way — must not be listed twice.
+        var sameClone = new ImageDef.RepoEntry();
+        sameClone.setUrl("https://github.com/quarkusio/quarkus.git");
+        sameClone.setPath("/home/agentuser/quarkus");
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-x");
+        imageDef.setRepos(List.of(derived, broken, blank, sameClone));
+
+        new BuildCommand().writeAgentContext(container, imageDef, Map.of(), List.of(), "tpl-x");
+
+        var written = capturedWrite(incus, "/etc/claude-code/CLAUDE.md");
+        assertNotNull(written);
+        assertTrue(written.contains("`~/quarkus`"), "path should be derived from the url");
+        assertFalse(written.contains("null"), "an unclonable entry must not be listed");
+        assertFalse(written.contains("``"), "a blank path must not render an empty bullet");
+        assertEquals(1, written.lines().filter(l -> l.contains("is checked out at")).count(),
+                "~/quarkus and /home/agentuser/quarkus are one clone, not two");
     }
 
     // --- collectEffectiveTools ---
@@ -812,19 +987,7 @@ class BuildCommandTest {
         var cmd = new BuildCommand();
         cmd.updateCodexTrust(container, imageDef);
 
-        var captor = ArgumentCaptor.forClass(String.class);
-        verify(incus, atLeastOnce()).shellExec(eq("test"), eq("sh"), eq("-c"), captor.capture());
-
-        String writtenContent = null;
-        for (var call : captor.getAllValues()) {
-            if (call.contains(".codex/config.toml")) {
-                var start = call.indexOf('\n') + 1;
-                var end = call.lastIndexOf("\nINCUS_EOF");
-                if (start > 0 && end > start) {
-                    writtenContent = call.substring(start, end);
-                }
-            }
-        }
+        var writtenContent = capturedWrite(incus, ".codex/config.toml");
         assertNotNull(writtenContent, "Expected config.toml to be written");
         assertTrue(writtenContent.contains("[projects.\"/home/agentuser/quarkus\"]"));
         assertTrue(writtenContent.contains("trust_level = \"trusted\""));

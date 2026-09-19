@@ -122,6 +122,20 @@ assert "ISX_CONTAINER is set (matches hostname)" \
     su -l agentuser -c 'bash -c "source ~/.bashrc 2>/dev/null; test -n \"\$ISX_CONTAINER\""'
 echo ""
 
+# --- 6b. Agent context file ---
+# The build writes Claude Code's managed-policy memory layer. It must exist, and
+# it must NOT have created or clobbered the user layer, which stays user-owned.
+echo "[6b] Agent Context File"
+assert "managed CLAUDE.md exists" \
+    test -f /etc/claude-code/CLAUDE.md
+assert "managed CLAUDE.md carries the generated preamble" \
+    grep -q '^# incus-spawn environment' /etc/claude-code/CLAUDE.md
+assert "managed CLAUDE.md names the template" \
+    grep -q 'built from the .* template' /etc/claude-code/CLAUDE.md
+assert "user-layer CLAUDE.md was not created by the build" \
+    bash -c '! test -e /home/agentuser/.claude/CLAUDE.md'
+echo ""
+
 # --- 7. npm install through proxy (tarball caching) ---
 # Verifies npm registry interception: packument fetch, tarball download,
 # and cache hit on repeat install.

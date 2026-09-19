@@ -610,6 +610,36 @@ class ImageDefTest {
     }
 
     @Test
+    void fingerprintChangesWhenAgentNoteChanges() {
+        // Unlike description, agent_note is fingerprinted: it is baked into the
+        // generated /etc/claude-code/CLAUDE.md, so a stale warning must force a rebuild.
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setAgentNote("boot JDK must be 26");
+        b.setAgentNote("boot JDK must be 27");
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintChangesWhenAgentNoteAdded() {
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        b.setAgentNote("a note");
+        assertNotEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
+    void fingerprintIgnoresDescriptionChanges() {
+        // Documents why the generated file renders no descriptions: editing one does
+        // not rebuild the image, so a rendered description could go stale.
+        var a = makeDef("images:fedora/44", null, List.of(), List.of());
+        var b = makeDef("images:fedora/44", null, List.of(), List.of());
+        a.setDescription("one thing");
+        b.setDescription("a completely different thing");
+        assertEquals(a.contentFingerprint(Map.of()), b.contentFingerprint(Map.of()));
+    }
+
+    @Test
     void fingerprintChangesWhenSkillsRepoChanges() {
         var a = makeDef("images:fedora/44", null, List.of(), List.of());
         var b = makeDef("images:fedora/44", null, List.of(), List.of());

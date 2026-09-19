@@ -125,6 +125,33 @@ class TemplateBuildIT {
         }
     }
 
+    @Test
+    @Order(6)
+    void minimalImageHasAgentContextFile() {
+        Assumptions.assumeTrue(incus.exists(TEST_MINIMAL),
+                "Skipping: " + TEST_MINIMAL + " was not built");
+
+        startAndWait(TEST_MINIMAL);
+        try {
+            // Claude Code's managed-policy memory layer. Root-owned by design.
+            var content = incus.shellExec(TEST_MINIMAL, "cat", "/etc/claude-code/CLAUDE.md");
+            assertTrue(content.success(), "agent context file should be written by the build");
+            assertTrue(content.stdout().contains("# incus-spawn environment"),
+                    "should carry the generated preamble");
+            assertTrue(content.stdout().contains("template"),
+                    "should name the template it was built from");
+
+            // The user layer must be left entirely alone — that is the whole reason
+            // for writing the managed layer instead of ~/.claude/CLAUDE.md.
+            var userLayer = incus.shellExec(TEST_MINIMAL,
+                    "test", "-e", "/home/agentuser/.claude/CLAUDE.md");
+            assertFalse(userLayer.success(),
+                    "the build must not create or overwrite the user-layer CLAUDE.md");
+        } finally {
+            incus.stop(TEST_MINIMAL);
+        }
+    }
+
     private void startAndWait(String container) {
         incus.start(container);
         for (int i = 0; i < 30; i++) {

@@ -116,10 +116,38 @@ public class Container {
         runInteractive(failureMessage, command);
     }
 
+    /** Default heredoc delimiter; lengthened if the content itself contains it. */
+    private static final String HEREDOC_MARKER = "INCUS_EOF";
+
     /** Write content to a file inside the container. */
     public void writeFile(String path, String content) {
-        sh("mkdir -p \"$(dirname " + shellQuote(path) + ")\" && cat > " + shellQuote(path) + " << 'INCUS_EOF'\n" + content.strip() + "\nINCUS_EOF")
+        var body = content.strip();
+        var marker = heredocMarker(body);
+        sh("mkdir -p \"$(dirname " + shellQuote(path) + ")\" && cat > " + shellQuote(path)
+                + " << '" + marker + "'\n" + body + "\n" + marker)
                 .assertSuccess("Failed to write file in container: " + path);
+    }
+
+    /**
+     * Pick a delimiter that no line of {@code content} equals. Content reaching here is
+     * often user-authored (tool {@code files:} blocks, template env, skills, agent notes),
+     * so a fixed delimiter could be closed early by the content itself — truncating the
+     * file and running its remainder as shell. Extending the marker keeps the content
+     * byte-for-byte intact, unlike escaping it.
+     */
+    private static String heredocMarker(String content) {
+        var marker = HEREDOC_MARKER;
+        while (containsLine(content, marker)) {
+            marker += "_";
+        }
+        return marker;
+    }
+
+    private static boolean containsLine(String content, String marker) {
+        for (var line : content.split("\n", -1)) {
+            if (line.equals(marker)) return true;
+        }
+        return false;
     }
 
     /** Set ownership recursively. */

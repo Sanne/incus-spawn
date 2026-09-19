@@ -343,6 +343,93 @@ class ToolDefTest {
     }
 
     @Test
+    void agentNoteIsParsed() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: jtreg
+                agent_note: |
+                  configure has no env auto-detect for jtreg;
+                  --with-jtreg=/opt/jtreg is the only way in.
+                """));
+        assertTrue(def.getAgentNote().contains("--with-jtreg=/opt/jtreg"));
+    }
+
+    @Test
+    void skillsAreOptionalAndDefaultToEmpty() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: zmx
+                description: session attach/detach
+                """));
+        assertTrue(def.getSkills().getList().isEmpty());
+        assertNull(def.getSkills().getRepo());
+    }
+
+    @Test
+    void skillsAcceptListShorthand() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: mvnd
+                skills:
+                  - owner/catalog@mvnd-builds
+                """));
+        assertEquals(List.of("owner/catalog@mvnd-builds"), def.getSkills().getList());
+    }
+
+    @Test
+    void skillsAcceptRepoAndListForm() throws Exception {
+        var def = ToolDef.loadFromStream(toStream("""
+                name: mvnd
+                skills:
+                  repo: owner/catalog
+                  list:
+                    - mvnd-builds
+                """));
+        assertEquals("owner/catalog", def.getSkills().getRepo());
+        assertEquals(List.of("mvnd-builds"), def.getSkills().getList());
+    }
+
+    @Test
+    void fingerprintChangesWhenToolSkillAdded() throws Exception {
+        // A tool's skill is baked into every image installing it, so adding one
+        // must mark those templates out of sync.
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                skills:
+                  - owner/catalog@thing
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintChangesWhenAgentNoteChanges() throws Exception {
+        // agent_note is baked into the generated /etc/claude-code/CLAUDE.md, so
+        // editing one must rebuild; contrast fingerprintIgnoresDescriptionChanges.
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                agent_note: one thing
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                agent_note: another thing
+                """));
+        assertNotEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
+    void fingerprintIgnoresDescriptionChanges() throws Exception {
+        var a = ToolDef.loadFromStream(toStream("""
+                name: test
+                description: one thing
+                """));
+        var b = ToolDef.loadFromStream(toStream("""
+                name: test
+                description: a completely different thing
+                """));
+        assertEquals(a.contentFingerprint(), b.contentFingerprint());
+    }
+
+    @Test
     void fingerprintChangesWhenDownloadUrlChanges() throws Exception {
         var a = ToolDef.loadFromStream(toStream("""
                 name: test

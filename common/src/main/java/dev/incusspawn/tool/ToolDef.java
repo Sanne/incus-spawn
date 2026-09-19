@@ -59,6 +59,10 @@ public class ToolDef {
     private Map<String, ParameterDef> parameters = Map.of();
     private String feature;
     private ProxyDef proxy;
+    @JsonProperty("agent_note")
+    private String agentNote;
+    @JsonDeserialize(using = ImageDef.SkillsDef.Deserializer.class)
+    private ImageDef.SkillsDef skills = ImageDef.SkillsDef.EMPTY;
 
     private transient volatile String cachedFingerprint;
 
@@ -96,6 +100,10 @@ public class ToolDef {
     public void setFeature(String feature) { this.feature = feature != null && feature.isBlank() ? null : feature; }
     public ProxyDef getProxy() { return proxy; }
     public void setProxy(ProxyDef proxy) { this.proxy = proxy; }
+    public String getAgentNote() { return agentNote; }
+    public void setAgentNote(String agentNote) { this.agentNote = agentNote; }
+    public ImageDef.SkillsDef getSkills() { return skills; }
+    public void setSkills(ImageDef.SkillsDef skills) { this.skills = skills != null ? skills : ImageDef.SkillsDef.EMPTY; }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DownloadEntry {
@@ -471,6 +479,12 @@ public class ToolDef {
             }
         }
         if (verify != null) sb.append("verify=").append(verify).append('\n');
+        // Included (unlike description) because the note is baked into the image.
+        if (agentNote != null && !agentNote.isBlank()) {
+            sb.append("agent_note=").append(agentNote).append('\n');
+        }
+        if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
+        skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         parameters.entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(e -> {
