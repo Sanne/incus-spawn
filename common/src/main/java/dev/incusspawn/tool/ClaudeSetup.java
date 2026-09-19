@@ -252,6 +252,13 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     static final String MANAGED_SETTINGS_PATH = "/etc/claude-code/managed-settings.json";
+    /**
+     * Claude Code's managed-policy memory layer. Written once per build by
+     * {@code BuildCommand.writeAgentContext} (it needs the fully resolved image, which a
+     * per-tool install step cannot see), but the path belongs here beside the rest of
+     * {@code /etc/claude-code}.
+     */
+    public static final String MANAGED_MEMORY_PATH = "/etc/claude-code/CLAUDE.md";
     static final String USER_SETTINGS_PATH = "/home/agentuser/.claude/settings.json";
     private static final String STATUSLINE_PATH = "/etc/claude-code/statusline.sh";
 

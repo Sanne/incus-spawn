@@ -334,5 +334,13 @@ public class TemplatesCommand extends BaseCommand {
             # Claude Code skills
             # skills:
             #   - owner/skills-repo@skill-name
+
+            # Always-true fact an agent must know before acting. It costs tokens in
+            # every session and the agent follows it in every session, including tasks
+            # it wasn't written for, so add one only when leaving it out would cause a
+            # wrong action. Descriptions, lists of installed tools (already generated)
+            # and procedures don't belong here -- put procedures in a skill.
+            # agent_note: |
+            #   The build needs a boot JDK of 26/27/28; this box ships 26 and omits 25.
             """;
 }

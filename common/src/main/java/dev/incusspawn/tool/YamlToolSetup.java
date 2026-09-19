@@ -40,6 +40,16 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public String agentNote() {
+        return def.getAgentNote();
+    }
+
+    @Override
+    public dev.incusspawn.config.ImageDef.SkillsDef skills() {
+        return def.getSkills();
+    }
+
+    @Override
     public ToolDef.ProxyDef proxy() {
         return def.getProxy();
     }

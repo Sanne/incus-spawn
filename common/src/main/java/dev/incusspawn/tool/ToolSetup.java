@@ -16,6 +16,22 @@ public interface ToolSetup {
     /** Human-readable description shown in menus (e.g. "GitHub — PAT for git operations"). */
     default String description() { return ""; }
 
+    /**
+     * Always-true fact about this tool that an agent must know <em>before</em> acting,
+     * rendered into {@code /etc/claude-code/CLAUDE.md} by the build. Null for most tools.
+     * Reserve it for things that cause a wrong action if unknown; procedural how-to
+     * content belongs in a skill, which loads on demand instead of every session.
+     */
+    default String agentNote() { return null; }
+
+    /**
+     * Skills this tool ships, installed when the tool is. Use these for the procedures
+     * that drive the tool — they load on demand, unlike {@link #agentNote()}, which is
+     * in context for every session. Bare skill names resolve against this definition's
+     * own {@code skills.repo}, not the image's.
+     */
+    default ImageDef.SkillsDef skills() { return ImageDef.SkillsDef.EMPTY; }
+
     /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
     default ToolDef.ProxyDef proxy() { return null; }
 
