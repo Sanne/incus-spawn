@@ -32,11 +32,8 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.cert.CertificateExpiredException;
 import java.security.cert.CertificateNotYetValidException;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,7 +55,7 @@ import java.util.regex.Pattern;
 public class DoctorCommand extends BaseCommand {
 
     @Option(name = "bundle", hasValue = false,
-            description = "Collect findings and logs into a support archive (tar.gz)")
+            description = "Collect findings and logs into a redacted support archive (tar.gz); implies --deep")
     boolean bundle;
 
     @Option(name = "deep", hasValue = false,
@@ -111,6 +108,15 @@ public class DoctorCommand extends BaseCommand {
             applyOrSuggest(f.remediation());
         }
         return exitFor(findings);
+    }
+
+    /**
+     * A bundle is the artifact we ask a user to attach to an issue, and the in-container DNS
+     * and TLS probes are its most conclusive evidence — a bundle without them is one we would
+     * have to ask them to generate again. So {@code --bundle} runs them too.
+     */
+    boolean deepChecks() {
+        return deep || bundle;
     }
 
     private CommandResult exitFor(List<Finding> findings) {
@@ -203,7 +209,7 @@ public class DoctorCommand extends BaseCommand {
         findings.addAll(checkDnsAndBridge());
         findings.add(checkInstanceSubnets());
         findings.addAll(checkTemplates());
-        if (deep) {
+        if (deepChecks()) {
             findings.addAll(checkInstances());
         }
     }
@@ -1208,47 +1214,42 @@ public class DoctorCommand extends BaseCommand {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private void generateBundle(List<Finding> findings) {
+        SupportBundle.Result result;
         try {
-            var timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
-            var bundleDir = Files.createTempDirectory("isx-doctor-");
-            try {
-                Files.writeString(bundleDir.resolve("findings.txt"), formatFindings(findings));
-                Files.writeString(bundleDir.resolve("findings.json"), findingsToJson(findings));
-                Files.writeString(bundleDir.resolve("versions.txt"), collectVersions());
-                copyLogTail(Environment.proxyLogFile(), bundleDir.resolve("proxy.log"), 1000);
-                copyLogTail(Environment.clientLogFile(), bundleDir.resolve("client.log"), 1000);
-                if (Platform.isMacOS()) {
-                    copyLogTail(Environment.vmLogFile(), bundleDir.resolve("vm.log"), 1000);
-                    copyLogTail(Environment.vmStateDir().resolve("proxy-service.log"),
-                            bundleDir.resolve("proxy-service.log"), 1000);
-                }
-                Files.writeString(bundleDir.resolve("proxy-status.txt"), collectProxyStatus());
-                Files.writeString(bundleDir.resolve("config-sanitized.yaml"), sanitizedConfig());
-                writeInstanceList(bundleDir.resolve("instances.json"));
-                Files.writeString(bundleDir.resolve("service-status.txt"), collectServiceStatus());
-
-                var outputDir = Environment.vmStateDir();
-                Files.createDirectories(outputDir);
-                var archivePath = outputDir.resolve("isx-doctor-" + timestamp + ".tar.gz");
-                var pb = new ProcessBuilder("tar", "czf", archivePath.toString(),
-                        "-C", bundleDir.toString(), ".");
-                pb.redirectErrorStream(true);
-                var process = pb.start();
-                process.getInputStream().readAllBytes();
-                if (process.waitFor() != 0) {
-                    System.err.println("Failed to create support archive.");
-                    return;
-                }
-                System.out.println("\nSupport archive: " + archivePath);
-            } finally {
-                try (var walk = Files.walk(bundleDir)) {
-                    walk.sorted(Comparator.reverseOrder())
-                            .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
-                }
-            }
+            result = SupportBundle.generate(formatFindings(findings), findingsToJson(findings));
         } catch (Exception e) {
             System.err.println("Failed to generate bundle: " + e.getMessage());
+            return;
         }
+
+        System.out.println("\nSupport archive: " + result.archive());
+        System.out.println("  " + result.fileCount() + " files — findings, versions, logs, proxy and"
+                + " instance state, and a redacted config.");
+        System.out.println("  " + describeRedactions(result));
+        System.out.println("\nWhat to do with it:");
+        // tar does not create the -C target, so the mkdir is part of the instruction, and the
+        // archive path is quoted because a home directory may contain spaces.
+        System.out.println("  1. Review it first:  mkdir -p /tmp/isx-bundle && tar xzf '"
+                + result.archive() + "' -C /tmp/isx-bundle");
+        System.out.println("  2. Open an issue at " + SupportBundle.ISSUE_URL);
+        System.out.println("  3. Attach the archive. See REDACTIONS.txt inside for what was withheld.");
+    }
+
+    static String describeRedactions(SupportBundle.Result result) {
+        int keys = result.redactedPaths().size();
+        int scrubbed = result.scrubCount();
+        if (keys == 0 && scrubbed == 0) {
+            return "No credentials were found to redact.";
+        }
+        var parts = new ArrayList<String>();
+        if (keys > 0) {
+            parts.add(keys + (keys == 1 ? " config key" : " config keys")
+                    + " (" + String.join(", ", result.redactedPaths()) + ")");
+        }
+        if (scrubbed > 0) {
+            parts.add(scrubbed + (scrubbed == 1 ? " value" : " values") + " in the logs");
+        }
+        return "Redacted " + String.join(" and ", parts) + ".";
     }
 
     private String formatFindings(List<Finding> findings) {
@@ -1279,95 +1280,4 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private String collectVersions() {
-        var info = BuildInfo.instance();
-        var sb = new StringBuilder();
-        sb.append("isx version: ").append(info.version()).append("\n");
-        sb.append("isx git SHA: ").append(info.gitSha()).append("\n");
-        sb.append("isx runtime: ").append(info.runtime()).append("\n");
-        try {
-            sb.append("Incus server: ").append(IncusClient.daemonVersion()).append("\n");
-        } catch (Exception e) {
-            sb.append("Incus server: unknown\n");
-        }
-        sb.append("OS: ").append(System.getProperty("os.name")).append(" ")
-                .append(System.getProperty("os.version")).append("\n");
-        sb.append("Arch: ").append(System.getProperty("os.arch")).append("\n");
-        sb.append("Java: ").append(System.getProperty("java.version", "n/a")).append("\n");
-        return sb.toString();
-    }
-
-    private String collectProxyStatus() {
-        var sb = new StringBuilder();
-        try {
-            var incus = RuntimeServices.incus();
-            var status = ProxyHealthCheck.check(incus);
-            sb.append("Status: ").append(status.name()).append("\n");
-            var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-            if (info != null) {
-                sb.append("Version: ").append(info.version()).append("\n");
-                sb.append("Git SHA: ").append(info.gitSha()).append("\n");
-                sb.append("Runtime: ").append(info.runtime()).append("\n");
-                sb.append("CA fingerprint: ").append(info.caFingerprint()).append("\n");
-                sb.append("DNS configured: ").append(info.dnsConfigured()).append("\n");
-            }
-        } catch (Exception e) {
-            sb.append("Error: ").append(e.getMessage()).append("\n");
-        }
-        return sb.toString();
-    }
-
-    static String sanitizedConfig() {
-        var config = SpawnConfig.load();
-        config.getClaude().clearAuth();
-        config.getGithub().setToken("");
-        try {
-            var yaml = new ObjectMapper(new YAMLFactory());
-            return yaml.writerWithDefaultPrettyPrinter().writeValueAsString(config);
-        } catch (Exception e) {
-            return "# could not serialize config: " + e.getMessage();
-        }
-    }
-
-    private void writeInstanceList(Path dest) {
-        try {
-            var incus = RuntimeServices.incus();
-            Files.writeString(dest, incus.listJsonConfig());
-        } catch (Exception e) {
-            try {
-                Files.writeString(dest, "[]");
-            } catch (IOException ignored) {}
-        }
-    }
-
-    private String collectServiceStatus() {
-        var sb = new StringBuilder();
-        sb.append("Platform: ").append(Platform.isMacOS() ? "macOS" : "Linux").append("\n");
-        sb.append("Service installed: ").append(ProxyService.isInstalled()).append("\n");
-        sb.append("Service active: ").append(ProxyService.isActive()).append("\n");
-        return sb.toString();
-    }
-
-    private void copyLogTail(Path src, Path dest, int maxLines) {
-        try {
-            if (!Files.exists(src)) {
-                Files.writeString(dest, "(file not found: " + src + ")");
-                return;
-            }
-            // Use a bounded deque to avoid loading the entire file into memory
-            var tail = new java.util.ArrayDeque<String>(maxLines);
-            try (var reader = Files.newBufferedReader(src)) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (tail.size() == maxLines) tail.removeFirst();
-                    tail.addLast(line);
-                }
-            }
-            Files.write(dest, tail);
-        } catch (Exception e) {
-            try {
-                Files.writeString(dest, "(could not read: " + e.getMessage() + ")");
-            } catch (IOException ignored) {}
-        }
-    }
 }

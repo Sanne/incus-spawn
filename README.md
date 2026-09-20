@@ -1242,7 +1242,18 @@ Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
 | Option | Description |
 |--------|-------------|
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
-| `--bundle` | Collect findings and logs into a support archive (.tar.gz) |
+| `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
+
+The bundle is meant to be attached to a GitHub issue. Credentials are removed before
+anything is written: values in `config.yaml` are replaced by a marker naming the key
+(`<isx:redacted:github.token>`), and the logs are scrubbed for those same values plus
+well-known token shapes. A key that is genuinely unset stays empty, so an empty value and a
+removed one remain distinguishable. `REDACTIONS.txt` inside the archive lists what was
+withheld, and `README.txt` explains each file.
+
+Which keys count as secrets is not a list in the code: every tool declares its own
+credentials in its proxy definition (`secret: true`), and redaction follows those
+declarations — including tools you define yourself under `~/.config/incus-spawn/tools/`.
 
 ### `isx clean`
 
