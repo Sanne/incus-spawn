@@ -1559,6 +1559,9 @@ public class InitCommand extends BaseCommand {
                     claudeReplaceAccounts = true;
                     return true;
                 }
+                // 'd' and 'x' save immediately rather than on the way out of the menu: each
+                // prints a confirmation naming what changed, and the loop then returns to the
+                // listing, so a later abort (or Ctrl-C) must not leave that message a lie.
                 case "d" -> {
                     if (canManageMultiple) {
                         System.out.print("  Name of the account to make default: ");
@@ -1585,7 +1588,9 @@ public class InitCommand extends BaseCommand {
                             }
                             config.save();
                             System.out.println("  Removed account '" + name + "'.");
-                            if (!claude.hasAuth()) return false;
+                            // No "nothing left" branch: 'x' is only offered when
+                            // effectiveAccounts() holds more than one complete account, so a
+                            // removal always leaves at least one behind.
                         } else if (!name.isEmpty()) {
                             System.out.println("  No account named '" + name + "'.");
                         }

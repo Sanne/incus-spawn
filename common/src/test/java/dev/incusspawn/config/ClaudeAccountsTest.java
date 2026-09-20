@@ -153,6 +153,45 @@ class ClaudeAccountsTest {
     }
 
     @Test
+    void theTypeFieldIsWrittenNotJustInferred() throws Exception {
+        // ClaudeAccount has no getType() -- 'type' reaches the file only through
+        // @JsonAutoDetect(fieldVisibility = ANY). Round-tripping alone would not catch its
+        // loss, because effectiveType() re-infers OAUTH from the token either way.
+        var config = new SpawnConfig();
+        config.getClaude().putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
+        config.getClaude().putAccount("console", ClaudeAccount.ofApiKey("sk-ant-api03-xyz"));
+        var written = YAML.writeValueAsString(config);
+        assertTrue(written.contains("type: \"oauth\"") || written.contains("type: oauth"), written);
+        assertTrue(written.contains("type: \"api-key\"") || written.contains("type: api-key"), written);
+    }
+
+    @Test
+    void derivedAccessorsAreNotSerialized() throws Exception {
+        // isOauthMode() and hasAuth() describe the resolved account; they are not state.
+        // Before getterVisibility = NONE, 'oauthMode' was auto-detected as an is-getter and
+        // written into every config.yaml. Re-detecting it would resurrect that phantom key.
+        var config = new SpawnConfig();
+        config.getClaude().putAccount("personal", ClaudeAccount.ofOauth("sk-ant-oat01-abc"));
+        var written = YAML.writeValueAsString(config);
+        assertFalse(written.contains("oauthMode"), written);
+        assertFalse(written.contains("auth:"), written);
+    }
+
+    @Test
+    void aPhantomOauthModeKeyFromAnOlderIsxIsIgnored() throws Exception {
+        // Configs written before getterVisibility = NONE carry 'oauthMode'. It must stay inert
+        // rather than failing the load and discarding the file.
+        var yaml = """
+                claude:
+                  oauthMode: true
+                  apiKey: "sk-ant-api03-xyz"
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        assertEquals(ClaudeAccountType.API_KEY, claude.account().effectiveType());
+        assertFalse(claude.isOauthMode());
+    }
+
+    @Test
     void addingAnAccountKeepsAPreAccountsCredential() throws Exception {
         // Regression: 'add another account' used to wipe the flat credential and re-point the
         // default at the newcomer, losing the token and silently switching every instance.

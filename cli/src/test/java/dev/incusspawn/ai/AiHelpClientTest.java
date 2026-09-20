@@ -40,7 +40,22 @@ class AiHelpClientTest {
     void vertexSelectsVertex() {
         var config = config();
         config.getClaude().setUseVertex(true);
+        // Region and project are what make the account complete(), and an incomplete one is
+        // deliberately never selected -- see incompleteVertexSelectsNothing below.
+        config.getClaude().setCloudMlRegion("europe-west1");
+        config.getClaude().setVertexProjectId("acme");
         assertEquals(AiHelpClient.Provider.VERTEX, AiHelpClient.detectProvider(config));
+    }
+
+    @Test
+    void incompleteVertexSelectsNothing() {
+        // 'useVertex: true' with no region or project cannot serve a call: the request URI
+        // would be built with empty path segments. It stays configured so ProxyMain can
+        // report the misconfiguration, but it must not be picked as a provider here.
+        var config = config();
+        config.getClaude().setUseVertex(true);
+        assertTrue(config.getClaude().isUseVertex());
+        assertNull(AiHelpClient.detectProvider(config));
     }
 
     @Test
