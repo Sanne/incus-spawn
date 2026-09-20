@@ -346,7 +346,7 @@ public class CompletionCommand extends BaseCommand {
             _isx_doctor() {
               _arguments \\
                 '(-h --help)'{-h,--help}'[Show help]' \\
-                '--bundle[Collect findings and logs into a support archive]' \\
+                '--bundle[Collect findings and logs into a redacted support archive (implies --deep)]' \\
                 '--deep[Run per-instance checks (DNS, TLS, resolv.conf)]'
             }
 
@@ -858,7 +858,7 @@ public class CompletionCommand extends BaseCommand {
 
             # ── doctor ──────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand doctor' -l bundle -d 'Collect findings and logs into a support archive'
+            complete -c isx -f -n '__isx_using_subcommand doctor' -l bundle -d 'Collect findings and logs into a redacted support archive (implies --deep)'
             complete -c isx -f -n '__isx_using_subcommand doctor' -l deep   -d 'Run per-instance checks (DNS, TLS, resolv.conf)'
             """;
 }

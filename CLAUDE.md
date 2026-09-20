@@ -49,6 +49,8 @@ Both `cli` and `proxy` are independent Quarkus applications that produce separat
 
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both. Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways. VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
 
+**Secrets are declared, not listed.** `SecretRegistry` (`common/config/`) answers "where do secrets live in `config.yaml`" by collecting every tool's `ToolDef.ConfigEntry` that sets `secret: true` with a `config-path` -- so a new credential becomes known to every secret-aware consumer by being declared on the tool (`ToolSetup.proxy()` or tool YAML), never by editing a list. A declared leaf also holds anywhere under its namespace, which is what covers `claude.accounts.<name>.apiKey`. `SecretRedactor` owns the other half -- what a credential *looks like*: the whole-word key-name backstop for undeclared keys in `SpawnConfig.extras`, the token-shape patterns, and the `<isx:redacted:<path>>` marker. `isx doctor --bundle` (`SupportBundle`) is the first consumer: the config is redacted structurally, every other file is scrubbed, and `SupportBundle.add()` is the only way into the archive so a new collector cannot leak by forgetting. See DESIGN.md "Support bundles: redaction by construction" and `.claude/rules/config.md`.
+
 **Native image: host paths belong in the run-time-initialized classes.** Quarkus initializes
 application classes at image-build time unless they are listed in `--initialize-at-run-time`, and
 Linux native builds run as **root inside the GraalVM builder container** — so a field holding an

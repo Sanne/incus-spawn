@@ -362,16 +362,51 @@ class DoctorCommandTest {
         assertTrue(f.remediation().description().contains("isx init"));
     }
 
-    // ---- Sanitized config structural redaction ----
+    // ---- Option implications ----
 
     @Test
-    void sanitizedConfigRemovesSecrets() {
-        var yaml = DoctorCommand.sanitizedConfig();
-        assertFalse(yaml.contains("sk-ant-"), "API keys must not appear in sanitized config");
-        assertFalse(yaml.contains("ghp_"), "GitHub tokens must not appear in sanitized config");
-        assertFalse(yaml.contains("sk-ant-oat"), "OAuth tokens must not appear in sanitized config");
-        // Structure should still be present
-        assertTrue(yaml.contains("claude") || yaml.contains("github"),
-                "Config structure should be preserved");
+    void bundleRunsTheDeepChecks() {
+        var command = new DoctorCommand();
+        command.bundle = true;
+        assertTrue(command.deepChecks(), "--bundle must collect the per-instance probes");
+    }
+
+    @Test
+    void deepRunsThemWithoutABundle() {
+        var command = new DoctorCommand();
+        command.deep = true;
+        assertTrue(command.deepChecks());
+    }
+
+    @Test
+    void plainDoctorStaysCheap() {
+        assertFalse(new DoctorCommand().deepChecks());
+    }
+
+    // ---- Redaction summary wording ----
+
+    @Test
+    void redactionSummaryNamesTheKeysItRemoved() {
+        var result = new SupportBundle.Result(Path.of("/tmp/b.tar.gz"),
+                List.of("claude.oauthToken", "github.token"), 3, 12);
+        var summary = DoctorCommand.describeRedactions(result);
+        assertTrue(summary.contains("2 config keys"), summary);
+        assertTrue(summary.contains("claude.oauthToken"), summary);
+        assertTrue(summary.contains("3 values in the logs"), summary);
+    }
+
+    @Test
+    void redactionSummarySaysSoWhenThereWasNothingToRedact() {
+        var result = new SupportBundle.Result(Path.of("/tmp/b.tar.gz"), List.of(), 0, 12);
+        assertEquals("No credentials were found to redact.", DoctorCommand.describeRedactions(result));
+    }
+
+    @Test
+    void redactionSummaryHandlesASingleKey() {
+        var result = new SupportBundle.Result(Path.of("/tmp/b.tar.gz"),
+                List.of("github.token"), 0, 12);
+        var summary = DoctorCommand.describeRedactions(result);
+        assertTrue(summary.contains("1 config key ("), summary);
+        assertFalse(summary.contains("in the logs"), "nothing was scrubbed: " + summary);
     }
 }
