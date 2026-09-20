@@ -384,6 +384,16 @@ class InitCommandTest {
         assertEquals("", InitCommand.readSecret(null));
     }
 
+    @Test
+    void readInputStripsSurroundingWhitespaceAndToleratesNull() {
+        assertEquals("personal", InitCommand.readInput("  personal\t"));
+        assertEquals("", InitCommand.readInput(""));
+        // Console.readLine() returns null once stdin is closed. Every prompt in InitCommand
+        // reads "" as skip/finish/take-the-default, so EOF ends the prompt the way pressing
+        // Enter would instead of throwing out of init.
+        assertEquals("", InitCommand.readInput(null));
+    }
+
     // --- OAuth token shape check ---
 
     private static String oauthToken(int length) {

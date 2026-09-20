@@ -1264,8 +1264,8 @@ public class InitCommand extends BaseCommand {
         }
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
-        var input = console.readLine();
-        if (input == null || input.isBlank()) {
+        var input = readInput(console.readLine());
+        if (input.isBlank()) {
             System.out.println("  Skipped credential setup.");
             return List.of();
         }
@@ -1410,18 +1410,18 @@ public class InitCommand extends BaseCommand {
         System.out.println("    3. Google Cloud Vertex AI");
         System.out.println();
         System.out.print("  Choice (1/2/3, or Enter to skip): ");
-        var authChoice = console.readLine().strip();
+        var authChoice = readInput(console.readLine());
 
         if (authChoice.equals("3")) {
             while (true) {
                 System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
-                var region = console.readLine().strip();
+                var region = readInput(console.readLine());
                 if (region.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     return;
                 }
                 System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
-                var projectId = console.readLine().strip();
+                var projectId = readInput(console.readLine());
                 if (projectId.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     return;
@@ -1541,7 +1541,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    x. Remove an account");
             }
             System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = console.readLine().strip().toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> {
@@ -1565,7 +1565,7 @@ public class InitCommand extends BaseCommand {
                 case "d" -> {
                     if (canManageMultiple) {
                         System.out.print("  Name of the account to make default: ");
-                        var name = console.readLine().strip();
+                        var name = readInput(console.readLine());
                         if (accounts.containsKey(name)) {
                             claude.setDefaultAccount(name);
                             config.save();
@@ -1579,7 +1579,7 @@ public class InitCommand extends BaseCommand {
                 case "x" -> {
                     if (canManageMultiple) {
                         System.out.print("  Name of the account to remove: ");
-                        var name = console.readLine().strip();
+                        var name = readInput(console.readLine());
                         if (accounts.containsKey(name)) {
                             claude.getAccounts().remove(name);
                             if (name.equals(claude.getDefaultAccount())) {
@@ -1607,7 +1607,7 @@ public class InitCommand extends BaseCommand {
     private static String askAccountName(Console console, java.util.Set<String> taken) {
         while (true) {
             System.out.print("  Name for this account (e.g. personal, work — Enter to cancel): ");
-            var name = console.readLine().strip();
+            var name = readInput(console.readLine());
             if (name.isEmpty()) return "";
             if (taken.contains(name)) {
                 System.out.println("  There is already an account named '" + name + "'.");
@@ -1651,6 +1651,25 @@ public class InitCommand extends BaseCommand {
      */
     static String readSecret(char[] chars) {
         return chars == null ? "" : new String(chars).strip();
+    }
+
+    /**
+     * The plaintext counterpart to {@link #readSecret(char[])}: strips, and answers EOF with
+     * {@code ""} rather than throwing.
+     *
+     * <p>{@link Console#readLine()} returns null once stdin is closed, so a bare
+     * {@code readLine().strip()} ends init with a {@code NullPointerException} the moment it is
+     * run non-interactively -- piped input that runs out, a terminated parent, a CI job. Empty
+     * is the right answer because every prompt here already reads it as "skip", "finish" or
+     * "take the default", so EOF behaves exactly as pressing Enter does and each retry loop
+     * still terminates.
+     *
+     * <p>Prompts that need a different answer at EOF keep choosing their own and do not use
+     * this: {@link BaseCommand#askConfirmation} takes an explicit {@code eofValue}, and
+     * {@link #parseVerificationFailureAction} maps null to SKIP so it never re-prompts.
+     */
+    static String readInput(String line) {
+        return line == null ? "" : line.strip();
     }
 
     /** Real 'claude setup-token' output runs to ~108 chars; much shorter means a paste cut at a line wrap. */
@@ -2211,7 +2230,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    " + (i + 1) + ". " + label);
             }
             System.out.print("  Select email for git commits [1]: ");
-            var choice = console.readLine().strip();
+            var choice = readInput(console.readLine());
             if (choice.isEmpty()) {
                 return parsed.verified.get(0);
             }
@@ -2320,8 +2339,7 @@ public class InitCommand extends BaseCommand {
                 if (configDef.isSecret()) {
                     value = readSecret(console.readPassword());
                 } else {
-                    var line = console.readLine();
-                    value = line != null ? line.strip() : "";
+                    value = readInput(console.readLine());
                 }
             }
             if (!value.isBlank()) {
@@ -2362,7 +2380,7 @@ public class InitCommand extends BaseCommand {
             System.out.print("  Add a local directory"
                     + (hasEntries ? " or # to remove" : "")
                     + " (or press Enter to " + (hasEntries ? "finish" : "skip") + "): ");
-            var input = console.readLine().strip();
+            var input = readInput(console.readLine());
             if (input.isEmpty()) break;
 
             if (input.contains("://")) {
@@ -2525,13 +2543,13 @@ public class InitCommand extends BaseCommand {
 
     private String askClonePath(Console console, String defaultPath) {
         System.out.print("  Clone to " + defaultPath + "? (Y/path/n): ");
-        var answer = console.readLine().strip();
+        var answer = readInput(console.readLine());
         if (answer.equalsIgnoreCase("n")) return null;
         if (answer.isEmpty() || answer.equalsIgnoreCase("y")) return defaultPath;
 
         if (answer.equalsIgnoreCase("path")) {
             System.out.print("  Clone path: ");
-            var path = console.readLine().strip();
+            var path = readInput(console.readLine());
             if (path.isEmpty()) return defaultPath;
             return HostResourceSetup.expandHostTilde(path);
         }
