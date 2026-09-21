@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Build a minimal custom kernel for the incus-spawn VM appliance.
 #
-# Downloads vanilla kernel source from kernel.org, applies the isx.config
-# fragment on top of allnoconfig, and builds a vmlinuz with zero modules.
+# Downloads vanilla kernel source from kernel.org, applies isx.config plus the
+# matching isx-<arch>.config on top of allnoconfig, and builds a vmlinuz with
+# zero modules.
 #
 # Usage:  ./build-kernel.sh [output-dir] [arch]
 #
@@ -19,7 +20,8 @@ mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 BUILD_ARCH="${2:-$(uname -m)}"
 CACHE_DIR="${KERNEL_CACHE_DIR:-/tmp/kernel-cache}"
-CONFIG_FRAGMENT="$SCRIPT_DIR/isx.config"
+BASE_FRAGMENT="$SCRIPT_DIR/isx.config"
+ARCH_FRAGMENT="$SCRIPT_DIR/isx-${BUILD_ARCH}.config"
 
 case "$BUILD_ARCH" in
     x86_64)  KARCH="x86";   TARGET="bzImage"; IMAGE="arch/x86/boot/bzImage" ;;
@@ -27,8 +29,12 @@ case "$BUILD_ARCH" in
     *) echo "ERROR: unsupported architecture: $BUILD_ARCH" >&2; exit 1 ;;
 esac
 
+for f in "$BASE_FRAGMENT" "$ARCH_FRAGMENT"; do
+    [ -f "$f" ] || { echo "ERROR: config fragment not found: $f" >&2; exit 1; }
+done
+
 echo "Building kernel $KERNEL_VERSION for $BUILD_ARCH..."
-echo "  Config: $CONFIG_FRAGMENT"
+echo "  Config: $BASE_FRAGMENT + $(basename "$ARCH_FRAGMENT")"
 echo "  Output: $OUTPUT_DIR"
 
 mkdir -p "$CACHE_DIR"
@@ -70,7 +76,13 @@ tar xf "$TARBALL" -C "$BUILD_DIR" --strip-components=1
 
 cd "$BUILD_DIR"
 
-echo "==> Configuring (allnoconfig + isx.config)..."
+# kconfig takes a single KCONFIG_ALLCONFIG file, so the shared and per-arch
+# fragments are concatenated here. Order matters: the arch fragment comes last
+# so it can override a shared default.
+CONFIG_FRAGMENT="$BUILD_DIR/.isx-merged.config"
+cat "$BASE_FRAGMENT" "$ARCH_FRAGMENT" > "$CONFIG_FRAGMENT"
+
+echo "==> Configuring (allnoconfig + isx.config + isx-${BUILD_ARCH}.config)..."
 KCONFIG_ALLCONFIG="$CONFIG_FRAGMENT" make -s ARCH="$KARCH" allnoconfig
 make -s ARCH="$KARCH" olddefconfig
 

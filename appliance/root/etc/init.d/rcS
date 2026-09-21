@@ -124,6 +124,12 @@ if grep -q 'isx.diag' /proc/cmdline; then
 fi
 
 #-- Serial console gettys (only on devices that exist) --#
+# "Exists" is weaker than it looks: x86_64 builds the 8250 driver, which
+# registers /dev/ttyS0..3 whether or not hardware answers, so under vfkit on an
+# Intel Mac some of these are stubs and get an idle getty each. That is only
+# waste -- getty -L sets CLOCAL, so it does not block -- but do not read this
+# loop as proof that a node here is attached to anything. Code that needs the
+# *real* console reads console= from /proc/cmdline; see incus-spawn-diag.
 for dev in ttyS0 hvc0 ttyAMA0; do
     [ -c "/dev/$dev" ] && echo "$dev::respawn:/sbin/getty -L 115200 $dev linux" >> /etc/inittab
 done

@@ -1,12 +1,28 @@
 #!/bin/sh
 # Diagnostic dump for debugging boot issues.
 # Scheduled 30s after boot by rcS.
-# Output goes to the serial console (ttyS0 on QEMU, hvc0 on vfkit).
+#
+# Output goes to whichever console the kernel was actually given: ttyS0 on
+# x86_64 QEMU, ttyAMA0 on aarch64 QEMU, hvc0 on vfkit. It is read from the
+# cmdline rather than probed for -- see incus-spawn-smoke-test for why a probe
+# is not safe. This matters most here: diag.sh polls its vfkit logfile for the
+# "end diagnostics" sentinel, so output sent to a stub tty means a 60s hang and
+# an empty report, from the one tool you reach for when the VM will not boot.
 
 CONSOLE=""
-for dev in /dev/ttyS0 /dev/hvc0 /dev/ttyAMA0; do
-    [ -c "$dev" ] && CONSOLE="$dev" && break
+for tok in $(cat /proc/cmdline); do
+    case "$tok" in
+        console=*)
+            dev="/dev/${tok#console=}"
+            [ -c "${dev%%,*}" ] && CONSOLE="${dev%%,*}"
+            ;;
+    esac
 done
+if [ -z "$CONSOLE" ]; then
+    for dev in /dev/hvc0 /dev/ttyAMA0 /dev/ttyS0; do
+        [ -c "$dev" ] && CONSOLE="$dev" && break
+    done
+fi
 [ -z "$CONSOLE" ] && exit 0
 
 exec > "$CONSOLE" 2>&1

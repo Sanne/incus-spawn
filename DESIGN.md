@@ -860,7 +860,7 @@ Multiple `isx` processes can modify VM or proxy state concurrently (e.g. `isx vm
 
 ## VM Appliance
 
-A minimal Alpine Linux VM image with Incus pre-installed, providing CI integration testing and macOS support. Uses BusyBox init (not systemd or OpenRC) for fastest possible boot. Custom kernel from kernel.org source (zero modules, no initrd) with musl libc for fast dynamic linking. The build produces a rootfs tarball (~30-40 MB) and kernel (~11 MB); a writable btrfs disk image is created on first boot. See [`appliance/DESIGN.md`](appliance/DESIGN.md) for full architecture details.
+A minimal Alpine Linux VM image with Incus pre-installed, providing CI integration testing and macOS support. Uses BusyBox init (not systemd or OpenRC) for fastest possible boot. Custom kernel from kernel.org source (zero modules, no initrd) with musl libc for fast dynamic linking. The build produces a rootfs tarball (~30-40 MB) and kernel (~10.5 MB on aarch64, ~5 MB on x86_64, both gzipped to ~5 MB for release download); a writable btrfs disk image is created on first boot. See [`appliance/DESIGN.md`](appliance/DESIGN.md) for full architecture details.
 
 ## Security Considerations
 

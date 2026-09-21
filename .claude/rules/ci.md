@@ -2,6 +2,9 @@
 paths:
   - ".github/**"
   - "bench/**"
+  # Cross-cutting trigger: VmManager holds the CLI half of the release-asset
+  # name contract below, so editing it must load this file too.
+  - "common/src/main/java/dev/incusspawn/vm/VmManager.java"
 ---
 
 # CI Integration Tests
@@ -16,6 +19,10 @@ paths:
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
+
+Note that `integration-tests` boots **x86_64 only** -- it runs on `ubuntu-latest` and installs `qemu-system-x86`. The aarch64 appliance is built in CI but never booted there; `appliance/test-boot.sh` is the developer-run script that covers aarch64 and vfkit. Do not read a green CI as evidence that an appliance change works on the macOS path.
+
+**Release asset names are a contract with the CLI.** `release.yml` publishes the appliance kernel as `vmlinuz-<arch>.gz` (gzipped there, not by `build-kernel.sh`, which still emits a plain `vmlinuz` for local QEMU/vfkit runs) and `VmManager.downloadKernel` gunzips it on the way into `~/.isx`. Renaming an asset on one side breaks the other, with the twist that a dev build resolves its appliance version to the *latest* release rather than its own -- which is why the download falls back to the pre-`.gz` name instead of failing. Change both sides together, and keep the fallback until no reachable release predates the rename.
 
 `fresh-daemon-init` exists because `isx-integration-tests` runs `incus admin init --minimal` *before*
 `isx init`, which populates the default profile -- so it cannot catch `isx init` failing to populate it

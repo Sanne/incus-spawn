@@ -1110,8 +1110,7 @@ public final class VmManager {
         var cache = new DownloadCache();
 
         if (!Files.exists(Environment.applianceKernel())) {
-            downloadStep(cache, "Downloading vmlinuz (" + arch + ")...",
-                    baseUrl + "/vmlinuz-" + arch, Environment.applianceKernel());
+            downloadKernel(cache, baseUrl, arch);
         }
 
         if (!Files.exists(Environment.applianceDiskImage())) {
@@ -1123,6 +1122,35 @@ public final class VmManager {
     }
 
     /**
+     * Fetch the appliance kernel, which is published gzipped.
+     *
+     * <p>Compressing it for distribution matters most on aarch64 -- the macOS target -- because
+     * that arch has no self-decompressing kernel target: {@code Image} is the raw thing, where
+     * x86_64's {@code bzImage} already compresses itself. Gzipping the asset roughly halves the
+     * download rather than shipping 11 MB of uncompressed kernel.
+     *
+     * <p>Releases published before that change carry only the uncompressed asset. A dev build
+     * resolves its appliance version to whatever the latest release is, so it can legitimately
+     * point at one of those; fall back to the old name instead of failing, and report the
+     * compressed attempt's failure if neither is there.
+     */
+    private static void downloadKernel(DownloadCache cache, String baseUrl, String arch)
+            throws IOException {
+        try {
+            downloadStep(cache, "Downloading vmlinuz (" + arch + ")...",
+                    baseUrl + "/vmlinuz-" + arch + ".gz", Environment.applianceKernel(), true);
+        } catch (IOException compressed) {
+            try {
+                downloadStep(cache, "Downloading vmlinuz (" + arch + ", uncompressed)...",
+                        baseUrl + "/vmlinuz-" + arch, Environment.applianceKernel(), false);
+            } catch (IOException legacy) {
+                compressed.addSuppressed(legacy);
+                throw compressed;
+            }
+        }
+    }
+
+    /**
      * Run one download as a single terminal step, closing its own dangling step line on failure
      * before propagating. Because only the code that printed the {@code stepStart} knows a line is
      * outstanding, owning the {@code stepBreak} here lets callers report the error with a plain
@@ -1130,10 +1158,36 @@ public final class VmManager {
      */
     private static void downloadStep(DownloadCache cache, String label, String url, java.nio.file.Path dest)
             throws IOException {
+        downloadStep(cache, label, url, dest, false);
+    }
+
+    /**
+     * As above, optionally gunzipping the download on the way to {@code dest}. The decompressed
+     * form lands via a temp file and an atomic move: {@link #downloadArtifacts()} treats an
+     * existing file as a completed download, so a half-written one would be indistinguishable
+     * from a good one on the next run.
+     */
+    private static void downloadStep(DownloadCache cache, String label, String url,
+            java.nio.file.Path dest, boolean gunzip) throws IOException {
         BuildOutput.stepStart(label);
         try {
             var cached = cache.download(url, null);
-            Files.copy(cached, dest, StandardCopyOption.REPLACE_EXISTING);
+            if (gunzip) {
+                var tmp = dest.resolveSibling(dest.getFileName() + ".part");
+                try {
+                    try (var gzIn = new GZIPInputStream(Files.newInputStream(cached), 64 * 1024);
+                         var out = Files.newOutputStream(tmp)) {
+                        gzIn.transferTo(out);
+                    }
+                    Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException | RuntimeException e) {
+                    try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+                    throw e;
+                }
+            } else {
+                Files.copy(cached, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException | RuntimeException e) {
             BuildOutput.stepBreak();
             throw e;
