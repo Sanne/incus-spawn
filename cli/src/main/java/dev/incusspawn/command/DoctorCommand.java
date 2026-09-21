@@ -5,6 +5,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
@@ -208,6 +210,7 @@ public class DoctorCommand extends BaseCommand {
         findings.addAll(checkProxy());
         findings.addAll(checkDnsAndBridge());
         findings.add(checkInstanceSubnets());
+        findings.add(checkInstanceAccounts());
         findings.addAll(checkTemplates());
         if (deepChecks()) {
             findings.addAll(checkInstances());
@@ -1025,6 +1028,44 @@ public class DoctorCommand extends BaseCommand {
     }
 
     // ---- Layer 5b: Instance subnet consistency ----
+
+    /**
+     * Instances pinned to an account that is no longer configured.
+     *
+     * <p>Worth a check of its own because the failure is silent from the host's side: the
+     * proxy fails those requests closed rather than serving another account, so the user sees
+     * a container that stopped working with no local symptom. There is no auto-fix -- only the
+     * user knows whether the account was renamed or the instance should follow the default.
+     */
+    private Finding checkInstanceAccounts() {
+        try {
+            var incus = RuntimeServices.incus();
+            var config = SpawnConfig.load();
+            var dangling = new ArrayList<String>();
+            for (var instance : incus.list()) {
+                var name = instance.get("name");
+                if (name == null || name.isBlank()) continue;
+                var selection = AccountSelection.read(incus, name);
+                if (selection.isEmpty()) continue;
+                try {
+                    AccountSelection.validate(config, selection);
+                } catch (AccountResolver.UnknownAccountException e) {
+                    dangling.add(name + " (" + e.namespace() + "=" + e.accountName() + ")");
+                }
+            }
+            if (dangling.isEmpty()) {
+                return Finding.ok("Instance credential accounts", "(all resolve)");
+            }
+            return Finding.fail("Instance credential accounts",
+                    "(" + dangling.size() + " pinned to a missing account: "
+                            + String.join(", ", dangling) + ")",
+                    new Remediation("Re-point them with 'isx account set <instance> <ns>=<account>'"
+                            + ", or re-add the account with 'isx init'", false, null));
+        } catch (Exception e) {
+            return Finding.warn("Instance credential accounts",
+                    "(could not check: " + e.getMessage() + ")", null);
+        }
+    }
 
     private Finding checkInstanceSubnets() {
         try {
