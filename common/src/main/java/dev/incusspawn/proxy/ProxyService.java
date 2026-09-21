@@ -518,16 +518,22 @@ public final class ProxyService {
     }
 
     /**
-     * Ask a running proxy to re-read config.yaml and instance account pinning, without
-     * restarting it. Best-effort and deliberately silent: the proxy re-reads on a timer
-     * anyway, so this only removes the delay. In-flight requests are unaffected.
+     * Ask a running proxy to re-read which accounts each instance uses, without restarting it
+     * and without the full config reload SIGHUP triggers.
      *
-     * <p>Not lock-guarded, unlike the mutating lifecycle operations: SIGHUP does not change
-     * service state, and taking the lock here would serialise every branch behind it.
+     * <p>Account pinning is instance state, not config state, and it changes on every branch --
+     * the most common operation there is. A full reload would re-mint certificates and re-push
+     * SSL options every time, so this uses SIGUSR1, which only re-reads the instance list.
+     *
+     * <p>Best-effort and deliberately silent: the proxy also refreshes on a short timer, so
+     * this only removes the delay. In-flight requests are unaffected.
+     *
+     * <p>Not lock-guarded, unlike the mutating lifecycle operations: it does not change service
+     * state, and taking the lock would serialise every branch behind it.
      */
-    public static void signalReload() {
+    public static void signalAccountRefresh() {
         var pid = findProxyPid();
-        if (pid != -1) runQuiet("kill", "-HUP", String.valueOf(pid));
+        if (pid != -1) runQuiet("kill", "-USR1", String.valueOf(pid));
     }
 
     private static long findProxyPid() {

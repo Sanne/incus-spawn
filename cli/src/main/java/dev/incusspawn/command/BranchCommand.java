@@ -256,17 +256,30 @@ public class BranchCommand extends BaseCommand {
             selection = merged;
         }
 
-        AccountSelection.validate(SpawnConfig.load(), selection);
+        var config = SpawnConfig.load();
+        AccountSelection.validate(config, selection);
+
+        // A branch is a CoW copy of an already-built template, so its environment is already
+        // baked -- an --account that crosses auth modes is exactly as unhonourable here as it
+        // is in 'isx account set', and must be refused the same way. Checked against the
+        // source, whose env class the copy inherits.
+        var reason = AccountSelection.incompatibilityReason(config, incus, resolvedSource, selection);
+        if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
+
         return selection;
     }
 
     private void applyAccountSelection(Map<String, String> selection) {
-        if (selection.isEmpty()) return;
-        AccountSelection.stamp(incus, name, selection);
-        BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
-        // The proxy caches instance pinning; tell it now rather than letting the new
-        // instance's first request race a stale snapshot.
-        ProxyService.signalReload();
+        if (!selection.isEmpty()) {
+            AccountSelection.stamp(incus, name, selection);
+            BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
+        }
+        // Signalled even when this branch pins nothing. Static IPs are handed out lowest-free,
+        // so a new instance frequently reuses a destroyed one's address; without this the proxy
+        // would still map that address to the old instance and hand its account to this one.
+        // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
+        // so the first request from inside already sees the right answer.
+        ProxyService.signalAccountRefresh();
     }
 
     private String resolveSource() {

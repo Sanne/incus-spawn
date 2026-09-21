@@ -79,6 +79,25 @@ class PerInstanceCredentialsTest {
         assertEquals("deleted", e.accountName());
     }
 
+    /**
+     * A pre-accounts config.yaml has no `claude.accounts` in the serialized tree, but
+     * ClaudeConfig still presents one synthesized account named `default` -- which is what
+     * `isx account list` shows and what a user would therefore pin to. Resolving that name
+     * generically as well as typed would fail closed and 502 every request.
+     */
+    @Test
+    void pinningTheSynthesizedAccountOnAFlatConfigResolves() throws Exception {
+        var config = YAML.readValue("""
+                claude:
+                  oauthToken: "sk-ant-oat01-legacy"
+                """, SpawnConfig.class);
+        var name = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
+        assertEquals(name, config.getClaude().accountName());
+
+        var creds = ProxyCredentials.forAccounts(config, Map.of("claude", name), Map.of());
+        assertEquals("sk-ant-oat01-legacy", creds.oauthToken());
+    }
+
     // ── the generic path: any namespace, no per-tool code ────────────────────────
 
     /** A tool that exists only as a config-namespace declaration, as a YAML tool would be. */
@@ -152,6 +171,34 @@ class PerInstanceCredentialsTest {
         var resolved = ToolProxyResolver.resolve(config,
                 Map.of("github", toolWithNamespace("github")), Map.of("github", "acme"));
         assertEquals("Bearer ghp_shared", resolved.get(0).computeHeaderValue());
+    }
+
+    /**
+     * Interception is global -- it drives certificates and bridge DNS, which cannot vary per
+     * caller. Resolving it from the default account alone drops a tool whose credential exists
+     * only under a named account, so the domain would not be intercepted and a pinned
+     * instance's request would be relayed through with nothing injected.
+     */
+    @Test
+    void domainsResolvableOnlyUnderANamedAccountAreStillIntercepted() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  accounts:
+                    personal:
+                      email: "me@example.com"
+                    acme:
+                      token: "ghp_acme"
+                  default: personal
+                """, SpawnConfig.class);
+        var tools = Map.of("github", toolWithNamespace("github"));
+
+        // The default account has no token, so the default resolution finds nothing.
+        assertTrue(ToolProxyResolver.resolve(config, tools, Map.of()).isEmpty());
+
+        // Across accounts, the domain is still known and must be intercepted.
+        var across = ToolProxyResolver.resolveAcrossAccounts(config, tools);
+        assertEquals(1, across.size());
+        assertEquals("api.example.com", across.get(0).domain());
     }
 
     @Test

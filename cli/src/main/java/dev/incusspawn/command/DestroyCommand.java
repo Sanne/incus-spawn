@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.tui.InstanceLockManager;
+import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -91,6 +92,11 @@ public class DestroyCommand extends BaseCommand {
             try {
                 incus.delete(target, true);
                 InstanceLifecycle.removeHostIntegration(target);
+                // The freed static IP is the lowest free address, so the next branch usually
+                // reuses it. Until the proxy re-reads the instance list, that address still
+                // maps to this instance -- and the new one would inherit its credential
+                // account. Tell the proxy now rather than leaving a window.
+                ProxyService.signalAccountRefresh();
             } catch (Exception e) {
                 incus.clearPendingOperation(target);
                 throw e;
