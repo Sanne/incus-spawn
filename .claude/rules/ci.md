@@ -20,7 +20,17 @@ paths:
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 
-Note that `integration-tests` boots **x86_64 only** -- it runs on `ubuntu-latest` and installs `qemu-system-x86`. The aarch64 appliance is built in CI but never booted there; `appliance/test-boot.sh` is the developer-run script that covers aarch64 and vfkit. Do not read a green CI as evidence that an appliance change works on the macOS path.
+**No CI job boots the appliance on aarch64 or under vfkit.** This is worth stating precisely, because the runner list makes it look otherwise:
+
+| where | what it does with the appliance |
+|---|---|
+| `test-integration.yml` → `integration-tests` (`ubuntu-latest`) | boots it under `qemu-system-x86` -- **x86_64 only** |
+| `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
+| `release.yml` native matrix (`macos-14`, `macos-15-intel`) | builds the native CLI/proxy and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`. Never starts a VM, and runs on `v*` tags only |
+
+So macOS runners do exist, but nothing on them exercises the appliance, and no workflow invokes `vfkit` at all. The `isx init` calls in `test-integration.yml` are Linux-path only, where isx talks to host Incus over a Unix socket and the VM is not involved.
+
+The practical consequence: the vfkit path -- the one macOS users actually run -- has **zero automated coverage**, and aarch64 boots are covered only by `appliance/test-boot.sh`, which is developer-run. A green CI is not evidence that an appliance change works on macOS. Anything touching the kernel config, the console, or the boot path needs a manual boot on both arches before it ships.
 
 **Release asset names are a contract with the CLI.** `release.yml` publishes the appliance kernel as `vmlinuz-<arch>.gz` (gzipped there, not by `build-kernel.sh`, which still emits a plain `vmlinuz` for local QEMU/vfkit runs) and `VmManager.downloadKernel` gunzips it on the way into `~/.isx`. Renaming an asset on one side breaks the other, with the twist that a dev build resolves its appliance version to the *latest* release rather than its own -- which is why the download falls back to the pre-`.gz` name instead of failing. Change both sides together, and keep the fallback until no reachable release predates the rename.
 
