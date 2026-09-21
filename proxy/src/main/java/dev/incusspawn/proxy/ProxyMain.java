@@ -161,6 +161,19 @@ public class ProxyMain implements QuarkusApplication {
             ProxyLog.info("SIGHUP handler not available: " + e.getMessage());
         }
 
+        try {
+            // Which accounts an instance uses is instance state, not config state, and it
+            // changes on every branch -- this tool's most common operation. Answering that with
+            // a full reload would re-mint certs and re-push SSL options each time, so it gets a
+            // signal of its own that only re-reads the instance list.
+            sun.misc.Signal.handle(new sun.misc.Signal("USR1"), signal -> {
+                ProxyLog.info("Received SIGUSR1, refreshing instance account registry");
+                proxy.refreshInstanceRegistry();
+            });
+        } catch (Exception e) {
+            ProxyLog.info("SIGUSR1 handler not available: " + e.getMessage());
+        }
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("\nStopping proxy...");
             configWatcher.stop();

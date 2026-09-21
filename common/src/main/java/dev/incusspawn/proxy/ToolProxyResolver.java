@@ -118,6 +118,40 @@ public final class ToolProxyResolver {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
+    /**
+     * Every entry that any configured account could make resolvable, not just the default's.
+     *
+     * <p>Which domains are intercepted is decided once, globally -- it drives certificate
+     * minting and the bridge DNS overrides, neither of which can vary per caller. Resolving
+     * that from the default account alone would drop a tool whose credential only exists under
+     * a named account (a {@code github.default} with no token beside a {@code github.accounts
+     * .acme} that has one): the domain would not be intercepted at all, so a pinned instance's
+     * request would be relayed straight through with no credential injected.
+     *
+     * <p>Credentials are still resolved per caller; this is only for the domain set.
+     */
+    public static List<ResolvedToolProxy> resolveAcrossAccounts(
+            SpawnConfig config, Map<String, ToolSetup> toolSetups) {
+        var configTree = JSON.valueToTree(config);
+        var seen = new LinkedHashMap<String, ResolvedToolProxy>();
+        var selections = new ArrayList<Map<String, String>>();
+        selections.add(Map.of());
+        for (var tool : toolSetups.values()) {
+            var proxyDef = tool.proxy();
+            if (proxyDef == null || proxyDef.getConfigNamespace().isBlank()) continue;
+            var namespace = proxyDef.getConfigNamespace();
+            for (var account : AccountResolver.accountNames(configTree, namespace)) {
+                selections.add(Map.of(namespace, account));
+            }
+        }
+        for (var selection : selections) {
+            for (var resolved : resolve(config, toolSetups, selection)) {
+                seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
+            }
+        }
+        return List.copyOf(seen.values());
+    }
+
     public record UnresolvedToolProxy(String toolName, String configKey) {}
 
     /**

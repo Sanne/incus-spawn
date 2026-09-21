@@ -187,6 +187,16 @@ public class BuildCommand extends BaseCommand {
         }
         var defs = loaded.defs();
 
+        // A template naming an account that is not configured must be reported here, before
+        // any build path runs: otherwise it surfaces as an unhandled exception partway through
+        // a build, from ClaudeSetup.envEntries or the metadata stamp. Checked across every
+        // loaded definition rather than per build path, since this method has six of them.
+        var accountError = validateTemplateAccounts(defs);
+        if (accountError != null) {
+            System.err.println("Cannot build: " + accountError);
+            return CommandResult.valueOf(1);
+        }
+
         var executor = Executors.newCachedThreadPool(r -> {
             var t = new Thread(r, "git-refresh");
             t.setDaemon(true);
@@ -2214,6 +2224,25 @@ public class BuildCommand extends BaseCommand {
      * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
      * refuse a swap that the baked environment could not honour.
      */
+    /**
+     * The first template whose {@code accounts:} names something that is not configured, or
+     * null when every definition resolves. Only definitions that select anything are examined,
+     * so a host with no named accounts pays nothing.
+     */
+    static String validateTemplateAccounts(Map<String, ImageDef> defs) {
+        var config = SpawnConfig.load();
+        for (var entry : defs.entrySet()) {
+            var selection = ImageDef.resolveAccounts(entry.getValue(), defs);
+            if (selection.isEmpty()) continue;
+            try {
+                AccountSelection.validate(config, selection);
+            } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+                return "template '" + entry.getKey() + "': " + e.getMessage();
+            }
+        }
+        return null;
+    }
+
     private void stampAccountSelection(String container, ImageDef imageDef,
                                        Map<String, ImageDef> defs) {
         var selection = ImageDef.resolveAccounts(imageDef, defs);

@@ -48,13 +48,16 @@ public final class AccountSelection {
             for (var spec : raw.split(",")) {
                 if (spec.isBlank()) continue;
                 var eq = spec.indexOf('=');
-                if (eq <= 0 || eq == spec.length() - 1) {
+                // Validate the stripped halves, not the raw offsets: 'claude= ' has a character
+                // after the '=' but no account, and would otherwise pass here, strip to empty,
+                // and silently resolve to the default instead of saying anything.
+                var namespace = eq < 0 ? "" : spec.substring(0, eq).strip();
+                var account = eq < 0 ? "" : spec.substring(eq + 1).strip();
+                if (eq < 0 || namespace.isEmpty() || account.isEmpty()) {
                     throw new InvalidSelectionException(
                             "Invalid --account '" + spec.strip() + "'. Expected <namespace>=<account>,"
                                     + " for example --account claude=work.");
                 }
-                var namespace = spec.substring(0, eq).strip();
-                var account = spec.substring(eq + 1).strip();
                 var previous = parsed.put(namespace, account);
                 if (previous != null && !previous.equals(account)) {
                     throw new InvalidSelectionException(
@@ -168,13 +171,20 @@ public final class AccountSelection {
         if (!updates.isEmpty()) incus.configUpdate(instance, updates);
     }
 
-    /** The selection currently recorded on an instance. */
+    /**
+     * The selection currently recorded on an instance.
+     *
+     * <p>Read by key prefix in one request rather than by asking for each known namespace:
+     * enumerating namespaces means rescanning every tool YAML, and {@code configGet} is a full
+     * instance GET per key -- together a filesystem scan plus a round trip per namespace, which
+     * {@code isx doctor} would then pay once per instance. Reading the prefix also surfaces a
+     * namespace whose tool is no longer installed, so {@link #stamp} can still clear it.
+     */
     public static Map<String, String> read(IncusClient incus, String instance) {
         var selection = new LinkedHashMap<String, String>();
-        for (var namespace : knownNamespaces()) {
-            var value = incus.configGet(instance, Metadata.accountKey(namespace));
+        incus.configByPrefix(instance, Metadata.ACCOUNT_PREFIX).forEach((namespace, value) -> {
             if (value != null && !value.isBlank()) selection.put(namespace, value.strip());
-        }
+        });
         return selection;
     }
 

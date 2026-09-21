@@ -56,7 +56,15 @@ public record ProxyCredentials(
                                                java.util.Map<String, String> accountsByNamespace,
                                                java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
         var claude = config.getClaude();
-        var resolved = ToolProxyResolver.resolve(config, toolSetups, accountsByNamespace);
+        // Claude's selection is resolved below by the typed path, so it must not also be
+        // resolved generically: ClaudeConfig synthesizes an account from the pre-accounts flat
+        // layout, which has no `claude.accounts` in the serialized tree at all. The generic
+        // resolver would rightly fail closed on that name, so an instance pinned to the
+        // synthesized `default` on a flat config.yaml would have every request 502 even though
+        // the CLI accepted the pin. One namespace, one owner.
+        var forToolProxies = new java.util.LinkedHashMap<>(accountsByNamespace);
+        forToolProxies.remove(SpawnConfig.ClaudeConfig.NAMESPACE);
+        var resolved = ToolProxyResolver.resolve(config, toolSetups, forToolProxies);
         // Each ClaudeConfig accessor re-resolves the account, rebuilding the account map every
         // time; resolve once and read the fields off it. Also makes it explicit that all five
         // values describe a single account rather than being independently sourced.

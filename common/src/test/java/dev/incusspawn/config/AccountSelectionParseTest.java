@@ -55,6 +55,19 @@ class AccountSelectionParseTest {
                 () -> AccountSelection.parse(List.of("claude=")));
     }
 
+    /**
+     * Whitespace-only sides must be rejected too. Validating raw offsets instead of the
+     * stripped halves let these through, whereupon they stripped to empty and quietly resolved
+     * to the configured default -- the user's selection discarded with no message.
+     */
+    @Test
+    void whitespaceOnlySideIsRejected() {
+        assertThrows(AccountSelection.InvalidSelectionException.class,
+                () -> AccountSelection.parse(List.of("claude=   ")));
+        assertThrows(AccountSelection.InvalidSelectionException.class,
+                () -> AccountSelection.parse(List.of("   =work")));
+    }
+
     @Test
     void repeatingANamespaceWithTheSameValueIsFine() {
         assertEquals(Map.of("claude", "work"),

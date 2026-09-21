@@ -262,7 +262,7 @@ public class MitmProxy {
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
         this.credentials = credentials;
-        applyToolProxies(credentials.toolProxies());
+        applyToolProxies(credentials.toolProxies(), credentials.toolProxies());
         this.configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     }
 
@@ -365,8 +365,19 @@ public class MitmProxy {
         this.debugLog = debugLog;
     }
 
-    private void applyToolProxies(List<ResolvedToolProxy> proxies) {
-        this.toolRouting = buildRouting(proxies, true);
+    /**
+     * Publish the global routing: credentials from the default account, but the intercepted
+     * domain set from every configured account.
+     *
+     * <p>The two differ on purpose. Which domains are intercepted drives certificate minting
+     * and bridge DNS, which cannot vary per caller, so a tool whose credential exists only
+     * under a named account must still have its domains intercepted -- otherwise a pinned
+     * instance's request is relayed straight through with nothing injected. Credential lookup
+     * stays default-only here; a pinned caller gets its own routing from {@link #contextFor}.
+     */
+    private void applyToolProxies(List<ResolvedToolProxy> proxies,
+                                  List<ResolvedToolProxy> proxiesAcrossAccounts) {
+        this.toolRouting = buildRouting(proxies, proxiesAcrossAccounts, true);
     }
 
     /**
@@ -379,10 +390,27 @@ public class MitmProxy {
      * selection would say nothing new.
      */
     private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies, boolean warn) {
+        return buildRouting(proxies, proxies, warn);
+    }
+
+    private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies,
+                                                 List<ResolvedToolProxy> domainProxies,
+                                                 boolean warn) {
         var exact = new java.util.LinkedHashMap<String, ResolvedToolProxy>();
         var wildcards = new ArrayList<Map.Entry<String, ResolvedToolProxy>>();
         var extraDomains = new HashSet<String>();
         var suffixSet = new java.util.LinkedHashSet<String>();
+
+        for (var tp : domainProxies) {
+            if (tp.auth() != null && "anthropic".equals(tp.auth().getType())) continue;
+            var domain = tp.domain();
+            if (domain.startsWith("*.")) {
+                suffixSet.add(domain.substring(1));
+                extraDomains.add(domain.substring(2));
+            } else {
+                extraDomains.add(domain);
+            }
+        }
 
         for (var tp : proxies) {
             if (tp.auth() != null && "anthropic".equals(tp.auth().getType())) continue;
@@ -400,8 +428,6 @@ public class MitmProxy {
                             + "' — first match wins");
                 }
                 wildcards.add(Map.entry(suffix, tp));
-                suffixSet.add(suffix);
-                extraDomains.add(domain.substring(2)); // base domain for DNS
             } else {
                 var existing = exact.putIfAbsent(domain, tp);
                 if (existing != null) {
@@ -411,7 +437,6 @@ public class MitmProxy {
                     }
                     continue;
                 }
-                extraDomains.add(domain);
             }
         }
 
@@ -468,7 +493,13 @@ public class MitmProxy {
         // per-instance selection later never reads the file or scans for tool YAMLs from the
         // event loop.
         proxy.configSnapshot = config;
-        proxy.toolSetupsSnapshot = ToolProxyResolver.proxyToolSetups(config);
+        var setups = ToolProxyResolver.proxyToolSetups(config);
+        proxy.toolSetupsSnapshot = setups;
+        // Re-publish the routing now that the config is in hand, so the intercepted domain set
+        // covers every account from the first request -- certificates are minted from it in
+        // start(), before any reload would widen it.
+        proxy.applyToolProxies(proxy.credentials.toolProxies(),
+                ToolProxyResolver.resolveAcrossAccounts(config, setups));
         return proxy;
     }
 
@@ -523,7 +554,8 @@ public class MitmProxy {
             // Drop per-selection credentials before publishing the new defaults: a rotated
             // token must not keep being served from a cache entry built off the old file.
             credentialsBySelection.clear();
-            applyToolProxies(newCreds.toolProxies());
+            applyToolProxies(newCreds.toolProxies(),
+                    ToolProxyResolver.resolveAcrossAccounts(newConfig, toolSetupsSnapshot));
             invalidateVertexToken();
             // Account pinning is instance state, not config state, but a reload is the one
             // moment isx reliably signals -- so take the opportunity to re-read it too.

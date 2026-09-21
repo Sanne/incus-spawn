@@ -1637,6 +1637,27 @@ public class IncusClient {
     /**
      * Get a specific config value. Returns empty string if the key is not set.
      */
+    /**
+     * Config entries whose key starts with {@code prefix}, keyed by the remainder.
+     *
+     * <p>One request for the whole group. {@link #configGet} does a full instance GET per key,
+     * so reading a family of related keys that way costs a round trip each.
+     */
+    public Map<String, String> configByPrefix(String name, String prefix) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read config from " + name);
+        }
+        var result = new java.util.LinkedHashMap<String, String>();
+        resp.body().path("metadata").path("config").properties().forEach(entry -> {
+            if (!entry.getKey().startsWith(prefix)) return;
+            var value = entry.getValue();
+            if (value == null || value.isNull()) return;
+            result.put(entry.getKey().substring(prefix.length()), value.asText(""));
+        });
+        return result;
+    }
+
     public String configGet(String name, String key) {
         var resp = http().get("/1.0/instances/" + name);
         if (!resp.isSuccess()) {

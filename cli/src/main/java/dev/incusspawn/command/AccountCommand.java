@@ -149,7 +149,7 @@ public class AccountCommand extends BaseCommand {
             var merged = new java.util.LinkedHashMap<>(AccountSelection.read(incus, instance));
             merged.putAll(requested);
             AccountSelection.stamp(incus, instance, merged);
-            ProxyService.signalReload();
+            ProxyService.signalAccountRefresh();
 
             System.out.println(instance + " now uses " + AccountSelection.describe(merged) + ".");
             System.out.println("Takes effect on the instance's next request;"
