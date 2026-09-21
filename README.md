@@ -969,6 +969,58 @@ re-resolves its alias through `jbang` on every run. To update, re-run both comma
 - `.incus-spawn/images/*.yaml` -- project-local template definitions
 - `.incus-spawn/tools/*.yaml` -- project-local tool definitions
 
+### Credential accounts
+
+A credential can be configured several times under different names, and different instances can
+use different ones -- useful when the subscription or identity you should be spending depends on
+which client the work is for.
+
+```yaml
+claude:
+  accounts:
+    personal:
+      type: oauth
+      oauthToken: "sk-ant-oat01-..."
+    acme:
+      type: vertex
+      cloudMlRegion: europe-west1
+      vertexProjectId: acme-prod
+  default: personal
+```
+
+`default` names the account used when nothing narrower applies. A template can override it for
+everything branched from it:
+
+```yaml
+name: tpl-acme
+parent: tpl-dev
+accounts:
+  claude: acme
+```
+
+And a single instance can override the template:
+
+```shell
+isx branch review-1 --account claude=acme
+isx account list                       # what is configured
+isx account show review-1              # what this instance uses
+isx account set review-1 claude=personal
+```
+
+Selections are always written `<namespace>=<account>`, where the namespace is the credential's
+section in `config.yaml` (`claude`, `github`, and any namespace a tool declares). Pass the flag
+more than once to set several.
+
+Because credentials live in the proxy and never inside the container, re-pointing a running
+instance takes effect on its next request -- nothing inside needs restarting. Moving *between
+Claude auth modes* (Pro/Max OAuth, API key, Vertex) is the exception: the mode is written into the
+container's environment when the template is built, so `isx account set` refuses that swap and
+tells you which template to branch from instead.
+
+If an instance names an account that has since been renamed or removed, its requests fail with a
+message saying so -- isx will not quietly spend a different account. `isx doctor` lists instances
+in that state.
+
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
 ```yaml
