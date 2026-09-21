@@ -66,7 +66,7 @@ When no version is given, the script increments the patch from the latest tag an
 Pushing a tag triggers a workflow that will:
 1. Detect the release channel from the tag (see table above)
 2. Set the project version from the tag
-3. Build a self-contained uber-jar (for JBang users)
+3. Build self-contained uber-jars for both `isx` and `isx-proxy` (for JBang users)
 4. Build native binaries via GraalVM (Linux amd64/aarch64, macOS aarch64/x86_64) for both `isx` and `isx-proxy`
 5. Create a GitHub Release (marked as pre-release for dev tags)
 6. Update the [Homebrew tap](https://github.com/Sanne/homebrew-tap): `incus-spawn.rb` for stable, `incus-spawn-dev.rb` for dev
@@ -109,7 +109,7 @@ echo "deb [signed-by=...] https://sanne.github.io/isx-apt-releases dev main" | s
 sudo apt update && sudo apt install incus-spawn
 ```
 
-Users can then update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `apt upgrade` (Ubuntu/Debian), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` (JVM).
+Users can then update via `brew upgrade` (macOS), `dnf upgrade` (Fedora), `apt upgrade` (Ubuntu/Debian), `curl -fsSL .../get-isx.sh | sh` (native), or `jbang app install isx@Sanne/incus-spawn` plus `jbang app install isx-proxy@Sanne/incus-spawn` (JVM — both aliases, since the CLI cannot serve the proxy in-process).
 
 ### Switching Between Dev and Stable Channels
 

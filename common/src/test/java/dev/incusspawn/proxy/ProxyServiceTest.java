@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -15,6 +16,8 @@ class ProxyServiceTest {
 
     @TempDir
     Path tempDir;
+
+    private static final String PROXY_BIN = "/home/user/.local/bin/isx-proxy";
 
     @Test
     void checkJvmWrapperReturnsNullForNativeBinary() throws IOException {
@@ -63,33 +66,32 @@ class ProxyServiceTest {
     @Test
     void writeProxyStartScriptCreatesExecutableScript() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        ProxyService.writeProxyStartScript(script, "/home/user/.local/bin/isx");
+        ProxyService.writeProxyStartScript(script, PROXY_BIN);
 
         var content = Files.readString(script);
         assertTrue(content.startsWith("#!/bin/bash\n"));
-        assertTrue(content.contains("/home/user/.local/bin/isx"));
-        assertTrue(content.contains("proxy start"));
+        assertTrue(content.contains(PROXY_BIN));
         assertTrue(Files.isExecutable(script));
     }
 
     @Test
     void startScriptIncludesPath() {
-        var content = ProxyService.proxyStartScriptContent("/home/user/.local/bin/isx",
+        var content = ProxyService.proxyStartScriptContent(PROXY_BIN,
                 "/usr/bin:/usr/local/bin:/opt/gcloud/bin");
         assertTrue(content.contains("export PATH='/usr/bin:/usr/local/bin:/opt/gcloud/bin'"));
     }
 
     @Test
     void startScriptUsesFallbackPathWhenNull() {
-        var content = ProxyService.proxyStartScriptContent("/home/user/.local/bin/isx", null);
+        var content = ProxyService.proxyStartScriptContent(PROXY_BIN, null);
         assertTrue(content.contains("export PATH="), "should use fallback PATH, not omit it");
     }
 
     @Test
     void oldScriptWithoutPathIsStale() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        Files.writeString(script, "#!/bin/bash\nexec '/home/user/.local/bin/isx' proxy start\n");
-        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+        Files.writeString(script, "#!/bin/bash\nexec '" + PROXY_BIN + "'\n");
+        assertTrue(ProxyService.startScriptIsStale(script, PROXY_BIN),
                 "scripts from before the PATH fix must be rewritten on upgrade");
     }
 
@@ -98,16 +100,16 @@ class ProxyServiceTest {
         var script = tempDir.resolve("proxy-start.sh");
         // Install with one PATH
         Files.writeString(script, ProxyService.proxyStartScriptContent(
-                "/home/user/.local/bin/isx", "/usr/bin:/usr/local/bin"));
+                PROXY_BIN, "/usr/bin:/usr/local/bin"));
         // Check staleness with the same binary but a different PATH (conda activated)
-        assertFalse(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+        assertFalse(ProxyService.startScriptIsStale(script, PROXY_BIN),
                 "PATH differences alone must not trigger a restart");
     }
 
     @Test
     void writeProxyStartScriptEscapesSingleQuotes() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        ProxyService.writeProxyStartScript(script, "/home/user/it's here/isx");
+        ProxyService.writeProxyStartScript(script, "/home/user/it's here/isx-proxy");
 
         var content = Files.readString(script);
         assertTrue(content.contains("it"));
@@ -125,21 +127,21 @@ class ProxyServiceTest {
     @Test
     void startScriptIsStaleWhenMissing() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"));
+        assertTrue(ProxyService.startScriptIsStale(script, PROXY_BIN));
     }
 
     @Test
     void startScriptIsNotStaleWhenItMatches() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        ProxyService.writeProxyStartScript(script, "/home/user/.local/bin/isx");
-        assertFalse(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"));
+        ProxyService.writeProxyStartScript(script, PROXY_BIN);
+        assertFalse(ProxyService.startScriptIsStale(script, PROXY_BIN));
     }
 
     @Test
     void startScriptIsStaleWhenBinaryMoved() throws IOException {
         var script = tempDir.resolve("proxy-start.sh");
-        ProxyService.writeProxyStartScript(script, "/usr/bin/isx");
-        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+        ProxyService.writeProxyStartScript(script, "/usr/bin/isx-proxy");
+        assertTrue(ProxyService.startScriptIsStale(script, PROXY_BIN),
                 "an upgrade that relocates the binary must be detected");
     }
 
@@ -149,9 +151,80 @@ class ProxyServiceTest {
         var script = tempDir.resolve("proxy-start.sh");
         // Old-format script: has PATH and exec command but no sg fallback block
         Files.writeString(script, "#!/bin/bash\nexport PATH='/usr/bin'\n"
-                + "exec '/home/user/.local/bin/isx' proxy start\n");
-        assertTrue(ProxyService.startScriptIsStale(script, "/home/user/.local/bin/isx"),
+                + "exec '" + PROXY_BIN + "'\n");
+        assertTrue(ProxyService.startScriptIsStale(script, PROXY_BIN),
                 "scripts from before the sg fallback must be rewritten on upgrade");
+    }
+
+    // --- the self-restart loop (issue #701) ---------------------------------------
+    //
+    // A unit that execs `isx proxy start` restarts itself: that command finds the service
+    // installed and unhealthy and restarts it, systemd starts it again, and `reset-failed` on
+    // each pass clears the start rate limiter, so nothing ever breaks the cycle. The service must
+    // exec the proxy binary directly, and an installation that still routes through the CLI must
+    // be recognised as stale so an upgrade rewrites it.
+
+    @Test
+    void startScriptExecsProxyBinaryDirectly() {
+        var content = ProxyService.proxyStartScriptContent(PROXY_BIN, "/usr/bin");
+        assertTrue(content.contains("exec '" + PROXY_BIN + "'"),
+                "the service must exec isx-proxy, not route back through the CLI");
+        assertFalse(content.contains("proxy start"),
+                "exec'ing `isx proxy start` makes the unit restart itself");
+    }
+
+    @Test
+    void scriptThatRoutesThroughTheCliIsStale() throws IOException {
+        var script = tempDir.resolve("proxy-start.sh");
+        // A script as written before this fix: correct PATH and sg block, but exec'ing the CLI.
+        Files.writeString(script, "#!/bin/bash\nexport PATH='/usr/bin'\n"
+                + ProxyService.sgFallbackBlock("exec '/home/user/.local/bin/isx' proxy start"));
+        assertTrue(ProxyService.startScriptIsStale(script, PROXY_BIN),
+                "upgrading must rewrite a script that still crash-loops");
+    }
+
+    @Test
+    void haltingAnUnusableServiceNeverFiresOnLinux() {
+        // The macOS halt removes a launch agent, so the platform gate is the only thing standing
+        // between a Linux user and a deleted service file. On Linux the unit halts on its own:
+        // RestartPreventExitStatus stops systemd retrying the EXIT_CONFIG failure.
+        assumeTrue(Platform.isLinux());
+        assertFalse(ProxyService.haltUnusableMacOsService());
+    }
+
+    @Test
+    void macOsPlistLaunchesProxyBinaryDirectly() {
+        var plist = ProxyService.generateProxyPlist(PROXY_BIN);
+        assertTrue(plist.contains("<string>" + PROXY_BIN + "</string>"));
+        assertFalse(plist.contains("<string>proxy</string>"),
+                "launchd KeepAlive plus `isx proxy start` is the same self-restart loop");
+    }
+
+    // --- JBang launcher scripts ---------------------------------------------------
+
+    @Test
+    void checkJvmWrapperAcceptsJbangWrapperWhenJbangIsOnPath() throws IOException {
+        var jbang = tempDir.resolve("jbang");
+        Files.writeString(jbang, "#!/bin/sh\n");
+        Files.setPosixFilePermissions(jbang, PosixFilePermissions.fromString("rwxr-xr-x"));
+
+        var wrapper = tempDir.resolve("isx-proxy");
+        Files.writeString(wrapper,
+                "#!/bin/sh\nexec " + jbang + " run isx-proxy@Sanne/incus-spawn \"$@\"\n");
+        assertNull(ProxyService.checkJvmWrapper(wrapper.toString()));
+    }
+
+    @Test
+    void checkJvmWrapperDetectsJbangMissingFromPath() throws IOException {
+        var wrapper = tempDir.resolve("isx-proxy");
+        Files.writeString(wrapper,
+                "#!/bin/sh\nexec " + tempDir.resolve("nope/jbang")
+                        + " run isx-proxy@Sanne/incus-spawn \"$@\"\n");
+        var result = ProxyService.checkJvmWrapper(wrapper.toString());
+        assertNotNull(result);
+        assertTrue(result.contains("JBang"));
+        assertTrue(result.contains("PATH"),
+                "the service inherits an install-time PATH, which is the actual failure mode");
     }
 
     @Test
