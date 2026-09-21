@@ -42,8 +42,21 @@ public record ProxyCredentials(
      */
     public static ProxyCredentials forAccounts(SpawnConfig config,
                                                java.util.Map<String, String> accountsByNamespace) {
+        return forAccounts(config, accountsByNamespace,
+                ToolProxyResolver.proxyToolSetups(config));
+    }
+
+    /**
+     * As {@link #forAccounts(SpawnConfig, java.util.Map)}, but against tool setups the caller
+     * already loaded. The proxy resolves a selection on the event loop, where discovering tool
+     * YAMLs -- a filesystem scan -- does not belong, so it loads them once per config reload
+     * and passes them in here.
+     */
+    public static ProxyCredentials forAccounts(SpawnConfig config,
+                                               java.util.Map<String, String> accountsByNamespace,
+                                               java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
         var claude = config.getClaude();
-        var resolved = ToolProxyResolver.resolveForAccounts(config, accountsByNamespace);
+        var resolved = ToolProxyResolver.resolve(config, toolSetups, accountsByNamespace);
         // Each ClaudeConfig accessor re-resolves the account, rebuilding the account map every
         // time; resolve once and read the fields off it. Also makes it explicit that all five
         // values describe a single account rather than being independently sourced.

@@ -244,6 +244,18 @@ public class BranchCommand extends BaseCommand {
         var templateName = (profile != null && !profile.isEmpty()) ? profile : resolvedSource;
         var selection = AccountSelection.resolve(
                 defs.get(templateName), defs, AccountSelection.parse(accounts));
+
+        // Branching from an instance that was re-pointed with 'isx account set' inherits that
+        // choice, not the template's: the source's selection is what the user can see, and the
+        // CoW copy carries it across anyway. An explicit --account still wins over both.
+        var sourceSelection = AccountSelection.read(incus, resolvedSource);
+        if (!sourceSelection.isEmpty()) {
+            var merged = new java.util.LinkedHashMap<>(selection);
+            merged.putAll(sourceSelection);
+            merged.putAll(AccountSelection.parse(accounts));
+            selection = merged;
+        }
+
         AccountSelection.validate(SpawnConfig.load(), selection);
         return selection;
     }

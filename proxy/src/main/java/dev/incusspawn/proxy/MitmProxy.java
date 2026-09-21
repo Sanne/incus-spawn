@@ -223,6 +223,16 @@ public class MitmProxy {
      */
     private volatile dev.incusspawn.config.SpawnConfig configSnapshot;
 
+    /**
+     * Tool setups behind {@link #credentialsBySelection}. Discovering these scans the filesystem
+     * for tool YAMLs, so they are loaded once per config reload rather than per request --
+     * resolving a selection happens on the event loop.
+     */
+    private volatile Map<String, dev.incusspawn.tool.ToolSetup> toolSetupsSnapshot;
+
+    private final java.util.concurrent.atomic.AtomicBoolean registryRefreshInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     /** What a single request needs to know about who asked and which credentials answer. */
     record RequestContext(String domain, String instanceName,
                           ProxyCredentials creds, ToolProxyRouting routing,
@@ -297,7 +307,7 @@ public class MitmProxy {
         }
         var selection = instance.accountsByNamespace();
         var bundle = credentialsBySelection.computeIfAbsent(selectionKey(selection), key -> {
-            var creds = ProxyCredentials.forAccounts(configSnapshot(), selection);
+            var creds = ProxyCredentials.forAccounts(configSnapshot(), selection, toolSetups());
             return new AccountBundle(creds, buildRouting(creds.toolProxies(), false));
         });
         return new RequestContext(domain, instance.instanceName(),
@@ -307,6 +317,15 @@ public class MitmProxy {
     /** Stable cache key for a selection map; sorted so ordering never splits the entry. */
     private static String selectionKey(Map<String, String> selection) {
         return new TreeMap<>(selection).toString();
+    }
+
+    private Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
+        var snapshot = toolSetupsSnapshot;
+        if (snapshot == null) {
+            snapshot = ToolProxyResolver.proxyToolSetups(configSnapshot());
+            toolSetupsSnapshot = snapshot;
+        }
+        return snapshot;
     }
 
     private dev.incusspawn.config.SpawnConfig configSnapshot() {
@@ -326,9 +345,6 @@ public class MitmProxy {
                     .onComplete(r -> registryRefreshInFlight.set(false));
         }
     }
-
-    private final java.util.concurrent.atomic.AtomicBoolean registryRefreshInFlight =
-            new java.util.concurrent.atomic.AtomicBoolean();
 
     /** Re-read instance pinning now, e.g. after {@code isx account set} signals the proxy. */
     public void refreshInstanceRegistry() {
@@ -448,9 +464,11 @@ public class MitmProxy {
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
                 ProxyCredentials.fromConfig(config));
-        // Keep the config that produced those credentials, so resolving a per-instance
-        // selection later never has to read the file from the event loop.
+        // Keep the config and tool setups that produced those credentials, so resolving a
+        // per-instance selection later never reads the file or scans for tool YAMLs from the
+        // event loop.
         proxy.configSnapshot = config;
+        proxy.toolSetupsSnapshot = ToolProxyResolver.proxyToolSetups(config);
         return proxy;
     }
 
@@ -500,6 +518,7 @@ public class MitmProxy {
             var newConfig = dev.incusspawn.config.SpawnConfig.load();
             var newCreds = ProxyCredentials.fromConfig(newConfig);
             configSnapshot = newConfig;
+            toolSetupsSnapshot = ToolProxyResolver.proxyToolSetups(newConfig);
             credentials = newCreds;
             // Drop per-selection credentials before publishing the new defaults: a rotated
             // token must not keep being served from a cache entry built off the old file.
