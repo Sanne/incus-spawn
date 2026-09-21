@@ -153,18 +153,19 @@ public final class AccountSelection {
                 .collect(java.util.stream.Collectors.joining(", "));
     }
 
-    /** Write a selection onto an instance, clearing namespaces it no longer names. */
+    /**
+     * Write a selection onto an instance, unpinning namespaces it no longer names.
+     *
+     * <p>Cleared keys are sent as {@code null}, which Incus removes; an empty string would set
+     * the key to an empty value and leave it visible in {@code incus config show} forever.
+     */
     public static void stamp(IncusClient incus, String instance, Map<String, String> selection) {
-        var updates = new LinkedHashMap<String, String>();
-        existingNamespaces(incus, instance).forEach(ns -> updates.put(Metadata.accountKey(ns), ""));
+        var updates = new LinkedHashMap<String, Object>();
+        read(incus, instance).keySet()
+                .forEach(ns -> updates.put(Metadata.accountKey(ns), null));
         selection.forEach((namespace, account) ->
                 updates.put(Metadata.accountKey(namespace), account));
-        if (!updates.isEmpty()) incus.configSetAll(instance, updates);
-    }
-
-    /** Namespaces this instance currently pins, whether or not they are still configured. */
-    public static List<String> existingNamespaces(IncusClient incus, String instance) {
-        return read(incus, instance).keySet().stream().toList();
+        if (!updates.isEmpty()) incus.configUpdate(instance, updates);
     }
 
     /** The selection currently recorded on an instance. */
