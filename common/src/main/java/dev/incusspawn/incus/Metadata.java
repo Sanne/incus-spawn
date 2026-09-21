@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 
 /**
  * Constants and helpers for incus-spawn metadata stored on containers.
@@ -33,6 +34,10 @@ public final class Metadata {
     public static final String PENDING_OP = PREFIX + "pending-op";
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
+    /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
+    public static final String ACCOUNT_PREFIX = PREFIX + "account.";
+    /** Prefix of the per-namespace baked env class; see {@link #envClassKey}. */
+    public static final String ENV_CLASS_PREFIX = PREFIX + "env-class.";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
     // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
     // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part
@@ -49,6 +54,40 @@ public final class Metadata {
     public static final String OP_DELETING = "deleting";
 
     private Metadata() {}
+
+    /**
+     * Key holding which named credential account this instance uses for a config
+     * namespace ({@code claude}, {@code github}, ... -- the {@code config-namespace}
+     * a tool declares). The value is an account <em>name</em>, never a credential:
+     * secrets stay on the host, which is the whole point of the proxy.
+     */
+    public static String accountKey(String namespace) {
+        return ACCOUNT_PREFIX + namespace;
+    }
+
+    /**
+     * Key holding the env class a namespace's credential was baked with at build time.
+     * Swapping to an account of a different class would leave the container's
+     * {@code /etc/profile.d/isx-env.sh} describing an auth mode that is no longer in
+     * use, so such a swap is refused rather than silently half-applied.
+     *
+     * <p>Empty for namespaces whose credential is pure header substitution (GitHub),
+     * where every account is interchangeable.
+     */
+    public static String envClassKey(String namespace) {
+        return ENV_CLASS_PREFIX + namespace;
+    }
+
+    /** Namespace → account name, read from an instance's Incus config map. */
+    public static Map<String, String> accountsFrom(Map<String, String> config) {
+        var accounts = new java.util.LinkedHashMap<String, String>();
+        config.forEach((key, value) -> {
+            if (key.startsWith(ACCOUNT_PREFIX) && value != null && !value.isBlank()) {
+                accounts.put(key.substring(ACCOUNT_PREFIX.length()), value.strip());
+            }
+        });
+        return accounts;
+    }
 
     public static String getType(IncusClient incus, String name) {
         try {

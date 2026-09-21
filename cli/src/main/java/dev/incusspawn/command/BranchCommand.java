@@ -1,6 +1,8 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
@@ -20,12 +22,15 @@ import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
+import dev.incusspawn.proxy.ProxyService;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
 import org.aesh.command.option.Option;
+import org.aesh.command.option.OptionList;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 @CommandDefinition(
@@ -74,6 +79,11 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "shell", description = "Open a plain shell instead of running the default action", hasValue = false)
     boolean shell;
 
+    @OptionList(name = "account",
+            description = "Credential account to use, as <namespace>=<account> "
+                    + "(e.g. claude=work). Repeatable; overrides the template's choice.")
+    List<String> accounts;
+
     private IncusClient incus;
 
     @Override
@@ -89,6 +99,18 @@ public class BranchCommand extends BaseCommand {
         }
 
         var defs = ImageDef.loadAll();
+
+        // Resolve and validate the account selection before anything is created: a typo
+        // should be reported now, not as a failed API call inside the container later.
+        Map<String, String> accountSelection;
+        try {
+            accountSelection = resolveAccountSelection(resolvedSource, defs);
+        } catch (AccountSelection.InvalidSelectionException
+                 | AccountResolver.UnknownAccountException e) {
+            System.err.println("Error: " + e.getMessage());
+            return CommandResult.valueOf(1);
+        }
+
         var networkMode = resolveNetworkMode();
         if (networkMode != NetworkMode.AIRGAP) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return CommandResult.valueOf(1);
@@ -133,6 +155,7 @@ public class BranchCommand extends BaseCommand {
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
+        applyAccountSelection(accountSelection);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
         // Configure GUI before start so environment.* keys are visible to init
@@ -205,6 +228,33 @@ public class BranchCommand extends BaseCommand {
         }
         incus.interactiveShell(name, "agentuser", shellPrep);
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * The account selection this branch inherits: the source template's {@code accounts:}
+     * merged down its chain, with any {@code --account} override applied on top.
+     *
+     * <p>Resolved against the template the instance is branched from, which for a branch of a
+     * branch is the leaf template recorded in {@link Metadata#PROFILE} -- the same rule
+     * {@code InstancePrep} uses to find the chain.
+     */
+    private Map<String, String> resolveAccountSelection(String resolvedSource,
+                                                        Map<String, ImageDef> defs) {
+        var profile = incus.configGet(resolvedSource, Metadata.PROFILE);
+        var templateName = (profile != null && !profile.isEmpty()) ? profile : resolvedSource;
+        var selection = AccountSelection.resolve(
+                defs.get(templateName), defs, AccountSelection.parse(accounts));
+        AccountSelection.validate(SpawnConfig.load(), selection);
+        return selection;
+    }
+
+    private void applyAccountSelection(Map<String, String> selection) {
+        if (selection.isEmpty()) return;
+        AccountSelection.stamp(incus, name, selection);
+        BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
+        // The proxy caches instance pinning; tell it now rather than letting the new
+        // instance's first request race a stale snapshot.
+        ProxyService.signalReload();
     }
 
     private String resolveSource() {

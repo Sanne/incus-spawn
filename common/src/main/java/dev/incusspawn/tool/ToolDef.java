@@ -363,6 +363,25 @@ public class ToolDef {
             if (path.isBlank() || configNamespace.isBlank()) return path;
             return configNamespace + "." + path;
         }
+
+        /**
+         * Path to this entry inside a named account of the tool's config namespace --
+         * {@code github.accounts.acme.token} for {@code config-path: token}.
+         *
+         * <p>This is the whole of what makes named accounts generic: a tool declares
+         * {@code config-namespace} and gets per-account credentials without any code,
+         * including a tool defined purely in YAML. Blank when the tool has no namespace
+         * or no account was selected, in which case callers fall back to
+         * {@link #fullConfigPath(ConfigEntry)} -- the flat, pre-accounts layout.
+         */
+        public String accountConfigPath(ConfigEntry entry, String accountName) {
+            var path = entry.getConfigPath();
+            if (path.isBlank() || configNamespace.isBlank()
+                    || accountName == null || accountName.isBlank()) {
+                return "";
+            }
+            return configNamespace + ".accounts." + accountName + "." + path;
+        }
     }
 
     @RegisterForReflection

@@ -11,6 +11,7 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
@@ -1831,8 +1832,11 @@ public class BuildCommand extends BaseCommand {
             resolver.addAll(layer.getEnv(), "template " + layer.getName());
         }
 
+        // The account the template selected decides which auth mode gets baked, so it has to
+        // reach envEntries -- resolving the default here would ignore the template's choice.
+        var accountSelection = ImageDef.resolveAccounts(imageDef, defs);
         for (var resolved : allTools) {
-            var entries = resolved.setup().envEntries(resolved.parameters());
+            var entries = resolved.setup().envEntries(resolved.parameters(), accountSelection);
             resolver.addAll(entries, "tool " + resolved.name());
         }
 
@@ -2199,6 +2203,36 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
+        stampAccountSelection(container, imageDef, defs);
+    }
+
+    /**
+     * Record which accounts this template was built against, and the env class each implies.
+     *
+     * <p>Both travel to every branch through the CoW copy. The account name is what the proxy
+     * reads to pick a credential; the env class is what
+     * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
+     * refuse a swap that the baked environment could not honour.
+     */
+    private void stampAccountSelection(String container, ImageDef imageDef,
+                                       Map<String, ImageDef> defs) {
+        var selection = ImageDef.resolveAccounts(imageDef, defs);
+        if (!selection.isEmpty()) {
+            AccountSelection.stamp(incus, container, selection);
+        }
+        // Stamp the env class even with no explicit selection: the build still baked *some*
+        // auth mode (the configured default), and a later swap has to be checked against it.
+        var config = SpawnConfig.load();
+        var effective = new java.util.LinkedHashMap<>(selection);
+        for (var namespace : AccountSelection.knownNamespaces()) {
+            effective.putIfAbsent(namespace, null);
+        }
+        var classes = AccountSelection.envClasses(config, effective);
+        if (classes.isEmpty()) return;
+        var updates = new java.util.LinkedHashMap<String, String>();
+        classes.forEach((namespace, envClass) ->
+                updates.put(Metadata.envClassKey(namespace), envClass));
+        incus.configSetAll(container, updates);
     }
 
     private static Map<String, String> computeToolFingerprints(

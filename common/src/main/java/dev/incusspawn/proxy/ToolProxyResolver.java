@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -28,13 +29,33 @@ public final class ToolProxyResolver {
     private ToolProxyResolver() {}
 
     public static List<ResolvedToolProxy> resolve(SpawnConfig config) {
+        return resolveForAccounts(config, Map.of());
+    }
+
+    /**
+     * Resolve every tool's proxy entries against a per-namespace account selection.
+     *
+     * @param accountsByNamespace config namespace → account name, as recorded on an
+     *     instance by {@link dev.incusspawn.incus.Metadata#accountKey}. A namespace absent
+     *     from the map falls back to its configured {@code default}; a name that is not
+     *     configured raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException}
+     *     rather than serving someone else's credential.
+     */
+    public static List<ResolvedToolProxy> resolveForAccounts(SpawnConfig config,
+                                                             Map<String, String> accountsByNamespace) {
         var loader = new ToolDefLoader();
         var filtered = filterByFeatureGate(config, loader.allToolSetups());
         rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
-        return resolve(config, filtered);
+        return resolve(config, filtered, accountsByNamespace);
     }
 
     public static List<ResolvedToolProxy> resolve(SpawnConfig config, Map<String, ToolSetup> toolSetups) {
+        return resolve(config, toolSetups, Map.of());
+    }
+
+    public static List<ResolvedToolProxy> resolve(SpawnConfig config,
+                                                  Map<String, ToolSetup> toolSetups,
+                                                  Map<String, String> accountsByNamespace) {
         var result = new ArrayList<ResolvedToolProxy>();
         var configTree = JSON.valueToTree(config);
         var namespaces = new java.util.HashMap<String, String>();
@@ -55,7 +76,9 @@ public final class ToolProxyResolver {
                 }
             }
 
-            var allConfigValues = resolveConfiguration(proxyDef, configTree);
+            var accountName = AccountResolver.effectiveAccount(
+                    configTree, ns, accountsByNamespace.get(ns));
+            var allConfigValues = resolveConfiguration(proxyDef, configTree, accountName);
 
             for (var authEntry : proxyDef.getAuth()) {
                 if (authEntry.getDomains() == null || authEntry.getDomains().isEmpty()) continue;
@@ -109,11 +132,16 @@ public final class ToolProxyResolver {
                     .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
             if (!hasNonAnthropicAuth) continue;
 
+            // Resolve against the namespace's default account, so a namespace that has
+            // moved to the accounts layout is not reported as missing its credential.
+            var accountName = AccountResolver.effectiveAccount(
+                    configTree, proxyDef.getConfigNamespace(), null);
+
             for (var configEntry : proxyDef.getConfiguration().entrySet()) {
                 var configKey = configEntry.getKey();
                 var configDef = configEntry.getValue();
                 if (configDef.isConfirm()) continue;
-                var value = resolveConfigValue(proxyDef, configDef, configTree);
+                var value = resolveConfigValue(proxyDef, configDef, configTree, accountName);
                 if (value == null || value.isBlank()) {
                     result.add(new UnresolvedToolProxy(toolName, configKey));
                 }
@@ -184,10 +212,11 @@ public final class ToolProxyResolver {
 
     private static Map<String, String> resolveConfiguration(
             ToolDef.ProxyDef proxyDef,
-            JsonNode configTree) {
+            JsonNode configTree,
+            String accountName) {
         var resolved = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
-            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree);
+            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree, accountName);
             if (value != null && !value.isBlank()) {
                 resolved.put(entry.getKey(), value);
             }
@@ -195,12 +224,33 @@ public final class ToolProxyResolver {
         return resolved;
     }
 
+    /**
+     * Resolve one configuration entry, preferring the named account when one applies.
+     *
+     * <p>This is the seam that makes named accounts generic. A tool declaring
+     * {@code config-namespace: github} and {@code config-path: token} resolves to
+     * {@code github.accounts.<account>.token} when the namespace uses the accounts
+     * layout, and to the flat {@code github.token} otherwise -- so a pre-accounts
+     * config.yaml keeps working untouched, and a tool defined purely in YAML gains
+     * per-account credentials with no code at all.
+     */
     private static String resolveConfigValue(
             ToolDef.ProxyDef proxyDef,
             ToolDef.ConfigEntry configDef,
-            JsonNode configTree) {
+            JsonNode configTree,
+            String accountName) {
         if (!configDef.getValue().isBlank()) {
             return configDef.getValue();
+        }
+        if (accountName != null && !accountName.isBlank()) {
+            var accountPath = proxyDef.accountConfigPath(configDef, accountName);
+            if (!accountPath.isBlank()) {
+                var value = navigateConfigPath(configTree, accountPath);
+                // An account that omits this key falls through to the flat path rather
+                // than resolving to blank: a namespace may hold some keys per account
+                // (the token) and others globally (an org-wide setting).
+                if (!value.isBlank()) return value;
+            }
         }
         var fullPath = proxyDef.fullConfigPath(configDef);
         if (!fullPath.isBlank()) {

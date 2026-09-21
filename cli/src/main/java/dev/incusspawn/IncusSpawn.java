@@ -104,7 +104,7 @@ public class IncusSpawn implements QuarkusApplication {
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
                 VmCommand.class, UpdateBaseCommand.class, DoctorCommand.class,
-                AskCommand.class, ToolsCommand.class
+                AskCommand.class, ToolsCommand.class, AccountCommand.class
             }, generateHelp = true)
     public static class IncusSpawnCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")
@@ -126,7 +126,7 @@ public class IncusSpawn implements QuarkusApplication {
                 CleanCommand.class, ResetCommand.class, CompletionCommand.class, TemplatesCommand.class,
                 InstancesCommand.class, GitRemoteHelperCommand.class, SshProxyCommand.class,
                 UpdateBaseCommand.class, DoctorCommand.class,
-                AskCommand.class, ToolsCommand.class
+                AskCommand.class, ToolsCommand.class, AccountCommand.class
             }, generateHelp = true)
     public static class IncusSpawnLinuxCommand extends BaseCommand {
         @Option(shortName = 'V', name = "version", hasValue = false, description = "Display version info")

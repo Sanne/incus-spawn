@@ -60,6 +60,19 @@ public class ClaudeSetup implements ToolSetup {
         return proxy;
     }
 
+    /**
+     * Claude's auth mode is the env class: {@code envEntries} writes a different set of
+     * variables for each, so vertex/oauth/api-key accounts are not interchangeable on a
+     * container that has already been built. Accounts of the same type are.
+     */
+    @Override
+    public String envClass(SpawnConfig config, String accountName) {
+        var account = config.getClaude().accountNamed(accountName);
+        if (account == null) return "";
+        var type = account.effectiveType();
+        return type == null ? "" : type.wireName();
+    }
+
     @Override
     public List<ToolDef.ActionEntry> actions() {
         var a = new ToolDef.ActionEntry();
@@ -124,16 +137,29 @@ public class ClaudeSetup implements ToolSetup {
 
     @Override
     public List<EnvEntry> envEntries(Map<String, String> resolvedParams) {
-        var claude = SpawnConfig.load().getClaude();
+        return envEntries(resolvedParams, Map.of());
+    }
+
+    /**
+     * The auth mode baked into the container comes from the account the <em>template</em>
+     * selected, not from the global default -- otherwise a template pinned to a Vertex
+     * account would build a container configured for an API key.
+     */
+    @Override
+    public List<EnvEntry> envEntries(Map<String, String> resolvedParams,
+                                     Map<String, String> accountSelection) {
+        var account = SpawnConfig.load().getClaude()
+                .accountNamed(accountSelection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
+        var type = account == null ? null : account.effectiveType();
         var entries = new ArrayList<EnvEntry>();
         entries.add(EnvEntry.raw("export PATH=\"$HOME/.local/bin${PATH:+:$PATH}\""));
-        if (claude.isUseVertex()) {
+        if (type == SpawnConfig.ClaudeAccountType.VERTEX) {
             entries.add(EnvEntry.set("CLAUDE_CODE_USE_VERTEX", "1"));
             entries.add(EnvEntry.set("CLAUDE_CODE_SKIP_VERTEX_AUTH", "1"));
-            entries.add(EnvEntry.set("CLOUD_ML_REGION", claude.getCloudMlRegion()));
-            entries.add(EnvEntry.set("ANTHROPIC_VERTEX_PROJECT_ID", claude.getVertexProjectId()));
+            entries.add(EnvEntry.set("CLOUD_ML_REGION", account.getCloudMlRegion()));
+            entries.add(EnvEntry.set("ANTHROPIC_VERTEX_PROJECT_ID", account.getVertexProjectId()));
             entries.add(EnvEntry.set("ANTHROPIC_VERTEX_BASE_URL", "https://api.anthropic.com/v1"));
-        } else if (claude.isOauthMode()) {
+        } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
             entries.add(EnvEntry.set("CLAUDE_CODE_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
         } else {
             entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
