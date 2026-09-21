@@ -57,6 +57,7 @@ curl -fsSL https://isx.run | sh
 
 ```shell
 jbang app install isx@Sanne/incus-spawn
+jbang app install isx-proxy@Sanne/incus-spawn
 ```
 
 <!-- tabs:end -->
@@ -926,7 +927,14 @@ Installs a self-contained native binary to `~/.local/bin/isx`. No JVM required. 
 
 ```shell
 jbang app install isx@Sanne/incus-spawn
+jbang app install isx-proxy@Sanne/incus-spawn
 ```
+
+Both aliases are required: the proxy runs as its own process and the CLI cannot serve it in-process,
+so an `isx`-only install fails at `isx init` with instructions to add the second alias. JBang puts
+both wrappers in `~/.jbang/bin/`, where `isx` finds `isx-proxy` as a sibling. Requires `jbang` to
+stay on your PATH — the proxy service inherits the PATH it was installed with, and the wrapper
+re-resolves its alias through `jbang` on every run. To update, re-run both commands.
 
 <!-- tabs:end -->
 

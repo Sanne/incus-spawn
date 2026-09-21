@@ -826,11 +826,27 @@ public class DoctorCommand extends BaseCommand {
         return switch (status) {
             case RUNNING -> Finding.ok("Proxy running", "");
             case WAITING_FOR_DNS -> Finding.warn("Proxy running", "(waiting for DNS configuration)", null);
-            case NOT_RUNNING -> proxyNotRunningFinding(
-                    ProxyService.isInstalled(), ProxyService.failedWithConfigError());
+            // The missing-binary case is checked first so the `systemctl show` behind
+            // failedWithConfigError() is not spent on a diagnosis that ignores it.
+            case NOT_RUNNING -> ProxyService.resolveProxyBinaryPath() == null
+                    ? missingProxyBinaryFinding()
+                    : proxyNotRunningFinding(
+                            ProxyService.isInstalled(), ProxyService.failedWithConfigError());
             case STALE_DNS -> Finding.fail("Proxy not running", "(stale DNS overrides still active)",
                     new Remediation("Start proxy to restore connectivity", false, null));
         };
+    }
+
+    /**
+     * Restarting cannot help when the binary the service runs does not exist, and this is the one
+     * state where that happens in practice: a JBang install of `isx` without `isx-proxy`. The
+     * remedy text comes from ProxyService so `isx doctor` and `isx proxy start` cannot disagree.
+     */
+    static Finding missingProxyBinaryFinding() {
+        return Finding.fail("Proxy not running",
+                "('isx-proxy' binary not found next to 'isx' — the proxy runs as its own "
+                        + "process and the CLI cannot serve it)",
+                new Remediation(ProxyService.MISSING_PROXY_REMEDIATION, false, null));
     }
 
     static Finding proxyNotRunningFinding(boolean installed, boolean configError) {

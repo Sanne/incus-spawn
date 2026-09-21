@@ -64,6 +64,56 @@ jobs:
           path: proxy/target/quarkus-app/
           retention-days: 1
 
+  # The uber-jars are what JBang users run, and nothing else in CI executes them. Without this the
+  # JVM channel can only be found broken by a user: the CLI losing its ability to serve the proxy
+  # in-process went unnoticed for six weeks because the released jar was built but never run.
+  uber-jar-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Oracle GraalVM 25.3
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '25.3'
+          java-version: '25'
+          distribution: 'graalvm'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: maven-
+
+      - name: Build uber-jars
+        run: mvn package -Prelease -DskipTests
+
+      - name: Smoke test uber-jars
+        run: |
+          set -euo pipefail
+          CLI_JAR=$(ls cli/target/incus-spawn-*-runner.jar)
+          PROXY_JAR=$(ls proxy/target/incus-spawn-proxy-*-runner.jar)
+
+          java -jar "$CLI_JAR" --version
+          java -jar "$CLI_JAR" --help > /dev/null
+          java -jar "$CLI_JAR" templates list | grep -q tpl-minimal
+          java -jar "$PROXY_JAR" --help > /dev/null
+
+          # A JBang install has no isx-proxy sibling until the second alias is installed; the CLI
+          # must say so and exit EX_CONFIG rather than looping (issue #701).
+          set +e
+          OUTPUT=$(java -jar "$CLI_JAR" proxy start 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -ne 78 ]; then
+            echo "::error::expected exit 78 (EX_CONFIG) without isx-proxy, got $STATUS"
+            exit 1
+          fi
+          echo "$OUTPUT" | grep -q "jbang app install isx-proxy@Sanne/incus-spawn"
+
   cancel-on-unit-failure:
     needs: [unit-tests]
     if: failure()

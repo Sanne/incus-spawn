@@ -122,10 +122,14 @@ if $NATIVE; then
         exit 1
     fi
     atomic_install "$RUNNER" "$INSTALL_DIR/$BINARY_NAME"
+    # Not optional: the CLI cannot serve the proxy in-process, so an isx without isx-proxy has no
+    # working proxy at all — better to fail here than at `isx init`.
     PROXY_RUNNER=$(ls -t "$SCRIPT_DIR"/proxy/target/incus-spawn-proxy-*-runner 2>/dev/null | head -1)
-    if [ -n "$PROXY_RUNNER" ] && [ -f "$PROXY_RUNNER" ]; then
-        atomic_install "$PROXY_RUNNER" "$INSTALL_DIR/isx-proxy"
+    if [ -z "$PROXY_RUNNER" ] || [ ! -f "$PROXY_RUNNER" ]; then
+        echo "Error: no native proxy runner found in proxy/target/"
+        exit 1
     fi
+    atomic_install "$PROXY_RUNNER" "$INSTALL_DIR/isx-proxy"
 else
     # Resolve the Java binary so the wrapper always uses the JDK it was built with,
     # even if a different version is the default at runtime.
@@ -153,16 +157,18 @@ else
     "$SCRIPT_DIR/mvnw" package -DskipTests -q
     echo "Installing to ${INSTALL_DIR}/${BINARY_NAME}..."
     # Create a wrapper script that runs the quarkus app jar
-    JARFILE=$(ls "$SCRIPT_DIR"/cli/target/quarkus-app/quarkus-run.jar 2>/dev/null)
+    JARFILE=$(ls "$SCRIPT_DIR"/cli/target/quarkus-app/quarkus-run.jar 2>/dev/null || true)
     if [ -z "$JARFILE" ]; then
         echo "Error: quarkus-run.jar not found in cli/target/quarkus-app/"
         exit 1
     fi
     install_wrapper "$INSTALL_DIR/$BINARY_NAME" "$JARFILE"
-    PROXY_JAR=$(ls "$SCRIPT_DIR"/proxy/target/quarkus-app/quarkus-run.jar 2>/dev/null)
-    if [ -n "$PROXY_JAR" ]; then
-        install_wrapper "$INSTALL_DIR/isx-proxy" "$PROXY_JAR"
+    PROXY_JAR=$(ls "$SCRIPT_DIR"/proxy/target/quarkus-app/quarkus-run.jar 2>/dev/null || true)
+    if [ -z "$PROXY_JAR" ]; then
+        echo "Error: quarkus-run.jar not found in proxy/target/quarkus-app/"
+        exit 1
     fi
+    install_wrapper "$INSTALL_DIR/isx-proxy" "$PROXY_JAR"
 fi
 
 # ── Install shell completions (if requested) ──────────────────────────────

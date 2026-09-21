@@ -30,7 +30,7 @@ The tradeoff: system containers are heavier than application containers (~200MB 
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
-- **JBang** for easy installation (`jbang app install isx`)
+- **JBang** for easy installation (`jbang app install isx` plus `isx-proxy`)
 
 ### Module Structure
 
@@ -38,7 +38,48 @@ Three Maven modules under a parent POM:
 
 - **`common`** (`incus-spawn-common`): shared code — Incus client, proxy config, image/tool definitions, configuration loading. Not a Quarkus app; uses the Jandex Maven plugin to produce a bean index so Quarkus discovers its CDI beans from dependent modules.
 - **`cli`** (`incus-spawn`): the main CLI/TUI binary (`isx`). Depends on common. Native image: serial GC, `-Os` (size-optimized).
-- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" below. When `isx-proxy` is not installed, `isx proxy start` falls back to running the proxy inline within the CLI process.
+- **`proxy`** (`incus-spawn-proxy`): the standalone MITM proxy binary (`isx-proxy`). Depends on common. Native image: G1 GC, `-O3` (throughput-optimized), and on x86_64 `-march=haswell` — see "Native image CPU baseline" below. Splitting this out removed Vert.x from the CLI, which means the CLI can no longer serve the proxy itself — see "Every install channel ships both binaries" below.
+
+### Every install channel ships both binaries
+
+Before the module split the CLI could run the proxy inline, so an installation that somehow lacked
+`isx-proxy` still worked. It cannot now: `isx proxy start` only launches the separate binary. That
+makes "both binaries are installed" an invariant of every channel — `get-isx.sh`, `install.sh` (in
+both native and JVM modes), Homebrew, apt, and JBang — rather than a nicety.
+
+JBang is where this went wrong (issue #701). Its catalog installs one alias per command, so
+publishing only `isx` produced installations with no proxy at all, and the failure did not surface
+as a missing binary: `ProxyService` wrote a unit exec'ing `isx proxy start` as a fallback, that
+command found the service installed and unhealthy, and restarted it — restarting the unit running
+the very process making the call. `restart()` clears systemd's start rate limiter with
+`reset-failed` on every pass, so the loop could not even burn itself out. These things keep it
+fixed:
+
+- `jbang-catalog.json` publishes `isx` **and** `isx-proxy`, and the release uploads
+  `isx-proxy-runner.jar` alongside `incus-spawn-runner.jar`. `JbangCatalogTest` fails if an alias
+  ever names an asset `gh release create` does not upload — the build step alone does not satisfy
+  it, because a jar that is built and not uploaded is exactly this bug.
+- The unit and the launchd plist exec `isx-proxy` directly; there is no `isx proxy start` fallback,
+  and `install()` refuses to write service files without a proxy binary rather than installing
+  something that cannot work.
+- `ProxyStartCommand` resolves the proxy binary *before* any service management, so a missing
+  binary produces an `EXIT_CONFIG` failure instead of a restart that cannot possibly help.
+- On macOS that exit code is not enough. launchd has no `RestartPreventExitStatus`, so a
+  `KeepAlive` job that exits 78 is started again every `ThrottleInterval` — the error is reprinted
+  every ten seconds and nothing changes — and `RunAtLoad` would bring a merely booted-out job back
+  at the next login. `haltUnusableMacOsService()` therefore boots the job out *and* removes the
+  plist, which `isx init` rewrites once `isx-proxy` is present. It declines when the proxy is
+  answering on 127.0.0.1, so a resolution quirk can never take down a working install.
+- `ProxyService.isSupervisedInvocation()` makes `isx proxy start` skip service management when it
+  *is* the service, by matching systemd's `INVOCATION_ID` against the proxy unit's own invocation.
+  It exists only for units written by older builds — this build's unit execs `isx-proxy`, which
+  never re-enters the CLI — and converts such a unit's loop into a single `EXIT_CONFIG` failure
+  that `RestartPreventExitStatus` halts, or, once `isx-proxy` is installed, into a working proxy.
+
+The uber-jars are what JBang users actually run, and nothing else in CI executes them, which is how
+the inline fallback's removal went unnoticed for six weeks. The `uber-jar-smoke` job in
+`test-integration.yml` runs both jars on every PR and asserts the missing-`isx-proxy` path exits 78
+with install instructions.
 
 ## Architecture
 

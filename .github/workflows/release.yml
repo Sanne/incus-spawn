@@ -82,11 +82,15 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
           mvn versions:set -DnewVersion=$VERSION -DgenerateBackupPoms=false -DprocessAllModules=true
 
+      # Both uber-jars: the JBang catalog installs `isx` and `isx-proxy` as separate aliases, and
+      # an installation with only the CLI cannot run the proxy at all (see jbang-catalog.json).
       - name: Build uber-jar
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: |
           mvn package -Prelease -DskipTests
-          cp cli/target/incus-spawn-*-runner.jar cli/target/incus-spawn-runner.jar
+          mkdir -p dist-jars
+          cp cli/target/incus-spawn-*-runner.jar dist-jars/incus-spawn-runner.jar
+          cp proxy/target/incus-spawn-proxy-*-runner.jar dist-jars/isx-proxy-runner.jar
 
       - name: Build native image (Linux)
         if: matrix.os == 'linux'
@@ -143,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: uber-jar
-          path: cli/target/incus-spawn-runner.jar
+          path: dist-jars/
 
       - name: Upload native binary (Linux)
         if: matrix.os == 'linux'
@@ -208,6 +212,7 @@ jobs:
         run: |
           gh release create $GITHUB_REF_NAME \
             artifacts/uber-jar/incus-spawn-runner.jar \
+            artifacts/uber-jar/isx-proxy-runner.jar \
             artifacts/native-linux-amd64/incus-spawn-linux-amd64 \
             artifacts/native-linux-aarch64/incus-spawn-linux-aarch64 \
             artifacts/native-macos-aarch64/incus-spawn-macos-aarch64 \

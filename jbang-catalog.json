@@ -6,6 +6,11 @@
       "script-ref": "https://github.com/Sanne/incus-spawn/releases/latest/download/incus-spawn-runner.jar",
       "description": "Manage isolated Incus development environments",
       "java": "25+"
+    },
+    "isx-proxy": {
+      "script-ref": "https://github.com/Sanne/incus-spawn/releases/latest/download/isx-proxy-runner.jar",
+      "description": "MITM authentication proxy for incus-spawn (install alongside isx)",
+      "java": "25+"
     }
   }
 }

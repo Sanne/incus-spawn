@@ -362,6 +362,21 @@ class DoctorCommandTest {
         assertTrue(f.remediation().description().contains("isx init"));
     }
 
+    @Test
+    void proxyNotRunningWithoutBinarySaysSoInsteadOfSuggestingRestart() {
+        // A JBang install of `isx` alone has no isx-proxy: restarting a service whose binary does
+        // not exist can never work, so the finding must name the missing binary (issue #701).
+        var f = DoctorCommand.missingProxyBinaryFinding();
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("isx-proxy"));
+        assertNotNull(f.remediation());
+        assertEquals(dev.incusspawn.proxy.ProxyService.MISSING_PROXY_REMEDIATION,
+                f.remediation().description(),
+                "doctor and 'isx proxy start' must offer the same command");
+        assertFalse(f.remediation().description().contains("Restart"),
+                "restarting cannot fix a missing binary");
+    }
+
     // ---- Option implications ----
 
     @Test
