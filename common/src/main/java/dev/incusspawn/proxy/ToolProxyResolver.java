@@ -43,10 +43,23 @@ public final class ToolProxyResolver {
      */
     public static List<ResolvedToolProxy> resolveForAccounts(SpawnConfig config,
                                                              Map<String, String> accountsByNamespace) {
+        return resolve(config, proxyToolSetups(config), accountsByNamespace);
+    }
+
+    /**
+     * Load and filter the tool setups that contribute proxy entries.
+     *
+     * <p>Separated out because it <strong>scans the filesystem</strong> for tool YAMLs. The proxy
+     * resolves a per-instance account selection on the event loop, which must never do that, so
+     * it loads this once per config reload and hands the result to
+     * {@link #resolve(SpawnConfig, Map, Map)} instead of calling
+     * {@link #resolveForAccounts} per request.
+     */
+    public static Map<String, ToolSetup> proxyToolSetups(SpawnConfig config) {
         var loader = new ToolDefLoader();
         var filtered = filterByFeatureGate(config, loader.allToolSetups());
         rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
-        return resolve(config, filtered, accountsByNamespace);
+        return filtered;
     }
 
     public static List<ResolvedToolProxy> resolve(SpawnConfig config, Map<String, ToolSetup> toolSetups) {

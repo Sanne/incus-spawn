@@ -597,6 +597,16 @@ public class SpawnConfig {
             }
         }
 
+        // A template naming an account that is not configured is a configuration problem and
+        // should read as one here, rather than surfacing later as an exception mid-build.
+        // Reported on its own because it already explains itself, and because the fix is to
+        // correct the template or add the account, not simply to run 'isx init'.
+        try {
+            AccountSelection.validate(config, ImageDef.resolveAccounts(imageDef, allDefs));
+        } catch (AccountResolver.UnknownAccountException e) {
+            return e.getMessage();
+        }
+
         if (missing.isEmpty()) return "";
         return "Missing credentials: " + String.join(", ", missing) + ". Run 'isx init' to configure.";
     }

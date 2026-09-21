@@ -4,7 +4,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Map;
 
 /**
  * Constants and helpers for incus-spawn metadata stored on containers.
@@ -76,17 +75,6 @@ public final class Metadata {
      */
     public static String envClassKey(String namespace) {
         return ENV_CLASS_PREFIX + namespace;
-    }
-
-    /** Namespace → account name, read from an instance's Incus config map. */
-    public static Map<String, String> accountsFrom(Map<String, String> config) {
-        var accounts = new java.util.LinkedHashMap<String, String>();
-        config.forEach((key, value) -> {
-            if (key.startsWith(ACCOUNT_PREFIX) && value != null && !value.isBlank()) {
-                accounts.put(key.substring(ACCOUNT_PREFIX.length()), value.strip());
-            }
-        });
-        return accounts;
     }
 
     public static String getType(IncusClient incus, String name) {
