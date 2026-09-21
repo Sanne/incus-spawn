@@ -4,22 +4,33 @@
 # Called from rcS when isx.smoke_test is on the kernel cmdline.
 # Output goes to the serial console for CI verification.
 #
-# KNOWN LIMITATION (vfkit / macOS): this picks /dev/ttyS0 first, but under
-# vfkit the console is hvc0 and /dev/ttyS0 is a backing-less stub whose
-# open-for-write blocks (no carrier). rcS runs this synchronously before
-# "ISX READY", so enabling isx.smoke_test on vfkit hangs the boot before the
-# script prints anything. It is therefore only used on QEMU (CI), where ttyS0
-# is the real console; the macOS test path (appliance/test-boot.sh on vfkit)
-# verifies the daemon over the vsock socket instead. To make this work on
-# vfkit, select the console from the kernel cmdline's console= token (resolves
-# to hvc0 on vfkit, ttyS0/ttyAMA0 on QEMU) rather than guessing ttyS0 first.
+# The console is read from the kernel cmdline rather than probed for, because a
+# device node existing does not mean anything is behind it: the 8250 driver
+# registers /dev/ttyS0..3 whether or not hardware answers, so on any target
+# whose real console is hvc0 -- vfkit, on Apple silicon *and* Intel Macs, since
+# x86_64 keeps that driver -- a fixed probe order lands on a backing-less stub.
+# What happens then is arch-dependent and both outcomes are bad: on aarch64 the
+# open succeeds and every write is silently discarded, while on x86_64 it fails
+# outright, which under "set -eu" exits this script non-zero and, because rcS is
+# also "set -eu" and runs us synchronously, aborts the boot before "ISX READY".
+# The last console= token wins, matching the kernel's own rule for /dev/console.
 
 set -eu
 
 CONSOLE=""
-for dev in /dev/ttyS0 /dev/hvc0 /dev/ttyAMA0; do
-    [ -c "$dev" ] && CONSOLE="$dev" && break
+for tok in $(cat /proc/cmdline); do
+    case "$tok" in
+        console=*)
+            dev="/dev/${tok#console=}"
+            [ -c "${dev%%,*}" ] && CONSOLE="${dev%%,*}"
+            ;;
+    esac
 done
+if [ -z "$CONSOLE" ]; then
+    for dev in /dev/hvc0 /dev/ttyAMA0 /dev/ttyS0; do
+        [ -c "$dev" ] && CONSOLE="$dev" && break
+    done
+fi
 [ -z "$CONSOLE" ] && exit 0
 
 exec > "$CONSOLE" 2>&1

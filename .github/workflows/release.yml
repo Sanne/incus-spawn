@@ -180,7 +180,11 @@ jobs:
           for arch in x86_64 aarch64; do
             dir="artifacts/appliance-${arch}"
             if [ -d "$dir" ]; then
-              cp "$dir/vmlinuz" "artifacts/vmlinuz-${arch}"
+              # Ship the kernel compressed. aarch64 has no self-decompressing
+              # kernel target -- its Image is raw, ~11 MB -- so without this the
+              # macOS download is more than twice the size it needs to be. isx
+              # gunzips it on the way to ~/.isx (VmManager.downloadKernel).
+              gzip -9 -c "$dir/vmlinuz" > "artifacts/vmlinuz-${arch}.gz"
               cp "$dir/disk.img.gz" "artifacts/disk-${arch}.img.gz"
             fi
           done
@@ -212,8 +216,8 @@ jobs:
             artifacts/native-linux-aarch64/isx-proxy-linux-aarch64 \
             artifacts/native-macos-aarch64/isx-proxy-macos-aarch64 \
             artifacts/native-macos-x86_64/isx-proxy-macos-x86_64 \
-            artifacts/vmlinuz-x86_64 \
-            artifacts/vmlinuz-aarch64 \
+            artifacts/vmlinuz-x86_64.gz \
+            artifacts/vmlinuz-aarch64.gz \
             artifacts/disk-x86_64.img.gz \
             artifacts/disk-aarch64.img.gz \
             artifacts/completions.tar.gz \

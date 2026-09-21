@@ -18,7 +18,9 @@ A minimal Alpine Linux VM image with Incus pre-installed, built from a declarati
 7. Pack the rootfs into a zstd-compressed tarball (`rootfs.tar.zst`)
 8. Build a custom minimal kernel from vanilla kernel.org source (`kernel/build-kernel.sh`)
 
-Output artifacts: `vmlinuz` (~11 MB), `rootfs.tar.zst` (~30-40 MB). No initrd.
+Output artifacts: `vmlinuz` (~10.5 MB on aarch64, ~5 MB on x86_64), `rootfs.tar.zst` (~30-40 MB). No initrd.
+
+The two kernel sizes are not a configuration difference: x86_64's `bzImage` decompresses itself at boot, while aarch64's `Image` target is raw -- arm64 has no self-decompressing equivalent, so `CONFIG_KERNEL_ZSTD` is meaningless there and kconfig drops it. The build therefore leaves aarch64 uncompressed (vfkit and QEMU both want a plain `Image`) and `release.yml` gzips the kernel for distribution instead, roughly halving exactly the download macOS users make (~11 MB to ~5 MB; the absolute figures move with the compiler, the ratio does not). `VmManager.downloadKernel` gunzips it on the way into `~/.isx`. x86_64 is gzipped too, purely so both arches use one asset name and one code path -- its bzImage is already zstd-compressed internally, so the second pass buys about 1%.
 
 No disk images are created during build -- the tarball is unpacked into a btrfs disk image on first use (see Disk Lifecycle below).
 
@@ -26,29 +28,57 @@ No disk images are created during build -- the tarball is unpacked into a btrfs 
 
 The appliance uses a custom kernel built from vanilla kernel.org source (`kernel/build-kernel.sh`). Every required driver and subsystem is compiled built-in -- there are no loadable modules and no initrd. The kernel boots directly to the root filesystem.
 
-### Config Fragment (`kernel/isx.config`)
+### Config Fragments (`kernel/isx.config` + `kernel/isx-<arch>.config`)
 
-Applied on top of `allnoconfig` via `merge_config.sh`. Both x86_64 and aarch64 options are included in a single fragment; irrelevant options are silently ignored by kconfig.
+Applied on top of `allnoconfig`. `build-kernel.sh` concatenates the shared `isx.config` with the matching `isx-x86_64.config` or `isx-aarch64.config` and passes the result as `KCONFIG_ALLCONFIG`; the arch fragment comes last so it can override a shared default.
+
+The split exists because a single fragment can only express the *union* of both arches. That was not merely untidy: `CONFIG_SERIAL_8250=y` applied cleanly on aarch64 even though no aarch64 target has a 16550 UART, because `serial8250_isa_init_ports()` registers `CONFIG_SERIAL_8250_NR_UARTS` ports whether or not hardware answers -- leaving `/dev/ttyS0..3` as backing-less stubs that accept writes and drop them. Options genuinely absent on the other arch also produced a WARN line per build, which trained readers to ignore the validator. With the split, aarch64 warns only about options arm64 forces on regardless, and x86_64 reports `0 skipped`.
+
+**The phantom-tty hazard is not solved by the split, and must not be assumed away.** x86_64 legitimately keeps the 8250 driver, so `/dev/ttyS0..3` stubs still appear there -- including under vfkit on an Intel Mac, where the real console is `hvc0` just as it is on Apple silicon. Any code that needs the *actual* console therefore reads the `console=` token from `/proc/cmdline` rather than taking the first tty node that exists; `incus-spawn-diag` and `incus-spawn-smoke-test` both do.
+
+Writing to a stub fails differently per arch, and neither way is recoverable:
+
+| | phantom `/dev/ttyS0` open | consequence |
+|---|---|---|
+| aarch64 | succeeds | every write silently discarded |
+| x86_64 | fails | `exec >` error exits the script; under `rcS`'s `set -eu` the boot aborts before `ISX READY` |
+
+Both were measured under QEMU against the shipped kernels. The reason this is worth a rule rather than a comment is that the loudest symptom is an absence: `diag.sh` boots the VM with `isx.diag` and polls its vfkit logfile for an `=== end diagnostics ===` sentinel, so a dump sent to a stub means a 60-second wait and an empty report -- from the one tool you reach for when the VM will not boot.
 
 **Enabled (built-in)**:
 - **Virtio**: PCI, MMIO, block, network, console, balloon, vsock (host↔VM API tunnel)
 - **Filesystems**: btrfs, overlayfs (Incus containers), fuse (lxcfs), tmpfs, procfs, sysfs, devtmpfs
 - **Networking**: TCP/UDP/IPv4/IPv6, UNIX sockets, packet sockets, bridge (with VLAN filtering), veth, macvlan, 802.1Q VLANs, netfilter/iptables (NAT, REDIRECT, CHECKSUM, MASQUERADE, conntrack)
 - **Container isolation**: all namespace types (including time), cgroups v2 (cpu with CFS bandwidth, io with iocost, memory with zswap, pids, cpuset, hugetlb), seccomp
-- **Console**: serial 8250 (ttyS0), AMBA PL011 (ttyAMA0), HVC (hvc0)
+- **Console**: HVC (hvc0, vfkit) shared; serial 8250 (ttyS0) on x86_64 only, AMBA PL011 (ttyAMA0) on aarch64 only. No virtual terminals (`CONFIG_VT=n`) -- there is no display adapter or keyboard, so VT could only bind the dummy console while publishing 64 unusable `/dev/tty0..63` nodes and dragging in the input core that `drivers/tty/Kconfig` selects with it. Every boot path passes an explicit `console=`.
 - **Block**: loop devices (Incus btrfs storage pool)
 - **System**: POSIX timers, file locking, BPF JIT, audit
 
 **Stripped at compile time**:
-- All hardware drivers except virtio (no SCSI, SATA, NVMe, USB, GPU, sound, wireless, bluetooth, input, I2C, SPI, GPIO, DMA, IOMMU, hwmon, media, InfiniBand, firewire, thunderbolt, NFC)
-- CPU mitigations (`CONFIG_CPU_MITIGATIONS=n`) -- trusted appliance VM; untrusted workloads are isolated in Incus containers
+- All hardware drivers except virtio (no SCSI, SATA, NVMe, USB, GPU, sound, wireless, bluetooth, input, I2C, SPI, GPIO, DMA, IOMMU, hwmon, media, InfiniBand, firewire, thunderbolt, NFC). Measured on aarch64, all of `drivers/` is ~1 MB of a ~10.5 MB image, and `drivers/net/` is 131 KB holding exactly virtio_net, tun, veth, macvlan, net_failover and loopback -- there are no vendor NIC drivers to remove. What remains beyond virtio and the console is force-`select`ed by `arch/arm64/Kconfig` (POWER_SUPPLY, GIC v2/v3/v5, COMMON_CLK, OF) and cannot be turned off from a fragment. The image's weight is in `net/` (2.5 MB), `kernel/` (2.5 MB) and `fs/` (2.0 MB, of which btrfs is 1.0 MB), not drivers.
+- Virtual terminals (`CONFIG_VT`), which also removes the input core
+- CPU mitigations (`CONFIG_CPU_MITIGATIONS=n`) -- trusted appliance VM; untrusted workloads are isolated in Incus containers. The symbol only takes on x86_64, but aarch64 ends up close to it regardless: KPTI and the BHB mitigation are not compiled in there either. What remains is per-CPU rather than per-build (see Config Validation)
 - All filesystems except btrfs, overlayfs, fuse, tmpfs, proc, sysfs, devtmpfs
 - All network protocols except TCP/UDP/IPv4/IPv6/UNIX/packet/netlink
 - Module support, initrd support, kexec, hibernation, suspend, RAID/MD/DM, ftrace/kprobes
 
 ### Config Validation
 
-`build-kernel.sh` validates the config fragment after applying it: every `CONFIG_*=y` option is checked against the generated `.config`. Options silently dropped by kconfig (unknown name or unmet dependency) are reported as warnings. Arch-specific options (e.g., ARM64 UART on x86) are expected to be absent on the other architecture and are harmless.
+`build-kernel.sh` validates the merged fragment after applying it: every `CONFIG_*=y` option is checked against the generated `.config`, and every `=n` is checked not to have come back on. Options silently dropped by kconfig (unknown name or unmet dependency) are reported as warnings. Since the per-arch split the expected output is `204 applied, 0 skipped` on x86_64 and `198 applied, 1 skipped` on aarch64, the single warning being `CPU_MITIGATIONS` (below). Any other warning means a fragment and the kernel have drifted apart -- treat it as a finding, not as background noise. Keeping the floor at zero-or-one is the point of the split: the old shared fragment emitted a warning per option the other arch didn't have, which trained readers to skim past the block.
+
+Note that `CONFIG_CPU_MITIGATIONS=n` does **not** take on aarch64: the validator reports `requested but .config has CONFIG_CPU_MITIGATIONS=y`. This is the one warning that is expected rather than actionable, and it matters less than it reads, because on aarch64 the symbol gates almost nothing that is compiled in:
+
+- **KPTI (`UNMAP_KERNEL_AT_EL0`) and the BHB mitigation (`MITIGATE_SPECTRE_BRANCH_HISTORY`) are already absent.** Both are `bool "..." if EXPERT` with `default y`, and `isx.config` sets `CONFIG_EXPERT=y` -- which makes the prompt visible, so `allnoconfig` answers `n`. They are off as a side effect of the EXPERT+allnoconfig combination, not by decision. Anything that changes `CONFIG_EXPERT` silently changes this.
+- **The one entry that does report a mitigation cannot be switched off by this flag.** arm64's `cpu_show_spectre_v1()` returns a hardcoded string; `__user` pointer sanitization is unconditional inline code, not gated by `cpu_mitigations_off()`.
+- **What is left is per-CPU, so it is not a property of the build.** The remaining runtime-gated callers on arm64 are `spectre_v2_mitigations_off()`, `spectre_v4_mitigations_off()` and `bpf_bypass_spec_v1/v4()`. Whether the first two install anything depends on the host core's MIDR and ID registers, not on this config. The BPF pair controls verifier-inserted speculation barriers and short-circuits for any caller holding `CAP_PERFMON` -- which incusd does, as root -- on every CPU.
+
+So the compile-time half of the answer is universal (the costly mitigations are not in the image on any arm64 host) and the runtime half must be read per machine, with `/sys/devices/system/cpu/vulnerabilities/`. On Apple silicon -- the only hardware the *macOS* appliance runs on -- a live appliance VM (`CPU implementer 0x61`) reports `meltdown: Not affected`, `spectre_v2: Mitigation: CSV2, but not BHB` and `spec_store_bypass: Vulnerable`: CSV2 is a hardware property, so no software v2 mitigation is installed and none can be removed, and v4 is not active either. `mitigations=off` therefore buys nothing on a Mac, and should not be added expecting a speedup. That result does **not** transfer to the aarch64 Linux hosts that also run this kernel (CI on `ubuntu-24.04-arm`, Ampere/Neoverse-class cores), where v2 hardening or SSBD may well be active -- measure there before claiming anything about them.
+
+A consequence worth knowing runs the other way: `but not BHB` means branch-history attacks are unmitigated in a kernel that containers share, and that one *is* universal, since it comes from the compiled-out `MITIGATE_SPECTRE_BRANCH_HISTORY` rather than from any CPU's properties. It followed from allnoconfig, not from a threat-model decision; revisit it there if the container boundary is ever meant to hold against a speculative-execution attacker.
+
+Two options are sized rather than merely enabled, and both are easy to regress:
+- `CONFIG_LOG_BUF_SHIFT=16` -- the printk ring buffer's descriptor arrays are statically sized from this and land in `.data`, so the shift costs image bytes, not just run-time memory. kconfig's default of 17 spends 360 KB on `struct printk_info` plus 96 KB of descriptors plus a 128 KB `.bss` buffer; 16 halves that and still holds several full boots of dmesg. Leaving it unset is a silent 456 KB.
+- `CONFIG_KALLSYMS=y` -- deliberately kept despite costing ~950 KB of `.data` (`kallsyms_seqs_of_names` 473 KB, `kallsyms_names` 362 KB, `kallsyms_offsets` 119 KB). With `CONFIG_PANIC_ON_OOPS=y` the alternative is that every appliance panic arrives as an unreadable hex trace. `CONFIG_PERF_EVENTS=y` (115 KB) is kept for the same kind of reason: the container sysctls deliberately relax `perf_event_paranoid` so profilers work inside instances.
 
 Key dependencies discovered during development:
 - `CONFIG_64BIT=y` -- `allnoconfig` on x86 defaults to 32-bit
@@ -63,7 +93,7 @@ Key dependencies discovered during development:
 
 Without initrd, the kernel can't resolve `root=LABEL=...` (label resolution requires udev). The kernel cmdline uses `root=/dev/vda` instead -- the virtio-blk device is always `/dev/vda` since there is exactly one disk. `CONFIG_DEVTMPFS_MOUNT=y` ensures `/dev/vda` exists at boot.
 
-The cmdline also passes `rootfstype=btrfs`. Without it the kernel probes `fuseblk` (we ship FUSE for virtiofs/lxcfs) before `btrfs` at root mount, which prints a harmless `fuseblk: Unknown parameter 'commit'` since `fuseblk` rejects the `commit` rootflag. `rootfstype=btrfs` skips the probing. It must live on the bootloader cmdline, not the kernel's built-in `CONFIG_CMDLINE`: arm64 only offers `CMDLINE_FROM_BOOTLOADER`/`CMDLINE_FORCE` (no `EXTEND`), so a built-in line is ignored once a bootloader cmdline is present, and `FORCE` would discard the dynamic `isx.*` params. Mitigations, by contrast, *are* compiled off (`CONFIG_CPU_MITIGATIONS=n`), so no `mitigations=off` is passed.
+The cmdline also passes `rootfstype=btrfs`. Without it the kernel probes `fuseblk` (we ship FUSE for virtiofs/lxcfs) before `btrfs` at root mount, which prints a harmless `fuseblk: Unknown parameter 'commit'` since `fuseblk` rejects the `commit` rootflag. `rootfstype=btrfs` skips the probing. It must live on the bootloader cmdline, not the kernel's built-in `CONFIG_CMDLINE`: arm64 only offers `CMDLINE_FROM_BOOTLOADER`/`CMDLINE_FORCE` (no `EXTEND`), so a built-in line is ignored once a bootloader cmdline is present, and `FORCE` would discard the dynamic `isx.*` params. Mitigations, by contrast, *are* compiled off (`CONFIG_CPU_MITIGATIONS=n`), so no `mitigations=off` is passed. That is literally true on x86_64 only -- arm64 forces the symbol on -- but adding the boot parameter there would still be pointless, because the mitigations it gates are either compiled out or inert on the hardware (see Config Validation above).
 
 ### Expected Console Warnings
 
@@ -350,18 +380,22 @@ losetup -d "$LOOP"
 
 ### Kernel config validation
 
-After modifying `kernel/isx.config`, validate for both architectures in a container:
+After modifying any fragment, validate for both architectures in a container. Each arch is checked against its own merged fragment, the same concatenation `build-kernel.sh` performs -- checking against `isx.config` alone would miss every per-arch option:
 
 ```
 podman run --rm -v $PWD/appliance:/appliance:ro fedora:44 bash -c '
 dnf install -y -q make gcc flex bison bc findutils
+mkdir -p /tmp/ks
 tar xf /appliance/build/linux-*.tar.xz -C /tmp/ks --strip-components=1
 cd /tmp/ks
-for ARCH in x86 arm64; do
+for PAIR in x86:x86_64 arm64:aarch64; do
+    ARCH=${PAIR%%:*}; BARCH=${PAIR##*:}
     echo "=== $ARCH ==="
-    KCONFIG_ALLCONFIG=/appliance/kernel/isx.config make -s ARCH=$ARCH allnoconfig
+    cat /appliance/kernel/isx.config /appliance/kernel/isx-$BARCH.config > /tmp/merged.config
+    make -s ARCH=$ARCH mrproper
+    KCONFIG_ALLCONFIG=/tmp/merged.config make -s ARCH=$ARCH allnoconfig
     make -s ARCH=$ARCH olddefconfig
-    grep "^CONFIG_" /appliance/kernel/isx.config | grep "=y" | while read line; do
+    grep "^CONFIG_" /tmp/merged.config | grep "=y" | while read line; do
         key=${line%%=*}
         grep -q "^${key}=y" .config || echo "  NOT APPLIED: $line"
     done
@@ -369,7 +403,7 @@ done
 '
 ```
 
-Arch-specific options (ARM64 UART on x86, ACPI on arm64, KERNEL_ZSTD on arm64) are expected to be absent on the other architecture.
+x86_64 should print nothing and aarch64 only `CPU_MITIGATIONS` (which this loop does not check, since it only looks at `=y` lines -- `build-kernel.sh` checks both directions). Anything else is drift between a fragment and the kernel version.
 
 ### Enabling auto-login (`enable-console.sh`)
 

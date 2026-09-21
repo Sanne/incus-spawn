@@ -14,7 +14,7 @@ Minimal Alpine Linux VM with Incus pre-installed. See [DESIGN.md](DESIGN.md) for
 ./appliance/build.sh
 ```
 
-Produces `rootfs.tar.zst` (~42 MB), `disk.img.gz`, and `vmlinuz` (~5 MB). The kernel is cached — delete `vmlinuz` to force a rebuild.
+Produces `rootfs.tar.zst` (~42 MB), `disk.img.gz`, and `vmlinuz` — ~5 MB on x86_64, where the `bzImage` compresses itself, and ~10.5 MB on aarch64, whose `Image` target is raw (releases gzip it to ~5 MB for download). The kernel is cached — delete `vmlinuz` to force a rebuild.
 
 On macOS the build runs in a podman container that cannot create loop devices, so `build.sh` assembles `disk.img.gz` on the host afterwards via the podman machine VM (this requires `podman machine` to be running: `podman machine start`).
 
