@@ -352,6 +352,19 @@ tools:
 
 When omitted, Claude Code uses its own default. Model IDs follow the `claude-*` naming convention (e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`).
 
+### Codex CLI
+
+Add Codex CLI to a template with `tools: [codex]` (requires the `openai` feature). To configure its model and reasoning effort:
+
+```yaml
+tools:
+  - codex:
+      model: gpt-5.3-codex
+      effort: high
+```
+
+The `model` parameter defaults to `o4-mini`. The `effort` parameter defaults to `high` and maps to `model_reasoning_effort` in `~/.codex/config.toml`. Supported effort values are `minimal`, `low`, `medium`, `high`, and `xhigh`, depending on the model. Both parameters can be overridden by child templates without reinstalling Codex.
+
 ### Pi Coding Agent
 
 Pi is a provider-agnostic CLI coding agent that uses the standard Anthropic API. Add it to any template with `tools: [pi]`:

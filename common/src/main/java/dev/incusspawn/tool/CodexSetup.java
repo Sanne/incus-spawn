@@ -10,6 +10,9 @@ import java.util.Map;
 
 public class CodexSetup implements ToolSetup {
 
+    private static final String DEFAULT_MODEL = "o4-mini";
+    private static final String DEFAULT_EFFORT = "high";
+
     @Override
     public String name() {
         return "codex";
@@ -68,6 +71,31 @@ public class CodexSetup implements ToolSetup {
     }
 
     @Override
+    public Map<String, ToolDef.ParameterDef> parameters() {
+        var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
+
+        var model = new ToolDef.ParameterDef();
+        model.setType("string");
+        model.setDescription("OpenAI model ID (e.g. o4-mini, gpt-5.3-codex)");
+        model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
+        model.setOptional(true);
+        model.setReconfigurable(true);
+        model.setDefault(DEFAULT_MODEL);
+        params.put("model", model);
+
+        var effort = new ToolDef.ParameterDef();
+        effort.setType("string");
+        effort.setDescription("Model reasoning effort (minimal, low, medium, high, xhigh)");
+        effort.setPattern("^(minimal|low|medium|high|xhigh)$");
+        effort.setOptional(true);
+        effort.setReconfigurable(true);
+        effort.setDefault(DEFAULT_EFFORT);
+        params.put("effort", effort);
+
+        return params;
+    }
+
+    @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         var entries = new ArrayList<EnvEntry>();
         entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
@@ -77,7 +105,12 @@ public class CodexSetup implements ToolSetup {
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
         installBinary(c);
-        configureSettings(c);
+        configureSettings(c, resolvedParams);
+    }
+
+    @Override
+    public void reconfigure(Container c, java.util.Map<String, String> resolvedParams) {
+        configureSettings(c, resolvedParams);
     }
 
     private void installBinary(Container c) {
@@ -90,10 +123,13 @@ public class CodexSetup implements ToolSetup {
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
-    private void configureSettings(Container c) {
+    private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Codex CLI...");
+        var model = resolvedParams.getOrDefault("model", DEFAULT_MODEL);
+        var effort = resolvedParams.getOrDefault("effort", DEFAULT_EFFORT);
         var configToml = """
-                model = "o4-mini"
+                model = "%s"
+                model_reasoning_effort = "%s"
                 approval_policy = "never"
                 sandbox_mode = "danger-full-access"
                 forced_login_method = "api"
@@ -107,7 +143,7 @@ public class CodexSetup implements ToolSetup {
 
                 [projects."/home/agentuser"]
                 trust_level = "trusted"
-                """;
+                """.formatted(model, effort);
         var authJson = """
                 {
                   "auth_mode": "apikey",
