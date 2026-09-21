@@ -128,6 +128,13 @@ public class ImageDef {
     private String defaultAction;
     @JsonProperty("agent_note")
     private String agentNote;
+    /**
+     * Credential account per config namespace, e.g. {@code {claude: work, github: acme-bot}}.
+     * Overrides the namespace's global {@code default}; overridden in turn by an instance's
+     * own selection. Merged key-by-key down the inheritance chain, so a child template
+     * re-points one namespace without restating the rest.
+     */
+    private Map<String, String> accounts = Map.of();
 
     @JsonIgnore
     private String source = "unknown";
@@ -197,6 +204,10 @@ public class ImageDef {
     public void setDefaultAction(String defaultAction) { this.defaultAction = defaultAction; }
     public String getAgentNote() { return agentNote; }
     public void setAgentNote(String agentNote) { this.agentNote = agentNote; }
+    public Map<String, String> getAccounts() { return accounts; }
+    public void setAccounts(Map<String, String> accounts) {
+        this.accounts = accounts == null ? Map.of() : Map.copyOf(accounts);
+    }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
 
@@ -378,6 +389,12 @@ public class ImageDef {
                             .append('=').append(e.getValue()).append('\n'));
         }
         sb.append("parent=").append(parent != null ? parent : "").append('\n');
+        // The selected account decides what gets baked into the image: which auth mode
+        // ClaudeSetup writes into isx-env.sh, and which GitHub identity GhSetup resolves
+        // into .gitconfig. Re-pointing an account must therefore rebuild, not reuse.
+        accounts.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .forEach(e -> sb.append("account.").append(e.getKey())
+                        .append('=').append(e.getValue()).append('\n'));
         packages.stream().sorted().forEach(p -> sb.append("pkg=").append(p).append('\n'));
         for (var t : tools.stream().sorted(java.util.Comparator.comparing(ToolDef.ToolRef::getName)).toList()) {
             sb.append("tool=").append(t.getName());
@@ -498,6 +515,30 @@ public class ImageDef {
 
     public static boolean resolveVm(ImageDef start, Map<String, ImageDef> defs) {
         return "vm".equals(resolveType(start, defs));
+    }
+
+    /**
+     * Collapse the {@code accounts:} maps of the whole inheritance chain into one.
+     *
+     * <p>Merged per key rather than replaced wholesale, and walked root-first via
+     * {@link #chain}, so the nearest declaration of a namespace wins while namespaces a
+     * child says nothing about keep the parent's choice. A template that re-points only
+     * {@code claude} therefore keeps its parent's {@code github} account.
+     *
+     * <p>Unlike {@link #resolveType}, which takes the first non-null it finds, every
+     * layer contributes here -- the value is a map, not a scalar.
+     */
+    public static Map<String, String> resolveAccounts(ImageDef start, Map<String, ImageDef> defs) {
+        var merged = new java.util.LinkedHashMap<String, String>();
+        for (var layer : chain(start, defs)) {
+            layer.getAccounts().forEach((namespace, account) -> {
+                if (namespace != null && !namespace.isBlank()
+                        && account != null && !account.isBlank()) {
+                    merged.put(namespace.strip(), account.strip());
+                }
+            });
+        }
+        return merged;
     }
 
     /** Whether this image is built from scratch (no parent). */

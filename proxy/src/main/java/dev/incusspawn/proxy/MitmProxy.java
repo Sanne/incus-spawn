@@ -45,6 +45,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -201,6 +202,39 @@ public class MitmProxy {
     private volatile FileTime configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     private dev.incusspawn.incus.IncusClient incusClient;
 
+    /**
+     * Source address → instance → pinned accounts. Null until {@link #setIncusClient} runs,
+     * in which case every caller gets the configured defaults -- which is exactly the
+     * behaviour before per-instance selection existed.
+     */
+    private volatile InstanceRegistry instanceRegistry;
+
+    /**
+     * Per-account-selection credentials, keyed by the selection itself so two instances
+     * pinned the same way share one entry. Built lazily off {@link #configSnapshot} and
+     * cleared whenever config.yaml changes, so a rotated token is never served from here.
+     */
+    private final Map<String, AccountBundle> credentialsBySelection = new ConcurrentHashMap<>();
+
+    /**
+     * The parsed config.yaml behind {@link #credentialsBySelection}. Held rather than
+     * re-read because resolving a selection happens on the event loop, where
+     * {@code SpawnConfig.load()}'s file read does not belong.
+     */
+    private volatile dev.incusspawn.config.SpawnConfig configSnapshot;
+
+    /** What a single request needs to know about who asked and which credentials answer. */
+    record RequestContext(String domain, String instanceName,
+                          ProxyCredentials creds, ToolProxyRouting routing,
+                          boolean usesDefaultCredentials) {
+        String describeCaller() {
+            return instanceName == null || instanceName.isBlank() ? "unknown caller" : instanceName;
+        }
+    }
+
+    /** Credentials plus the routing that indexes them, cached together per selection. */
+    private record AccountBundle(ProxyCredentials creds, ToolProxyRouting routing) {}
+
     // Overridable for tests: upstream WebSocket connections default to port 443 + TLS
     int upstreamWsPort = 443;
     boolean upstreamWsSsl = true;
@@ -228,10 +262,87 @@ public class MitmProxy {
 
     public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
         this.incusClient = incusClient;
+        var registry = new InstanceRegistry(incusClient);
+        this.instanceRegistry = registry;
+        // Populate before serving: an empty snapshot would hand defaults to every pinned
+        // instance until the first refresh landed. Off the event loop -- this runs during
+        // startup, but keep the blocking call explicit so it stays that way.
+        vertx.executeBlocking(() -> { registry.refresh(); return null; })
+                .onFailure(e -> ProxyLog.warn("Initial instance registry load failed: " + e.getMessage()));
+    }
+
+    /**
+     * Credentials for whoever sent this request.
+     *
+     * <p>An address that is not a known instance -- a template build container, host-side
+     * traffic -- gets the configured defaults. An instance that pins nothing gets the same.
+     * Only an explicit pin diverges, and a pin naming an account that is not configured
+     * raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException} so the
+     * caller can fail the request instead of spending the wrong credential (#351).
+     *
+     * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
+     */
+    private RequestContext contextFor(String domain, String sourceAddress) {
+        var registry = instanceRegistry;
+        if (registry == null) return new RequestContext(domain, null, credentials, toolRouting, true);
+
+        var instance = registry.lookup(sourceAddress);
+        // A miss is the case worth refreshing for: a branch that happened since the last
+        // snapshot. isx signals the proxy on branch, so this is only the backstop.
+        if (instance == null || registry.isStale()) scheduleRegistryRefresh(registry);
+
+        if (instance == null || instance.usesDefaults()) {
+            return new RequestContext(domain,
+                    instance == null ? null : instance.instanceName(), credentials, toolRouting, true);
+        }
+        var selection = instance.accountsByNamespace();
+        var bundle = credentialsBySelection.computeIfAbsent(selectionKey(selection), key -> {
+            var creds = ProxyCredentials.forAccounts(configSnapshot(), selection);
+            return new AccountBundle(creds, buildRouting(creds.toolProxies(), false));
+        });
+        return new RequestContext(domain, instance.instanceName(),
+                bundle.creds(), bundle.routing(), false);
+    }
+
+    /** Stable cache key for a selection map; sorted so ordering never splits the entry. */
+    private static String selectionKey(Map<String, String> selection) {
+        return new TreeMap<>(selection).toString();
+    }
+
+    private dev.incusspawn.config.SpawnConfig configSnapshot() {
+        var snapshot = configSnapshot;
+        if (snapshot == null) {
+            // Only reachable if a request arrives before the first reload on a proxy
+            // constructed directly rather than through fromConfig().
+            snapshot = dev.incusspawn.config.SpawnConfig.load();
+            configSnapshot = snapshot;
+        }
+        return snapshot;
+    }
+
+    private void scheduleRegistryRefresh(InstanceRegistry registry) {
+        if (registryRefreshInFlight.compareAndSet(false, true)) {
+            vertx.executeBlocking(() -> { registry.refresh(); return null; })
+                    .onComplete(r -> registryRefreshInFlight.set(false));
+        }
+    }
+
+    private final java.util.concurrent.atomic.AtomicBoolean registryRefreshInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** Re-read instance pinning now, e.g. after {@code isx account set} signals the proxy. */
+    public void refreshInstanceRegistry() {
+        var registry = instanceRegistry;
+        if (registry != null) registry.refresh();
     }
 
     private String vertexHost() {
-        return ProxyConfig.vertexHost(credentials.vertexRegion());
+        return vertexHost(credentials);
+    }
+
+    /** Vertex endpoint for one request's account -- the region is part of the account. */
+    private static String vertexHost(ProxyCredentials creds) {
+        return ProxyConfig.vertexHost(creds.vertexRegion());
     }
 
     public void setDebugLog(ApiTrafficLog debugLog) {
@@ -239,6 +350,19 @@ public class MitmProxy {
     }
 
     private void applyToolProxies(List<ResolvedToolProxy> proxies) {
+        this.toolRouting = buildRouting(proxies, true);
+    }
+
+    /**
+     * Index a resolved tool proxy list for lookup: exact domains, then wildcard suffixes
+     * longest-first.
+     *
+     * <p>Pure, so the same construction serves both the global routing table and the
+     * per-account-selection one. Domains never vary by account -- only the credential does --
+     * so {@code warn} is set only for the global build; repeating collision warnings once per
+     * selection would say nothing new.
+     */
+    private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies, boolean warn) {
         var exact = new java.util.LinkedHashMap<String, ResolvedToolProxy>();
         var wildcards = new ArrayList<Map.Entry<String, ResolvedToolProxy>>();
         var extraDomains = new HashSet<String>();
@@ -253,7 +377,7 @@ public class MitmProxy {
                 var firstForSuffix = wildcards.stream()
                         .filter(e -> e.getKey().equals(suffix))
                         .findFirst().orElse(null);
-                if (firstForSuffix != null
+                if (warn && firstForSuffix != null
                         && !firstForSuffix.getValue().toolName().equals(tp.toolName())) {
                     ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
                             + "' already registered by tool '" + firstForSuffix.getValue().toolName()
@@ -265,8 +389,10 @@ public class MitmProxy {
             } else {
                 var existing = exact.putIfAbsent(domain, tp);
                 if (existing != null) {
-                    ProxyLog.warn("Tool '" + tp.toolName() + "' claims domain '" + domain
-                            + "' already registered by tool '" + existing.toolName() + "' — skipping");
+                    if (warn) {
+                        ProxyLog.warn("Tool '" + tp.toolName() + "' claims domain '" + domain
+                                + "' already registered by tool '" + existing.toolName() + "' — skipping");
+                    }
                     continue;
                 }
                 extraDomains.add(domain);
@@ -276,7 +402,7 @@ public class MitmProxy {
         wildcards.sort(Comparator.<Map.Entry<String, ResolvedToolProxy>, Integer>comparing(
                 e -> e.getKey().length()).reversed());
 
-        this.toolRouting = new ToolProxyRouting(
+        return new ToolProxyRouting(
                 Map.copyOf(exact),
                 List.copyOf(wildcards),
                 ProxyConfig.interceptedDomains(extraDomains),
@@ -284,7 +410,15 @@ public class MitmProxy {
     }
 
     ResolvedToolProxy findToolProxy(String domain) {
-        var routing = toolRouting;
+        return findToolProxy(toolRouting, domain);
+    }
+
+    /**
+     * The tool proxy serving a domain for one request. Routing is global (which domains are
+     * intercepted never depends on the account) but the credential inside the entry is not,
+     * so a pinned instance looks this up in its own routing.
+     */
+    private static ResolvedToolProxy findToolProxy(ToolProxyRouting routing, String domain) {
         var exact = routing.exactDomain().get(domain);
         if (exact != null) return exact;
         for (var entry : routing.wildcardSuffixes()) {
@@ -306,13 +440,18 @@ public class MitmProxy {
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        return new MitmProxy(
+        var config = dev.incusspawn.config.SpawnConfig.load();
+        var proxy = new MitmProxy(
                 vertx,
                 gatewayIp,
                 ProxyConfig.DEFAULT_MITM_PORT,
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
-                ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load()));
+                ProxyCredentials.fromConfig(config));
+        // Keep the config that produced those credentials, so resolving a per-instance
+        // selection later never has to read the file from the event loop.
+        proxy.configSnapshot = config;
+        return proxy;
     }
 
     // --- Lifecycle ---
@@ -358,10 +497,18 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
-            var newCreds = ProxyCredentials.fromConfig(dev.incusspawn.config.SpawnConfig.load());
+            var newConfig = dev.incusspawn.config.SpawnConfig.load();
+            var newCreds = ProxyCredentials.fromConfig(newConfig);
+            configSnapshot = newConfig;
             credentials = newCreds;
+            // Drop per-selection credentials before publishing the new defaults: a rotated
+            // token must not keep being served from a cache entry built off the old file.
+            credentialsBySelection.clear();
             applyToolProxies(newCreds.toolProxies());
             invalidateVertexToken();
+            // Account pinning is instance state, not config state, but a reload is the one
+            // moment isx reliably signals -- so take the opportunity to re-read it too.
+            refreshInstanceRegistry();
             var jksBuffer = buildKeyStoreBuffer();
             if (mitmServer != null) {
                 var sslOptions = new io.vertx.core.net.SSLOptions()
@@ -596,7 +743,18 @@ public class MitmProxy {
             } else if (NPM_DOMAINS.contains(domain)) {
                 handleNpmRequest(clientReq, domain);
             } else if (isInterceptedDomain(domain)) {
-                handleApiRequest(clientReq, domain);
+                RequestContext ctx;
+                try {
+                    ctx = contextFor(domain, sourceAddressOf(clientReq));
+                } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+                    // Fail closed: this instance is pinned to an account that is gone.
+                    // Falling back to the default would quietly spend another account.
+                    ProxyLog.warn("Refusing " + domain + " for a caller pinned to missing "
+                            + e.namespace() + " account '" + e.accountName() + "'");
+                    sendError(clientReq.response(), 502, e.getMessage());
+                    return;
+                }
+                handleApiRequest(clientReq, ctx);
             } else {
                 // Subdomain of an intercepted domain (e.g. cdn01.quay.io) reached us
                 // via dnsmasq wildcard — relay transparently without auth injection.
@@ -609,6 +767,20 @@ public class MitmProxy {
             e.printStackTrace(System.err);
             sendError(clientReq.response(), 502, "Internal proxy error");
         }
+    }
+
+    /**
+     * The address the request came from. iptables REDIRECT preserves the container's source
+     * address, so on the bridge this is the instance's own static IP.
+     */
+    private static String sourceAddressOf(HttpServerRequest req) {
+        var remote = req.remoteAddress();
+        return remote == null ? null : remote.hostAddress();
+    }
+
+    private static String sourceAddressOf(ServerWebSocket ws) {
+        var remote = ws.remoteAddress();
+        return remote == null ? null : remote.hostAddress();
     }
 
     private String extractDomain(HttpServerRequest req) {
@@ -631,10 +803,22 @@ public class MitmProxy {
         }
         var colon = host.indexOf(':');
         var domain = colon > 0 ? host.substring(0, colon) : host;
-        handleWebSocketUpgrade(clientWs, domain);
+        RequestContext ctx;
+        try {
+            ctx = contextFor(domain, sourceAddressOf(clientWs));
+        } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+            // Same fail-closed rule as the HTTP path: an instance pinned to an account
+            // that is gone gets an error, never someone else's credential.
+            ProxyLog.warn("Refusing WebSocket to " + domain + " for a caller pinned to missing "
+                    + e.namespace() + " account '" + e.accountName() + "'");
+            clientWs.reject(502);
+            return;
+        }
+        handleWebSocketUpgrade(clientWs, ctx);
     }
 
-    private void handleWebSocketUpgrade(ServerWebSocket clientWs, String domain) {
+    private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx) {
+        var domain = ctx.domain();
         var wsOptions = new WebSocketConnectOptions()
                 .setHost(domain)
                 .setPort(upstreamWsPort)
@@ -656,7 +840,7 @@ public class MitmProxy {
             }
         }
 
-        injectWebSocketAuth(wsOptions, domain);
+        injectWebSocketAuth(wsOptions, ctx);
 
         // Pause the client socket so frames arriving before the upstream
         // connection is ready are buffered, not dropped.
@@ -755,7 +939,9 @@ public class MitmProxy {
         });
     }
 
-    private void injectWebSocketAuth(WebSocketConnectOptions options, String domain) {
+    private void injectWebSocketAuth(WebSocketConnectOptions options, RequestContext ctx) {
+        var domain = ctx.domain();
+        var credentials = ctx.creds();
         if (ANTHROPIC_DOMAINS.contains(domain)) {
             if (!credentials.oauthToken().isBlank()) {
                 options.putHeader("Authorization", "Bearer " + credentials.oauthToken());
@@ -764,7 +950,7 @@ public class MitmProxy {
                 options.putHeader("x-api-key", credentials.anthropicApiKey());
             }
         } else {
-            var tp = findToolProxy(domain);
+            var tp = findToolProxy(ctx.routing(), domain);
             if (tp != null) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();
@@ -777,10 +963,10 @@ public class MitmProxy {
 
     // --- API requests (Anthropic, GitHub) ---
 
-    private void handleApiRequest(HttpServerRequest clientReq, String domain) {
+    private void handleApiRequest(HttpServerRequest clientReq, RequestContext ctx) {
         clientReq.body().onSuccess(bodyBuffer -> {
             try {
-                handleApiRequestWithBody(clientReq, domain, bodyBuffer);
+                handleApiRequestWithBody(clientReq, ctx, bodyBuffer);
             } catch (Exception e) {
                 System.err.println("API request error: " + e.getMessage());
                 e.printStackTrace(System.err);
@@ -792,8 +978,10 @@ public class MitmProxy {
         });
     }
 
-    private void handleApiRequestWithBody(HttpServerRequest clientReq, String domain,
+    private void handleApiRequestWithBody(HttpServerRequest clientReq, RequestContext ctx,
                                            Buffer bodyBuffer) throws Exception {
+        var domain = ctx.domain();
+        var credentials = ctx.creds();
         String upstreamHost;
         byte[] bodyBytes = bodyBuffer.getBytes();
         boolean isVertexRequest = false;
@@ -818,14 +1006,14 @@ public class MitmProxy {
                 // ANTHROPIC_VERTEX_BASE_URL pointing here): forward to real Vertex.
                 // The Vertex SDK uses @date suffixes (e.g. claude-haiku-4-5@20251001)
                 // which the global endpoint rejects — strip them.
-                upstreamHost = vertexHost();
+                upstreamHost = vertexHost(credentials);
                 isVertexRequest = true;
                 uri = path.replaceFirst("@\\d{8}(?=:)", "");
             } else if (path.startsWith("/v1/messages")) {
                 // Standard API format: translate to Vertex AI rawPredict
-                upstreamHost = vertexHost();
+                upstreamHost = vertexHost(credentials);
                 isVertexRequest = true;
-                var translated = translateToVertex(path, bodyBytes, upstreamHost);
+                var translated = translateToVertex(path, bodyBytes, upstreamHost, credentials);
                 uri = translated.path;
                 bodyBytes = translated.body;
                 bodyRewritten = true;
@@ -838,7 +1026,7 @@ public class MitmProxy {
         }
         requestOptions.setHost(upstreamHost).setURI(uri);
 
-        sendApiRequest(clientReq, requestOptions, upstreamHost, domain,
+        sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
                 bodyBytes, isVertexRequest, bodyRewritten, false,
                 originalDump, originalBody);
     }
@@ -874,13 +1062,15 @@ public class MitmProxy {
     }
 
     private void sendApiRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
-                                String upstreamHost, String domain,
+                                String upstreamHost, RequestContext ctx,
                                 byte[] bodyBytes, boolean isVertexRequest,
                                 boolean bodyRewritten, boolean isRetry,
                                 String originalDump, byte[] originalBody) {
+        var domain = ctx.domain();
+        var credentials = ctx.creds();
         requestWithAsyncDns(requestOptions).onSuccess(upReq -> {
             copyRequestHeaders(clientReq, upReq, domain);
-            injectHeaders(upReq, domain, upstreamHost, isVertexRequest).onSuccess(ok -> {
+            injectHeaders(upReq, ctx, upstreamHost, isVertexRequest).onSuccess(ok -> {
                 if (!ok) {
                     var err = authError;
                     var detail = err != null ? err : "Failed to obtain upstream credentials";
@@ -893,13 +1083,18 @@ public class MitmProxy {
                     if (!isRetry && isVertexRequest && upResp.statusCode() == 401) {
                         System.err.println("Vertex 401: invalidating cached token and retrying");
                         invalidateVertexToken();
-                        sendApiRequest(clientReq, requestOptions, upstreamHost, domain,
+                        sendApiRequest(clientReq, requestOptions, upstreamHost, ctx,
                                 bodyBytes, isVertexRequest, bodyRewritten, true,
                                 originalDump, originalBody);
                         return;
                     }
 
-                    if (!credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
+                    // Only the default credentials drive the host's auth status. A pinned
+                    // instance's broken token is reported to that instance (it sees the 401)
+                    // but must not tell the user their own default credential has failed --
+                    // nor clear a real default-account error by succeeding.
+                    if (ctx.usesDefaultCredentials()
+                            && !credentials.oauthToken().isBlank() && ANTHROPIC_DOMAINS.contains(domain)) {
                         if (upResp.statusCode() == 401) {
                             setAuthError("Claude OAuth token rejected (HTTP 401). "
                                     + "The token may have expired — run 'isx init' to refresh.",
@@ -1695,7 +1890,7 @@ public class MitmProxy {
      * </ul>
      */
     private VertexTranslation translateToVertex(String originalPath, byte[] bodyBytes,
-                                                 String upstreamHost) {
+                                                 String upstreamHost, ProxyCredentials credentials) {
         try {
             var tree = bodyBytes.length > 0 ? JSON.readTree(bodyBytes) : null;
 
@@ -1769,14 +1964,20 @@ public class MitmProxy {
      * worker thread via {@link #acquireVertexAccessToken()}, so the event loop is
      * never blocked by a {@code gcloud} fork.
      */
-    private Future<Boolean> injectHeaders(HttpClientRequest upReq, String domain,
+    private Future<Boolean> injectHeaders(HttpClientRequest upReq, RequestContext ctx,
                                String upstreamHost, boolean isVertexRequest) {
+        var domain = ctx.domain();
+        var credentials = ctx.creds();
         upReq.putHeader("Host", upstreamHost);
 
         if (isVertexRequest) {
+            // The token itself is host-wide: 'gcloud auth print-access-token' returns the
+            // gcloud *user* credential, independent of project, so one cache serves every
+            // Vertex account. Only the project and region differ, and those come off
+            // ctx.creds() above. See the Vertex notes in .claude/rules/proxy.md.
             return acquireVertexAccessToken()
                     .map(token -> {
-                        clearAuthError();
+                        if (ctx.usesDefaultCredentials()) clearAuthError();
                         upReq.putHeader("Authorization", "Bearer " + token);
                         upReq.headers().remove("x-api-key");
                         upReq.headers().remove("anthropic-beta");
@@ -1785,7 +1986,7 @@ public class MitmProxy {
                         return true;
                     })
                     .recover(e -> {
-                        setAuthError(e.getMessage(), VERTEX_AUTH_HINT);
+                        if (ctx.usesDefaultCredentials()) setAuthError(e.getMessage(), VERTEX_AUTH_HINT);
                         return Future.succeededFuture(false);
                     });
         } else if (ANTHROPIC_DOMAINS.contains(domain)) {
@@ -1798,7 +1999,7 @@ public class MitmProxy {
                 upReq.headers().remove("x-api-key");
             }
         } else {
-            var tp = findToolProxy(domain);
+            var tp = findToolProxy(ctx.routing(), domain);
             if (tp != null) {
                 var headerName = tp.headerName();
                 var headerValue = tp.computeHeaderValue();

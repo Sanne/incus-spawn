@@ -517,6 +517,19 @@ public final class ProxyService {
         }
     }
 
+    /**
+     * Ask a running proxy to re-read config.yaml and instance account pinning, without
+     * restarting it. Best-effort and deliberately silent: the proxy re-reads on a timer
+     * anyway, so this only removes the delay. In-flight requests are unaffected.
+     *
+     * <p>Not lock-guarded, unlike the mutating lifecycle operations: SIGHUP does not change
+     * service state, and taking the lock here would serialise every branch behind it.
+     */
+    public static void signalReload() {
+        var pid = findProxyPid();
+        if (pid != -1) runQuiet("kill", "-HUP", String.valueOf(pid));
+    }
+
     private static long findProxyPid() {
         try {
             var pb = new ProcessBuilder("fuser", ProxyConfig.DEFAULT_HEALTH_PORT + "/tcp");

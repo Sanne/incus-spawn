@@ -6,6 +6,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -53,6 +54,7 @@ public class InstancePrep {
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             ipFixed = fixStaticIpMismatch(incus, name);
+            fixIpFiltering(incus, name);
             fixCaMismatch(incus, name);
             fixResolvConfMismatch(incus, name);
         }
@@ -99,6 +101,26 @@ public class InstancePrep {
                     + ": " + e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * Turn on IP spoofing protection for an instance branched before it was applied.
+     *
+     * <p>The proxy trusts the source address to decide which credential account answers, so
+     * an instance that predates this check would otherwise be able to impersonate another.
+     * Quiet when already set -- this runs on every shell and run.
+     */
+    private static void fixIpFiltering(IncusClient incus, String name) {
+        // Only while stopped, mirroring fixStaticIpMismatch: NIC device changes on a live
+        // instance are not reliably applied, and a warning on every shell would be noise.
+        // The next stop/start picks it up.
+        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+        try {
+            var nic = StaticIpAllocator.findNicDevice(incus, name);
+            InstanceLifecycle.applyIpFiltering(incus, name, nic);
+        } catch (Exception ignored) {
+            // No bridge NIC (airgap, or a hand-made instance) -- nothing to filter.
+        }
     }
 
     private static void fixResolvConfMismatch(IncusClient incus, String name) {

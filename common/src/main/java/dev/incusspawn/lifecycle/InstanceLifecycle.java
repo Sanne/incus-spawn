@@ -76,6 +76,7 @@ public final class InstanceLifecycle {
 
         BuildOutput.step("Assigning static IP " + ip + ".");
         incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
+        applyIpFiltering(incus, name, nicDevice);
         incus.configSetAll(name, Map.of(
                 Metadata.STATIC_IP, ip,
                 Metadata.STATIC_GATEWAY, gateway));
@@ -84,6 +85,32 @@ public final class InstanceLifecycle {
             pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
         }
         return ip;
+    }
+
+    /**
+     * Pin the instance to the address it was allocated, so it cannot answer for another.
+     *
+     * <p>The proxy attributes a request to an instance by its source address, and picks that
+     * instance's credential account from it. Without filtering, root inside a container could
+     * re-address its interface as a neighbour and spend that neighbour's subscription --
+     * which would make per-instance credentials worse than useless, since they would look
+     * like isolation while providing none.
+     *
+     * <p>Incus enforces this with nftables/ebtables rules and requires the pinned
+     * {@code ipv4.address} set just above. A host whose kernel or firewall backend cannot do
+     * it warns rather than failing the branch: the instance still works, it is only the
+     * separation between instances that is not enforced.
+     */
+    public static void applyIpFiltering(IncusClient incus, String name, String nicDevice) {
+        try {
+            incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
+        } catch (RuntimeException e) {
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Warning: could not enable IP spoofing protection on " + name + ": "
+                    + e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Instances on this host can impersonate each other's credential accounts.");
+        }
     }
 
     static int bridgePrefixLen(IncusClient incus) {
@@ -164,6 +191,7 @@ public final class InstanceLifecycle {
 
         BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + newIp);
         incus.deviceConfigSet(name, nicDevice, "ipv4.address", newIp);
+        applyIpFiltering(incus, name, nicDevice);
 
         var updates = new HashMap<String, String>();
         updates.put(Metadata.STATIC_IP, newIp);

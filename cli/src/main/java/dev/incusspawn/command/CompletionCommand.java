@@ -164,6 +164,7 @@ public class CompletionCommand extends BaseCommand {
                 '--memory=[Memory limit, e.g. 8GB]:size' \\
                 '--disk=[Disk size limit]:size' \\
                 '--no-start[Don'"'"'t start the instance after creation]' \\
+                '*--account=[Credential account as <namespace>=<account>]:selection' \\
                 '1:new instance name'
             }
 
@@ -350,6 +351,19 @@ public class CompletionCommand extends BaseCommand {
                 '--deep[Run per-instance checks (DNS, TLS, resolv.conf)]'
             }
 
+            _isx_account() {
+              local -a _account_subcmds
+              _account_subcmds=(
+                'list:list configured accounts per namespace'
+                'show:show the accounts an instance uses'
+                'set:point an instance at different credential accounts'
+              )
+              case $words[1] in
+                show|set) _isx_instances ;;
+                *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
+              esac
+            }
+
             _isx_tools() {
               local state line; typeset -A opt_args
               _arguments -C \\
@@ -402,6 +416,7 @@ public class CompletionCommand extends BaseCommand {
                     'proxy:manage the MITM authentication proxy'
                     'templates:manage template definitions'
                     'tools:list and inspect available tool definitions'
+                    'account:show or change the credential accounts an instance uses'
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
                     'doctor:run health checks and offer to fix problems'
@@ -427,6 +442,7 @@ public class CompletionCommand extends BaseCommand {
                     proxy)      _isx_proxy ;;
                     templates)  _isx_templates ;;
                     tools)      _isx_tools ;;
+                    account)    _isx_account ;;
                     vm)         _isx_vm ;;
                     update-base) _isx_update_base ;;
                   esac ;;
@@ -457,14 +473,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates tools vm doctor help"
+              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates account tools vm doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|tools|vm|doctor|help)
+                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|tools|vm|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -494,7 +510,7 @@ public class CompletionCommand extends BaseCommand {
                       return ;;
                     --cpu|--memory|--disk) return ;;
                   esac
-                  COMPREPLY=( $(compgen -W "--help --from --gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start" -- "$cur") )
+                  COMPREPLY=( $(compgen -W "--help --from --gui --kvm --no-kvm --airgap --proxy-only --inbox --cpu --memory --disk --no-start --account" -- "$cur") )
                   ;;
                 build)
                   case "$prev" in
@@ -703,7 +719,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -750,6 +766,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand branch' -l memory      -d 'Memory limit, e.g. 8GB'
             complete -c isx -f -n '__isx_using_subcommand branch' -l disk        -d 'Disk size limit'
             complete -c isx -f -n '__isx_using_subcommand branch' -l no-start    -d "Don't start the instance after creation"
+            complete -c isx -f -n '__isx_using_subcommand branch' -l account     -d 'Credential account as <namespace>=<account>'
 
             # ── build ────────────────────────────────────────────────────────────────────
 
@@ -816,6 +833,15 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand list' -s v -l verbose -d 'Show source and description'
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand edit' -a '(__isx_templates)' -d 'Template name'
             complete -c isx -f -n '__isx_using_subcommand templates; and __isx_using_subcommand new' -l project -d 'Create in project-local directory'
+
+            # ── account ─────────────────────────────────────────────────────────────────
+
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a show -d 'Show the accounts an instance uses'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
+
+            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand set'  -a '(__isx_instances)' -d 'Instance name'
 
             # ── tools ────────────────────────────────────────────────────────────────────
 

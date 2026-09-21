@@ -1,0 +1,160 @@
+package dev.incusspawn.command;
+
+import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.proxy.ProxyService;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.option.Argument;
+import org.aesh.command.option.Arguments;
+
+import java.util.List;
+
+/**
+ * Inspect and change which credential account an instance uses.
+ *
+ * <p>Accounts themselves are configured by {@code isx init}; this command only decides who
+ * uses them. Re-pointing a running instance takes effect on its next request -- credentials
+ * live in the proxy, never in the container, so nothing inside has to be restarted.
+ */
+@CommandDefinition(
+        name = "account",
+        description = "Show or change the credential accounts an instance uses",
+        generateHelp = true,
+        groupCommands = {
+                AccountCommand.ListSub.class,
+                AccountCommand.Show.class,
+                AccountCommand.Set.class
+        }
+)
+public class AccountCommand extends BaseCommand {
+
+    @Override
+    protected CommandResult doExecute() throws Exception {
+        return new ListSub().doExecute();
+    }
+
+    // ── list ────────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "list", description = "List configured accounts per namespace",
+            generateHelp = true)
+    public static class ListSub extends BaseCommand {
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var config = SpawnConfig.load();
+            var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+
+            boolean any = false;
+            for (var namespace : AccountSelection.knownNamespaces()) {
+                var names = SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)
+                        ? List.copyOf(config.getClaude().effectiveAccounts().keySet())
+                        : AccountResolver.accountNames(tree, namespace);
+                if (names.isEmpty()) continue;
+                any = true;
+                var defaultName = SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)
+                        ? config.getClaude().accountName()
+                        : AccountResolver.effectiveAccount(tree, namespace, null);
+                System.out.println(namespace + ":");
+                for (var name : names) {
+                    System.out.println("  " + name + (name.equals(defaultName) ? "  (default)" : ""));
+                }
+            }
+            if (!any) {
+                System.out.println("No named accounts configured. Run 'isx init' to add one.");
+            }
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    // ── show ────────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "show", description = "Show the accounts an instance uses",
+            generateHelp = true)
+    public static class Show extends BaseCommand {
+
+        @Argument(description = "Instance name", required = true)
+        String instance;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
+            if (!incus.exists(instance)) {
+                System.err.println("Error: no instance named '" + instance + "' found.");
+                return CommandResult.valueOf(1);
+            }
+            var selection = AccountSelection.read(incus, instance);
+            if (selection.isEmpty()) {
+                System.out.println(instance + " uses the configured default account"
+                        + " for every credential.");
+                return CommandResult.SUCCESS;
+            }
+            selection.forEach((namespace, account) -> {
+                var envClass = incus.configGet(instance, Metadata.envClassKey(namespace));
+                System.out.println(namespace + " = " + account
+                        + (envClass == null || envClass.isBlank() ? "" : "  (built for " + envClass + ")"));
+            });
+            return CommandResult.SUCCESS;
+        }
+    }
+
+    // ── set ─────────────────────────────────────────────────────────────────────
+
+    @CommandDefinition(name = "set",
+            description = "Point an instance at different credential accounts",
+            generateHelp = true)
+    public static class Set extends BaseCommand {
+
+        @Arguments(description = "Instance name, then one or more <namespace>=<account>")
+        List<String> args;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            if (args == null || args.size() < 2) {
+                System.err.println("Usage: isx account set <instance> <namespace>=<account> ...");
+                System.err.println("Example: isx account set my-box claude=work");
+                return CommandResult.valueOf(1);
+            }
+            var incus = RuntimeServices.incus();
+            var instance = args.get(0);
+            if (!incus.exists(instance)) {
+                System.err.println("Error: no instance named '" + instance + "' found.");
+                return CommandResult.valueOf(1);
+            }
+
+            var config = SpawnConfig.load();
+            java.util.Map<String, String> requested;
+            try {
+                requested = AccountSelection.parse(args.subList(1, args.size()));
+                AccountSelection.validate(config, requested);
+            } catch (AccountSelection.InvalidSelectionException
+                     | AccountResolver.UnknownAccountException e) {
+                System.err.println("Error: " + e.getMessage());
+                return CommandResult.valueOf(1);
+            }
+
+            // Refuse a swap the built container could not honour, while the user is still
+            // choosing -- rather than letting it surface later as a failing request inside.
+            var reason = AccountSelection.incompatibilityReason(config, incus, instance, requested);
+            if (!reason.isEmpty()) {
+                System.err.println("Error: " + reason);
+                return CommandResult.valueOf(1);
+            }
+
+            // Merge rather than replace: naming one namespace must not silently unpin others.
+            var merged = new java.util.LinkedHashMap<>(AccountSelection.read(incus, instance));
+            merged.putAll(requested);
+            AccountSelection.stamp(incus, instance, merged);
+            ProxyService.signalReload();
+
+            System.out.println(instance + " now uses " + AccountSelection.describe(merged) + ".");
+            System.out.println("Takes effect on the instance's next request;"
+                    + " nothing inside it needs restarting.");
+            return CommandResult.SUCCESS;
+        }
+    }
+}

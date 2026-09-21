@@ -43,6 +43,26 @@ public interface ToolSetup {
      */
     default boolean hasOwnCredentials() { return true; }
 
+    /**
+     * The class of container environment this account is baked with, or {@code ""} when the
+     * account makes no difference to what gets baked.
+     *
+     * <p>Credentials never enter a container -- the proxy substitutes them -- so for most
+     * tools every account is interchangeable and a running instance can be re-pointed at
+     * another freely. Claude is the exception: its auth mode decides which variables
+     * {@code envEntries} writes into {@code /etc/profile.d/isx-env.sh}, so swapping between
+     * modes would leave the container describing an auth mode it is no longer using.
+     *
+     * <p>Two accounts are swappable exactly when their env classes match. The build stamps the
+     * class onto the instance under {@link dev.incusspawn.incus.Metadata#envClassKey}, and
+     * selection refuses a mismatch rather than half-applying it.
+     *
+     * @param accountName the account being considered, as named in {@code <ns>.accounts}
+     */
+    default String envClass(dev.incusspawn.config.SpawnConfig config, String accountName) {
+        return "";
+    }
+
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
     default String feature() { return null; }
 
@@ -72,6 +92,21 @@ public interface ToolSetup {
      * env entries, validated for conflicts, and written to
      * {@code /etc/profile.d/isx-env.sh}.
      */
+    /**
+     * Environment for a build that selected particular credential accounts.
+     *
+     * <p>Only tools whose baked environment depends on which account is in use need this --
+     * Claude, whose auth mode decides the variable set. Everything else ignores the selection
+     * and the default delegates, so a tool that does not care is unaffected.
+     *
+     * @param accountSelection config namespace → account name; a namespace absent from it
+     *     uses the configured default
+     */
+    default java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams,
+                                                java.util.Map<String, String> accountSelection) {
+        return envEntries(resolvedParams);
+    }
+
     default java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         return java.util.List.of();
     }

@@ -187,6 +187,9 @@ public class SpawnConfig {
         /** Name given to the account synthesized from a pre-accounts config.yaml. */
         public static final String LEGACY_ACCOUNT_NAME = "default";
 
+        /** Config namespace, matching the {@code config-namespace} ClaudeSetup declares. */
+        public static final String NAMESPACE = "claude";
+
         // Pre-accounts layout. Still read, and still written until credentials next change,
         // so a config.yaml written by an older isx (or copied between machines) keeps working.
         // NON_DEFAULT rather than NON_EMPTY: a primitive false is not "empty", and a stray
@@ -260,9 +263,35 @@ public class SpawnConfig {
             return null;
         }
 
-        /** The account to use when nothing narrower applies -- today, for every instance. */
+        /** The account to use when nothing narrower applies: no instance or template selection. */
         public ClaudeAccount account() {
             return accountFor(a -> true);
+        }
+
+        /**
+         * The account an instance or template explicitly named, or {@link #account()} when
+         * it named none.
+         *
+         * <p><strong>Fails closed.</strong> A name that is not configured raises rather than
+         * falling back to the default: an instance pinned to one client's subscription must
+         * never quietly start spending another's (#351). The two failure messages are kept
+         * apart because an incomplete entry is invisible in {@code isx init} (#742), so
+         * "configured but unusable" would otherwise read as "never existed".
+         */
+        public ClaudeAccount accountNamed(String name) {
+            if (name == null || name.isBlank()) return account();
+            var usable = effectiveAccounts();
+            var found = usable.get(name);
+            if (found != null) return found;
+            if (accounts.containsKey(name)) {
+                throw new AccountResolver.UnknownAccountException("claude", name,
+                        "Claude account '" + name + "' is configured but incomplete"
+                                + " -- it is missing the fields its type requires."
+                                + " Repair it in ~/.config/incus-spawn/config.yaml.");
+            }
+            throw new AccountResolver.UnknownAccountException("claude", name,
+                    "Claude account '" + name + "' is not configured. Configured: "
+                            + (usable.isEmpty() ? "(none)" : String.join(", ", usable.keySet())));
         }
 
         /** Name of the account {@link #account()} resolves to, or "" when none is configured. */
@@ -380,8 +409,31 @@ public class SpawnConfig {
         }
     }
 
+    /**
+     * Base for the credential namespaces that have a typed class, preserving any key the class
+     * does not declare -- notably an {@code accounts:} block.
+     *
+     * <p>Without this, a namespace's named accounts would deserialize to nothing and then be
+     * <em>deleted</em> by the next save, destroying credentials exactly the way the
+     * {@code putAccount} bug found in review did. Namespaces with no Java class at all (a tool
+     * defined purely in YAML) are already safe: they land in {@link SpawnConfig#extras}.
+     *
+     * <p>Accounts are read generically off the serialized tree by {@link AccountResolver}, so
+     * nothing here needs to know their shape.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class GitHubConfig {
+    public abstract static class NamespaceConfig {
+        private final Map<String, Object> extras = new java.util.LinkedHashMap<>();
+
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void setExtra(String key, Object value) { extras.put(key, value); }
+
+        @com.fasterxml.jackson.annotation.JsonAnyGetter
+        public Map<String, Object> getExtras() { return extras; }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class GitHubConfig extends NamespaceConfig {
         private String token = "";
         private String email = "";
 
@@ -392,7 +444,7 @@ public class SpawnConfig {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class BobConfig {
+    public static class BobConfig extends NamespaceConfig {
         private String apiKey = "";
         private boolean licenseConsent;
 
@@ -404,7 +456,7 @@ public class SpawnConfig {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class OpenaiConfig {
+    public static class OpenaiConfig extends NamespaceConfig {
         private String apiKey = "";
 
         public String getApiKey() { return apiKey; }
