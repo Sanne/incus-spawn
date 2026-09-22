@@ -1426,23 +1426,28 @@ public class BuildCommand extends BaseCommand {
             explicit.add(toolRef.getName());
         }
         var resolved = new LinkedHashMap<String, ResolvedTool>();
+        var explicitlyResolved = new HashSet<String>();
 
         for (var toolRef : imageDef.getTools()) {
             resolveWithDeps(toolRef.getName(), toolRef.getParams(), resolved,
-                new LinkedHashSet<>(), explicit, toolDefLoader, cdiTools, quiet);
+                new LinkedHashSet<>(), explicit, explicitlyResolved, true,
+                toolDefLoader, cdiTools, quiet);
         }
         return new ArrayList<>(resolved.values());
     }
 
     private void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
-                                  LinkedHashSet<String> visiting, Set<String> explicit) {
-        resolveWithDeps(name, params, resolved, visiting, explicit, toolDefLoader, toolSetups, false);
+                                  LinkedHashSet<String> visiting, Set<String> explicit,
+                                  Set<String> explicitlyResolved, boolean isExplicit) {
+        resolveWithDeps(name, params, resolved, visiting, explicit, explicitlyResolved, isExplicit,
+            toolDefLoader, toolSetups, false);
     }
 
     private static void resolveWithDeps(String name, Map<String, String> params,
                                   LinkedHashMap<String, ResolvedTool> resolved,
                                   LinkedHashSet<String> visiting, Set<String> explicit,
+                                  Set<String> explicitlyResolved, boolean isExplicit,
                                   ToolDefLoader toolDefLoader, Iterable<ToolSetup> cdiTools, boolean quiet) {
         if (!visiting.add(name)) {
             if (!quiet) {
@@ -1485,15 +1490,36 @@ public class BuildCommand extends BaseCommand {
             );
         }
 
-        // Check if tool already resolved - if parameters differ (after resolution), that's an error
+        // Check if tool already resolved - if parameters differ, explicit config wins over transitive deps
         if (resolved.containsKey(name)) {
             var existing = resolved.get(name);
             if (!existing.parameters().equals(resolvedParams)) {
-                throw new IllegalArgumentException(
-                    "Tool '" + name + "' specified multiple times with different parameters:\n" +
-                    "  First:  " + existing.parameters() + "\n" +
-                    "  Second: " + resolvedParams
-                );
+                if (!isExplicit && explicit.contains(name)) {
+                    // Transitive dep for a tool the user explicitly configured — skip
+                    if (!quiet && params != null && !params.isEmpty()) {
+                        System.err.println("Warning: tool '" + name +
+                            "' is explicitly configured, overriding parameters from a transitive dependency.");
+                    }
+                } else if (isExplicit && !explicitlyResolved.contains(name)) {
+                    // Explicit config replaces a prior transitive-dep resolution
+                    if (!quiet) {
+                        var defaultOnly = dev.incusspawn.tool.ParameterResolver.resolve(
+                            tool.parameters(), Map.of());
+                        if (defaultOnly.hasErrors() ||
+                                !defaultOnly.resolvedValues().equals(existing.parameters())) {
+                            System.err.println("Warning: tool '" + name +
+                                "' is explicitly configured, overriding parameters from a transitive dependency.");
+                        }
+                    }
+                    resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
+                    explicitlyResolved.add(name);
+                } else {
+                    throw new IllegalArgumentException(
+                        "Tool '" + name + "' specified multiple times with different parameters:\n" +
+                        "  First:  " + existing.parameters() + "\n" +
+                        "  Second: " + resolvedParams
+                    );
+                }
             }
             visiting.remove(name);
             return;
@@ -1505,18 +1531,21 @@ public class BuildCommand extends BaseCommand {
                 if (!quiet && !explicit.contains(depRef.getName())) {
                     BuildOutput.note("Auto-adding dependency: " + depRef.getName() + " (required by " + name + ")");
                 }
-                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, toolDefLoader, cdiTools, quiet);
+                resolveWithDeps(depRef.getName(), depRef.getParams(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
             }
         } else {
             for (var dep : tool.requires()) {
                 if (!quiet && !explicit.contains(dep)) {
                     BuildOutput.note("Auto-adding dependency: " + dep + " (required by " + name + ")");
                 }
-                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, toolDefLoader, cdiTools, quiet);
+                resolveWithDeps(dep, Map.of(), resolved, visiting, explicit, explicitlyResolved, false, toolDefLoader, cdiTools, quiet);
             }
         }
 
         resolved.put(name, new ResolvedTool(name, tool, resolvedParams));
+        if (isExplicit) {
+            explicitlyResolved.add(name);
+        }
         visiting.remove(name);
     }
 
