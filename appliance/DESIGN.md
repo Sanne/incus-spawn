@@ -60,7 +60,7 @@ Both were measured under QEMU against the shipped kernels. The reason this is wo
 - CPU mitigations (`CONFIG_CPU_MITIGATIONS=n`) -- trusted appliance VM; untrusted workloads are isolated in Incus containers. The symbol only takes on x86_64, but aarch64 ends up close to it regardless: KPTI and the BHB mitigation are not compiled in there either. What remains is per-CPU rather than per-build (see Config Validation)
 - All filesystems except btrfs, overlayfs, fuse, tmpfs, proc, sysfs, devtmpfs
 - All network protocols except TCP/UDP/IPv4/IPv6/UNIX/packet/netlink
-- Module support, initrd support, kexec, hibernation, suspend, RAID/MD/DM, ftrace/kprobes
+- Module support, initrd support, kexec, hibernation, suspend, RAID/MD/DM
 
 ### Config Validation
 
