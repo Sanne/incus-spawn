@@ -1,0 +1,55 @@
+name: Gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  # gitleaks-action calls GET .../pulls/{n}/commits and GET .../pulls/{n}/comments on
+  # pull_request events with no error handling around either -- without this scope both
+  # 403 and crash the step outright. write additionally lets it post its inline PR comment
+  # when a leak is found (that call is try/caught, so read alone would degrade gracefully,
+  # but write gets the better UX the tool is designed around).
+  pull-requests: write
+
+concurrency:
+  group: gitleaks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # gitleaks' [extend] table can't set both useDefault and path at once, so the
+  # leaktk/patterns ruleset (vendored at .gitleaks/leaktk-gitleaks-8.27.0.toml) lives in its
+  # own config and runs as a separate pass rather than being merged into .gitleaks.toml. This
+  # has to be a second job, not a second step in the same job: gitleaks-action installs the
+  # gitleaks binary to a fixed /tmp path, and a second invocation in the same job fails with
+  # "Destination file path /tmp/gitleaks.tmp already exists".
+  scan-stock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks (stock ruleset)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  scan-leaktk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks (leaktk/patterns ruleset)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks-leaktk.toml
+          GITLEAKS_VERSION: '8.27.0'

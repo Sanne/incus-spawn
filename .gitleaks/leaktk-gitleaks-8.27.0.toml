@@ -1,0 +1,3087 @@
+# Vendored, unmodified, from https://github.com/leaktk/patterns
+# Source path: target/patterns/gitleaks/8.27.0
+# Source commit: 9d3ec1a8e15e96e35b04d8069e9f7eced2e8c7ee
+#
+# To refresh: fetch the same path at the current main branch tip and replace this file
+# wholesale (bump the filename/GITLEAKS_VERSION in .github/workflows/gitleaks.yml too if
+# leaktk publishes a newer gitleaks-targeted version). Do not hand-edit -- this is generated
+# by leaktk's own build from its source patterns.
+
+[[allowlists]]
+description = "Global Allowlist"
+regexTarget = "line"
+regexes = [
+'''(?i)\bnot[\t\x20\-\_]*secret\b'''
+]
+paths = [
+'''(?i)\.(?:[sk]?o|a|bin|bmp|class|css|dat|deb|dll|docx?|ear|exe|gif|img|iso|jar|jpe?g|lib|mp4|pcap|pdf|png|py[co]|pyc|qcow2|raw|rpm|socket|svg|war|xlsx?)$''',
+'''quickstart''',
+'''vendor|(?:^|\/)(?:gems|node_modules|GoDeps)\/''',
+'''(?:^|\/)go\.(?:mod|sum)$''',
+'''(?:^|\/).?(?:better|git)leaks''',
+'''(?:^|\/)lib\/python[^/]+\/site-packages''',
+'''(?:^|\/)lib\/rest\/static\/.+\/(?:.*?github.+\.json|ghes.+\.json)''',
+'''(?:^|\/)\.?secrets.baseline$''',
+'''(?:^|\/)specs\/github\.(?:ya?ml|json)$''',
+'''(?:^|\/).yarn\/releases\/''',
+'''(?:^|\/)\.git$''',
+]
+[[rules]]
+id = 'nPY_Rcj4gzY'
+description = 'ArgoCD JWT'
+regex = '''[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+(?:ImlzcyI6ImFyZ29jZC|Jpc3MiOiJhcmdvY2Qi|iaXNzIjoiYXJnb2NkI)[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'imlzcyi6imfyz29jzc',
+'jpc3mioijhcmdvy2qi',
+'iaxnzijoiyxjnb2nki',
+]
+[[rules]]
+id = 'LAJoYTdoQH4'
+description = 'AWS IAM Unique Identifier'
+regex = '''(?:^|[^!$-&\(-9<>-~])((?:A3T[A-Z0-9]|ACCA|ABIA|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z2-7]{16})\b'''
+tags = ['type:secret', 'type:cid', 'alert:repo-owner']
+entropy = 3.2
+secretGroup = 1
+keywords = [
+'a3t',
+'abia',
+'acca',
+'agpa',
+'aida',
+'aipa',
+'akia',
+'anpa',
+'anva',
+'aroa',
+'asia',
+]
+[rules.allowlist]
+stopwords = [
+'example',
+'1234',
+'abcd',
+]
+regexTarget = 'line'
+regexes = [
+'''X-Amz-Signature|WC1BbXotU2lnbmF0dXJl|gtQW16LVNpZ25hdHVyZ|YLUFtei1TaWduYXR1cm''',
+'''(?i)(?:sample|example).{0,128}\b(?:A3T[A-Z0-9]|ACCA|ABIA|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)(?:[A-Z0-9]{16})\b''',
+]
+[[rules]]
+id = '9j_rmwDeioM'
+description = 'AWS Secret Access Key'
+regex = '''(?i)aws[\w\-]{0,32}[\'\"]?\s*?[:=\(]\s*?[\'\"]?([a-z0-9\/+]{40})(?:[^a-z0-9\/+]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 4
+secretGroup = 1
+keywords = [
+'aws',
+]
+[rules.allowlist]
+stopwords = [
+'abcdef',
+'cert',
+'conf',
+'cont',
+'curl',
+'example',
+'fake',
+'get',
+'name',
+'profile',
+'resource',
+'role',
+'sample',
+'serv',
+'spec',
+'test',
+'xxxxx',
+]
+regexTarget = 'line'
+regexes = [
+'''arn:aws:iam:''',
+'''(?i)aws[\w\-]{0,32}[\'\"]?\s*?[:=\(]\s*?[\'\"]?[a-z0-9\/+]*(?-i)(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF)''',
+]
+[[rules]]
+id = 'QqS4RvI6Zmg'
+description = 'Authorization Header'
+regex = '''(?:\A|[^\w\-])Authorization:[\t\x20]*(?:\w+[\t\x20]+)?([^\s\"\'<]{18,})'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.35
+secretGroup = 1
+keywords = [
+'authorization',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''(?:\A|[^\w\-])Authorization:[\t\x20]*(?:\w+[\t\x20]+)?\$\{?[A-Z][A-Z0-9_]{2,16}''',
+'''(?:\A|[^\w\-])Authorization:[\t\x20]*(?:\w+[\t\x20]+)?[^\s\"\'<]*(?:MTIzNDU2Nzg5M|EyMzQ1Njc4OT|xMjM0NTY3ODkw)[^\s\"\'<]*''',
+'''(?:example|description)''',
+]
+[[rules]]
+id = 'zl044yuux24'
+description = 'Azure Active Directory Client Secret'
+regex = '''(?:[^a-zA-Z0-9_~.-]|\A)([a-zA-Z0-9_~.-]{3}\dQ~[a-zA-Z0-9_~.-]{31,34})(?:[^a-zA-Z0-9_~.-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3
+secretGroup = 1
+[[rules]]
+id = 'd01DtP9iA8I'
+description = 'Base64 Encoded AWS Secret Access Key'
+regex = '''[a-zA-Z0-9\/\+]*(?:YXdzX2FjY2Vzc19rZXlfaW|F3c19hY2Nlc3Nfa2V5X2lk|hd3NfYWNjZXNzX2tleV9pZ)[a-zA-Z0-9\/\+]*(?:QUtJQ|FLSU|BS0lB|UVV0Sl|FVdEpR|RVXRKU|RkxTV|ZMU1|GTFNV|QlMwbE|JTMGxC|CUzBsQ)[a-zA-Z0-9\/\+]*(?:YXdzX3NlY3JldF9hY2Nlc3Nfa2V5|F3c19zZWNyZXRfYWNjZXNzX2tle|hd3Nfc2VjcmV0X2FjY2Vzc19rZX)[a-zA-Z0-9\/\+]+={0,2}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'yxdzx2fjy2vzc19rzxlfaw',
+'f3c19hy2nlc3nfa2v5x2lk',
+'hd3nfywnjzxnzx2tlev9pz',
+]
+[[rules]]
+id = 'gpfGmO3HH64'
+description = 'Container Registry Authentication'
+regex = '''\\*\"auths\\*\"\s*:\s*\{\s*(?:\\*\"(?:[a-z0-9\-]{1,63}\.)+(?:[a-z0-9\-]{1,63})\\*\"\s*:\s*\{\s*\\*\"auth\\*\"\s*:\s*\\*\"[\w\/+-]{32,}={0,2}\\*\"[\s\S]*?\},?\s*)+\}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'"auths',
+]
+[rules.allowlist]
+regexTarget = 'match'
+regexes = [
+'''\"auth\\*\"\s*:\s*\\*\"[^"]*(?:\.\.\.|\*\*\*)[^"]*\\?\"''',
+'''\"auth\\*\"\s*:\s*\\*\"[^"]*(?i)(?:replace|password|example)[^"]*\\*\"''',
+'''\"email\\*\"\s*:\s*\\*\"[^"]*(?i)example[^"]*\\*\"''',
+]
+[[rules]]
+id = '12NI0Yd57gc'
+description = 'Controlled Unclassified Information'
+regex = '''\b(?:CONTROLLED|CUI)\/(?:\/[A-Z-]{2,16})+(?:\/\/[A-Z]{0,16})?\b'''
+tags = ['type:secret', 'type:cui', 'alert:repo-owner', 'alert:analyst']
+keywords = [
+'cui',
+'controlled',
+]
+[rules.allowlist]
+stopwords = [
+'dissem',
+'categories',
+]
+regexTarget = 'secret'
+regexes = [
+'''[^S][^P]-''',
+]
+[[rules]]
+id = 'me-TlU0uKS8'
+description = 'Dynatrace Token'
+regex = '''\bdt0[a-zA-Z]{1}[0-9]{2}\.[A-Z0-9]{24}\.[A-Z0-9]{64}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'dt0',
+]
+[[rules]]
+id = 'bzBQF-LMlZU'
+description = 'Facebook Access Token'
+regex = '''\bEAACEdEose0cBA(?i)[a-z0-9]{128,256}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'eaacedeose0cba',
+]
+[[rules]]
+id = 'fdc8WJ7tfUA'
+description = 'Facebook Secret'
+regex = '''(?i)(?:facebook)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:{1,3}=|\|\|:|<=|=>|:|\?=)(?:'|\"|\s|=|\x60){0,5}([a-f0-9]{32})(?:[\'\"\s\x60;,]|$)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'facebook',
+]
+[[rules]]
+id = 'mC5kOxQ6kn4'
+description = 'Generic Secret'
+path = '''(?i)\.[\w\-]*(?:password|secret|token)$'''
+regex = '''\A(?:\s*(?:(?:#|\/\/)[\t\x20\S]*|\/\*[\s\S]*\*\/)\s)*([\S]{8,})\s*\z'''
+entropy = 3.35
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+[rules.allowlist]
+stopwords = [
+'change',
+'example',
+'insert',
+'passp',
+'passw',
+'placeholder',
+'test',
+]
+paths = [
+'''(?:^|\/)testdata\/''',
+]
+regexes = [
+'''^[a-z\-]+$''',
+'''^#!\s*\/''',
+]
+[[rules]]
+id = '_-9w6-yrc-4'
+description = 'Generic Secret'
+regex = '''(?i)[\w\-]*(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\']([^\"\s]+?)[\"\']'''
+entropy = 3.35
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'key',
+'password',
+'secret',
+'token',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+paths = [
+'''(?:^|\/)testdata\/''',
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+'''(?:^|\/)openapi\.json$''',
+'''(?i)openapi.*github[^\/]*\.json$''',
+]
+regexTarget = 'line'
+regexes = [
+'''#\s*?nosec(?:\s+|$)''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''\/\/\s*?nolint:gosec(?:\s+|$)''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?:_.+?_|<.+?>|@.+?@|\).+?\(|%.+?(?:%|\)s)|\$.+?\$|`.+?`|\[.+?\]|\[%.+?%\]|[A-Z]+\(\{\{[^\}]{0,32}\}\}\)|\\?\$\(.*)[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?-i)[A-Z_]{5,}?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\']\\?[\$%#]?\\?\{.+?\}[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?-i)(?:[A-Za-z.]+|[a-z_\.\-]{0,32}|[A-Z_\.\-]{0,32})[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'][^\"\']*?(?:\.\.\.|\*\*\*|xxxxx).*?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\']\+.+?\+[\"\'].+?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?:(?-i)[A-Z_]{5,})?.?[\$#]\{.{4,}?\}.*?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'][a-z\-\_\/\:]{4,}\$\{[a-z\_\.\$\{\}]{4,}?\}[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?-i)\'?\\?\$[A-Z][0-9A-Z_]{4,}[\w\-]*?[\"\']''',
+'''(?i)(?:public|mock|example|fake)[\w\-]*(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?:[^\"\s]+?)[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'][^\"\']*?(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF|Y2hhbmdl|NoYW5nZ|jaGFuZ2|MTIzND|EyMzQ1|xMjM0N|dG9rZW|Rva2Vu|0b2tlb|aGVsbG|hlbGxv|oZWxsb|d29ybG|dvcmxk|3b3JsZ|cGFzc3|Bhc3N3|wYXNzd|c2VjcmV0|NlY3Jld|zZWNyZX).*?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\']eyJhbGciO[\w\-]{0,64}[\"\']''',
+'''(?i)aws.{0,15}(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)''',
+'''(?i)<\w+\s[^>]{0,128}token\w*\s*=\s*\"@?[a-z.\/\-]+\"''',
+'''jq\s+[\w\-\s]*.*\.\w*(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?:&lt;|\\u201c|\\u003c|\$)?(?:#!\/|ask|auto|dict|ENC(?:RYPTED)?[\[\(]|RU5DW|VOQ|FTk|false|file:|fixme|grub|https?:\/\/|installation_prefix|libvirt|none|not|self|ssh|spec\.|str:|(?:my)?te?mp|this).*?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'][^\'\"]*?(\.(?:jpe?g|png|svg|txt|tmpl)|-auth(?:entication)?|-cert(?:ification)?s?|-encryption|-tls|_id|conf(?:ig(?:uration)?)?|cred(?:ential)?s?|data|devel(?:opment)|key|[_-]pwd|raw\(|ya?ml)(?:&gt;|\\u003e)?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?-i)[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?-i).+?[a-z]{2,}-[a-z]{2,}-[a-z]{2,}.+?[\"\']''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\'](?:\\u[a-z0-9]{4})+[\"\']''',
+'''xox[baprs]-[0-9a-zA-Z-]{10,48}''',
+'''\bgh[oupsr]_[0-9A-Za-z]{36}\b''',
+'''\bgithub_pat_\w{82}\b''',
+'''(?i)(?:sonar[_.-]?(?:login|token))\b''',
+'''\bglpat-[\w\-]{20}\b''',
+'''\bglptt-[0-9a-f]{40}\b''',
+'''\b(?:glrt-|GR1348941)[\w\-]{20}\b''',
+'''(?i)[\"\'][\t\x20\w]+(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key):[\t\x20]*?[\"\']''',
+'''[^A-Za-z0-9+\/]Ag[A-Za-z0-9+\/]{256,}''',
+'''(?i)(?:(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?|api[_-]?key)[\"\']?\s*?\]?\s*?[:=]\s*?[\"\']\$(?:1\$[^$:\n]{1,8}|md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}|2[abxy]\$[0-9]{2}|[56]\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}|g?y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}|7\$[.\/A-Za-z0-9]{11,97})\$[.\/A-Za-z0-9]{22}[\"\']''',
+]
+[[rules]]
+id = 'hG-qMjbXGro'
+description = 'Generic Secret'
+regex = '''(?i)(?:^|\n)[#\/\s]*[\w\-]*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=([^\s\"\',]{6,})'''
+entropy = 3.35
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'key',
+'password',
+'secret',
+'token',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+'''(?:^|\/)testdata\/''',
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+'''(?:^|\/)openapi\.json$''',
+'''(?i)openapi.*github[^\/]*\.json$''',
+]
+regexTarget = 'line'
+regexes = [
+'''#\s*?nosec(?:\s+|$)''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''\/\/\s*?nolint:gosec(?:\s+|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?:_.+?_|<.+?>|@.+?@|%.+?%|\$.+?\$|`.+?`|\[.+?\]|\[%.+?%\]|\\?\$\(.*)(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?-i)[A-Z_]{5,}?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=\\?[\$%#]?\\?\{.+?\}(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?:(?-i)[A-Z_]{5,})?.?[\$#]\{.{8,}?\}.*?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=[a-z\-\_\/\:]{4,}\$\{[a-z\_\.\$\{\}]{4,}?\}(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?-i)\\?\$[A-Z][0-9A-Z_]{8,}.*?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=([^\s\"\']{6,}),\s''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?-i)(?:[a-z\.\_\(\,\[]{0,32}|[A-Z\.\_\(\,\[]{0,32})(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?-i)(?:[A-Z0-9]{2,16}[_\.][A-Z0-9_\.]{2,32}|[a-z0-9]{2,16}[_\.][a-z0-9_\.])''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=.*?(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF).*?(?:\s|$)''',
+'''(?i)aws.{0,15}(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?:&lt;|\\u201c|\\u003c|\$)?(?:#!\/|ask|auto|dict|ENC(?:RYPTED)?[\[\(]|RU5DW|VOQ|FTk|false|file:|fixme|grub|https?:\/\/|installation_prefix|libvirt|none|not|self|ssh|spec\.|str:|(?:my)?te?mp|this).*?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=.*?(\.(jpe?g|png|svg|txt|tmpl)|-auth(?:entication)?|-cert(?:ification)?s?|-encryption|-tls|_id|conf(?:ig(?:uration)?)?|cred(?:ential)?s?|data|devel(?:opment)|key|[_-]pwd|raw\(|ya?ml)(?:&gt;|\\u003e|&#34;)?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?-i).+?[a-z]{2,}-[a-z]{2,}-[a-z]{2,}.+?(?:\s|$)''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=(?:\\u[a-z0-9]{4})+(?:\s|$)''',
+'''xox[baprs]-[0-9a-zA-Z-]{10,48}''',
+'''\bgh[oupsr]_[0-9A-Za-z]{36}\b''',
+'''\bgithub_pat_\w{82}\b''',
+'''\bglpat-[\w\-]{20}\b''',
+'''\bglptt-[0-9a-f]{40}\b''',
+'''\b(?:glrt-|GR1348941)[\w\-]{20}\b''',
+'''TESTING_FARM_API_TOKEN''',
+'''(?i)(?:mailgun|mg).{0,20}?\bkey-[0-9a-z]{32}\b''',
+'''(?i)(?:^|\n)[#\/\s]*\w*(?:(?:password|secret|token)_?(?:access_?)?(?:key)?|api_?key)=\$(?:1\$[^$:\n]{1,8}|md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}|2[abxy]\$[0-9]{2}|[56]\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}|g?y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}|7\$[.\/A-Za-z0-9]{11,97})\$[.\/A-Za-z0-9]{22}''',
+]
+[[rules]]
+id = 'eCOHX_SKGzA'
+description = 'Generic Secret'
+regex = '''(?i)<\s*[\w\-]*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?([^<\"\s]+)(?:\]\]>)?<\/(?:[\s\w\"\'=]+>)?'''
+entropy = 3.5
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'password',
+'secret',
+'token',
+]
+[rules.allowlist]
+paths = [
+'''(?:^|\/)testdata\/''',
+'/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)',
+]
+stopwords = [
+'1234',
+'client-secret',
+'clientsecret',
+'example',
+'java',
+'newseveryone',
+'passp',
+'passw',
+'redhat',
+'schema',
+'test',
+'token',
+]
+regexTarget = 'line'
+regexes = [
+'''(?:\s+|--)nosec(?:\s+|$)''',
+'''(?:\s+|--)noqa(?::[\s\w]+)?$''',
+'''\/\/\s*nolint:gosec(?:\s+|$)''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?\\?[\$%]?(?-i)[A-Z][0-9A-Z_]{4,}.*(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?\\?[\$%]?\\?(?:\{.+?\}|\$\w+?\$|\([\w\.]+\)|<\w+>|@.+?@|%\w+%|_\w+_|<%=.+?%>|\[%\w+%\]|\[.+?\]|`.+?`)(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?[a-z\-\_\/\:]{4,}\$\{[a-z\_\.\$\{\}]{4,}?\}(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?[^<\"\s]+(?:\.\.\.|\*\*\*|xxxxx).*(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?[^<\"\s]*?(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF|Y2hhbmdl|NoYW5nZ|jaGFuZ2|MTIzND|EyMzQ1|xMjM0N|dG9rZW|Rva2Vu|0b2tlb|aGVsbG|hlbGxv|oZWxsb|d29ybG|dvcmxk|3b3JsZ|cGFzc3|Bhc3N3|wYXNzd|c2VjcmV0|NlY3Jld|zZWNyZX).*(?:\]\]>)?<\/''',
+'''\bgh[oupsr]_[0-9A-Za-z]{36}\b''',
+'''\bgithub_pat_\w{82}\b''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?(?:&lt;|\\u201c|\\u003c|\$)?(?:#!\/|\/etc\/|data\/|\/path\/|(?:\/var)?\/run\/|abc(?:d|12)|ask|admin|ansible|auto|bool:|capi-openstack|change|client|confirm|contrase|demo|dict|django-insecure-|ENC(?:RYPTED)?[\[\(]|RU5DW|VOQ|FTk|enter_|fake|false|file:|fixme|grub|https?:\/\/|installation_prefix|invalid|libvirt|none|not|placeholder|provide|path|quickstart|replace|sample|(?:my)?secret|self|ssh|spec\.|str:|(?:my)?te?mp|test|this|update|value|your_).*(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?[^<\"\s]+(\.(?:jpe?g|png|svg|txt|tmpl)|-auth(?:entication)?|-cert(?:ification)?s?|-demo|-encryption|-tls|_id|_private|client|(?:change|fix)me|conf(?:ig(?:uration)?)?|cred(?:ential)?s?|data|default|devel(?:opment)|hash|here|json|key|[_-]pwd|placeholder|principal|raw\(|registry|required|secret(?:s|_v\d)?|string|test|uuid|value|xxxxx|ya?ml)(?:&gt;|\\u003e)?(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?(?-i)[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?(?:\\u[a-z0-9]{4})+(?:\]\]>)?<\/''',
+'''(?i)<\s*\w*(?:password|secret|token)[\s\w\"\'=]*>(?:<!\[CDATA\[)?\$(?:1\$[^$:\n]{1,8}|md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}|2[abxy]\$[0-9]{2}|[56]\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}|g?y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}|7\$[.\/A-Za-z0-9]{11,97})\$[.\/A-Za-z0-9]{22}(?:\]\]>)?<\/''',
+]
+[[rules]]
+id = 'rnWF160pWNg'
+description = 'Generic Secret'
+path='''\.ya?ml$'''
+regex = '''(?i)[\w\-]*(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?([^\"\'\s]+?)[\t\x20]*(?:\\n|\n|#|$)'''
+entropy = 3.35
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'password',
+'secret',
+'token',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+'cmVkaGF0Cg==', # b64('redhat\n')
+]
+paths = [
+'''(?:^|\/)testdata\/''',
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+]
+regexTarget = 'line'
+regexes = [
+'''#\s*?nosec(?:\s+|$)''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''\/\/\s*?nolint:gosec(?:\s+|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:_.+?_|<.+?>|@.+?@|%.+?%|\$.+?\$|`.+?`|\[.+?\]|\[%.+?%\]|\\?\$\(.*)[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[A-Z_]{5,}?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?\\?[\$%]?\\?\{.+?\}[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*?(?:\.\.\.|\*\*\*|xxxxx)[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:(?-i)[A-Z_]{5,})?.?\$\{.{4,}?\}.*?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?[a-z\-\_\/\:]{4,}\$\{[a-z\_\.\$\{\}]{4,}?\}[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)\\?\$[A-Z][0-9A-Z_]{4,}[\w\-]*?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[a-z\-]+[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)(?:[A-Z0-9]{2,32}_[A-Z0-9_]{2,32}|[a-z0-9]{2,32}_[a-z0-9_]{2,32})[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF|Y2hhbmdl|NoYW5nZ|jaGFuZ2|MTIzND|EyMzQ1|xMjM0N|dG9rZW|Rva2Vu|0b2tlb|aGVsbG|hlbGxv|oZWxsb|d29ybG|dvcmxk|3b3JsZ|cGFzc3|Bhc3N3|wYXNzd|c2VjcmV0|NlY3Jld|zZWNyZX).*?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:&lt;|\\u201c|\\u003c|\$)?(?:#!\/|ask|auto|dict|ENC(?:RYPTED)?[\[\(]|RU5DW|VOQ|FTk|false|file:|fixme|grub|https?:\/\/|installation_prefix|libvirt|none|not|self|ssh|spec\.|str:|(?:my)?te?mp|this).*?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*?(\.(jpe?g|png|svg|txt|tmpl)|-auth(?:entication)?|-cert(?:ification)?s?|-encryption|-tls|_id|conf(?:ig(?:uration)?)?|cred(?:ential)?s?|data|devel(?:opment)|key|[_-]pwd|raw\(|ya?ml)(?:&gt;|\\u003e)?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i).+?[a-z]{2,}-[a-z]{2,}-[a-z]{2,}.+?[\t\x20]*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:\\u[a-z0-9]{4})+[\t\x20]*(?:\\n|\n|#|$)''',
+'''xox[baprs]-[0-9a-zA-Z-]{10,48}''',
+'''\bgh[oupsr]_[0-9A-Za-z]{36}\b''',
+'''\bgithub_pat_\w{82}\b''',
+'''\bglpat-[\w\-]{20}\b''',
+'''\bglptt-[0-9a-f]{40}\b''',
+'''\b(?:glrt-|GR1348941)[\w\-]{20}\b''',
+'''\bAg[A-Za-z0-9+\/]{256,}''',
+'''(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?\$(?:1\$[^$:\n]{1,8}|md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}|2[abxy]\$[0-9]{2}|[56]\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}|g?y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}|7\$[.\/A-Za-z0-9]{11,97})\$[.\/A-Za-z0-9]{22}''',
+]
+[[rules]]
+id = 'kX_PwM0MFvE'
+description = 'GitHub Fine-Grained Personal Access Token'
+regex = '''\bgithub_pat_\w{82}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'github_pat_',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+]
+[[rules]]
+id = '3J1l0v_MrA0'
+description = 'GitHub OAuth Access Token'
+regex = '''\bgho_[0-9A-Za-z]{36}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'gho_',
+]
+[rules.allowlist]
+stopwords = [
+'gho_16C7e42F292c6912E7710c838347Ae178B4a',
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'gODCNuGzuKQ'
+description = 'GitHub Personal Access Token'
+regex = '''\bghp_[0-9A-Za-z]{36}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'ghp_',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'ReSYq_S3Ou0'
+description = 'GitHub Refresh Token'
+regex = '''\bghr_[0-9A-Za-z]{36}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'ghr_',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'YmXj5Lk-jw4'
+description = 'GitHub Server to Server Token'
+regex = '''\bghs_[0-9A-Za-z]{36}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'ghs_',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'MMuUwURWAhM'
+description = 'GitHub User to Server Token'
+regex = '''\bghu_[0-9A-Za-z]{36}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'ghu_',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'KJX2Vbp6_jY'
+description = 'GitLab Personal Access Token'
+regex = '''\b(glpat-(?:[\w\-]{20}|[\w\-]{32,235}\.[0-9a-z]{2}\.[0-9a-z]{9}))(?:[^\w\-]|\z)'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'glpat-',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'IOimnsNGyvw'
+description = 'GitLab Pipeline Trigger Token'
+regex = '''\bglptt-[0-9a-f]{40}\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'glptt-',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = '5eH7BIYmpNo'
+description = 'GitLab Runner Registration Token'
+regex = '''\b((?:glrt-|GR1348941)[\w\-]{20})(?:[^\w\-]|\z)'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'glrt-',
+'gr1348941',
+]
+[rules.allowlist]
+stopwords = [
+'****',
+'....',
+'1234',
+'abcd',
+'xxxx',
+]
+[[rules]]
+id = 'HysINeDft8k'
+description = 'Google Cloud Platform API Key'
+regex = '''\b(AIza[\w\\\-]{35})(?:[^\w\\\-]|$)'''
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'aiza',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+'AIzaSyA65lEHUEizIsNtlbNo-l2K18dT680nsaM',
+'AIzaSyA2KlwBX3mkFo30om9LUFYQhpqLoa_BNhE',
+'AIzaSyBqJZh-7pA44blAaAkH6490hUFOwX0KCYM',
+'AIzaSyDr2UxVnv_U85AbhhY8XSHSIavUW0DC-sY',
+]
+[[rules]]
+id = 'F8ySDDFvEPA'
+description = 'Groq API Key'
+regex = '''\bgsk_[A-Za-z0-9]{52}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'wgdyb3fy',
+]
+[[rules]]
+id = 'rZUmm0ozLWQ'
+description = 'HashiCorp Vault AppRole SecretID'
+regex = '''vault[\s\S]{0,128}secret_id[\'\"]?\s*[:=]\s*[\'\"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'secret_id',
+]
+[[rules]]
+id = '6Tfk9iWtINY'
+description = 'Heroku API Token'
+regex = '''(?i)heroku(?:.{0,20})?\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'heroku',
+]
+[[rules]]
+id = '8nWBN4ZoGf8'
+description = 'Htpasswd File'
+path = '''htpasswd[^\/]*?$'''
+regex = '''[^:\s]{1,255}:(\S{1,255})'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 4
+[rules.allowlist]
+paths = [
+'''\.(?:adoc|c|go|json|java|js|html|md|py|rb|sh|ya?ml)(?:\.\w+)*$''',
+]
+regexTarget = 'line'
+regexes = [
+'''^\s*#''',
+]
+[[rules]]
+id = 'ROB1tToGkqM'
+description = 'Hugging Face API Token'
+entropy = 3
+regex = '''\bhf_[a-zA-Z]{34}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'hf_',
+]
+[[rules]]
+id = 'J4rqQ0Yj3mx'
+description = 'JFrog Cloud Domain'
+regex = '''(?i)\b[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]\.jfrog\.io\b'''
+tags = ['type:infra']
+keywords = [
+'jfrog.io',
+]
+[[rules]]
+id = 'vAAom0bPHy8'
+description = 'Kubernetes System Service Account JWT'
+regex = '''[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+(?:InN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudD|JzdWIiOiJzeXN0ZW06c2VydmljZWFjY291bnQ6|ic3ViIjoic3lzdGVtOnNlcnZpY2VhY2NvdW50O)[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'inn1yii6inn5c3rlbtpzzxj2awnlywnjb3vudd',
+'jzdwiioijzexn0zw06c2vydmljzwfjy291bnq6',
+'ic3viijoic3lzdgvtonnlcnzpy2vhy2nvdw50o',
+]
+[[rules]]
+id = 'Evwi072oSOU'
+description = 'MailChimp API Key'
+regex = '''\b[0-9a-f]{32}-us[0-9]{1,2}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'-us',
+]
+[[rules]]
+id = '0Fj-HDkaBWM'
+description = 'Mailgun API Key'
+regex = '''(?i)(?:mailgun|mg).{0,20}?\b(key-[0-9a-z]{32})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'mailgun',
+'key-',
+]
+[[rules]]
+id = 'fxBSpHpk7ZI'
+description = 'Notion API Token'
+regex = '''\bntn_[0-9]{11}[A-Za-z0-9]{35}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'ntn_',
+]
+[[rules]]
+id = 'tBcMT24UjGQ'
+description = 'NPM Access Token'
+regex = '''\bnpm_[A-Za-z0-9]{36}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.35
+keywords = [
+'npm_',
+]
+[[rules]]
+id = 'tSFtnbvWdlk'
+description = 'NPM Registry Auth'
+regex = '''_(?:auth(?:Token)?|password)\s*=\s*(.+)'''
+path = '''(?:^|\/)[^\/]+npmrc$'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.35
+keywords = [
+'_auth',
+'_password',
+]
+[rules.allowlist]
+regexTarget = 'secret'
+regexes = [
+'''\$\{.+?\}''',
+]
+[[rules]]
+id = 'w2Sz3reUlWk'
+description = 'NVIDIA API Key'
+regex = '''\b(nvapi-[\w\-]{64})(?:[^\w\-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 4
+[[rules]]
+id = "sOZiHxUBVFc"
+description = 'OpenShift User Token'
+regex = '''\b(sha256~[\w\-]{43})(?:[^\w\-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.5
+keywords = ["sha256~"]
+[rules.allowlist]
+regexTarget = 'line'
+regexes = [
+'''Deleted\s+\{oauth\.openshift\.io\/v1, Resource=oauth(?:accesstokens|clients)\s+sha256~[\w\-]{43}\}''',
+]
+[[rules]]
+id = 'bYudTkTa56I'
+description = 'Password Hash'
+regex = '''\$y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}\$[.\/A-Za-z0-9]{43}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$y$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'fqtWnpN0lfA'
+description = 'Password Hash'
+regex = '''\$gy\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}\$[.\/A-Za-z0-9]{43}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$gy$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'MxYvbqkT9IM'
+description = 'Password Hash'
+regex = '''\$7\$[.\/A-Za-z0-9]{11,97}\$[.\/A-Za-z0-9]{43}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$7$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'RX7HEzTc6dI'
+description = 'Password Hash'
+regex = '''\$2[abxy]\$[0-9]{2}\$[.\/A-Za-z0-9]{53}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$2a$',
+'$2b$',
+'$2x$',
+'$2y$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'amXYPF5An5s'
+description = 'Password Hash'
+regex = '''\$6\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}\$[.\/0-9A-Za-z]{86}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$6$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'u9MfgjhX7SI'
+description = 'Password Hash'
+regex = '''\$5\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}\$[.\/0-9A-Za-z]{43}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$5$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'iGgJnI-f5Xk'
+description = 'Password Hash'
+regex = '''\$md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}\${1,2}[.\/0-9A-Za-z]{22}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$md5',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'AeVJW2sPHGs'
+description = 'Password Hash'
+regex = '''\$1\$[^$:\n]{1,8}\$[.\/0-9A-Za-z]{22}'''
+tags = ['type:secret', 'type:crd']
+keywords = [
+'$1$',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+]
+regexTarget = 'line'
+regexes = [
+'''test|example|assert''',
+]
+[[rules]]
+id = 'LSd2f7avYkQ'
+description = 'OpenAI API Key'
+regex = '''\b(sk-[\w\-]{16,}T3BlbkFJ[\w\-]{16,})(?:[^\w\-]|$)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'t3blbkfj',
+]
+[[rules]]
+id = 'DLYxFORrl_U'
+description = 'OpenSSH Private key'
+regex = '''(?:-----BEGIN OPENSSH PRIVATE KEY-----(?:\s+|\\*n)+)?b3BlbnNzaC1rZXktdjEA[0-9A-Za-z\"\',\s\+\/\\]{256,}={0,2}(?:(?:\s+|\\*n)+-----END OPENSSH PRIVATE KEY-----)?'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'b3blbnnzac1rzxktdjea',
+]
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+'''(?:^|\/)testdata\/''',
+'''tests?\/.*.(?:txt|der|key|pem)$''',
+'''[^\/]+test[^\/]+(?:txt|der|key|pem)$''',
+'''(?:dummy|example).*(?:key|pem)''',
+'''\/s?bin\/ssh(?:-add|-agent|-autoproxy|-copy-id|-keygen|-keyscan|-sign-request|d)?$''',
+'''\/lib\w+\/lib(?:gnutls|ssh).so''',
+'''\/lib\w+\/(?:cockpit-|openssh\/ssh-)''',
+'''\/usr\/share\/(?:mime|misc)''',
+'''(?:^|\/)test\/jdk\/(?:sun\/security\/ssl\/|java\/security\/|javax\/crypto\/)''',
+]
+[[rules]]
+id = 'RVee3wT2Z4I'
+description = 'Base64 Encoded OpenSSH Private Key'
+regex = '''[A-Za-z0-9+\/_\-]*?(?:QkVHSU4gT1BFTlNTSCBQUklW|JFR0lOIE9QRU5TU0ggUFJJV|CRUdJTiBPUEVOU1NIIFBSSV)[A-Za-z0-9+\/_\-\s]{256,}(?:RU5EIE9QRU5TU0ggUFJJV|VORCBPUEVOU1NIIFBSSV|FTkQgT1BFTlNTSCBQUklW)[A-Za-z0-9+\/_\-\s]*={0,3}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'qkvhsu4gt1bftlntscbquklw',
+'jfr0loie9qru5tu0ggufjjv',
+'crudjtibpuevou1niifbssv',
+'ru5eie9qru5tu0ggufjjv',
+'vorcbpuevou1niifbssv',
+'ftkqgt1bftlntscbquklw',
+]
+[rules.allowlist]
+stopwords = [
+'zxhhbxbsz',
+'v4yw1wbg',
+'legftcgxl',
+'rvhbtvbmr',
+'vyqu1qte',
+'fwefnuexf',
+]
+[[rules]]
+id = 'NSjjvv0VeYg'
+description = 'PayPal Braintree Access Token'
+regex = '''access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'access_token$production$',
+]
+[[rules]]
+id = 'K3ZNQj2_kTE'
+description = 'Picatic API Key'
+regex = '''\bsk_live_[0-9a-z]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'sk_live_',
+]
+[[rules]]
+id = 'RA8jFaMQxIg'
+description = 'PKCS #12 File'
+path = '''(?:^|\/)[^\/]+\.p(?:12|fx)$'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+[[rules]]
+id = 'ePK9whPQPpY'
+description = 'Private Key'
+regex = '''(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:[a-z0-9\/+]{64}[\s\S]*?){2}-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'-----begin',
+]
+[rules.allowlist]
+stopwords = [
+'...',
+'***',
+'snip',
+'xxx',
+]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+'''(?:^|\/)testdata\/''',
+'''tests?\/.*.(?:txt|der|key|pem)$''',
+'''[^\/]+test[^\/]+(?:txt|der|key|pem)$''',
+'''(?:dummy|example).*(?:key|pem)''',
+'''\/s?bin\/ssh(?:-add|-agent|-autoproxy|-copy-id|-keygen|-keyscan|-sign-request|d)?$''',
+'''\/lib\w+\/lib(?:gnutls|ssh).so''',
+'''\/lib\w+\/(?:cockpit-|openssh\/ssh-)''',
+'''\/usr\/share\/(?:mime|misc)''',
+'''(?:^|\/)test\/jdk\/(?:sun\/security\/ssl\/|java\/security\/|javax\/crypto\/)''',
+]
+regexTarget = 'line'
+regexes = [
+'''(?i)-----BEGIN (?:DUMMY|EXAMPLE|FAKE|TEST) PRIVATE KEY(?: BLOCK)?-----''',
+'''(?i)\w*(?:dummy|example|fake|test)\w*\s*[:=]+\s*(?:\[)?\s*(?:\"\"\"|\"|\'|`)?-----BEGIN''',
+'''if.*==\s*?[\"|\']-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\"|\']''',
+'''\([\"\']-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----(\\n)?[\"\']''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''MIIJQwIBADANBgkqhkiG9w0BAQEFAASCCS0wggkpAgEAAoICAQCq9HeRqe2cYffi''',
+]
+[[rules]]
+id = 'ZeqrEVYyN7A'
+description = 'PyPI Upload Token'
+regex = '''pypi-AgEIcHlwaS5vcmc[A-Za-z0-9-_]{50,1000}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'pypi-ageichlwas5vcmc',
+]
+[[rules]]
+id = 'fJqKYcYx3bk'
+description = 'SendGrid API Key'
+regex = '''\b(SG\.[\w\-]{16,32}\.[\w\-]{16,64})(?:[^\w\-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'sg.',
+]
+[[rules]]
+id = 'Rn1i7_84x3E'
+description = 'Shopify Access Token'
+regex = '''\bshpat_[a-fA-F0-9]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'shpat_',
+]
+[[rules]]
+id = '2yT2HilWNWU'
+description = 'Shopify Custom App Access Token'
+regex = '''\bshpca_[a-fA-F0-9]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'shpca_',
+]
+[[rules]]
+id = 'Q3_9607B5YA'
+description = 'Shopify Private App Access Token'
+regex = '''\bshppa_[a-fA-F0-9]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'shppa_',
+]
+[[rules]]
+id = 'xgtaj9NNvtQ'
+description = 'Shopify Shared Secret'
+regex = '''\bshpss_[a-fA-F0-9]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'shpss_',
+]
+[[rules]]
+id = 'PdsUpd2VsLw'
+description = 'Slack App Token'
+regex = '''(?i)\bxapp-\d-[a-z0-9]+-\d+-[a-z0-9]+\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xapp-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'AHqBipAQalU'
+description = 'Slack Bot Token'
+regex = '''\b(xoxb-[0-9]{10,13}\-[0-9]{10,13}[a-zA-Z0-9-]*)(?:[^a-zA-Z0-9-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxb-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'ADpHU5Pfr_w'
+description = 'Slack Config Access Token'
+regex = '''\bxoxe.xox[bp]-\d-[a-zA-Z0-9]{163,166}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxe.xoxb-',
+'xoxe.xoxp-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'VitPJ4tk46E'
+description = 'Slack Config Refresh Token'
+regex = '''\b(xoxe-\d-[a-zA-Z0-9]{146})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxe-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'qWJ75vwX7O8'
+description = 'Slack Legacy Bot Token'
+regex = '''\b(xoxb-[0-9]{8,14}\-[a-zA-Z0-9]{18,26})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxb-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'L7sVfqv1KDs'
+description = 'Slack Legacy Token'
+regex = '''\b(xox[os]-\d+-\d+-\d+-[a-fA-F\d]+)\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxo-',
+'xoxs-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'Yjg2P_IaYK8'
+description = 'Slack Legacy Workspace Token'
+regex = '''\b(xox[ar]-(?:\d-)?[0-9a-zA-Z]{8,48})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxa-',
+'xoxr-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = '6mKbEmEYQDY'
+description = 'Slack User Token'
+regex = '''\b(xox[pe](?:-[0-9]{10,13}){3}-[a-zA-Z0-9-]{28,34})(?:[^a-z0-9-]|\z)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 3.2
+keywords = [
+'xoxp-',
+'xoxe-',
+]
+[rules.allowlist]
+stopwords = [
+'1234',
+'some',
+'placeholder',
+'slack',
+]
+[[rules]]
+id = 'CPcj1txuB2g'
+description = 'Slack Webhook URL'
+regex = '''(?:https?:\/\/)?hooks.slack.com\/(?:services|workflows|triggers)\/[A-Za-z0-9+\/]{43,58}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 4.75
+keywords = [
+'hooks.slack.com',
+]
+[[rules]]
+id = 'pcwMvzsYJ5U'
+description = 'Snowflake OAuth Token'
+regex = '''[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+(?:c2Vzc2lvbjpyb2xlLWFue|Nlc3Npb246cm9sZS1hbn|zZXNzaW9uOnJvbGUtYW55|c2Vzc2lvbjpyb2xlO|Nlc3Npb246cm9sZT|zZXNzaW9uOnJvbGU6|ImF1ZCI6InNub3dmbGFrZS|JhdWQiOiJzbm93Zmxha2Ug|iYXVkIjoic25vd2ZsYWtlI)[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'c2vzc2lvbjpyb2xllwfue',
+'nlc3npb246cm9szs1hbn',
+'zzxnzaw9uonjvbgutyw55',
+'c2vzc2lvbjpyb2xlo',
+'nlc3npb246cm9szt',
+'zzxnzaw9uonjvbgu6',
+'imf1zci6innub3dmbgfrzs',
+'jhdwqioijzbm93zmxha2ug',
+'iyxvkijoic25vd2zsywtli',
+]
+[[rules]]
+id = 'FrTqjJHAoEY'
+description = 'StackRox JWT'
+regex = '''[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+(?:ImlzcyI6Imh0dHBzOi8vc3RhY2tyb3guaW8vand0I|Jpc3MiOiJodHRwczovL3N0YWNrcm94LmlvL2p3dC|iaXNzIjoiaHR0cHM6Ly9zdGFja3JveC5pby9qd3Qi)[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'imlzcyi6imh0dhbzoi8vc3rhy2tyb3guaw8vand0i',
+'jpc3mioijodhrwczovl3n0ywnrcm94lmlvl2p3dc',
+'iaxnzijoiahr0chm6ly9zdgfja3jvec5pby9qd3qi',
+]
+[[rules]]
+id = 'fZHzd4gAHrs'
+description = 'Square Access Token'
+regex = '''\bsq0atp-[\w\-]{22}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'sq0atp-',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = 'YX55Boo0gwk'
+description = 'Square OAuth Secret'
+regex = '''\bsq0csp-[\w\-]{43}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'sq0csp-',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = 'CSHGj8J1lUs'
+description = 'Stripe API Key'
+regex = '''(?i)\b[sr]k_live_[0-9a-zA-Z]{24}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'k_live_',
+]
+[[rules]]
+id = 'lSFsU9hapFQ'
+description = 'Testing Farm API Token'
+regex = '''\bTESTING_FARM_API_TOKEN=[\"\']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'testing_farm_api_token',
+]
+[[rules]]
+id = 'TiwMt5e05g4'
+description = 'Tines Webhook'
+regex = '''(?i)(?:https:\/\/)?[\w\-]+\.tines\.com\/webhook\/[a-z0-9]{32}\/[a-z0-9]{32}'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'.tines.com/webhook/',
+]
+[[rules]]
+id = 'xRAjGfP0Zao'
+description = 'Twilio Account SID'
+regex = '''\bAC[0-9a-fA-F]{32}\b'''
+entropy = 2
+tags = ['type:secret', 'type:cid', 'alert:repo-owner']
+keywords = [
+'ac',
+]
+[[rules]]
+id = 'hRAjGfP0Zao'
+description = 'Twilio API Key SID'
+regex = '''\bSK[0-9a-fA-F]{32}\b'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+keywords = [
+'sk',
+]
+[[rules]]
+id = 'NoSStdj9pfY'
+description = 'URL User and Password'
+regex = '''[\w\+]*?:\/\/[^:\/\s\"\']*?:([^@\/\s\"]{3,})@[\w\.\-]+(:\d+)?'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+entropy = 2.8
+secretGroup = 1
+keywords = [
+'://',
+]
+[rules.allowlist]
+paths = [
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+regexTarget = 'line'
+regexes = [
+''':\/\/[^:\/\s\"\']*?:(?:\[[^@\/\s\"]+\]|__[^@\/\s\"]+__|%[^@\/\s\"]+% |\[?_?<[^@\/\s\"]+>_?\]?)@[\w\.\-]+''',
+''':\/\/[^:\/\s\"\']*?:&lt;[^@\/\s\"]+&gt;@[\w\.\-]+''',
+'''(?i):\/\/[^:\/\s\"\']*?:\$[a-z][a-z\_\-]+\$?@[\w\.\-]+''',
+''':\/\/[^:\/\s\"\']*?:[^@\/\s\"]*(?:\.\.\.|\*\*\*|xxxxx)[^@\/\s\"]*@[\w\.\-]+''',
+''':\/\/[^:\/\s\"\']*?:\"?(?:\\?\$|#)?(?:\([^@\/\s\"]+\)|{[^@\/\s\"]+\})\"?@[\w\.\-]+''',
+''':\/\/mailto:([^@\/\s\"]{3,})@[\w\.\-]+(:\d+)?''',
+''':\/\/[^:\/\s\"\']*?:\"?\$[A-Z][0-9A-Z_]{4,}[\w\-]*?\"?@[\w\.\-]+''',
+''':\/\/[^:\/\s\"\']*?:(?:[a-z]+|[A-Z]+)@[\w\.\-]+''',
+''':\/\/[^:\/\s\"\']*?:\d{3,4},[\w\.]+@[\w\.\-]+''',
+''':\/\/(?:[^:\/\s\"\']+)?:(?:[^@\/\s\"]{3,})@(?:[a-z]+|127\.0.\0\.1|[\w\.\-]*?examples?(?:\.com|\.net)?)(?:[^\w\.\-]|$)''',
+''':\/\/[^:\/\s\"\']*?:[^@\/\s\"]{3,}@(?:ip|host):port''',
+'''re\.compile\(\s*?r?[\'\"]''',
+''':\/\/[^:\/\s\"\']*?:[^@\/\s\"]{3,}@(?:sha\d+|blake3)(:?\+b64u)?:[\w\-]{40,256}''',
+]
+[[rules]]
+id = 'FxXgdaIgf7Y'
+description = 'WP-Config'
+regex = '''define\s*?\(\s*?[\"\'](?:DB_HOST|DB_NAME|DB_USER|DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|LOGGED_IN_SALT|NONCE_SALT)[\"\']\s*?,\s*?[\"\'](.+?)[\"\']\s*?\)'''
+tags = ['type:secret', 'type:crd', 'alert:repo-owner']
+secretGroup = 1
+keywords = [
+'define',
+]
+[rules.allowlist]
+stopwords = [
+'auth',
+'example',
+'insert',
+'localhost',
+'passw',
+'passp',
+'place',
+'required',
+'secret',
+]
+regexes = [
+'''^(?:<.+?>|\{\{.+?\}\}|\$\{.+?\}|\$\w+)$''',
+]
+[[rules]]
+id = '-bDTAD8YMJg'
+description = 'Auth0 OAuth Client Secret'
+regex = '''(?i)auth0[\s\S]{0,128}client_?secret[\"\']?\s*\]?\s*[:=]\s*[\"\']?([a-zA-Z0-9_-]{64,})[\"\']?'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+entropy = 3
+keywords = [
+'client_secret',
+'clientsecret',
+]
+[[rules]]
+id = 'o3-Wm5oL1D4'
+description = 'Auth0 JWT'
+regex = '''[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+(?:LmF1dGgwLmNvbS8iL|5hdXRoMC5jb20vIi|uYXV0aDAuY29tLyIs)[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'lmf1dggwlmnvbs8il',
+'5hdxromc5jb20vii',
+'uyxv0adauy29tlyis',
+]
+[[rules]]
+id = 'qUN8svLm9sk'
+description = 'Dropbox Refresh Token'
+regex = '''(?:[^A-Za-z0-9]|\A)([A-Za-z0-9]{11}AAAAAAAAAA[A-Za-z0-9\-_=]{43})(?:[^A-Za-z0-9\-=_]|$)'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'dropbox',
+]
+[[rules]]
+id = 'tvqG--ROt7U'
+description = 'Dropbox Short-Lived Offline Access Token'
+regex = '''(?i)(?:[^a-z0-9\-=_]|\A)(sl\.u.[a-z0-9\-=_]{136})(?:[^a-z0-9\-=_]|$)'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'sl.u.',
+]
+[[rules]]
+id = 'vtSSaD-DcYo'
+description = 'Dropbox Short-Lived Access Token'
+regex = '''(?i)(?:[^a-z0-9\-=_]|\A)(sl\.[a-z0-9\-=_]{136})(?:[^a-z0-9\-=_]|$)'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'sl.',
+]
+[[rules]]
+id = 'JH9jBKr63QI'
+description = 'Label Studio API Key'
+regex = '''LABEL_STUDIO_API_KEY[\"\']?\s*[=:]\s*[\"\']?([a-z0-9]{40})\b'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'label_studio_api_key',
+]
+[[rules]]
+id = 'X2X0u9K8QKY'
+description = 'SonarQube Token'
+regex = '''(?i)(?:sonar[_.-]?(?:login|token))[\'\"]?[\x20\t]*[:=][\x20\t]*[\'\"]?(?-i)([a-z0-9]{40})\b'''
+keywords = ['sonar']
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+[[rules]]
+id = '3jLtqqDiiZQ'
+description = 'Sourcegraph Access Token'
+regex = '''\bsgp_(?:local_)?[a-z0-9]{40}\b'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+entropy = 3
+keywords = ['sgp_']
+[[rules]]
+id = 'Erxpc1eNAD0'
+description = 'Vulnerable GitHub Workflow (pull_request_target + PR Head Checkout)'
+regex = '''\bpull_request_target\b[\s\S]+\suses:\s+[\"\']?actions\/checkout@v\d+[\"\']?[\s\S]+github\.event\.pull_request\.head\.sha\b()'''
+secretGroup = 1
+keywords = ['github.event.pull_request.head.sha']
+tags = ['type:vln', 'group:leaktk-testing']
+[[rules]]
+id = 'OjplbNyeiXQ'
+description = 'OIDC Client Secret'
+regex = '''(?i)[\w\-]*client[\s\S]{0,32}secret\s*[\"\']?\s*[:=]\s*[\"\']?([0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12})\b'''
+secretGroup = 1
+entropy = 3
+keywords = ['client']
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+[rules.allowlist]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+'''\/resources\/org\/keycloak\/tests\/''',
+]
+[[rules]]
+id = 'B09tH8vORCw'
+description = 'Generic Secret'
+path = '''(?i)(?:^|\/)(?:password|secret|token)$'''
+regex = '''\A(?:\s*(?:(?:#|\/\/)[\t\x20\S]*|\/\*[\s\S]*\*\/)\s)*([\S]{8,})\s*\z'''
+entropy = 3.35
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+[rules.allowlist]
+stopwords = [
+'change',
+'example',
+'insert',
+'passp',
+'passw',
+'placeholder',
+'test',
+]
+paths = [
+'''(?:^|\/)testdata\/''',
+]
+regexes = [
+'''^[a-z\-]+$''',
+'''^#!\s*\/''',
+]
+[[rules]]
+id = '6ZbcVhQ-dlQ'
+description = 'Generic Secret'
+regex = '''(?i)[\w\-]*(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?([^\"\'\s]+?)[\t\x20]*(?:\\n|\n|#|$)'''
+entropy = 3.35
+secretGroup = 1
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'password',
+'secret',
+'token',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+'cmVkaGF0Cg==', # b64('redhat\n')
+]
+paths = [
+'''(?:^|\/)testdata\/''',
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+'''\.ya?ml$''',
+]
+regexTarget = 'line'
+regexes = [
+'''#\s*?nosec(?:\s+|$)''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''\/\/\s*?nolint:gosec(?:\s+|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:_.+?_|<.+?>|@.+?@|%.+?%|\$.+?\$|`.+?`|\[.+?\]|\[%.+?%\]|\\?\$\(.*)\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[A-Z_]{5,}?\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?\\?[\$%]?\\?\{.+?\}\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*?(?:\.\.\.|\*\*\*|xxxxx)\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:(?-i)[A-Z_]{5,})?.?\$\{.{4,}?\}.*?\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?[a-z\-\_\/\:]{4,}\$\{[a-z\_\.\$\{\}]{4,}?\}\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)\\?\$[A-Z][0-9A-Z_]{4,}[\w\-]*?\s*(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[a-z\-]+\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)(?:[A-Z0-9]{2,32}_[A-Z0-9_]{2,32}|[a-z0-9]{2,32}_[a-z0-9_]{2,32})\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*(?:ZXhhbXBsZ|V4YW1wbG|leGFtcGxl|RVhBTVBMR|VYQU1QTE|FWEFNUExF|Y2hhbmdl|NoYW5nZ|jaGFuZ2|MTIzND|EyMzQ1|xMjM0N|dG9rZW|Rva2Vu|0b2tlb|aGVsbG|hlbGxv|oZWxsb|d29ybG|dvcmxk|3b3JsZ|cGFzc3|Bhc3N3|wYXNzd|c2VjcmV0|NlY3Jld|zZWNyZX).*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:&lt;|\\u201c|\\u003c|\$)?(?:#!\/|ask|auto|dict|ENC(?:RYPTED)?[\[\(]|RU5DW|VOQ|FTk|false|file:|fixme|grub|https?:\/\/|installation_prefix|libvirt|none|not|self|ssh|spec\.|str:|(?:my)?te?mp|this).*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:.*?(\.(jpe?g|png|svg|txt|tmpl)|-auth(?:entication)?|-cert(?:ification)?s?|-encryption|-tls|_id|conf(?:ig(?:uration)?)?|cred(?:ential)?s?|data|devel(?:opment)|key|[_-]pwd|raw\(|ya?ml)(?:&gt;|\\u003e)?\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i)[0-9a-z]{8}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{12}\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?-i).+?[a-z]{2,}-[a-z]{2,}-[a-z]{2,}.+?\s*?(?:\\n|\n|#|$)''',
+'''(?i)(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?(?:\\u[a-z0-9]{4})+\s*?(?:\\n|\n|#|$)''',
+'''xox[baprs]-[0-9a-zA-Z-]{10,48}''',
+'''\bgh[oupsr]_[0-9A-Za-z]{36}\b''',
+'''\bgithub_pat_\w{82}\b''',
+'''\bglpat-[\w\-]{20}\b''',
+'''\bglptt-[0-9a-f]{40}\b''',
+'''\b(?:glrt-|GR1348941)[\w\-]{20}\b''',
+'''\bAg[A-Za-z0-9+\/]{256,}''',
+'''(?:password|secret|token)[_-]?(?:access[_-]?)?(?:key)?:[\t\x20]+?\$(?:1\$[^$:\n]{1,8}|md5(?:,rounds=[1-9][0-9]+)?\$[.\/0-9A-Za-z]{8}|2[abxy]\$[0-9]{2}|[56]\$(?:rounds=[1-9][0-9]+\$)?[^$:\n]{1,16}|g?y\$[.\/A-Za-z0-9]+\$[.\/A-Za-z0-9]{0,86}|7\$[.\/A-Za-z0-9]{11,97})\$[.\/A-Za-z0-9]{22}''',
+]
+[[rules]]
+id = 'FatqB1Yj2mw'
+description = 'JFrog Reference Token'
+regex = '''\bcmVmd[0-9a-zA-Z]{59}\b'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'cmvmd',
+]
+[[rules]]
+id = 'mlFILXs1UvI'
+description = 'JFrog API Key'
+regex = '''\bAKCp[0-9a-zA-Z]{69}\b'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'akcp',
+]
+[[rules]]
+id = 'YzS2V8VFHGc'
+description = 'Azure Storage Account Access Key'
+regex = '''(?:\A|[:=>,\+\(\]\x20\t\'\"])([a-zA-Z0-9+\/]{86}==)'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'azure',
+]
+[[rules]]
+id = 'gil1vJdjLX8'
+description = 'Box Credential'
+regex = '''(?i)client[_-]?secret[:=>,\+\(\]\x20\t\'\"]+([a-zA-Z0-9]{32})\b'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'box',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = 'KLjNyfRdTds'
+description = 'IBM Cloudant Legacy Credential'
+regex = '''\bapikey-v2-[\w\-]{30,60}\b'''
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+entropy = 3
+keywords = [
+'cloudant',
+]
+[[rules]]
+id = 'LuM6ju8-bhw'
+description = 'IBM Cloudant Domain'
+regex = '''(?i)\b[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]\.(?:cloudantnosqldb\.appdomain\.cloud|cloudant\.com)'''
+tags = ['type:infra', 'group:leaktk-testing']
+keywords = [
+'cloudant',
+]
+[[rules]]
+id = '66er8vrJfek'
+description = 'IBM Cloud IAM Key'
+regex = '''(?i)(?:ibm|bluemix)[a-z0-9_ .\-]{0,40}[:=>,\+\(\]\x20\t\'\"]+([a-zA-Z0-9_\-]{44,64})(?:[^\w\-\+\/]|\z)'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'ibm',
+'bluemix',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = 'jAvVLUuPci4'
+description = 'IBM COS HMAC Credential'
+regex = '''(?i)[\w\-]{0,32}(?:secret[-_]?(?:access)?[-_]?key)[:=>,\+\(\]\x20\t\'\"]+([a-f0-9]{48})\b'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'cos',
+'hmac',
+'ibm',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = 'hiXy21ky-0g'
+description = 'JSON Web Token'
+regex = '''\bey[\w\-]{16,}\.ey[\w\-]{16,}\.[\w\-]{8,}'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'ey',
+]
+[[rules]]
+id = '_RRN9Zvxarw'
+description = 'PuTTY Private Key'
+regex = '''PuTTY-User-Key-File-2:\s*.*\s+(?:[0-9a-zA-Z\-]+:\s*.+\s+|[0-9a-zA-Z\+\/]{64}\s+|[0-9a-zA-Z\+\/]{1,63}={0,2}\s+)+'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'putty-user-key-file-2',
+]
+[[rules]]
+id = '_aphOtzsw1M'
+description = 'SoftLayer Credential'
+regex = '''(?i)(?:softlayer|sl[_-]?api)[\w\-]{0,32}[:=>,\+\(\]\x20\t\'\"]+([0-9a-f]{64})\b'''
+entropy = 3
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'softlayer',
+'sl',
+]
+[rules.allowlist]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+[[rules]]
+id = '4aEKDYoZvaw'
+description = 'SoftLayer Credential'
+regex = '''(?i)https?:\/\/api\.softlayer\.com\/soap\/v[^\/]+\/([a-z0-9]{64})'''
+entropy = 2
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+keywords = [
+'api.softlayer.com',
+]
+[[rules]]
+id = 'KWxkfMbO7cM'
+description = 'LeakTK Flag'
+regex = '''\bLTKF\{([a-z]{2,16})\}'''
+tags = ['type:flg', 'group:leaktk-testing']
+[rules.allowlist]
+stopwords = [
+'public',
+]
+[[rules]]
+id = 'SW7cCS4-5S0'
+description = 'Generic Secret'
+regex = '''[\w\-]{1,32}[\x20\t]{1,32}login(?:[\x20\t\S]+|\\\n)+--(?i)[\w\-]{0,32}(?:secret|token|(?:access|api)[_-]?key|password)[\x20\t=]{1,32}[\'\"]?([^\'\"\s]{8,})'''
+entropy = 3.35
+tags = ['type:secret', 'type:crd', 'group:leaktk-testing']
+[[rules.allowlists]]
+stopwords = [
+'***',
+'...',
+'/etc/',
+'/run/',
+'/var/',
+'1234',
+'_key',
+'abc123',
+'abcd',
+'admin',
+'ansible',
+'auth',
+'base',
+'bearer',
+'bool',
+'bucket',
+'candlepin',
+'categories',
+'cert',
+'change',
+'client',
+'conf',
+'cont',
+'cred',
+'curl',
+'data',
+'default',
+'demo',
+'dissem',
+'django',
+'dummy',
+'enter',
+'entry',
+'environ',
+'everyone',
+'example',
+'fake',
+'gitops',
+'hash',
+'header',
+'here',
+'insert',
+'install',
+'invalid',
+'java',
+'json',
+'keylime',
+'label',
+'local',
+'login',
+'manager',
+'metric',
+'name',
+'network',
+'notreal',
+'oauth-basic',
+'opens',
+'pass123',
+'passp',
+'passw',
+'path',
+'pbench',
+'place',
+'placeholder',
+'policy',
+'postgres',
+'principal',
+'prisma',
+'private',
+'profile',
+'provide',
+'quickstart',
+'rabbitmq',
+'redacted',
+'redhat',
+'registry',
+'replace',
+'required',
+'resource',
+'role',
+'sample',
+'schema',
+'secret',
+'segment',
+'serv',
+'service',
+'session',
+'slack',
+'snip',
+'some',
+'spec',
+'string',
+'telemetry',
+'test',
+'theblurstoftimes',
+'todo',
+'token',
+'update',
+'user',
+'uuid',
+'value',
+'volume',
+'xxxxx',
+'your',
+]
+paths = [
+'''\.(?:html|md|adoc|rst)$''',
+'''(?:^|\/)testdata\/''',
+'''/azure-(?:cli.+\/command_modules\/(?:[^a]|a[^r])|sdk-for-python\/|rest-api-specs\/|docs\/)''',
+'''(?:^|\/)openapi\.json$''',
+'''(?i)openapi.*github[^\/]*\.json$''',
+]
+regexTarget = 'line'
+regexes = [
+'''#\s*?nosec(?:\s+|$)''',
+'''#\s*?noqa(?::[\s\w]+)?$''',
+'''\/\/\s*?nolint:gosec(?:\s+|$)''',
+]
+[[rules.allowlists]]
+regexTarget = 'secret'
+regexes = [
+'''(?:_[\w\-]+_|<[\w\-]+>|@[\w\-]+@|%[\w\-]+%|\$[\w\-]+\$|`.+`)$''',
+'''\\*[\$%#]?\\*(?:\{[\w\-]+\}|\([\w\-]+\)|\[[\w\-]+\]|[A-Z_]+)$''',
+'''\.\.\.|\*\*\*|xxxxx''',
+]

@@ -56,6 +56,21 @@ The `isx-integration-tests` job exercises three environments: a container (from 
 
 When adding a new end-to-end test, add an `assert` call in the appropriate script under a new numbered section. The test runs as root inside the container; use `su -l agentuser -c "..."` to test user-level behavior. The `tpl-minimal` base image is Fedora with only git, curl, which, procps-ng, and findutils -- install extra packages with `dnf install` inside the test if needed.
 
+# Secret Scanning
+
+`.github/workflows/gitleaks.yml` runs on every push/PR to `main` and scans full git history (not just the diff) with `gitleaks/gitleaks-action@v2`, in two independent jobs:
+
+- **`scan-stock`**: reads the root `.gitleaks.toml`, which sets `[extend] useDefault = true` to pull in gitleaks' own built-in rules.
+- **`scan-leaktk`**: reads `.gitleaks-leaktk.toml` via `GITLEAKS_CONFIG`, which extends the vendored `.gitleaks/leaktk-gitleaks-8.27.0.toml` (unmodified copy of [leaktk/patterns](https://github.com/leaktk/patterns)' generated gitleaks config -- see the header comment in that file for the source commit and refresh instructions). `GITLEAKS_VERSION` is pinned to `8.27.0` to match the version leaktk generated the ruleset for.
+
+gitleaks' `[extend]` table is mutually exclusive between `path` and `useDefault` (one config file can only pick one base ruleset to extend), which is why these are two separate config files and two separate scan passes rather than one merged ruleset. They must be two **jobs**, not two steps in one job: `gitleaks-action` installs the gitleaks binary to a fixed `/tmp` path, so a second invocation in the same job fails with "Destination file path /tmp/gitleaks.tmp already exists" -- this shipped once and failed on the very first PR.
+
+Both configs carry the same `[allowlist]` (kept in sync manually, not shared via a common file): known-fake credentials in config/proxy unit tests that legitimately need key-shaped strings to exercise parsing and redaction logic (`ClaudeLegacyConfigCompatTest`, `ClaudeAccountsTest`, `ProxyCredentialsAccountsTest`, `SecretRedactorTest`, `SupportBundleTest`, `HelpContextTest`), plus `^\.gitleaks/` -- the vendored leaktk ruleset's own rule definitions and example regex fragments look like credentials to a scanner. Path-based allowlist entries apply across all historical commits gitleaks scans, since matching is on file path, not commit content -- so this also covers commits that predate the allowlist. A new test fixture with a fake credential needs its path added to **both** `.toml` files, or it (rightly) fails the PR check the first time.
+
+Both configs also carry two custom `[[rules]]` (`anthropic-api-key`, `anthropic-oauth-token`) for `sk-ant-api03-`/`sk-ant-oat01-` keys -- neither gitleaks' defaults nor leaktk/patterns have an Anthropic-specific rule. They're gated on a 40+ char suffix rather than matching the prefix alone: real keys run 90+ chars past the prefix, while every fake fixture in this repo tops out at 28, so the length gate catches a real leak without re-flagging the test placeholders above -- no allowlist entry needed for these two rules specifically.
+
+This is a separate GitHub Action from a Red Hat-internal tool called rh-gitleaks (a wrapper around gitleaks with patterns from an internal Pattern Server) that may also flag this repo out-of-band -- rh-gitleaks can't run from a public-repo GitHub Actions runner, so it isn't wired into CI here. leaktk/patterns is the closest public equivalent: its README states it backs an (unreleased) internal pattern server, so its ruleset is the nearest available proxy for what that tool would flag.
+
 # Benchmarking
 
 `bench/run.sh` measures native image performance: binary size, startup time, memory (idle and peak RSS), throughput, and latency. See `bench/README.md` for full documentation.
