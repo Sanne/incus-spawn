@@ -65,7 +65,7 @@ public class ClaudeSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Claude Code");
         a.setType("shell");
-        a.setCommand("if find ~/.claude/projects -maxdepth 2 -name '*.jsonl' 2>/dev/null | grep -q .; then claude --continue; else claude; fi");
+        a.setCommand("d=$(find ~/.claude/projects -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); if [ -n \"$d\" ]; then c=$(grep -m1 -o '\"cwd\":\"[^\"]*\"' \"$d\" | cut -d'\"' -f4); [ -n \"$c\" ] && [ -d \"$c\" ] && cd \"$c\"; claude --continue; else claude; fi");
         a.setAutoReturn(true);
         return List.of(a);
     }
