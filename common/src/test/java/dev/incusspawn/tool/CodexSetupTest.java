@@ -205,7 +205,9 @@ class CodexSetupTest {
         assertEquals(1, actions.size());
         assertEquals("Codex CLI", actions.getFirst().getLabel());
         assertEquals("shell", actions.getFirst().getType());
-        assertEquals("codex", actions.getFirst().getCommand());
+        var command = actions.getFirst().getCommand();
+        assertTrue(command.contains("codex resume --last"), "Should resume last session");
+        assertTrue(command.contains(".codex/sessions"), "Should detect sessions in ~/.codex/sessions");
         assertTrue(actions.getFirst().isAutoReturn());
     }
 }
