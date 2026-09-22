@@ -48,7 +48,9 @@ public final class Environment {
     // v6: the sudoers rule also permits `btrfs quota rescan <pool>`, the auto-repair for
     // inconsistent qgroup accounting (see BtrfsUsage); without it the TUI can detect the broken
     // state but not fix it.
-    public static final int INIT_VERSION = 6;
+    // v7: host sysctl now sets kernel.perf_event_paranoid=-1 so profilers inside containers can
+    // access kernel-inclusive perf events (the default of 2 blocks perf record with kernel samples).
+    public static final int INIT_VERSION = 7;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();

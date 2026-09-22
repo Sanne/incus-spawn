@@ -34,6 +34,7 @@ public class ToolDefLoader {
     private static final String RESOURCE_DIR = "tools/";
     public static final List<String> BUILTIN_TOOLS = List.of(
             "headroom.yaml",
+            "perf.yaml",
             "podman.yaml",
             "maven-3.yaml",
             "mvnd.yaml",
