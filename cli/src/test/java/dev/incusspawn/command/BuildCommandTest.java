@@ -12,6 +12,7 @@ import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.YamlToolSetup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -2017,6 +2018,235 @@ class BuildCommandTest {
         var names = resolved.stream().map(r -> r.name()).toList();
         assertTrue(names.contains("sshd"), "YAML tool 'sshd' should be present");
         assertTrue(names.contains("claude"), "CDI tool 'claude' should be present");
+    }
+
+    @Test
+    void resolveToolsExplicitParamsWinOverTransitiveDep() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("default-model");
+
+        var claude = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+        var headroom = new ToolSetup() {
+            @Override public String name() { return "headroom"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.List<String> requires() { return java.util.List.of("claude"); }
+        };
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(claude);
+        when(toolDefLoader.find("headroom")).thenReturn(headroom);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6")),
+            new ToolDef.ToolRef("headroom")
+        ));
+
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
+        assertEquals(2, resolved.size());
+        var claudeResolved = resolved.stream().filter(r -> r.name().equals("claude")).findFirst().orElseThrow();
+        assertEquals("claude-opus-4-6", claudeResolved.parameters().get("model"));
+    }
+
+    @Test
+    void resolveToolsExplicitParamsWinOverTransitiveDepReversedOrder() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("default-model");
+
+        var claude = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+        var headroom = new ToolSetup() {
+            @Override public String name() { return "headroom"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.List<String> requires() { return java.util.List.of("claude"); }
+        };
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(claude);
+        when(toolDefLoader.find("headroom")).thenReturn(headroom);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("headroom"),
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
+        ));
+
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
+        assertEquals(2, resolved.size());
+        var claudeResolved = resolved.stream().filter(r -> r.name().equals("claude")).findFirst().orElseThrow();
+        assertEquals("claude-opus-4-6", claudeResolved.parameters().get("model"),
+            "Explicit params should win even when transitive dep is resolved first");
+    }
+
+    @Test
+    void resolveToolsExplicitWinsOverYamlTransitiveDepWithParams() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("default-model");
+
+        var claude = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+
+        var headroomDef = new ToolDef();
+        headroomDef.setName("headroom");
+        headroomDef.setRequires(java.util.List.of(
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "dep-model"))
+        ));
+        var headroom = new YamlToolSetup(headroomDef);
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(claude);
+        when(toolDefLoader.find("headroom")).thenReturn(headroom);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("headroom"),
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
+        ));
+
+        var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, true);
+        assertEquals(2, resolved.size());
+        var claudeResolved = resolved.stream().filter(r -> r.name().equals("claude")).findFirst().orElseThrow();
+        assertEquals("claude-opus-4-6", claudeResolved.parameters().get("model"),
+            "Explicit params should win over YAML transitive dep params");
+    }
+
+    @Test
+    void resolveToolsWarnsWhenExplicitOverridesTransitiveDepWithParams() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("default-model");
+
+        var claude = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+
+        var headroomDef = new ToolDef();
+        headroomDef.setName("headroom");
+        headroomDef.setRequires(java.util.List.of(
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "dep-model"))
+        ));
+        var headroom = new YamlToolSetup(headroomDef);
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(claude);
+        when(toolDefLoader.find("headroom")).thenReturn(headroom);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("headroom"),
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
+        ));
+
+        var oldErr = System.err;
+        var errContent = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(errContent));
+        try {
+            var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, false);
+            assertEquals(2, resolved.size());
+            assertTrue(errContent.toString().contains("overriding"),
+                "Should warn when explicit overrides transitive dep with params");
+        } finally {
+            System.setErr(oldErr);
+        }
+    }
+
+    @Test
+    void resolveToolsNoWarningWhenTransitiveDepHasNoExplicitParams() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+        modelParam.setDefault("default-model");
+
+        var claude = new ToolSetup() {
+            @Override public String name() { return "claude"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+        var headroom = new ToolSetup() {
+            @Override public String name() { return "headroom"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.List<String> requires() { return java.util.List.of("claude"); }
+        };
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("claude")).thenReturn(claude);
+        when(toolDefLoader.find("headroom")).thenReturn(headroom);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("headroom"),
+            new ToolDef.ToolRef("claude", java.util.Map.of("model", "claude-opus-4-6"))
+        ));
+
+        var oldErr = System.err;
+        var errContent = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(errContent));
+        try {
+            var resolved = BuildCommand.resolveTools(imageDef, toolDefLoader, false);
+            assertEquals(2, resolved.size());
+            assertFalse(errContent.toString().contains("overriding"),
+                "Should not warn when transitive dep has no explicit params");
+        } finally {
+            System.setErr(oldErr);
+        }
+    }
+
+    @Test
+    void resolveToolsDuplicateExplicitWithDifferentParamsStillErrors() {
+        var modelParam = new ToolDef.ParameterDef();
+        modelParam.setType("string");
+
+        var tool = new ToolSetup() {
+            @Override public String name() { return "my-tool"; }
+            @Override public void install(Container container, java.util.Map<String, String> params) {}
+            @Override public java.util.Map<String, ToolDef.ParameterDef> parameters() {
+                return java.util.Map.of("model", modelParam);
+            }
+        };
+
+        var toolDefLoader = mock(ToolDefLoader.class);
+        when(toolDefLoader.find("my-tool")).thenReturn(tool);
+
+        var imageDef = new ImageDef();
+        imageDef.setName("tpl-test");
+        imageDef.setTools(List.of(
+            new ToolDef.ToolRef("my-tool", java.util.Map.of("model", "a")),
+            new ToolDef.ToolRef("my-tool", java.util.Map.of("model", "b"))
+        ));
+
+        var ex = assertThrows(IllegalArgumentException.class,
+            () -> BuildCommand.resolveTools(imageDef, toolDefLoader, true));
+        assertTrue(ex.getMessage().contains("my-tool"));
+        assertTrue(ex.getMessage().contains("different parameters"));
     }
 
     // --- syncInheritedGcloudStub ---
