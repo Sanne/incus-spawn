@@ -53,7 +53,7 @@ public class PiSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Pi Coding Agent");
         a.setType("shell");
-        a.setCommand("pi");
+        a.setCommand("d=$(find ~/.pi/agent/sessions -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); if [ -n \"$d\" ]; then c=$(grep -m1 -o '\"cwd\":\"[^\"]*\"' \"$d\" | cut -d'\"' -f4); [ -n \"$c\" ] && [ -d \"$c\" ] && cd \"$c\"; pi --continue || pi; else pi; fi");
         a.setAutoReturn(true);
         return List.of(a);
     }
