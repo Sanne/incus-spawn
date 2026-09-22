@@ -252,6 +252,7 @@ public final class HostResourceSetup {
                 container.exec("mkdir", "-p", parentDir);
                 container.filePush(downloaded.toString(), containerPath);
                 container.chown(containerPath, "agentuser:agentuser");
+                chownHomeParents(container, containerPath);
                 BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
             } catch (IOException e) {
                 System.err.println("Warning: failed to download " + hr.getSource() + ": " + e.getMessage());
@@ -270,6 +271,7 @@ public final class HostResourceSetup {
                 container.filePush(expandedSource, containerPath);
             }
             container.chown(containerPath, "agentuser:agentuser");
+            chownHomeParents(container, containerPath);
             BuildOutput.note("Copied " + hr.getSource() + " -> " + containerPath);
         }
     }
