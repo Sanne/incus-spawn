@@ -123,7 +123,7 @@ public class BobSetup implements ToolSetup {
         var a = new ToolDef.ActionEntry();
         a.setLabel("Bob Shell");
         a.setType("shell");
-        a.setCommand("d=$(sqlite3 -noheader ~/.bob/db/bob.db \"SELECT REPLACE(project_id,'file:','') FROM tasks WHERE parent_id IS NULL ORDER BY updated_at DESC LIMIT 1\" 2>/dev/null); if [ -n \"$d\" ] && [ -d \"$d\" ]; then cd \"$d\"; bob --resume --auto-approve || bob --auto-approve; else bob --auto-approve; fi");
+        a.setCommand("d=$(sqlite3 -noheader ~/.bob/db/bob.db \"SELECT REPLACE(project_id,'file:','') FROM tasks WHERE parent_id IS NULL ORDER BY updated_at DESC LIMIT 1\" 2>/dev/null); if [ -n \"$d\" ] && [ -d \"$d\" ]; then cd \"$d\"; bob chat --resume --auto-approve || bob chat --auto-approve; else bob chat --auto-approve; fi");
         a.setAutoReturn(true);
         return List.of(a);
     }
