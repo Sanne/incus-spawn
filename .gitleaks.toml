@@ -1,0 +1,55 @@
+title = "incus-spawn gitleaks config"
+
+# Extend gitleaks' built-in rule set rather than replacing it -- we only add
+# allowlisting for the synthetic credentials our unit tests use, we don't
+# want to lose real-secret detection anywhere else.
+[extend]
+useDefault = true
+
+# Neither gitleaks' defaults nor leaktk/patterns (see .gitleaks-leaktk.toml) have an
+# Anthropic-specific rule. Gated on length, not just the prefix: real keys run 90+ chars
+# past the prefix, while every fake fixture in this repo tops out at 28 -- so this catches
+# a real leak without re-flagging the placeholders the allowlist below already covers.
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API Key"
+regex = '''sk-ant-api03-[A-Za-z0-9_-]{40,}'''
+tags = ["type:secret", "type:crd", "alert:repo-owner"]
+keywords = ["sk-ant-api03-"]
+
+[[rules]]
+id = "anthropic-oauth-token"
+description = "Anthropic OAuth Token"
+regex = '''sk-ant-oat01-[A-Za-z0-9_-]{40,}'''
+tags = ["type:secret", "type:crd", "alert:repo-owner"]
+keywords = ["sk-ant-oat01-"]
+
+[allowlist]
+  description = "Synthetic credentials used by config/proxy unit tests, never real secrets"
+
+  # These tests exercise Claude/GitHub credential parsing and redaction, so they
+  # necessarily contain strings shaped like API keys and tokens. The values are
+  # hand-written placeholders ("real", "stale", "abc", "xyz", "legacy", ...),
+  # never anything that touched a live account.
+  paths = [
+    # The vendored leaktk/patterns ruleset is a pattern database: its own rule
+    # definitions and example strings look like credentials to a scanner.
+    '''^\.gitleaks/''',
+    '''common/src/test/java/dev/incusspawn/config/ClaudeLegacyConfigCompatTest\.java$''',
+    '''common/src/test/java/dev/incusspawn/config/ClaudeAccountsTest\.java$''',
+    '''common/src/test/java/dev/incusspawn/proxy/ProxyCredentialsAccountsTest\.java$''',
+    '''common/src/test/java/dev/incusspawn/config/SecretRedactorTest\.java$''',
+    '''cli/src/test/java/dev/incusspawn/command/SupportBundleTest\.java$''',
+    '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',
+  ]
+
+  # Belt-and-suspenders, and covers future tests without needing a path added here
+  # every time: fake key/token prefixes our fixtures use, followed by a short
+  # (<=35 char) human-readable suffix, capped well under the 40-char minimum the
+  # anthropic-api-key/anthropic-oauth-token rules above require -- so this can
+  # never accidentally allowlist a real, ~90+-char leaked key.
+  regexes = [
+    '''sk-ant-api03-[A-Za-z0-9]{1,35}["']''',
+    '''sk-ant-oat01-[A-Za-z0-9]{1,35}["']''',
+    '''ghp_legacy["']''',
+  ]
