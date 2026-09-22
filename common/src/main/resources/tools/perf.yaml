@@ -1,0 +1,9 @@
+name: perf
+description: Linux perf tools and tracing utilities for performance analysis
+
+packages:
+  - perf
+  - bpftrace
+  - bcc-tools
+
+verify: perf version

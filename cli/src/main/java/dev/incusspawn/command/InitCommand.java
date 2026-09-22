@@ -693,7 +693,7 @@ public class InitCommand extends BaseCommand {
 
     private static final String SYSCTL_CONF = "/etc/sysctl.d/99-incus-spawn.conf";
 
-    private void configureInotifyLimits() {
+    private void configureHostSysctls() {
         var sysctlPath = Path.of(SYSCTL_CONF);
         var content = """
                 # All containers share one host UID range, so they draw on the same
@@ -702,27 +702,30 @@ public class InitCommand extends BaseCommand {
                 # before it can log anything.
                 fs.inotify.max_user_instances=8192
                 fs.inotify.max_user_watches=524288
+
+                # Allow kernel-inclusive profiling from unprivileged containers. The
+                # default (2) restricts perf_event_open() to userspace-only, which blocks
+                # perf record/stat with kernel samples and narrows what async-profiler can
+                # see. -1 removes all restrictions -- the container is the security
+                # boundary, not this sysctl.
+                kernel.perf_event_paranoid=-1
                 """;
         try {
             if (Files.exists(sysctlPath)) {
                 var existing = Files.readString(sysctlPath);
-                var matcher = Pattern.compile("max_user_instances\\s*=\\s*(\\d+)").matcher(existing);
-                if (matcher.find()) {
-                    int current = Integer.parseInt(matcher.group(1));
-                    if (current >= 8192) {
-                        return;
-                    }
+                if (content.equals(existing)) {
+                    return;
                 }
             }
             var tempFile = Files.createTempFile("isx-sysctl-", ".conf");
             Files.writeString(tempFile, content);
             if (runHostQuiet("sudo", "cp", tempFile.toString(), SYSCTL_CONF) == 0) {
                 runHostQuiet("sudo", "sysctl", "-p", SYSCTL_CONF);
-                System.out.println("  Raised inotify limits for concurrent containers.");
+                System.out.println("  Configured host sysctls (inotify, perf_event_paranoid).");
             }
             Files.deleteIfExists(tempFile);
         } catch (IOException e) {
-            System.err.println("  Warning: could not configure inotify limits: " + e.getMessage());
+            System.err.println("  Warning: could not configure host sysctls: " + e.getMessage());
         }
     }
 
@@ -746,7 +749,7 @@ public class InitCommand extends BaseCommand {
             configureMitmProxyFirewalld(gatewayIp);
         }
 
-        configureInotifyLimits();
+        configureHostSysctls();
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {

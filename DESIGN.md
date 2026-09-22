@@ -45,7 +45,7 @@ Three Maven modules under a parent POM:
 ### Container Model
 
 - **System containers** by default (lightweight, full init system), with `--vm` flag for KVM VMs (stronger isolation, separate kernel)
-- Containers don't drop capabilities (`lxc.cap.drop =`) and relax kernel paranoia (`ptrace_scope`, `perf_event_paranoid`, `ping_group_range`) to match bare-metal behaviour
+- Containers don't drop capabilities (`lxc.cap.drop =`) and the host kernel relaxes `perf_event_paranoid` to `-1` so profilers work without restrictions; `ptrace_scope` is unrestricted (Yama is not compiled in) and `ping_group_range` is wide by default
 - No GUI by default; Wayland + GPU passthrough available at branch time
 - Three network modes at branch time: full internet (default), proxy-only, or airgapped
 - Container user: `agentuser` (UID 1000, passwordless sudo)
@@ -314,11 +314,10 @@ Overridable via TUI branch modal (for VMs, all three fields are shown).
 
 **Capabilities**: `lxc.cap.drop =` (don't drop any — the container is the security boundary).
 
-**Sysctl relaxation** (`/etc/sysctl.d/99-dev-container.conf`):
-- `net.ipv4.ping_group_range = 0 2147483647` — unprivileged ping
-- `kernel.dmesg_restrict = 0` — read kernel logs
-- `kernel.perf_event_paranoid = 1` — perf profiling
-- `kernel.yama.ptrace_scope = 0` — strace/debuggers
+**Host sysctl relaxation** (`/etc/sysctl.d/99-incus-spawn.conf`, applied by `isx init`):
+- `kernel.perf_event_paranoid = -1` — unrestricted perf profiling (kernel-inclusive sampling, hardware counters where available)
+
+These are host-wide because they are not namespace-aware. `kernel.dmesg_restrict = 0` and `kernel.yama.ptrace_scope = 0` hold by default (`dmesg_restrict`'s default is 0; Yama is not compiled into the appliance kernel, so ptrace is unrestricted). `ping_group_range` is wide in modern kernels and further ensured by not dropping `CAP_NET_RAW`.
 
 **DNS**: systemd-resolved disabled, `/etc/resolv.conf` points at Incus bridge gateway (`incusbr0`), immutable via `chattr +i`.
 
