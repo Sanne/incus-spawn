@@ -2759,15 +2759,16 @@ public class BuildCommand extends BaseCommand {
                                     + " && git -C " + clonePath + " fetch --quiet origin"
                                     + " && git -C " + clonePath + " remote set-head origin --auto");
                     if (fixup.success()) {
-                        String branchArg;
+                        String resolveExpr;
                         if (repo.getBranch() != null && !repo.getBranch().isBlank()) {
-                            branchArg = shellQuote(repo.getBranch());
+                            resolveExpr = "b=" + shellQuote(repo.getBranch());
                         } else {
-                            branchArg = "\"$(git -C " + clonePath
-                                    + " symbolic-ref --short refs/remotes/origin/HEAD)\"";
+                            resolveExpr = "b=$(git -C " + clonePath
+                                    + " for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)";
                         }
                         var checkout = container.shAsUser("agentuser",
-                                "git -C " + clonePath + " checkout " + branchArg);
+                                resolveExpr + " && git -C " + clonePath
+                                        + " checkout -B \"$b\" --track \"origin/$b\"");
                         usedReference = checkout.success();
                     }
                 }
