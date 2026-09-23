@@ -1296,8 +1296,8 @@ class BuildCommandTest {
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Checkout remote's default branch (host ref may have a different HEAD)
         verify(incus).execInContainer("test", "agentuser",
-                "git -C '/home/agentuser/repo' checkout"
-                        + " \"$(git -C '/home/agentuser/repo' symbolic-ref --short refs/remotes/origin/HEAD)\"");
+                "b=$(git -C '/home/agentuser/repo' for-each-ref --format='%(symref:lstrip=3)' refs/remotes/origin/HEAD)"
+                        + " && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\"");
         // Reference device cleaned up
         verify(incus).deviceRemove("test", "ref-repo");
     }
@@ -1367,7 +1367,7 @@ class BuildCommandTest {
                         + " && git -C '/home/agentuser/repo' remote set-head origin --auto");
         // Branch checkout (explicit branch overrides detected default)
         verify(incus).execInContainer("test", "agentuser",
-                "git -C '/home/agentuser/repo' checkout 'feature/x'");
+                "b='feature/x' && git -C '/home/agentuser/repo' checkout -B \"$b\" --track \"origin/$b\"");
     }
 
     @Test
