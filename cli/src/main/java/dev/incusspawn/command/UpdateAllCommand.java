@@ -4,6 +4,7 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
+import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
@@ -122,7 +123,7 @@ public class UpdateAllCommand extends BaseCommand {
         // Git fetch in all repos (for project images)
         BuildOutput.stepStart("Updating git repositories...");
         incus.execInContainer(name, "agentuser",
-                "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"  Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
+                "sh", "-c", GitRemoteUtils.automaticFetchScript());
         BuildOutput.stepDone();
 
         var primeResult = handlePrimeCommands(incus, name, imageDef);

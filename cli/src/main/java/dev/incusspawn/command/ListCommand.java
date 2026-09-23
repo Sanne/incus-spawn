@@ -4101,13 +4101,16 @@ public class ListCommand extends BaseCommand {
 
     private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
         try {
+            if (dev.incusspawn.git.HostRepoSource.isHostOnly(cloneUrl)) {
+                return dev.incusspawn.git.HostRepoSource.gitDirectory(cloneUrl);
+            }
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
             var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
             if (hostPath == null || !java.nio.file.Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath))
                 return null;
             return GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl) ? hostPath : null;
-        } catch (IllegalStateException e) {
+        } catch (IllegalStateException | IllegalArgumentException e) {
             return null;
         }
     }

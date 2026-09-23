@@ -164,7 +164,7 @@ public class ProjectCommand extends BaseCommand {
             // Git fetch in all repos
             BuildOutput.stepStart("Updating git repositories...");
             incus.execInContainer(name, "agentuser",
-                    "sh", "-c", "for d in ~/*/; do if [ -d \"$d/.git\" ]; then echo \"Fetching $d\" && cd \"$d\" && git fetch --all && cd ~; fi; done");
+                    "sh", "-c", dev.incusspawn.git.GitRemoteUtils.automaticFetchScript());
             BuildOutput.stepDone();
 
             // Re-run pre-build if config available

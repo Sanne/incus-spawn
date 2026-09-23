@@ -335,6 +335,11 @@ public class ImageDef {
     }
 
     public String contentFingerprint(Map<String, String> toolFingerprints) {
+        return contentFingerprint(toolFingerprints, Map.of());
+    }
+
+    /** Build stamps use the host state actually copied, even if the host advances later. */
+    public String contentFingerprint(Map<String, String> toolFingerprints, Map<String, String> hostRepoFingerprints) {
         var sb = new StringBuilder();
         sb.append("image=").append(image).append('\n');
         if (imageUrl != null) sb.append("image_url=").append(imageUrl).append('\n');
@@ -371,8 +376,15 @@ public class ImageDef {
         repos.stream()
                 .sorted(java.util.Comparator.<RepoEntry, String>comparing(r -> String.valueOf(r.getUrl()))
                         .thenComparing(r -> String.valueOf(r.getPath())))
-                .forEach(r -> sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
-                        .append(',').append(r.getBranch()).append(',').append(r.getPrime()).append('\n'));
+                .forEach(r -> {
+                    sb.append("repo=").append(r.getUrl()).append(',').append(r.getPath())
+                            .append(',').append(r.getBranch()).append(',').append(r.getPrime()).append('\n');
+                    if (dev.incusspawn.git.HostRepoSource.isHostOnly(r.getUrl())) {
+                        sb.append("host-repo=").append(hostRepoFingerprints.containsKey(r.getUrl())
+                                ? hostRepoFingerprints.get(r.getUrl())
+                                : dev.incusspawn.git.HostRepoSource.fingerprint(r.getUrl())).append('\n');
+                    }
+                });
         if (skills.getRepo() != null) sb.append("skills-repo=").append(skills.getRepo()).append('\n');
         skills.getList().stream().sorted().forEach(s -> sb.append("skill=").append(s).append('\n'));
         for (var hr : hostResources) {

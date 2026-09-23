@@ -1,6 +1,7 @@
 package dev.incusspawn.git;
 
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 
 import java.nio.file.Path;
@@ -16,8 +17,6 @@ public final class AutoRemoteService {
 
     public static void addRemotes(IncusClient incus, String instanceName, Consumer<String> output) {
         var config = SpawnConfig.load();
-        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
-
         var repos = GitRemoteUtils.collectReposForInstance(instanceName, incus);
         if (repos.isEmpty()) return;
 
@@ -27,6 +26,10 @@ public final class AutoRemoteService {
 
         for (var repo : repos) {
             try {
+                if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                    addRemoteInHostRepo(HostRepoSource.gitDirectory(repo.getUrl()), instanceName, repo.getPath(), output, cache);
+                    continue;
+                }
                 var normalizedUrl = GitRemoteUtils.normalizeGitUrl(repo.getUrl());
                 var matchingDirs = urlIndex.getOrDefault(normalizedUrl, java.util.List.of());
                 for (var hostPath : matchingDirs) {
@@ -64,9 +67,20 @@ public final class AutoRemoteService {
 
     public static void removeRemotes(String instanceName, Consumer<String> output) {
         var config = SpawnConfig.load();
-        if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
-
-        var candidates = GitRemoteUtils.findAllCandidateRepoDirs(config);
+        var candidates = new java.util.LinkedHashSet<>(GitRemoteUtils.findAllCandidateRepoDirs(config));
+        // Explicit sources are candidates even without host-paths/repo-paths. As with
+        // configured search paths, cleanup needs the source declaration to remain available.
+        for (var image : ImageDef.loadAll().values()) {
+            for (var repo : image.getRepos()) {
+                if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                    try {
+                        candidates.add(HostRepoSource.gitDirectory(repo.getUrl()));
+                    } catch (IllegalArgumentException ignored) {
+                        // A removed or unavailable source cannot have a remote removed.
+                    }
+                }
+            }
+        }
         var isxPrefix = "isx://" + instanceName + "/";
 
         for (var dir : candidates) {

@@ -297,12 +297,28 @@ repos:
 ```
 
 Repo entry fields:
-- `url` (required) -- git clone URL (HTTPS, for proxy compatibility)
-- `path` (required) -- target directory (`~` expands to agentuser's home)
+- `url` (required) -- HTTPS git clone URL (for proxy compatibility), or a host-only `file:///absolute/path/to/repo/.git` source
+- `path` (optional) -- target directory (`~` expands to agentuser's home); defaults to `~/<repository-name>`
 - `branch` (optional) -- branch or tag to check out; defaults to the repo's default branch
 - `prime` (optional) -- shell command to run inside the repo directory after cloning, typically to pre-fetch dependencies (e.g. `mvn dependency:go-offline`, `gradle dependencies`)
 
 Declared repos are automatically pre-trusted in `.claude.json` so Claude Code doesn't prompt for trust on first use.
+
+To build from committed work on your host, including commits you have not pushed:
+
+```yaml
+repos:
+  - url: file:///home/me/projects/my-project/.git
+    path: ~/my-project
+```
+
+File URLs name absolute paths on the host running `isx`, independent of `host-paths` and `repo-paths`. URL-encode spaces and other reserved characters. During **build**, isx mounts the Git directory read-only, copies its objects and refs without hardlinks, and creates a clean working tree at the host's HEAD. The current branch is preserved; a detached HEAD stays detached, and an empty repository keeps its unborn branch. Staged changes, unstaged edits, untracked files, host hooks, and unrelated host Git settings are not copied.
+
+The host's repository remote configuration (including push URLs and refspecs) and branch tracking settings are recreated. Remote URLs are retained exactly, including SSH URLs; using them later requires the corresponding container-side connectivity and authentication. Preparation performs no remote fetch, does not refresh the host repository, and never falls back to a remote clone. Missing or unsupported sources fail the build. `branch:` is not allowed with a file URL because the host's HEAD selects the checkout.
+
+Initially, sources must be standalone `.git` directories or bare repositories with complete local objects. Linked worktrees, shallow/partial repositories, and repositories borrowing objects through alternates are unsupported. Submodules are not initialized and Git LFS content is not downloaded. A `prime` command still runs normally and can perform any network operations you explicitly put in it.
+
+`isx branch` inherits the built repository; it does not reread the host. Changes to host HEAD, refs, or remote/branch configuration mark the template outdated. Rebuild to capture them. Automatic template/project updates skip fetching these repositories; ordinary Git commands remain available inside the container. Host remote integration also uses the explicit source path, without requiring configured search paths (keep the source declaration available for remote cleanup on destroy).
 
 ### Shell Defaults
 

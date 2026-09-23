@@ -15,6 +15,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.git.HostRepoRefresh;
+import dev.incusspawn.git.HostRepoSource;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.FirewallDetector;
@@ -140,6 +141,7 @@ public class BuildCommand extends BaseCommand {
     private volatile String[] activeBuild;
 
     private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
+    private final Map<String, String> builtHostRepoFingerprints = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Root defs whose latest base image was already resolved this invocation (avoids re-fetching). */
     private final Set<String> resolvedRoots = new HashSet<>();
@@ -2049,7 +2051,7 @@ public class BuildCommand extends BaseCommand {
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
-                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
+                imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs), builtHostRepoFingerprints));
     }
 
     private static Map<String, String> computeToolFingerprints(
@@ -2555,7 +2557,10 @@ public class BuildCommand extends BaseCommand {
         return skillsRepo + "@" + skill;
     }
 
-    record RepoReference(String deviceName, String containerPath, String skipReason) {
+    record RepoReference(String deviceName, String containerPath, String skipReason, HostRepoSource.Snapshot hostSource) {
+        RepoReference(String deviceName, String containerPath, String skipReason) {
+            this(deviceName, containerPath, skipReason, null);
+        }
         static RepoReference skipped(String reason) { return new RepoReference(null, null, reason); }
         boolean mounted() { return deviceName != null; }
     }
@@ -2623,9 +2628,6 @@ public class BuildCommand extends BaseCommand {
 
         // Phase 1 (serial): mount all host-reference disk devices up front.
         var refs = new RepoReference[repos.size()];
-        for (int i = 0; i < repos.size(); i++) {
-            refs[i] = tryMountReference(container, repos.get(i).getUrl(), config, isVm);
-        }
 
         // Phase 2 (parallel, bounded): clone each repo from its reference (local)
         // or the remote (fallback), restore the fetch refspec, then prime it —
@@ -2642,6 +2644,13 @@ public class BuildCommand extends BaseCommand {
                 Math.min(CpuInfo.highPerfCores(), maxFromTunnel));
         var failureSeen = new AtomicBoolean(false);
         try {
+            for (int i = 0; i < repos.size(); i++) {
+                var repo = repos.get(i);
+                if (HostRepoSource.isHostOnly(repo.getUrl()) && repo.getBranch() != null) {
+                    throw new IllegalArgumentException("Host-only repositories use the host HEAD; remove 'branch' from " + repo.getUrl());
+                }
+                refs[i] = tryMountReference(container, repo.getUrl(), config, isVm);
+            }
             TerminalProgress.run(repos.size(), concurrency,
                     idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen),
                     (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
@@ -2678,7 +2687,8 @@ public class BuildCommand extends BaseCommand {
             return; // failure already recorded in states[idx]
         }
 
-        String note = clone.usedReference() ? "via host reference" : null;
+        String note = HostRepoSource.isHostOnly(repo.getUrl()) ? "from host HEAD"
+                : clone.usedReference() ? "via host reference" : null;
         boolean highlight = false;
         if (!clone.usedReference() && ref != null && ref.skipReason() != null) {
             note = ref.skipReason();
@@ -2712,6 +2722,23 @@ public class BuildCommand extends BaseCommand {
     private CloneResult cloneOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
                                  AtomicReferenceArray<StepProgress> states, int idx) {
         try {
+            if (HostRepoSource.isHostOnly(repo.getUrl())) {
+                if (ref == null || !ref.mounted() || ref.hostSource() == null) {
+                    throw new IllegalStateException("Required host repository is not mounted: " + repo.getUrl());
+                }
+                var snapshot = ref.hostSource();
+                var clone = container.shAsUser("agentuser",
+                        snapshot.cloneScript(ref.containerPath(), expandHome(repo.getPath())));
+                if (!clone.success()) {
+                    states.set(idx, StepProgress.failed(gitError(clone), combinedOutput(clone)));
+                    return CloneResult.FAILED;
+                }
+                if (!snapshot.fingerprint().equals(HostRepoSource.capture(repo.getUrl()).fingerprint())) {
+                    throw new IllegalStateException("Host repository changed while cloning; retry the build: " + repo.getUrl());
+                }
+                builtHostRepoFingerprints.put(repo.getUrl(), snapshot.fingerprint());
+                return new CloneResult(true, true);
+            }
             boolean usedReference = false;
 
             if (ref != null && ref.mounted()) {
@@ -2930,20 +2957,22 @@ public class BuildCommand extends BaseCommand {
     }
 
     RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config, boolean isVm) {
+        boolean hostOnly = HostRepoSource.isHostOnly(cloneUrl);
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
 
-            var hostPath = GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            var snapshot = hostOnly ? HostRepoSource.capture(cloneUrl) : null;
+            var hostPath = hostOnly ? snapshot.gitDirectory() : GitRemoteUtils.resolveHostRepoPath(repoName, config);
             if (hostPath == null) return null;
-            if (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
-                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl)) {
+            if (!hostOnly && (!Files.isDirectory(hostPath) || !GitRemoteUtils.isGitRepo(hostPath)
+                    || !GitRemoteUtils.anyRemoteMatches(hostPath, cloneUrl))) {
                 return RepoReference.skipped("no local reference found to speedup cloning");
             }
 
             var containerPath = GitRemoteUtils.referenceContainerPath(repoName, cloneUrl);
             var deviceName = GitRemoteUtils.referenceDeviceName(repoName, cloneUrl);
-            container.exec("mkdir", "-p", containerPath);
+            container.exec("mkdir", "-p", containerPath).assertSuccess("Cannot prepare repository mount");
             var refArgs = new java.util.ArrayList<>(java.util.List.of(
                     "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
                     "path=" + containerPath,
@@ -2951,8 +2980,27 @@ public class BuildCommand extends BaseCommand {
             HostResourceSetup.addShiftIfSupported(refArgs, isVm);
             incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
-            return new RepoReference(deviceName, containerPath, null);
+            if (hostOnly && isVm) {
+                // virtiofs attachment is asynchronous. Keep cleanup local until the
+                // device has been returned to cloneRepos' outer finally block.
+                try {
+                    var headFile = shellQuote(containerPath + "/HEAD");
+                    container.sh("for attempt in $(seq 1 15); do test -r " + headFile
+                                    + " && break; sleep 1; done; test -r " + headFile)
+                            .assertSuccess("Timed out waiting for host repository mount " + containerPath);
+                } catch (Exception e) {
+                    try {
+                        incus.deviceRemove(container.name(), deviceName);
+                    } catch (Exception cleanup) {
+                        e.addSuppressed(cleanup);
+                    }
+                    throw e;
+                }
+            }
+
+            return new RepoReference(deviceName, containerPath, null, snapshot);
         } catch (Exception e) {
+            if (hostOnly) throw new IllegalStateException("Cannot mount required host repository " + cloneUrl + ": " + e.getMessage(), e);
             System.err.println("Warning: could not set up repo reference: " + e.getMessage());
             return null;
         }

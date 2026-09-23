@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.git.HostRepoSource;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -1262,6 +1263,121 @@ class BuildCommandTest {
 
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).execInContainer(eq("test"), anyString(), anyString());
+    }
+
+    @Test
+    void hostOnlyCloneUsesCapturedHeadWithoutRemoteFallback(@TempDir Path tmp) throws Exception {
+        var source = Files.createDirectories(tmp.resolve("host"));
+        var init = new ProcessBuilder("git", "init", "-b", "host-branch", source.toString()).start();
+        assertEquals(0, init.waitFor());
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(source.resolve(".git").toUri().toString());
+        repo.setPath("~/copy");
+        var snapshot = HostRepoSource.capture(repo.getUrl());
+        var imageDef = new ImageDef();
+        imageDef.setRepos(List.of(repo));
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(new BuildCommand.RepoReference("host-ref", "/mnt/host", null, snapshot))
+                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenReturn(OK);
+
+        cmd.cloneRepos(container, imageDef, false);
+        verify(incus).execInContainer("test", "agentuser", snapshot.cloneScript("/mnt/host", "/home/agentuser/copy"));
+        verify(incus).deviceRemove("test", "host-ref");
+        verify(incus, never()).execInContainer(eq("test"), anyString(), argThat((String s) -> s.contains("fetch --") || s.contains("remote set-head")));
+
+        clearInvocations(incus);
+        when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenReturn(FAIL);
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, false));
+        verify(incus, times(1)).execInContainer(eq("test"), eq("agentuser"), anyString());
+        verify(incus).deviceRemove("test", "host-ref");
+    }
+
+    @Test
+    void hostSourceMountFailureCleansEarlierMounts(@TempDir Path tmp) throws Exception {
+        var first = new ImageDef.RepoEntry();
+        first.setUrl("https://example.com/first.git");
+        var missing = new ImageDef.RepoEntry();
+        missing.setUrl(tmp.resolve("missing/.git").toUri().toString());
+        var imageDef = new ImageDef();
+        imageDef.setRepos(List.of(first, missing));
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(new BuildCommand.RepoReference("first-ref", "/mnt/first", null))
+                .when(cmd).tryMountReference(eq(container), eq(first.getUrl()), any(), eq(false));
+
+        var failure = assertThrows(IllegalStateException.class, () -> cmd.cloneRepos(container, imageDef, false));
+        assertTrue(failure.getMessage().contains("required host repository"));
+        verify(incus).deviceRemove("test", "first-ref");
+        verify(incus, never()).execInContainer(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void hostOnlyMountIsRequiredAndVmTimeoutRemovesDevice(@TempDir Path tmp) throws Exception {
+        var init = new ProcessBuilder("git", "init", "-b", "host-branch", tmp.toString()).start();
+        assertEquals(0, init.waitFor());
+        var url = tmp.resolve(".git").toUri().toString();
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        when(incus.shellExec(eq("test"), any(String[].class))).thenReturn(OK);
+        var ref = cmd.tryMountReference(container, url, new dev.incusspawn.config.SpawnConfig(), false);
+        assertNotNull(ref.hostSource());
+        var arguments = ArgumentCaptor.forClass(String[].class);
+        verify(incus).deviceAdd(eq("test"), eq(ref.deviceName()), eq("disk"), arguments.capture());
+        assertTrue(List.of(arguments.getValue()).contains("readonly=true"));
+        assertTrue(List.of(arguments.getValue()).contains("source=" + tmp.resolve(".git")));
+
+        clearInvocations(incus);
+        when(incus.shellExec(eq("test"), eq("sh"), eq("-c"), anyString())).thenReturn(FAIL);
+        assertThrows(IllegalStateException.class,
+                () -> cmd.tryMountReference(container, url, new dev.incusspawn.config.SpawnConfig(), true));
+        verify(incus).deviceRemove("test", ref.deviceName());
+    }
+
+    @Test
+    void changingHostHeadAbortsBeforePrime(@TempDir Path tmp) throws Exception {
+        var init = new ProcessBuilder("git", "init", "-b", "before", tmp.toString()).start();
+        assertEquals(0, init.waitFor());
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl(tmp.resolve(".git").toUri().toString());
+        repo.setPrime("should-not-run");
+        var snapshot = HostRepoSource.capture(repo.getUrl());
+        var imageDef = new ImageDef();
+        imageDef.setRepos(List.of(repo));
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(new BuildCommand.RepoReference("host-ref", "/mnt/host", null, snapshot))
+                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        when(incus.execInContainer(eq("test"), eq("agentuser"), anyString())).thenAnswer(invocation -> {
+            Files.writeString(tmp.resolve(".git/HEAD"), "ref: refs/heads/after\n");
+            return OK;
+        });
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, false));
+        verify(incus, times(1)).execInContainer(eq("test"), eq("agentuser"), anyString());
+        verify(incus).deviceRemove("test", "host-ref");
+    }
+
+    @Test
+    void hostOnlySourcesRejectBranchOverrides() {
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("file:///host/repo/.git");
+        repo.setBranch("main");
+        var imageDef = new ImageDef();
+        imageDef.setRepos(List.of(repo));
+        var incus = mock(IncusClient.class);
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        assertThrows(IllegalArgumentException.class, () -> cmd.cloneRepos(new Container(incus, "test"), imageDef, false));
+        verifyNoInteractions(incus);
     }
 
     @Test

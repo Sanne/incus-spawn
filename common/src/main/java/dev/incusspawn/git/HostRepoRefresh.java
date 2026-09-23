@@ -114,6 +114,7 @@ public final class HostRepoRefresh {
         var toClone = new ArrayList<CloneTask>();
 
         for (var repo : deduplicated) {
+            if (HostRepoSource.isHostOnly(repo.getUrl())) continue;
             var repoName = GitRemoteUtils.repoNameFromUrl(repo.getUrl());
             if (repoName.isEmpty()) continue;
 

@@ -49,6 +49,8 @@ Both `cli` and `proxy` are independent Quarkus applications that produce separat
 
 **YAML tool downloads:** `ToolDef` download entries may set `extract`, `destination_file`, or both. Downloads are cached on the host, then either extracted into the target, copied to the exact destination path, or processed both ways. VM builds use mount-and-copy rather than slow incus-agent file pushes over vsock.
 
+**Host-only Git sources:** Template repo URLs may use `file:///absolute/host/path/.git`. `HostRepoSource` snapshots committed host state during build, preserving HEAD/branch, refs, and remote/branch configuration without remote fetches or fallback. It reuses read-only reference mounts and the parallel clone/prime pipeline. Automatic updates skip these repos using `isx.hostOnly`; fingerprints include captured host state. See `.claude/rules/build.md` and DESIGN.md for limits and lifecycle details.
+
 **Native image: host paths belong in the run-time-initialized classes.** Quarkus initializes
 application classes at image-build time unless they are listed in `--initialize-at-run-time`, and
 Linux native builds run as **root inside the GraalVM builder container** — so a field holding an

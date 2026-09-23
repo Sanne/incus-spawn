@@ -50,6 +50,14 @@ public final class GitRemoteUtils {
 
     private GitRemoteUtils() {}
 
+    /** Automatic maintenance respects the source mode baked into each repository. */
+    public static String automaticFetchScript() {
+        return "for d in ~/*/; do if [ -d \"$d/.git\" ]; then "
+                + "if [ \"$(git -C \"$d\" config --bool --get " + HostRepoSource.CONFIG_KEY + ")\" = true ]; then "
+                + "echo \"  Skipping host-only repository $d\"; else "
+                + "echo \"  Fetching $d\"; git -C \"$d\" fetch --all; fi; fi; done";
+    }
+
     public static IsxUrl parseIsxUrl(String url) {
         if (url == null || !url.startsWith("isx://")) return null;
         var rest = url.substring("isx://".length());
@@ -70,6 +78,7 @@ public final class GitRemoteUtils {
 
     public static String repoNameFromUrl(String gitUrl) {
         if (gitUrl == null || gitUrl.isEmpty()) return "";
+        if (HostRepoSource.isHostOnly(gitUrl)) return HostRepoSource.repoName(gitUrl);
         var url = gitUrl.strip();
         // Handle SSH: git@github.com:org/repo.git
         var colonIdx = url.indexOf(':');
@@ -92,6 +101,7 @@ public final class GitRemoteUtils {
 
     public static String normalizeGitUrl(String url) {
         if (url == null || url.isEmpty()) return "";
+        if (HostRepoSource.isHostOnly(url)) return HostRepoSource.path(url).toUri().toString();
         var s = url.strip();
         // SSH format: git@github.com:org/repo.git -> github.com/org/repo
         var atIdx = s.indexOf('@');
@@ -341,6 +351,9 @@ public final class GitRemoteUtils {
     }
 
     private static Path resolveGitConfig(Path repoDir) {
+        if (Files.isRegularFile(repoDir.resolve("HEAD")) && Files.isDirectory(repoDir.resolve("objects"))) {
+            return repoDir.resolve("config");
+        }
         var dotGit = repoDir.resolve(".git");
         if (Files.isDirectory(dotGit)) {
             return dotGit.resolve("config");
