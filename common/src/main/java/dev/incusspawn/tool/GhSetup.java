@@ -41,7 +41,9 @@ public class GhSetup implements ToolSetup {
         basicAuth.setPassword("${token}");
 
         var bearerAuth = new ToolDef.AuthDef();
-        bearerAuth.setDomains(List.of("*.github.com", "*.githubusercontent.com"));
+        bearerAuth.setDomains(List.of("*.github.com", "*.githubusercontent.com", "*.githubcopilot.com",
+                "api.individual.githubcopilot.com", "api.business.githubcopilot.com",
+                "api.enterprise.githubcopilot.com"));
         bearerAuth.setType("bearer");
         bearerAuth.setToken("${token}");
 

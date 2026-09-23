@@ -30,6 +30,32 @@ class GhSetupTest {
     }
 
     @Test
+    void proxyBearerAuthCoversCopilotDomain() {
+        var proxy = new GhSetup().proxy();
+
+        assertTrue(proxy.getAuth().stream()
+                .filter(auth -> "bearer".equals(auth.getType()))
+                .anyMatch(auth -> auth.getDomains().contains("*.githubcopilot.com")));
+    }
+
+    @Test
+    void proxyBearerAuthCoversCopilotTierExactDomains() {
+        // These have two labels ahead of githubcopilot.com, so the single-label
+        // *.githubcopilot.com wildcard cert can't match them under RFC 6125 SNI rules
+        // even though the proxy's own suffix-based routing would; register them as
+        // exact domains so each gets its own leaf certificate.
+        var proxy = new GhSetup().proxy();
+        var bearerDomains = proxy.getAuth().stream()
+                .filter(auth -> "bearer".equals(auth.getType()))
+                .flatMap(auth -> auth.getDomains().stream())
+                .toList();
+
+        assertTrue(bearerDomains.contains("api.individual.githubcopilot.com"));
+        assertTrue(bearerDomains.contains("api.business.githubcopilot.com"));
+        assertTrue(bearerDomains.contains("api.enterprise.githubcopilot.com"));
+    }
+
+    @Test
     void envEntriesSetsGhToken() {
         var entries = new GhSetup().envEntries(Map.of());
 
