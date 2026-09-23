@@ -3,6 +3,7 @@ package dev.incusspawn;
 import dev.incusspawn.tool.BobSetup;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.CodexSetup;
+import dev.incusspawn.tool.CopilotSetup;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.tool.PiSetup;
 import dev.incusspawn.tool.ToolSetup;
@@ -45,7 +46,7 @@ public final class RuntimeConstants {
      * too — which is why they are declared here, after the paths they capture.
      */
     public static final List<ToolSetup> CDI_TOOLS = List.of(
-            new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup()
+            new ClaudeSetup(), new GhSetup(), new PiSetup(), new BobSetup(), new CodexSetup(), new CopilotSetup()
     );
 
     private RuntimeConstants() {}

@@ -1239,6 +1239,7 @@ public class InitCommand extends BaseCommand {
         for (var entry : allTools.entrySet()) {
             var tool = entry.getValue();
             if (tool.feature() != null && !config.isFeatureEnabled(tool.feature())) continue;
+            if (!tool.hasOwnCredentials()) continue;
             var proxyDef = tool.proxy();
             if (proxyDef == null || proxyDef.getConfiguration().isEmpty()) continue;
             toolsWithProxy.add(entry);
