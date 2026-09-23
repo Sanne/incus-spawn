@@ -35,6 +35,14 @@ public interface ToolSetup {
     /** Proxy definition for credential injection by the MITM proxy. Null if this tool has no proxy config. */
     default ToolDef.ProxyDef proxy() { return null; }
 
+    /**
+     * Whether this tool's {@link #proxy()} configuration is its own credential, rather than
+     * borrowing another tool's (e.g. {@code CopilotSetup} reuses the {@code gh} tool's PAT via
+     * {@code github.token}). {@code isx init}'s credential menu uses this to avoid listing a
+     * "configure X" entry that silently edits some other tool's secret.
+     */
+    default boolean hasOwnCredentials() { return true; }
+
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
     default String feature() { return null; }
 
