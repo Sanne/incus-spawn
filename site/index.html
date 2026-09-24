@@ -14,173 +14,247 @@
   <meta name="twitter:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
   <link rel="canonical" href="https://isx.run/">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0b0d10">
   <link rel="stylesheet" href="vendor/asciinema-player-3.13.5.css">
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-
 <nav class="site-nav">
-  <a class="logo" href="./">isx</a>
-  <ul class="nav-links">
-    <li><a href="docs.html">Docs</a></li>
-    <li><a href="https://github.com/Sanne/incus-spawn">GitHub</a></li>
-  </ul>
+  <div class="nav-inner">
+    <a class="logo" href="./"><span class="logo-mark" aria-hidden="true">&gt;_</span>isx</a>
+    <ul class="nav-links">
+      <li><a href="docs.html">Docs</a></li>
+      <li><a href="https://github.com/Sanne/incus-spawn" class="nav-gh"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a></li>
+      <li><a href="#install" class="nav-cta">Install</a></li>
+    </ul>
+  </div>
 </nav>
 
 <header class="hero">
-  <h1>Give your AI coding agents their own machines &mdash; not your credentials</h1>
-  <p class="subtitle">
-    isx onboards agents the way you'd onboard a new teammate: a real Linux workstation of their own,
-    credentials that never enter the environment, disposable copy-on-write branches, and full autonomy
-    &mdash; no permission prompts to babysit, because the blast radius is the branch.
-    Just as good for triaging untrusted patches and reproducing bug reports &mdash; without risking your host.
-  </p>
+  <div class="hero-bg" aria-hidden="true"></div>
+  <div class="hero-inner">
+    <p class="eyebrow-pill"><span class="dot"></span>Open source &middot; Linux &amp; macOS &middot; on your hardware</p>
+    <h1>Give your AI coding agents their own machines &mdash; <span class="hl">not your credentials</span></h1>
+    <p class="subtitle">
+      isx onboards agents the way you'd onboard a new teammate: a real Linux workstation of their own,
+      credentials that never enter the environment, disposable copy-on-write branches, and full autonomy
+      &mdash; no permission prompts to babysit, because the blast radius is the branch.
+    </p>
+    <p class="subtitle subtitle-secondary">
+      Just as good for triaging untrusted patches and reproducing bug reports &mdash; without risking your host.
+    </p>
 
-  <div class="install-tabs">
-    <div class="tab-buttons os-tabs">
-      <button class="tab-btn active" data-os="linux">Linux</button>
-      <button class="tab-btn" data-os="macos">macOS</button>
-      <button class="tab-btn" data-os="jbang">JBang</button>
-    </div>
-
-    <div class="os-group active" data-os-group="linux">
-      <div class="tab-buttons sub-tabs">
-        <button class="tab-btn active" data-tab="fedora">Fedora / RHEL</button>
-        <button class="tab-btn" data-tab="ubuntu">Ubuntu / Debian</button>
-        <!-- <button class="tab-btn" data-tab="arch">Arch</button> -->
-        <button class="tab-btn" data-tab="linux">Other</button>
+    <div class="install-tabs" id="install">
+      <div class="install-head">
+        <div class="tab-buttons os-tabs">
+          <button class="tab-btn active" data-os="linux">Linux</button>
+          <button class="tab-btn" data-os="macos">macOS</button>
+          <button class="tab-btn" data-os="jbang">JBang</button>
+        </div>
       </div>
-      <div class="tab-panel active" id="tab-fedora">
-        <pre><code>sudo dnf copr enable sanne/incus-spawn
+
+      <div class="os-group active" data-os-group="linux">
+        <div class="tab-buttons sub-tabs">
+          <button class="tab-btn active" data-tab="fedora">Fedora / RHEL</button>
+          <button class="tab-btn" data-tab="ubuntu">Ubuntu / Debian</button>
+          <!-- <button class="tab-btn" data-tab="arch">Arch</button> -->
+          <button class="tab-btn" data-tab="linux">Other</button>
+        </div>
+        <div class="tab-panel active" id="tab-fedora">
+          <pre><code>sudo dnf copr enable sanne/incus-spawn
 sudo rpm --import https://download.copr.fedorainfracloud.org/results/sanne/incus-spawn/pubkey.gpg
 sudo dnf install incus-spawn</code></pre>
-      </div>
-      <div class="tab-panel" id="tab-ubuntu">
-        <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
+        </div>
+        <div class="tab-panel" id="tab-ubuntu">
+          <pre><code>curl -fsSL https://sanne.github.io/isx-apt-releases/public.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/incus-spawn.gpg
 echo "deb [signed-by=/usr/share/keyrings/incus-spawn.gpg] https://sanne.github.io/isx-apt-releases stable main" | sudo tee /etc/apt/sources.list.d/incus-spawn.list
 sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
+        </div>
+        <!-- <div class="tab-panel" id="tab-arch">
+          <code>yay -S incus-spawn</code>
+        </div> -->
+        <div class="tab-panel" id="tab-linux">
+          <code>curl -fsSL https://isx.run | sh</code>
+        </div>
       </div>
-      <!-- <div class="tab-panel" id="tab-arch">
-        <code>yay -S incus-spawn</code>
-      </div> -->
-      <div class="tab-panel" id="tab-linux">
-        <code>curl -fsSL https://isx.run | sh</code>
+
+      <div class="os-group" data-os-group="macos">
+        <!-- <div class="tab-buttons sub-tabs">
+          <button class="tab-btn active" data-tab="brew">Homebrew</button>
+          <button class="tab-btn" data-tab="nix">Nix</button>
+        </div> -->
+        <div class="tab-panel active" id="tab-brew">
+          <code>brew install Sanne/tap/incus-spawn</code>
+        </div>
+        <!-- <div class="tab-panel" id="tab-nix">
+          <code>nix profile install github:Sanne/incus-spawn</code>
+        </div> -->
+      </div>
+
+      <div class="os-group" data-os-group="jbang">
+        <div class="tab-panel active" id="tab-jbang">
+          <code>jbang app install isx@Sanne/incus-spawn<br>jbang app install isx-proxy@Sanne/incus-spawn</code>
+        </div>
       </div>
     </div>
 
-    <div class="os-group" data-os-group="macos">
-      <!-- <div class="tab-buttons sub-tabs">
-        <button class="tab-btn active" data-tab="brew">Homebrew</button>
-        <button class="tab-btn" data-tab="nix">Nix</button>
-      </div> -->
-      <div class="tab-panel active" id="tab-brew">
-        <code>brew install Sanne/tap/incus-spawn</code>
-      </div>
-      <!-- <div class="tab-panel" id="tab-nix">
-        <code>nix profile install github:Sanne/incus-spawn</code>
-      </div> -->
-    </div>
-
-    <div class="os-group" data-os-group="jbang">
-      <div class="tab-panel active" id="tab-jbang">
-        <code>jbang app install isx@Sanne/incus-spawn<br>jbang app install isx-proxy@Sanne/incus-spawn</code>
-      </div>
+    <div class="cta-links">
+      <a class="primary" href="docs.html">Read the docs</a>
+      <a class="secondary" href="https://github.com/Sanne/incus-spawn">View on GitHub &rarr;</a>
     </div>
   </div>
 
-  <div class="cast-frame"><div class="cast-title">isx:fix-bug — the full loop, 80 seconds</div><div class="castbox" data-cast="hero"></div></div>
-
-  <div class="cta-links">
-    <a class="primary" href="docs.html">Read the docs</a>
-    <a class="secondary" href="https://github.com/Sanne/incus-spawn">View on GitHub &rarr;</a>
+  <div class="hero-cast">
+    <div class="cast-frame"><div class="cast-title">isx:fix-bug — the full loop, 80 seconds</div><div class="castbox" data-cast="hero"></div></div>
   </div>
 </header>
 
+<section class="pillars" aria-label="Highlights">
+  <a class="pillar" href="#credentials">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+    <h3>Zero credential exposure</h3>
+    <p>A host-side TLS proxy injects keys upstream. Nothing inside is worth stealing.</p>
+  </a>
+  <a class="pillar" href="#real-machines">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
+    <h3>A real machine, full autonomy</h3>
+    <p>Root, init system, nested containers &mdash; and no permission prompts, because the blast radius is the branch.</p>
+  </a>
+  <a class="pillar" href="#branching">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/></svg></span>
+    <h3>New machines in seconds</h3>
+    <p>Copy-on-write branches from a template. Use, throw away, branch again.</p>
+  </a>
+  <a class="pillar" href="#workflows">
+    <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M18 16c0-6-5-8-10-9.5"/></svg></span>
+    <h3>Git-native workflow</h3>
+    <p><code>git fetch &lt;machine&gt;</code> pulls commits straight out of it. Remotes are added and removed for you.</p>
+  </a>
+</section>
+
 <main class="features">
 
-  <section class="feature">
-    <h2>Credentials never enter containers</h2>
-    <p>
-      A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently &mdash;
-      <code>claude</code>, <code>pi</code>, <code>gh</code>, <code>git</code>, <code>curl</code>,
-      and any other tool work unmodified, with no configuration or wrappers needed inside the environment.
-      Branches run with full internet, proxy-only egress, or completely airgapped.
-    </p>
-    <p>
-      The proxy also caches container image layers and build artifacts on the host &mdash;
-      the same dependency is never downloaded twice.
-    </p>
+  <section class="feature" id="credentials">
+    <div class="feature-head">
+      <p class="eyebrow"><span>01</span> Credential isolation</p>
+      <h2>Credentials never enter containers</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        A host-side MITM TLS proxy intercepts HTTPS and injects credentials transparently &mdash;
+        <code>claude</code>, <code>pi</code>, <code>gh</code>, <code>git</code>, <code>curl</code>,
+        and any other tool work unmodified, with no configuration or wrappers needed inside the environment.
+        Branches run with full internet, proxy-only egress, or completely airgapped.
+      </p>
+      <p>
+        The proxy also caches container image layers and build artifacts on the host &mdash;
+        the same dependency is never downloaded twice.
+      </p>
+    </div>
     <div class="cast-frame"><div class="cast-title">isx:experiment — try to steal the credentials</div><div class="castbox" data-cast="creds"></div></div>
   </section>
 
-  <section class="feature">
-    <h2>Real machines, not process jails</h2>
-    <p>
-      <strong>Docker and Podman are built for shipping applications</strong> &mdash;
-      minimal filesystems, single-process isolation, fast startup.
-      isx solves a different problem: full <strong>system containers</strong> powered by
-      <a href="https://linuxcontainers.org/incus/">Incus</a> that behave like real machines.
-      Each environment runs its own init system, has real networking
-      (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
-      and supports GUI and audio passthrough.
-      Templates pre-install your baseline tools and repos, but the environment is a real Linux system &mdash;
-      agents and users can freely <code>dnf install</code>, <code>pip install</code>,
-      build from source, or run Docker Compose just like on a workstation.
-      For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
-    </p>
+  <section class="feature" id="real-machines">
+    <div class="feature-head">
+      <p class="eyebrow"><span>02</span> System containers</p>
+      <h2>Real machines, not process jails</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        <strong>Docker and Podman are built for shipping applications</strong> &mdash;
+        minimal filesystems, single-process isolation, fast startup.
+        isx solves a different problem: full <strong>system containers</strong> powered by
+        <a href="https://linuxcontainers.org/incus/">Incus</a> that behave like real machines.
+        Each environment runs its own init system, has real networking
+        (<code>ping</code>, <code>strace</code>, nested Podman/Docker),
+        and supports GUI and audio passthrough.
+      </p>
+      <p>
+        Templates pre-install your baseline tools and repos, but the environment is a real Linux system &mdash;
+        agents and users can freely <code>dnf install</code>, <code>pip install</code>,
+        build from source, or run Docker Compose just like on a workstation.
+        For untrusted code, KVM virtual machines provide hardware-level isolation with a separate kernel.
+      </p>
+    </div>
     <div class="cast-frame"><div class="cast-title">isx:experiment — root, packages, nested containers</div><div class="castbox" data-cast="realmachine"></div></div>
   </section>
 
-  <section class="feature">
-    <h2>Instant branching</h2>
-    <p>
-      Like <code>git branch</code>, each clone is a copy-on-write snapshot that shares storage
-      with its parent. Build a template once with your preferred tools and repos, then spin up
-      complete, disposable environments in seconds &mdash; each with its own filesystem,
-      networking, and process tree.
-    </p>
-    <div class="cast-frame"><div class="cast-title">isx — copy-on-write branches</div><div class="term-static"><pre><code>tpl-java  (stopped template, ~2GB)
-  &#9500;&#9472;&#9472; fix-nasty-bug    (running, uses ~50MB extra)
-  &#9500;&#9472;&#9472; review-pr-423    (running, uses ~30MB extra)
-  &#9492;&#9472;&#9472; experiment       (stopped, uses ~10MB extra)</code></pre></div></div>
+  <section class="feature" id="branching">
+    <div class="feature-head">
+      <p class="eyebrow"><span>03</span> Copy-on-write</p>
+      <h2>Instant branching</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        Like <code>git branch</code>, each clone is a copy-on-write snapshot that shares storage
+        with its parent. Build a template once with your preferred tools and repos, then spin up
+        complete, disposable environments in seconds &mdash; each with its own filesystem,
+        networking, and process tree.
+      </p>
+    </div>
+    <div class="cast-frame"><div class="cast-title">isx — copy-on-write branches</div><div class="term-static"><pre><code><span class="t-hi">tpl-java</span>  <span class="t-dim">(stopped template, ~2GB)</span>
+  &#9500;&#9472;&#9472; <span class="t-ok">fix-nasty-bug</span>    <span class="t-dim">(running, uses ~50MB extra)</span>
+  &#9500;&#9472;&#9472; <span class="t-ok">review-pr-423</span>    <span class="t-dim">(running, uses ~30MB extra)</span>
+  &#9492;&#9472;&#9472; experiment       <span class="t-dim">(stopped, uses ~10MB extra)</span></code></pre></div></div>
     <div class="cast-frame"><div class="cast-title">isx — fork a machine, database included</div><div class="castbox" data-cast="branching"></div></div>
   </section>
 
-  <section class="feature">
-    <h2>Built for developer workflows</h2>
-    <p>
-      Templates are YAML: packages, tools, repos. Branch and it's all there.
-      Git remotes are managed automatically &mdash;
-      <code>git fetch fix-auth</code> from your host pulls commits straight out of the container.
-      JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
-    </p>
-    <div class="cast-frame"><div class="cast-title">host — git fetch from a running instance</div><div class="term-static"><pre><code># Inside the container, you make some commits...
-# Back on the host:
-git fetch fix-auth
-git cherry-pick fix-auth/main</code></pre></div></div>
+  <section class="feature" id="workflows">
+    <div class="feature-head">
+      <p class="eyebrow"><span>04</span> Workflow</p>
+      <h2>Built for developer workflows</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        Templates are YAML: packages, tools, repos. Branch and it's all there.
+        Git remotes are managed automatically &mdash;
+        <code>git fetch fix-auth</code> from your host pulls commits straight out of the container.
+        JetBrains Gateway, shell completions, and Claude Code skills plug in via the same tool system.
+      </p>
+    </div>
+    <div class="cast-frame"><div class="cast-title">host — git fetch from a running instance</div><div class="term-static"><pre><code><span class="t-dim"># Inside the container, you make some commits...</span>
+<span class="t-dim"># Back on the host:</span>
+<span class="t-prompt">$</span> git fetch fix-auth
+<span class="t-prompt">$</span> git cherry-pick fix-auth/main</code></pre></div></div>
   </section>
 
-  <section class="feature">
-    <h2>Enter &rarr; a working agent</h2>
-    <p>
-      The built-in TUI: browse templates and running machines, hit <strong>F4</strong> to branch,
-      and land in Claude Code on the fresh machine &mdash; before you finish reading this sentence.
-    </p>
+  <section class="feature" id="tui">
+    <div class="feature-head">
+      <p class="eyebrow"><span>05</span> Interactive TUI</p>
+      <h2>Enter &rarr; a working agent</h2>
+    </div>
+    <div class="feature-body">
+      <p>
+        The built-in TUI: browse templates and running machines, hit <kbd>F4</kbd> to branch,
+        and land in Claude Code on the fresh machine &mdash; before you finish reading this sentence.
+      </p>
+    </div>
     <div class="cast-frame"><div class="cast-title">isx — the TUI</div><div class="castbox" data-cast="tui"></div></div>
   </section>
 
 </main>
 
+<section class="closing">
+  <h2>Hand your agent a machine, not your keys.</h2>
+  <div class="cta-links">
+    <a class="primary" href="#install">Install isx</a>
+    <a class="secondary" href="docs.html">Read the docs &rarr;</a>
+  </div>
+</section>
+
 <footer class="site-footer">
-  <ul class="footer-links">
-    <li><a href="docs.html">Docs</a></li>
-    <li><a href="https://github.com/Sanne/incus-spawn">GitHub</a></li>
-    <li><a href="https://github.com/Sanne/incus-spawn/issues">Issues</a></li>
-  </ul>
-  <p>Built on <a href="https://linuxcontainers.org/incus/">Incus</a>, <a href="https://quarkus.io/">Quarkus</a>, <a href="https://tamboui.dev/">Tamboui</a>, and <a href="https://www.graalvm.org/">GraalVM</a></p>
+  <div class="footer-inner">
+    <a class="logo" href="./"><span class="logo-mark" aria-hidden="true">&gt;_</span>isx</a>
+    <ul class="footer-links">
+      <li><a href="docs.html">Docs</a></li>
+      <li><a href="https://github.com/Sanne/incus-spawn">GitHub</a></li>
+      <li><a href="https://github.com/Sanne/incus-spawn/issues">Issues</a></li>
+    </ul>
+    <p>Built on <a href="https://linuxcontainers.org/incus/">Incus</a>, <a href="https://quarkus.io/">Quarkus</a>, <a href="https://tamboui.dev/">Tamboui</a>, and <a href="https://www.graalvm.org/">GraalVM</a></p>
+  </div>
 </footer>
 
 <script>
@@ -256,7 +330,7 @@ git cherry-pick fix-auth/main</code></pre></div></div>
     var opts = OPTS[name] || {};
     if (reduced) { opts.autoPlay = false; opts.loop = false; }
     var player = AsciinemaPlayer.create("casts/" + name + ".cast", box, {
-      fit: "width", theme: "monokai", controls: true,
+      fit: "width", theme: "isx", controls: true,
       poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
     });
     if (!opts.loop) {
