@@ -579,6 +579,18 @@ If a host path doesn't exist at build or branch time, the entry is skipped with 
 
 Host resources compose additively across the parent chain, with override-by-container-path. If a parent declares `~/.gitconfig` as `readonly` and a child declares `~/.gitconfig` as `copy`, the child's mode wins. This follows the same last-write-wins pattern as package deduplication.
 
+#### Project-local templates are confined to their project
+
+A project-local template (`.incus-spawn/images/`) is whatever the cloned repository shipped, and the same repository controls the template's `prime` commands and tools, which have network access. If it could name any host path, running `isx build` in a cloned directory would be enough to copy `~/.ssh` into a template that every branch inherits, bypassing the credential isolation isx exists for (#765). So `ImageDef.loadFromDirectory` stamps project-local definitions with their `projectRoot` (never read from YAML), and `HostResourceSetup.collectEffective()` confines each of their non-URL sources to that directory. Trusted layers (user, search paths, built-in) are unaffected, and so are a project-local template's trusted ancestors.
+
+- **Checked on real paths.** The source is resolved against the project root, then through its symlinks. For a path that does not exist yet, that means its longest existing prefix, and dangling links are followed to their targets. So `~`, absolute paths, `..`, and symlinks all get the same treatment. For `copy` of a directory the tree is walked too, because the host-side push follows file symlinks. Mounts need no walk: symlinks inside a mount resolve inside the container.
+- **Rewritten to the checked path.** The effective resource carries the absolute real source, an explicit container path, and `confined-to: <root>`. A relative source would otherwise be re-resolved against the CWD of a later `isx branch`, so `source: .ssh` checked as `<project>/.ssh` would become `~/.ssh` when branching from home. `collectEffective` rebuilds every entry, so a `confined-to` written in YAML is discarded.
+- **Re-checked at every use.** The project is a working tree, and a later `git pull` can turn a checked directory into a symlink. `verifyConfined()` runs again in `applyForBuild`, `applyForInstance` (branch), and `removeStaleDevices` (every start). There a violation removes the device and warns instead of failing the start.
+- **Enforced before the build starts.** `BuildCommand.buildSingleImage` calls `collectEffective` before creating anything, so a rejected template leaves no half-built container. The `isx templates new/edit --project` validator reports the same error while the file is still open.
+- **Survives rebuilds from metadata.** `BuildSource` records `projectRoots` alongside `sources`, so a template rebuilt out of scope from `build-source` stays confined. For metadata written before the field existed, the root is inferred from a `…/.incus-spawn/images/*.yaml` source.
+
+This follows `ToolProxyResolver.rejectProjectLocalProxy()`: project-local definitions get the capabilities that stay within the project, and anything that reaches the rest of the host belongs in a location the user owns.
+
 ### Metadata Tracking
 
 Containers tagged via Incus `user.*` config keys:

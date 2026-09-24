@@ -49,6 +49,7 @@ public class TemplateValidator {
         }
 
         validateHostResources(def, warnings);
+        validateProjectLocalHostResources(file, def, errors);
         validateDuplicateTools(def, warnings);
 
         return new ValidationResult(errors, warnings);
@@ -62,6 +63,19 @@ public class TemplateValidator {
                 warnings.add("host-resource mode '" + hr.getMode()
                         + "' is not valid — must be one of: readonly, overlay, copy");
             }
+        }
+    }
+
+    /** The rule {@code isx build} enforces, reported while the file is still being edited. */
+    private static void validateProjectLocalHostResources(Path file, ImageDef def, List<String> errors) {
+        var dir = file.toAbsolutePath().normalize().getParent();
+        if (!ImageDef.projectImagesDir().toAbsolutePath().normalize().equals(dir)) return;
+        def.setSource(file.toAbsolutePath().normalize().toString());
+        def.setProjectRoot(ImageDef.projectRoot());
+        try {
+            HostResourceSetup.collectEffective(def, Map.of());
+        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+            errors.add(e.getMessage());
         }
     }
 

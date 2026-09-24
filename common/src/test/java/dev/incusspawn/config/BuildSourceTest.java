@@ -173,4 +173,36 @@ class BuildSourceTest {
         assertNotNull(bs.getTools());
         assertNotNull(bs.getSources());
     }
+
+    @Test
+    void projectRootSurvivesRoundTrip() {
+        var def = new ImageDef();
+        def.setName("tpl-project");
+        def.setSource("/work/repo/.incus-spawn/images/project.yaml");
+        def.setProjectRoot(java.nio.file.Path.of("/work/repo"));
+        var bs = new BuildSource(new LinkedHashMap<>(Map.of("tpl-project", def)), null, null,
+                new LinkedHashMap<>(Map.of("tpl-project", def.getSource())));
+        bs.setProjectRoots(new LinkedHashMap<>(Map.of("tpl-project", "/work/repo")));
+
+        var restored = BuildSource.fromJson(bs.toJson()).getDefinitions().get("tpl-project");
+        assertEquals(java.nio.file.Path.of("/work/repo"), restored.getProjectRoot());
+    }
+
+    @Test
+    void legacyMetadataInfersProjectRootFromSource() {
+        var def = new ImageDef();
+        def.setName("tpl-project");
+        var user = new ImageDef();
+        user.setName("tpl-user");
+        var bs = new BuildSource(new LinkedHashMap<>(Map.of("tpl-project", def, "tpl-user", user)), null, null,
+                new LinkedHashMap<>(Map.of(
+                        "tpl-project", "/work/repo/.incus-spawn/images/project.yaml",
+                        "tpl-user", "/home/me/.config/incus-spawn/images/user.yaml")));
+        var json = bs.toJson().replace(",\"projectRoots\":{}", "");
+        assertFalse(json.contains("projectRoots"), json);
+
+        var restored = BuildSource.fromJson(json).getDefinitions();
+        assertEquals(java.nio.file.Path.of("/work/repo"), restored.get("tpl-project").getProjectRoot());
+        assertNull(restored.get("tpl-user").getProjectRoot());
+    }
 }

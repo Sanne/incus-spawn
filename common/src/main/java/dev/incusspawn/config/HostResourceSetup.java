@@ -106,16 +106,148 @@ public final class HostResourceSetup {
         for (var def : chain) {
             for (var hr : def.getHostResources()) {
                 var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
-                result.put(containerPath, hr);
+                result.put(containerPath, def.getProjectRoot() == null
+                        ? new ImageDef.HostResource(hr.getSource(), hr.getPath(), hr.getMode())
+                        : confineToProject(def, hr, containerPath));
             }
         }
         return new ArrayList<>(result.values());
+    }
+
+    /**
+     * A project-local template tried to reach a host path outside its project directory (#765).
+     */
+    public static final class HostPathOutsideProjectException extends IllegalStateException {
+        HostPathOutsideProjectException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Project-local templates arrive with whatever repository was cloned, so they may only
+     * reference host paths inside that project: otherwise building in a cloned directory would
+     * be enough to copy {@code ~/.ssh} into a container whose prime commands the same repository
+     * controls. The check runs on real paths, so neither {@code ..} nor a symlink can escape,
+     * and the source is rewritten to that absolute real path: a relative source would otherwise
+     * be re-resolved against whatever directory a later branch is created from.
+     */
+    private static ImageDef.HostResource confineToProject(ImageDef def, ImageDef.HostResource hr,
+                                                          String containerPath) {
+        if (isUrl(hr.getSource())) {
+            return new ImageDef.HostResource(hr.getSource(), hr.getPath(), hr.getMode());
+        }
+        var root = realPath(def.getProjectRoot());
+        var resolved = root.resolve(expandHostTilde(hr.getSource()));
+        var escape = findEscape(resolved, root, hr.getMode());
+        var real = escape == null ? realPathOfExistingPrefix(resolved, new int[1]) : null;
+        if (real == null) {
+            throw new HostPathOutsideProjectException("Template '" + def.getName() + "' is project-local ("
+                    + def.getSource() + "),\n"
+                    + "  so its host-resources must stay inside the project directory " + root + ",\n"
+                    + "  but '" + hr.getSource() + "' " + (escape != null ? escape : UNRESOLVABLE) + ".\n"
+                    + "  A cloned repository must not be able to copy or mount your files into a container.\n"
+                    + "  If you trust this template, move it to " + ImageDef.userImagesDir()
+                    + " or a configured search path.");
+        }
+        return new ImageDef.HostResource(real.toString(), containerPath,
+                hr.getMode(), root.toString());
+    }
+
+    /**
+     * Re-checks a resource confined by {@link #confineToProject} right before it is used: the
+     * project is a working tree, and a later {@code git pull} can turn a checked directory into
+     * a symlink pointing anywhere.
+     */
+    static void verifyConfined(ImageDef.HostResource hr) {
+        if (hr.getConfinedTo() == null) return;
+        var escape = findEscape(Path.of(hr.getSource()), Path.of(hr.getConfinedTo()), hr.getMode());
+        if (escape != null) {
+            throw new HostPathOutsideProjectException("Host-resource '" + hr.getSource()
+                    + "' comes from a project-local template and must stay inside " + hr.getConfinedTo()
+                    + ", but it " + escape + ".");
+        }
+    }
+
+    /** Why {@code path} is not confined to {@code root} (already a real path), or null if it is. */
+    private static String findEscape(Path path, Path root, String mode) {
+        var real = realPathOfExistingPrefix(path, new int[1]);
+        if (real == null) return UNRESOLVABLE;
+        if (!real.startsWith(root)) return "resolves to " + real;
+        // Mounts are safe from symlinks further down: those resolve inside the container. A copy
+        // is made by the host, which follows a file symlink and pushes the file it points to.
+        if ("copy".equals(mode) && Files.isDirectory(real)) {
+            try (var stream = Files.walk(real)) {
+                for (var p : (Iterable<Path>) stream::iterator) {
+                    if (!Files.isSymbolicLink(p)) continue;
+                    var target = realPathOfExistingPrefix(p, new int[1]);
+                    if (target == null) return "contains " + real.relativize(p) + ", which " + UNRESOLVABLE;
+                    if (!target.startsWith(root)) {
+                        return "contains " + real.relativize(p) + ", a symlink to " + target;
+                    }
+                }
+            } catch (IOException | java.io.UncheckedIOException e) {
+                return "could not be checked for symlinks (" + e.getMessage() + ")";
+            }
+        }
+        return null;
+    }
+
+    private static Path realPath(Path path) {
+        try {
+            return path.toRealPath();
+        } catch (IOException e) {
+            return path.toAbsolutePath().normalize();
+        }
+    }
+
+    private static final String UNRESOLVABLE = "could not be resolved (a symlink loop, or too many symlinks)";
+
+    /** The kernel's own limit on symlinks followed while resolving one path (ELOOP). */
+    private static final int MAX_SYMLINK_HOPS = 40;
+
+    /**
+     * The real path {@code path} would have: the longest existing prefix resolved through its
+     * symlinks, with the rest appended. Dangling symlinks are followed to where they point, so a
+     * link to a host path that does not exist yet cannot pass as a path inside the project.
+     * Returns null when that takes more than {@link #MAX_SYMLINK_HOPS} symlinks: an unresolved
+     * path must never be mistaken for its lexical, inside-the-project-looking self. {@code hops}
+     * counts symlinks only (shared across the recursion); walking up missing parents is bounded
+     * by the path's length.
+     */
+    private static Path realPathOfExistingPrefix(Path path, int[] hops) {
+        path = path.toAbsolutePath();
+        try {
+            return path.toRealPath();
+        } catch (IOException ignored) {
+            // Does not exist (yet), or is a dangling symlink: resolve what does exist.
+        }
+        if (Files.isSymbolicLink(path)) {
+            if (++hops[0] > MAX_SYMLINK_HOPS) return null;
+            try {
+                return realPathOfExistingPrefix(path.resolveSibling(Files.readSymbolicLink(path)), hops);
+            } catch (IOException e) {
+                return null;
+            }
+        }
+        var parent = path.getParent();
+        if (parent == null) return path;
+        var realParent = realPathOfExistingPrefix(parent, hops);
+        if (realParent == null) return null;
+        var name = path.getFileName().toString();
+        if (name.equals("..")) return realParent.getParent() != null ? realParent.getParent() : realParent;
+        if (name.equals(".")) return realParent;
+        return realParent.resolve(name);
+    }
+
+    private static boolean isUrl(String source) {
+        return source.startsWith("http://") || source.startsWith("https://");
     }
 
     public static void applyForBuild(IncusClient incus, Container container, List<ImageDef.HostResource> resources,
                                       boolean isVm) {
         var overlayEntries = new ArrayList<ImageDef.HostResource>();
         for (var hr : resources) {
+            verifyConfined(hr);
             switch (effectiveMode(hr, isVm)) {
                 case "copy" -> applyCopy(container, hr);
                 case "readonly" -> applyReadonly(incus, container.name(), hr, isVm);
@@ -153,6 +285,13 @@ public final class HostResourceSetup {
         var resources = deserialize(hrJson);
         for (var hr : resources) {
             if ("copy".equals(hr.getMode())) continue;
+            try {
+                verifyConfined(hr);
+            } catch (HostPathOutsideProjectException e) {
+                removeExistingDevice(incus, container, deviceNameForMode(hr));
+                System.err.println("Warning: " + e.getMessage() + " (device removed)");
+                continue;
+            }
             var expandedSource = expandHostTilde(hr.getSource());
             if (!Files.exists(Path.of(expandedSource))) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
@@ -165,6 +304,15 @@ public final class HostResourceSetup {
     public static void applyForInstance(IncusClient incus, String container, List<ImageDef.HostResource> resources,
                                         boolean isVm) {
         for (var hr : resources) {
+            if (!"copy".equals(hr.getMode())) {
+                try {
+                    verifyConfined(hr);
+                } catch (HostPathOutsideProjectException e) {
+                    removeExistingDevice(incus, container, deviceNameForMode(hr));
+                    System.err.println("Warning: " + e.getMessage() + " (skipping)");
+                    continue;
+                }
+            }
             switch (effectiveMode(hr, isVm)) {
                 case "readonly" -> {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
@@ -245,7 +393,7 @@ public final class HostResourceSetup {
                 ? containerPath.substring(0, containerPath.lastIndexOf('/'))
                 : "/";
 
-        if (hr.getSource().startsWith("http://") || hr.getSource().startsWith("https://")) {
+        if (isUrl(hr.getSource())) {
             try {
                 var cache = new DownloadCache();
                 var downloaded = cache.download(hr.getSource(), null);
