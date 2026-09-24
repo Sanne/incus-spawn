@@ -87,15 +87,13 @@ public class GhSetup implements ToolSetup {
      */
     @Override
     public void rebakeForAccount(Container container, String accountName) {
-        clearGitIdentity(container);
-        configureGitIdentity(container, accountName);
-    }
-
-    private void clearGitIdentity(Container c) {
-        // Not assertSuccess: git exits non-zero when the key is already absent, which is a
-        // perfectly good starting point for re-deriving it.
-        c.shAsUser("agentuser", "git config --global --unset-all user.name");
-        c.shAsUser("agentuser", "git config --global --unset-all user.email");
+        // Resolve before overwriting. Clearing first and then failing -- no network, a revoked
+        // token, gh missing -- would leave the instance with no author at all, which is worse
+        // than the stale one it had: every commit made before the next successful attempt would
+        // be unattributed rather than merely attributed to the previous account.
+        var identity = resolveIdentity(container, accountName, true);
+        gitConfig(container, "user.name", identity.name());
+        gitConfig(container, "user.email", identity.email());
     }
 
     @Override
@@ -155,6 +153,27 @@ public class GhSetup implements ToolSetup {
             return;
         }
 
+        var identity = resolveIdentity(c, accountName, false);
+        if (identity == null) return;
+        if (!hasName) gitConfig(c, "user.name", identity.name());
+        if (!hasEmail) gitConfig(c, "user.email", identity.email());
+    }
+
+    /** The git identity behind a GitHub account, as the API reports it. */
+    record GitIdentity(String name, String email) {}
+
+    /**
+     * Ask the API who this account's token belongs to.
+     *
+     * <p>The request carries only the placeholder token: it goes through the MITM proxy, which
+     * substitutes the real one for whichever account the caller is pinned to. That is why
+     * neither this method nor its callers need the credential itself.
+     *
+     * @param required when true, a failure throws rather than returning null -- a build must not
+     *     produce a template with no identity, and a re-point must not overwrite a good identity
+     *     with nothing
+     */
+    private GitIdentity resolveIdentity(Container c, String accountName, boolean required) {
         var command = "GH_TOKEN=" + PLACEHOLDER_TOKEN
                 + " gh api user --jq '[.login, .name, .email] | @tsv'";
         var tokenConfigured = !githubValue(accountName, "token").isBlank();
@@ -173,40 +192,34 @@ public class GhSetup implements ToolSetup {
         }
         if (!result.success() || result.stdout().isBlank()) {
             var detail = result.stderr().isBlank() ? "" : " (" + result.stderr().strip() + ")";
-            var message = "Could not determine git identity from GitHub token" + detail;
-            if (tokenConfigured) {
-                throw new IncusException(message + "; refusing to create a template without git identity");
+            if (required || tokenConfigured) {
+                throw new IncusException("Could not determine git identity from GitHub" + detail);
             }
-            return;
+            return null;
         }
 
         var parts = result.stdout().lines().findFirst().orElse("").split("\t", -1);
         if (parts[0].isEmpty()) {
-            return;
+            if (required) throw new IncusException("GitHub reported no login for this account");
+            return null;
         }
 
         var login = parts[0];
         var name = parts.length >= 2 && !parts[1].isEmpty() ? parts[1] : login;
 
-        if (!hasName) {
-            gitConfig(c, "user.name", name);
+        var configEmail = githubValue(accountName, "email");
+        var email = configEmail.isBlank() ? null : configEmail;
+        boolean publicEmailHidden = parts.length < 3 || parts[2].isEmpty();
+        if (email == null) {
+            email = findEmailFromApi(c, publicEmailHidden);
         }
-
-        if (!hasEmail) {
-            var configEmail = githubValue(accountName, "email");
-            var email = configEmail.isBlank() ? null : configEmail;
-            boolean publicEmailHidden = parts.length < 3 || parts[2].isEmpty();
-            if (email == null) {
-                email = findEmailFromApi(c, publicEmailHidden);
-            }
-            if (email == null && !publicEmailHidden) {
-                email = parts[2];
-            }
-            if (email == null) {
-                email = login + "@users.noreply.github.com";
-            }
-            gitConfig(c, "user.email", email);
+        if (email == null && !publicEmailHidden) {
+            email = parts[2];
         }
+        if (email == null) {
+            email = login + "@users.noreply.github.com";
+        }
+        return new GitIdentity(name, email);
     }
 
     private static final String JQ_NOREPLY = "([.[] | select(.verified and (.email | endswith(\"@users.noreply.github.com\"))) | .email] | first)";
