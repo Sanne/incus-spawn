@@ -40,7 +40,7 @@ public class RunCommand extends BaseCommand {
         var imageDefs = ImageDef.loadAll(w -> {});
         var resolver = new ActionResolver(incus, toolDefLoader, cdiTools, imageDefs);
 
-        var installedTools = resolver.collectInstalledTools(parent);
+        var installedTools = resolver.collectInstalledTools(name, parent);
         var repos = resolver.collectRepos(parent);
 
         // Find the action to execute

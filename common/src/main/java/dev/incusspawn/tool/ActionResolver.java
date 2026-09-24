@@ -112,9 +112,30 @@ public class ActionResolver {
     }
 
     /**
-     * Collect all installed tools for an instance by walking its template inheritance chain.
+     * Collect installed tools for an instance. For instances with BUILD_SOURCE metadata
+     * (branched from a built template), uses the build-time tools list so that action
+     * resolution reflects what was actually installed — not what the current YAML says.
+     * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable.
      */
-    public Set<String> collectInstalledTools(String parentTemplate) {
+    public Set<String> collectInstalledTools(String instanceName, String parentTemplate) {
+        var buildSourceJson = incus.configGet(instanceName, Metadata.BUILD_SOURCE);
+        if (buildSourceJson != null && !buildSourceJson.isBlank()) {
+            var type = Metadata.getType(incus, instanceName);
+            if (!Metadata.TYPE_BASE.equals(type)) {
+                var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
+                if (bs != null) {
+                    return extractBuildTimeTools(bs);
+                }
+            }
+        }
+        return collectInstalledToolsFromYaml(parentTemplate);
+    }
+
+    /**
+     * Collect all installed tools by walking the YAML template inheritance chain.
+     * Use for templates (whose YAML IS authoritative) or as a fallback.
+     */
+    public Set<String> collectInstalledToolsFromYaml(String parentTemplate) {
         var tools = new LinkedHashSet<String>();
         if (parentTemplate == null || parentTemplate.isEmpty() || "-".equals(parentTemplate)) {
             return tools;
@@ -133,6 +154,25 @@ public class ActionResolver {
             collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
         }
         tools.addAll(allDeps);
+        removeFeatureGated(tools);
+        return tools;
+    }
+
+    private Set<String> extractBuildTimeTools(dev.incusspawn.config.BuildSource bs) {
+        var tools = new LinkedHashSet<String>();
+        for (var def : bs.getDefinitions().values()) {
+            for (var toolRef : def.getTools()) {
+                tools.add(toolRef.getName());
+            }
+        }
+        for (var entry : bs.getTools().entrySet()) {
+            var toolDef = entry.getValue();
+            if (toolDef.getRequires() != null) {
+                for (var dep : toolDef.getRequires()) {
+                    tools.add(dep.getName());
+                }
+            }
+        }
         removeFeatureGated(tools);
         return tools;
     }
@@ -190,7 +230,7 @@ public class ActionResolver {
             if (ipv4 == null) ipv4 = "";
         }
         var networkMode = incus.configGet(instanceName, Metadata.NETWORK_MODE);
-        var installedTools = collectInstalledTools(parentTemplate);
+        var installedTools = collectInstalledTools(instanceName, parentTemplate);
         var repos = collectRepos(parentTemplate);
 
         return new ActionContext(
