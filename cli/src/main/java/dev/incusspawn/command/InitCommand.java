@@ -1238,7 +1238,6 @@ public class InitCommand extends BaseCommand {
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
         for (var entry : allTools.entrySet()) {
             var tool = entry.getValue();
-            if (tool.feature() != null && !config.isFeatureEnabled(tool.feature())) continue;
             if (!tool.hasOwnCredentials()) continue;
             var proxyDef = tool.proxy();
             if (proxyDef == null || proxyDef.getConfiguration().isEmpty()) continue;
