@@ -244,7 +244,7 @@ public class BranchCommand extends BaseCommand {
 
         var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
                 RuntimeServices.toolSetups(), defs);
-        var installedTools = resolver.collectInstalledTools(templateName);
+        var installedTools = resolver.collectInstalledTools(source, templateName);
         var repos = resolver.collectRepos(templateName);
         var action = resolver.findDefaultAction(name, templateName, installedTools, repos);
         if (action.isEmpty()) return null;

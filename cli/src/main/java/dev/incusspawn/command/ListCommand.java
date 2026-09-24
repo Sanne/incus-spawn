@@ -4292,7 +4292,8 @@ public class ListCommand extends BaseCommand {
     private String resolveDefaultCommandFromTemplate(String source) {
         // When the source is a clone (not a template), resolve via its PROFILE metadata
         var templateName = source;
-        if (!imageDefs.containsKey(templateName)) {
+        boolean isClone = !imageDefs.containsKey(templateName);
+        if (isClone) {
             var profile = incus.configGet(source, Metadata.PROFILE);
             if (profile != null && !profile.isEmpty()) {
                 templateName = profile;
@@ -4316,7 +4317,18 @@ public class ListCommand extends BaseCommand {
         if (ref == null) return null;
 
         var parsed = parseActionRef(ref);
-        var actions = collectActionsForTemplate(templateName);
+        // For clones, use build-time tools to avoid resolving actions for
+        // tools that aren't actually installed in the source.
+        java.util.List<ToolAction> actions;
+        if (isClone) {
+            var bsJson = incus.configGet(source, Metadata.BUILD_SOURCE);
+            var bs = (bsJson != null && !bsJson.isBlank())
+                    ? dev.incusspawn.config.BuildSource.fromJson(bsJson) : null;
+            var tools = bs != null ? extractBuildTimeTools(bs) : collectInstalledToolsForTemplate(templateName);
+            actions = collectActionsForTools(tools);
+        } else {
+            actions = collectActionsForTemplate(templateName);
+        }
         var matching = actions.stream()
                 .filter(a -> parsed.toolName().equals(a.toolName()))
                 .toList();
@@ -4330,14 +4342,22 @@ public class ListCommand extends BaseCommand {
     }
 
     private java.util.List<ToolAction> collectActionsForTemplate(String templateName) {
-        var actions = new ArrayList<ToolAction>();
-        var chain = getInheritanceChain(templateName);
+        return collectActionsForTools(collectInstalledToolsForTemplate(templateName));
+    }
+
+    private java.util.Set<String> collectInstalledToolsForTemplate(String templateName) {
         var tools = new java.util.LinkedHashSet<String>();
+        var chain = getInheritanceChain(templateName);
         for (var def : chain) {
             for (var toolRef : def.getTools()) {
                 tools.add(toolRef.getName());
             }
         }
+        return tools;
+    }
+
+    private java.util.List<ToolAction> collectActionsForTools(java.util.Set<String> tools) {
+        var actions = new ArrayList<ToolAction>();
         var handledTools = new java.util.HashSet<String>();
         for (var toolName : tools) {
             var setup = toolDefLoader.find(toolName);
@@ -4364,6 +4384,16 @@ public class ListCommand extends BaseCommand {
     }
 
     private java.util.Set<String> collectInstalledTools(InstanceInfo instance) {
+        // For instances (clones), prefer the build-time tools list from BUILD_SOURCE
+        // metadata. The current YAML chain may reference tools that were added after
+        // the instance was branched and aren't actually installed in the container.
+        if (!Metadata.TYPE_BASE.equals(instance.type)
+                && instance.buildSourceJson != null && !instance.buildSourceJson.isEmpty()) {
+            var bs = dev.incusspawn.config.BuildSource.fromJson(instance.buildSourceJson);
+            if (bs != null) {
+                return extractBuildTimeTools(bs);
+            }
+        }
         var tools = new java.util.LinkedHashSet<String>();
         var templateName = resolveTemplateName(instance);
         if (templateName == null) return tools;
@@ -4379,6 +4409,36 @@ public class ListCommand extends BaseCommand {
             collectTransitiveDeps(toolName, allDeps, new java.util.HashSet<>());
         }
         tools.addAll(allDeps);
+        var config = SpawnConfig.load();
+        tools.removeIf(name -> {
+            var setup = toolDefLoader.find(name);
+            if (setup != null) return BuildCommand.isFeatureGated(setup, config);
+            if (cdiTools != null) {
+                for (var t : cdiTools) {
+                    if (t.name().equals(name)) return BuildCommand.isFeatureGated(t, config);
+                }
+            }
+            return false;
+        });
+        return tools;
+    }
+
+    private java.util.Set<String> extractBuildTimeTools(dev.incusspawn.config.BuildSource bs) {
+        var tools = new java.util.LinkedHashSet<String>();
+        for (var def : bs.getDefinitions().values()) {
+            for (var toolRef : def.getTools()) {
+                tools.add(toolRef.getName());
+            }
+        }
+        // Add transitive deps from BUILD_SOURCE tool definitions
+        for (var entry : bs.getTools().entrySet()) {
+            var toolDef = entry.getValue();
+            if (toolDef.getRequires() != null) {
+                for (var dep : toolDef.getRequires()) {
+                    tools.add(dep.getName());
+                }
+            }
+        }
         var config = SpawnConfig.load();
         tools.removeIf(name -> {
             var setup = toolDefLoader.find(name);
@@ -5444,8 +5504,7 @@ public class ListCommand extends BaseCommand {
                         configVal(config, Metadata.BUILD_VERSION, ""),
                         configVal(config, Metadata.DEFINITION_SHA, ""),
                         type,
-                        Metadata.TYPE_BASE.equals(type)
-                                ? configVal(config, Metadata.BUILD_SOURCE, "") : "",
+                        configVal(config, Metadata.BUILD_SOURCE, ""),
                         configVal(config, Metadata.PENDING_OP, ""),
                         configVal(config, Metadata.DEFAULT_ACTION, ""),
                         diskUsage, referencedBytes));
