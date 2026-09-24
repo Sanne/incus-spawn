@@ -240,6 +240,58 @@ class ProxyServiceTest {
                 "the unit should exec the start script, which is what holds the binary path");
     }
 
+    // --- exit-code interpretation ------------------------------------------------
+
+    @Test
+    void describeExitDecodesSignalKill() {
+        var desc = ProxyService.describeExit(128 + 9);
+        assertTrue(desc.contains("SIGKILL"));
+        assertTrue(desc.contains("kill -9"));
+        if (Platform.isLinux()) {
+            assertTrue(desc.contains("journalctl"), "Linux hint should mention journalctl");
+            assertTrue(desc.contains("OOM killer"));
+        } else if (Platform.isMacOS()) {
+            assertTrue(desc.contains("jetsam"), "macOS hint should mention jetsam");
+        }
+    }
+
+    @Test
+    void describeExitDecodesSignalTerm() {
+        var desc = ProxyService.describeExit(128 + 15);
+        assertTrue(desc.contains("SIGTERM"));
+    }
+
+    @Test
+    void describeExitDecodesSignalInt() {
+        var desc = ProxyService.describeExit(128 + 2);
+        assertTrue(desc.contains("SIGINT"));
+    }
+
+    @Test
+    void describeExitDecodesSignalHup() {
+        var desc = ProxyService.describeExit(128 + 1);
+        assertTrue(desc.contains("SIGHUP"));
+    }
+
+    @Test
+    void describeExitHandlesUnknownSignal() {
+        var desc = ProxyService.describeExit(128 + 6);
+        assertTrue(desc.contains("signal 6"));
+    }
+
+    @Test
+    void describeExitDecodesConfigError() {
+        var desc = ProxyService.describeExit(ProxyService.EXIT_CONFIG);
+        assertTrue(desc.contains("configuration"));
+        assertTrue(desc.contains("isx init"));
+    }
+
+    @Test
+    void describeExitHandlesGenericNonZero() {
+        var desc = ProxyService.describeExit(1);
+        assertTrue(desc.contains("exit 1"));
+    }
+
     // --- systemd restart policy -------------------------------------------------
     //
     // A misconfiguration the user must fix by hand (init not run, Vertex fields blank) exits
