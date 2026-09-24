@@ -40,21 +40,17 @@ public class AskCommand extends BaseCommand {
 
         var question = String.join(" ", questionWords);
         var config = SpawnConfig.load();
-        var provider = AiHelpClient.detectProvider(config);
+        var targets = AiHelpClient.targets(config);
 
-        if (provider == null) {
+        if (targets.isEmpty()) {
             System.err.println(AiHelpClient.noProviderMessage(config));
             return CommandResult.valueOf(1);
         }
 
-        var providerName = switch (provider) {
-            case ANTHROPIC -> "Anthropic (" + AiHelpClient.ANTHROPIC_MODEL + ")";
-            case VERTEX -> "Vertex AI (" + AiHelpClient.VERTEX_MODEL + ")";
-            case OPENAI -> "OpenAI (" + AiHelpClient.OPENAI_MODEL + ")";
-        };
-        var label = "Asking " + providerName + "…" + (withTemplates ? " (with templates)" : "");
+        var target = targets.getFirst();
+        var label = "Asking " + target.label() + "…" + (withTemplates ? " (with templates)" : "");
 
-        var systemPrompt = HelpContext.buildSystemPrompt(withTemplates);
+        var systemBlocks = HelpContext.systemBlocks(withTemplates);
         var ansi = TerminalProgress.isAnsiTerminal();
 
         if (!ansi) {
@@ -79,7 +75,7 @@ public class AskCommand extends BaseCommand {
 
         var firstChunk = new AtomicBoolean(true);
         var lineBuf = new StringBuilder();
-        AiHelpClient.askStreaming(question, systemPrompt, config, chunk -> {
+        AiHelpClient.askStreaming(question, systemBlocks, config, target, chunk -> {
             if (firstChunk.getAndSet(false)) {
                 spinning.set(false);
                 if (ansi) {

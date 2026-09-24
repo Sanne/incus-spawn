@@ -1,0 +1,40 @@
+
+
+
+
+
+
+
+
+
+
+
+                    ╔ AI Help ═════════════════════════════════════════════════════════════════════╗
+                    ║ Your question is processed by an LLM using the account selected below; its   ║
+                    ║ usage is billed to that account.                                             ║
+                    ║                                                                              ║
+                    ║  ▸ Account: < Vertex AI · "gcp" · claude-sonnet-5 >                          ║
+                    ║                                                                              ║
+                    ║    Question:                                                                 ║
+                    ║    ask anything about incus-spawn…                                           ║
+                    ║                                                                              ║
+                    ║                                                                              ║
+                    ║                                                                              ║
+                    ║    [ ] Attach my template and tool definitions (~12.2 KB)                    ║
+                    ║        Sent to Google Vertex AI with your question, for better answers about ║
+                    ║        your own setup.                                                       ║
+                    ║                                                                              ║
+                    ║  Ctrl+S/Enter Ask   ←/→ Change   Tab Next field   Esc Close                  ║
+                    ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+
+
+
+

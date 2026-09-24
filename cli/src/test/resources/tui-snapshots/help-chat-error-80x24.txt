@@ -1,0 +1,24 @@
+
+
+
+
+
+
+
+
+  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
+  ║ Error: HTTP 401 from api.anthropic.com: authentication_error: invalid    ║
+  ║ x-api-key. Check the key with 'isx init' or 'isx doctor'.                ║
+  ║                                                                          ║
+  ║                                                                          ║
+  ║                                                                          ║
+  ║  n New question   q/Esc Close                                            ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+

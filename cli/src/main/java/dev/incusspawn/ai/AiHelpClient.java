@@ -15,6 +15,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -32,16 +34,64 @@ public class AiHelpClient {
         return httpClient;
     }
 
-    public enum Provider { ANTHROPIC, OPENAI, VERTEX }
+    public enum Provider {
+        ANTHROPIC("Anthropic", "Anthropic API key"),
+        OPENAI("OpenAI", "OpenAI API key"),
+        VERTEX("Google Vertex AI", "Vertex AI");
 
-    public record AiResponse(String content, Provider provider) {}
+        private final String serviceName;
+        private final String credentialKind;
+
+        Provider(String serviceName, String credentialKind) {
+            this.serviceName = serviceName;
+            this.credentialKind = credentialKind;
+        }
+
+        /** Who processes the question, as the user would name them. */
+        public String serviceName() { return serviceName; }
+
+        /** The kind of credential an account for this provider holds. */
+        public String credentialKind() { return credentialKind; }
+    }
+
+    public record AiResponse(String content, Usage usage) {}
+
+    /**
+     * Input tokens split by how they were billed, as the provider reported them: the uncached
+     * remainder, those read from the prompt cache (~0.1x), and those written to it (~1.25x).
+     * OpenAI caches on its own and reports no writes.
+     */
+    public record Usage(long inputTokens, long cacheReadTokens, long cacheWriteTokens, long outputTokens) {
+        public static final Usage NONE = new Usage(0, 0, 0, 0);
+
+        public long totalInputTokens() {
+            return inputTokens + cacheReadTokens + cacheWriteTokens;
+        }
+    }
 
     public static final String ANTHROPIC_MODEL = "claude-sonnet-5";
     public static final String VERTEX_MODEL = "claude-sonnet-5";
     public static final String OPENAI_MODEL = "gpt-4o-mini";
 
     /**
-     * Picks the provider to answer with, or null when no configured account can.
+     * A configured account a question can be sent to. {@code accountName} is the Claude
+     * account's name in {@code config.yaml}, or empty for OpenAI.
+     */
+    public record Target(Provider provider, String accountName, String model) {
+
+        /** One-line description for choosing between targets: kind, account name, model. */
+        public String label() {
+            // The legacy flat config has no user-chosen name, so there is nothing to show.
+            var named = !accountName.isEmpty()
+                    && !accountName.equals(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME);
+            return provider.credentialKind() + (named ? " · \"" + accountName + "\"" : "") + " · " + model;
+        }
+    }
+
+    /**
+     * Every configured account that can answer, the one to use by default first: Claude
+     * accounts that serve the API directly (in file order, the default account leading), then
+     * OpenAI. Empty when nothing can answer -- see {@link #noProviderMessage}.
      *
      * <p>Selection is by what an account <em>is</em>, not by any designation: a Claude Pro/Max
      * OAuth account cannot serve this, because such a token is only valid for Claude Code
@@ -49,26 +99,41 @@ public class AiHelpClient {
      * account keeps serving instances while an API-key or Vertex account answers here, without
      * either being set aside for the purpose.
      */
-    public static Provider detectProvider(SpawnConfig config) {
-        var account = directApiAccount(config);
-        if (account != null) {
-            return switch (account.effectiveType()) {
-                case API_KEY -> Provider.ANTHROPIC;
-                case VERTEX -> Provider.VERTEX;
-                case OAUTH -> null; // unreachable: servesDirectApi() excludes it
-            };
-        }
-        if (config.getOpenai().hasAuth()) return Provider.OPENAI;
-        return null;
-    }
-
-    /** The Claude account {@link #detectProvider} resolved to, or null when none can serve. */
-    private static SpawnConfig.ClaudeAccount directApiAccount(SpawnConfig config) {
-        return config.getClaude().accountFor(SpawnConfig.ClaudeAccount::servesDirectApi);
+    public static List<Target> targets(SpawnConfig config) {
+        var result = new ArrayList<Target>();
+        var claude = config.getClaude();
+        var accounts = claude.effectiveAccounts();
+        var preferred = claude.accountNameFor(SpawnConfig.ClaudeAccount::servesDirectApi);
+        if (!preferred.isEmpty()) result.add(claudeTarget(preferred, accounts.get(preferred)));
+        accounts.forEach((name, account) -> {
+            if (!name.equals(preferred) && account.servesDirectApi()) {
+                result.add(claudeTarget(name, account));
+            }
+        });
+        if (config.getOpenai().hasAuth()) result.add(new Target(Provider.OPENAI, "", OPENAI_MODEL));
+        return result;
     }
 
     /**
-     * Explains why {@link #detectProvider} found nothing usable. A Claude Pro/Max OAuth token
+     * Claude accounts that are configured but can never answer here: Pro/Max subscriptions,
+     * whose token is only valid for Claude Code itself (see {@link #targets}).
+     */
+    public static List<String> subscriptionAccounts(SpawnConfig config) {
+        var names = new ArrayList<String>();
+        config.getClaude().effectiveAccounts().forEach((name, account) -> {
+            if (account.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH) names.add(name);
+        });
+        return names;
+    }
+
+    private static Target claudeTarget(String name, SpawnConfig.ClaudeAccount account) {
+        return account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
+                ? new Target(Provider.VERTEX, name, VERTEX_MODEL)
+                : new Target(Provider.ANTHROPIC, name, ANTHROPIC_MODEL);
+    }
+
+    /**
+     * Explains why {@link #targets} found nothing usable. A Claude Pro/Max OAuth token
      * counts as configured credentials to the rest of isx, so "no credentials" would be a
      * confusing thing to tell that user -- name the real reason instead.
      */
@@ -95,44 +160,66 @@ public class AiHelpClient {
                 + "Run 'isx init' to add an Anthropic API key or Vertex AI account.";
     }
 
-    public static AiResponse ask(String question, String systemPrompt, SpawnConfig config) throws IOException {
+    /**
+     * Asks {@code target}, which must be one of {@link #targets}. {@code systemBlocks} are sent
+     * as separately cacheable blocks where the provider supports it (see
+     * {@link HelpContext#systemBlocks}).
+     */
+    public static AiResponse ask(String question, List<String> systemBlocks, SpawnConfig config,
+                                 Target target) throws IOException {
         var sb = new StringBuilder();
-        var provider = requireProvider(config);
-        dispatch(question, systemPrompt, config, provider, sb::append);
-        return new AiResponse(sb.toString(), provider);
+        var usage = askStreaming(question, systemBlocks, config, target, sb::append);
+        return new AiResponse(sb.toString(), usage);
     }
 
-    public static void askStreaming(String question, String systemPrompt,
-                                    SpawnConfig config, Consumer<String> onChunk) throws IOException {
-        dispatch(question, systemPrompt, config, requireProvider(config), onChunk);
+    /** Like {@link #ask}, handing the answer to {@code onChunk} as it arrives. */
+    public static Usage askStreaming(String question, List<String> systemBlocks, SpawnConfig config,
+                                     Target target, Consumer<String> onChunk) throws IOException {
+        return switch (target.provider()) {
+            case ANTHROPIC -> streamAnthropic(question, systemBlocks, target.model(),
+                    claudeAccount(config, target), onChunk);
+            case VERTEX -> streamVertex(question, systemBlocks, target.model(),
+                    claudeAccount(config, target), onChunk);
+            case OPENAI -> streamOpenAI(question, String.join("", systemBlocks), target.model(),
+                    config.getOpenai(), onChunk);
+        };
     }
 
-    private static void dispatch(String question, String systemPrompt,
-                                  SpawnConfig config, Provider provider,
-                                  Consumer<String> onChunk) throws IOException {
-        switch (provider) {
-            case ANTHROPIC -> streamAnthropic(question, systemPrompt, directApiAccount(config), onChunk);
-            case VERTEX -> streamVertex(question, systemPrompt, directApiAccount(config), onChunk);
-            case OPENAI -> streamOpenAI(question, systemPrompt, config.getOpenai(), onChunk);
+    /**
+     * The Messages API {@code system} field as text blocks, each ending in a cache breakpoint.
+     * The documentation is the same for every question, so after the first one it is read from
+     * the cache at a tenth of the price. The default 5-minute lifetime fits help traffic: a
+     * cache read renews it, so follow-ups keep it warm, while the 1-hour lifetime doubles the
+     * write cost for questions too sparse to repay it.
+     */
+    static com.fasterxml.jackson.databind.node.ArrayNode cachedSystem(List<String> systemBlocks) {
+        var system = JSON.createArrayNode();
+        for (var text : systemBlocks) {
+            var block = system.addObject();
+            block.put("type", "text");
+            block.put("text", text);
+            block.putObject("cache_control").put("type", "ephemeral");
         }
+        return system;
     }
 
-    private static Provider requireProvider(SpawnConfig config) throws IOException {
-        var provider = detectProvider(config);
-        if (provider == null) {
-            throw new IOException(noProviderMessage(config));
+    private static SpawnConfig.ClaudeAccount claudeAccount(SpawnConfig config, Target target) throws IOException {
+        var account = config.getClaude().effectiveAccounts().get(target.accountName());
+        if (account == null || !account.servesDirectApi()) {
+            throw new IOException("Claude account '" + target.accountName() + "' can no longer answer;"
+                    + " check it with 'isx init'.");
         }
-        return provider;
+        return account;
     }
 
-    private static void streamAnthropic(String question, String systemPrompt,
+    private static Usage streamAnthropic(String question, List<String> systemBlocks, String model,
                                          SpawnConfig.ClaudeAccount account,
                                          Consumer<String> onChunk) throws IOException {
         var body = JSON.createObjectNode();
-        body.put("model", ANTHROPIC_MODEL);
+        body.put("model", model);
         body.put("max_tokens", 4096);
         body.put("stream", true);
-        body.put("system", systemPrompt);
+        body.set("system", cachedSystem(systemBlocks));
         var messages = body.putArray("messages");
         var msg = messages.addObject();
         msg.put("role", "user");
@@ -147,10 +234,10 @@ public class AiHelpClient {
 
         builder.header("x-api-key", account.getApiKey());
 
-        processStream(sendStream(builder.build()), onChunk);
+        return processStream(sendStream(builder.build()), onChunk);
     }
 
-    private static void streamVertex(String question, String systemPrompt,
+    private static Usage streamVertex(String question, List<String> systemBlocks, String model,
                                       SpawnConfig.ClaudeAccount account,
                                       Consumer<String> onChunk) throws IOException {
         var gcpToken = getGcloudAccessToken();
@@ -159,7 +246,7 @@ public class AiHelpClient {
         body.put("anthropic_version", "vertex-2023-10-16");
         body.put("max_tokens", 4096);
         body.put("stream", true);
-        body.put("system", systemPrompt);
+        body.set("system", cachedSystem(systemBlocks));
         var messages = body.putArray("messages");
         var msg = messages.addObject();
         msg.put("role", "user");
@@ -170,7 +257,7 @@ public class AiHelpClient {
         var host = ProxyConfig.vertexHost(region);
         var uri = "https://" + host + "/v1/projects/" + project
                 + "/locations/" + region + "/publishers/anthropic/models/"
-                + VERTEX_MODEL + ":streamRawPredict";
+                + model + ":streamRawPredict";
 
         var request = HttpRequest.newBuilder()
                 .uri(URI.create(uri))
@@ -180,15 +267,17 @@ public class AiHelpClient {
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
                 .build();
 
-        processStream(sendStream(request), onChunk);
+        return processStream(sendStream(request), onChunk);
     }
 
-    private static void streamOpenAI(String question, String systemPrompt,
+    private static Usage streamOpenAI(String question, String systemPrompt, String model,
                                       SpawnConfig.OpenaiConfig openai,
                                       Consumer<String> onChunk) throws IOException {
         var body = JSON.createObjectNode();
-        body.put("model", OPENAI_MODEL);
+        body.put("model", model);
         body.put("stream", true);
+        // Streamed responses only report token usage when asked to, in a final chunk.
+        body.putObject("stream_options").put("include_usage", true);
         var messages = body.putArray("messages");
         var sysMsg = messages.addObject();
         sysMsg.put("role", "system");
@@ -205,7 +294,11 @@ public class AiHelpClient {
                 .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)))
                 .build();
 
-        var is = sendStream(request);
+        return processOpenAiStream(sendStream(request), onChunk);
+    }
+
+    static Usage processOpenAiStream(InputStream is, Consumer<String> onChunk) throws IOException {
+        var usage = Usage.NONE;
         try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -215,12 +308,20 @@ public class AiHelpClient {
                 var node = JSON.readTree(data);
                 var text = node.path("choices").path(0).path("delta").path("content").asText(null);
                 if (text != null) onChunk.accept(text);
+                var reported = node.path("usage");
+                if (reported.isObject()) {
+                    long cached = reported.path("prompt_tokens_details").path("cached_tokens").asLong(0);
+                    usage = new Usage(reported.path("prompt_tokens").asLong(0) - cached, cached, 0,
+                            reported.path("completion_tokens").asLong(0));
+                }
             }
         }
+        return usage;
     }
 
-    private static void processStream(InputStream is, Consumer<String> onChunk) throws IOException {
+    static Usage processStream(InputStream is, Consumer<String> onChunk) throws IOException {
         boolean inTextBlock = false;
+        var usage = Usage.NONE;
         try (var reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -232,6 +333,12 @@ public class AiHelpClient {
                 var type = node.path("type").asText("");
 
                 switch (type) {
+                    case "message_start":
+                        usage = withUsage(usage, node.path("message").path("usage"));
+                        break;
+                    case "message_delta":
+                        usage = withUsage(usage, node.path("usage"));
+                        break;
                     case "content_block_start":
                         inTextBlock = "text".equals(
                                 node.path("content_block").path("type").asText());
@@ -251,6 +358,21 @@ public class AiHelpClient {
                 }
             }
         }
+        return usage;
+    }
+
+    /**
+     * Folds a Messages API {@code usage} object into {@code usage}. {@code message_start}
+     * carries the input counts and {@code message_delta} the final output count (and may
+     * repeat the input counts), so each field keeps the latest value it was given.
+     */
+    static Usage withUsage(Usage usage, com.fasterxml.jackson.databind.JsonNode reported) {
+        if (!reported.isObject()) return usage;
+        return new Usage(
+                reported.path("input_tokens").asLong(usage.inputTokens()),
+                reported.path("cache_read_input_tokens").asLong(usage.cacheReadTokens()),
+                reported.path("cache_creation_input_tokens").asLong(usage.cacheWriteTokens()),
+                reported.path("output_tokens").asLong(usage.outputTokens()));
     }
 
     private static String getGcloudAccessToken() throws IOException {

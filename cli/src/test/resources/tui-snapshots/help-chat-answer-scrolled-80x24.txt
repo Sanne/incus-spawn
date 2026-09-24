@@ -1,0 +1,24 @@
+
+  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
+  ║ Line 6 of a long answer.                                               │ ║
+  ║ Line 7 of a long answer.                                               █ ║
+  ║ Line 8 of a long answer.                                               █ ║
+  ║ Line 9 of a long answer.                                               █ ║
+  ║ Line 10 of a long answer.                                              █ ║
+  ║ Line 11 of a long answer.                                              █ ║
+  ║ Line 12 of a long answer.                                              │ ║
+  ║ Line 13 of a long answer.                                              │ ║
+  ║ Line 14 of a long answer.                                              │ ║
+  ║ Line 15 of a long answer.                                              │ ║
+  ║ Line 16 of a long answer.                                              │ ║
+  ║ Line 17 of a long answer.                                              │ ║
+  ║ Line 18 of a long answer.                                              │ ║
+  ║ Line 19 of a long answer.                                              │ ║
+  ║ Line 20 of a long answer.                                              │ ║
+  ║ Line 21 of a long answer.                                              │ ║
+  ║ Line 22 of a long answer.                                              │ ║
+  ║                                                                          ║
+  ║  51.2k tokens in (51.2k from cache) · 312 out                            ║
+  ║  n New question   q/Esc Close                                            ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+

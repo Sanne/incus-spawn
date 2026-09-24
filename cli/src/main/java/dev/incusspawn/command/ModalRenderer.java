@@ -14,6 +14,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.terminal.Frame;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
@@ -25,6 +26,9 @@ import dev.tamboui.widgets.input.TextInputState;
 import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.select.Select;
 import dev.tamboui.widgets.select.SelectState;
+import dev.tamboui.widgets.scrollbar.Scrollbar;
+import dev.tamboui.widgets.scrollbar.ScrollbarOrientation;
+import dev.tamboui.widgets.scrollbar.ScrollbarState;
 
 final class ModalRenderer {
 
@@ -111,10 +115,33 @@ final class ModalRenderer {
         spans.add(Span.styled(" " + label + "  ", Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg())));
     }
 
+    /** Width of the focus-marker column (" ▸ ") that precedes every form field. */
+    static final int FIELD_PREFIX = 3;
+
+    /** Column where a toggle's label text starts: past the focus marker and the checkbox. */
+    int toggleLabelColumn() {
+        return FIELD_PREFIX + checkbox.width() + 1;
+    }
+
+    /** A field label with the focus marker, for fields whose input is rendered separately. */
+    void renderLabel(Frame frame, Rect area, String label, boolean focused) {
+        frame.renderWidget(Paragraph.from(Line.from(
+                Span.styled(focused ? " ▸ " : "   ", Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())),
+                Span.styled(label, Style.EMPTY.fg(focused ? theme.focusedLabel() : theme.modalFg())
+                        .bg(theme.modalBg())))), area);
+    }
+
+    /** A read-only field: its label aligned with the other fields, then its value. */
+    void renderValue(Frame frame, Rect area, String label, String value) {
+        frame.renderWidget(Paragraph.from(Line.from(
+                Span.styled(" ".repeat(FIELD_PREFIX) + label + " ", Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg())),
+                Span.styled(value, Style.EMPTY.fg(theme.modalAccent()).bg(theme.modalBg())))), area);
+    }
+
     void renderToggle(Frame frame, Rect area,
                               String label, CheckboxState state, boolean focused) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(3), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(checkbox.width() + 1), Constraint.fill())
                 .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
@@ -127,7 +154,7 @@ final class ModalRenderer {
 
     void renderDisabledLine(Frame frame, Rect area, String label, String reason) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(3), Constraint.length(checkbox.width() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(checkbox.width() + 1), Constraint.fill())
                 .split(area);
         frame.renderWidget(Paragraph.from(Line.styled(label + " — " + reason,
                 Style.EMPTY.fg(theme.textDim()).bg(theme.modalBg()))), cols.get(2));
@@ -136,7 +163,7 @@ final class ModalRenderer {
     void renderSelect(Frame frame, Rect area,
                               String label, SelectState state, boolean focused) {
         var cols = Layout.horizontal()
-                .constraints(Constraint.length(3), Constraint.length(label.length() + 1), Constraint.fill())
+                .constraints(Constraint.length(FIELD_PREFIX), Constraint.length(label.length() + 1), Constraint.fill())
                 .split(area);
         var prefix = focused ? "▸" : " ";
         var labelColor = focused ? theme.focusedLabel() : theme.modalFg();
@@ -239,7 +266,7 @@ final class ModalRenderer {
         frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(rows.size() - 1));
     }
 
-    private static List<String> wrapText(String text, int width) {
+    static List<String> wrapText(String text, int width) {
         var result = new ArrayList<String>();
         for (var paragraph : text.split("\n")) {
             if (paragraph.isEmpty()) {
@@ -311,5 +338,46 @@ final class ModalRenderer {
         frame.renderWidget(Paragraph.from(Line.styled(
                 " " + message,
                 Style.EMPTY.fg(theme.modalFg()).bg(theme.modalBg()))), block.inner(modalArea));
+    }
+
+    int renderScrollableContent(Frame frame, Rect contentArea,
+                                List<Line> contentLines, int scrollOffset) {
+        boolean needsScroll = contentLines.size() > contentArea.height();
+        Rect textArea;
+        Rect scrollbarArea;
+        if (needsScroll) {
+            var cols = Layout.horizontal()
+                    .constraints(Constraint.fill(), Constraint.length(1))
+                    .split(contentArea);
+            textArea = cols.get(0);
+            scrollbarArea = cols.get(1);
+        } else {
+            textArea = contentArea;
+            scrollbarArea = null;
+        }
+
+        int visibleHeight = textArea.height();
+        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
+        scrollOffset = Math.min(scrollOffset, maxScroll);
+
+        var visibleLines = contentLines.subList(
+                scrollOffset,
+                Math.min(scrollOffset + visibleHeight, contentLines.size()));
+        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), textArea);
+
+        if (scrollbarArea != null) {
+            var scrollbar = Scrollbar.builder()
+                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
+                    .thumbStyle(Style.EMPTY.fg(accent()))
+                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
+                    .style(Style.EMPTY.bg(bg()))
+                    .build();
+            var state = new ScrollbarState()
+                    .contentLength(contentLines.size())
+                    .viewportContentLength(visibleHeight)
+                    .position(scrollOffset);
+            frame.renderStatefulWidget(scrollbar, scrollbarArea, state);
+        }
+        return scrollOffset;
     }
 }

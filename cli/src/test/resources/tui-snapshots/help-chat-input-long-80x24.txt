@@ -1,0 +1,24 @@
+
+
+
+  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
+  ║ Your question is processed by an LLM using the account shown below; its  ║
+  ║ usage is billed to that account.                                         ║
+  ║                                                                          ║
+  ║    Account: Anthropic API key · "work" · claude-sonnet-5                 ║
+  ║                                                                          ║
+  ║  ▸ Question:                                                             ║
+  ║    I have a template tpl-java that builds fine, but when I branch it the ║
+  ║    Maven repository cache seems to be empty and every build downloads    ║
+  ║    the internet again. Is the cache supposed to be shared between        ║
+  ║    branches, and if so what could be preventing it?                      ║
+  ║                                                                          ║
+  ║    [ ] Attach my template and tool definitions (~12.2 KB)                ║
+  ║        Sent to Anthropic with your question, for better answers about    ║
+  ║        your own setup.                                                   ║
+  ║                                                                          ║
+  ║  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+

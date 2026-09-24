@@ -1,0 +1,40 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    ╔ AI Help ═════════════════════════════════════════════════════════════════════╗
+                    ║ To branch an instance, select it in the list and press **b**. The branch is  ║
+                    ║ a copy-on-write clone, so it is created in seconds regardless of how large   ║
+                    ║ the source is.                                                               ║
+                    ║                                                                              ║
+                    ║ From the command line:                                                       ║
+                    ║                                                                              ║
+                    ║     isx branch my-instance my-experiment                                     ║
+                    ║                                                                              ║
+                    ║ See https://github.com/Sanne/incus-spawn#branching for details.              ║
+                    ║                                                                              ║
+                    ║  51.2k tokens in (51.2k from cache) · 312 out                                ║
+                    ║  n New question   q/Esc Close                                                ║
+                    ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+
+
+
+
+
