@@ -131,53 +131,96 @@ public final class AccountSelection {
     }
 
     /**
-     * The env class each selected account implies, for namespaces whose tool declares one.
-     * Namespaces with no class are omitted -- their accounts are freely interchangeable.
+     * What the build derived from each selected account, for namespaces whose tool derives
+     * anything. Namespaces absent from the result bake nothing, so their accounts are freely
+     * interchangeable.
      *
-     * @see ToolSetup#envClass
+     * @see ToolSetup#bakedAccountIdentity
      */
-    public static Map<String, String> envClasses(SpawnConfig config, Map<String, String> selection) {
-        return envClasses(config, selection, namespaceSetups(config));
+    public static Map<String, String> bakedIdentities(SpawnConfig config, Map<String, String> selection) {
+        return bakedIdentities(config, selection, namespaceSetups(config));
     }
 
-    /** As {@link #envClasses(SpawnConfig, Map)}, against setups the caller already discovered. */
-    public static Map<String, String> envClasses(SpawnConfig config, Map<String, String> selection,
+    /** As {@link #bakedIdentities(SpawnConfig, Map)}, against setups the caller already discovered. */
+    public static Map<String, String> bakedIdentities(SpawnConfig config, Map<String, String> selection,
                                                  Map<String, ToolSetup> setups) {
-        var classes = new LinkedHashMap<String, String>();
-        if (selection == null || selection.isEmpty()) return classes;
+        var identities = new LinkedHashMap<String, String>();
+        if (selection == null || selection.isEmpty()) return identities;
         selection.forEach((namespace, account) -> {
             var setup = setups.get(namespace);
             if (setup == null) return;
-            var envClass = setup.envClass(config, account);
-            if (envClass != null && !envClass.isBlank()) classes.put(namespace, envClass);
+            var identity = setup.bakedAccountIdentity(config, account);
+            if (identity != null && !identity.isBlank()) identities.put(namespace, identity);
         });
-        return classes;
+        return identities;
     }
 
     /**
      * Why this selection cannot be applied to an already-built instance, or {@code ""} when it
-     * can. A mismatch means the container's baked environment describes a different auth mode,
-     * which no amount of proxy-side substitution can fix.
+     * can.
+     *
+     * <p>Only namespaces whose tool bakes something can object, and only when it cannot
+     * re-derive that thing in place. GitHub can -- the git identity is re-read from the API
+     * through the proxy, which answers for the new account by itself -- so a GitHub re-point is
+     * accepted here and reconciled on the instance's next use. Claude cannot, because its auth
+     * mode lives in the environment a running agent has already read.
      */
     public static String incompatibilityReason(SpawnConfig config, IncusClient incus,
                                                String instance, Map<String, String> selection) {
-        var wanted = envClasses(config, selection);
+        var setups = namespaceSetups(config);
+        var wanted = bakedIdentities(config, selection, setups);
         if (wanted.isEmpty()) return "";
-        var bakedClasses = incus.configByPrefix(instance, Metadata.ENV_CLASS_PREFIX);
+        var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
         for (var entry : wanted.entrySet()) {
             var namespace = entry.getKey();
-            var baked = bakedClasses.get(namespace);
-            if (baked == null || baked.isBlank()) continue;
-            if (!baked.equals(entry.getValue())) {
-                return "Instance '" + instance + "' was built for " + namespace + " auth mode '"
-                        + baked + "', but account '" + selection.get(namespace) + "' uses '"
-                        + entry.getValue() + "'. The mode is baked into the container's"
-                        + " environment at build time, so it cannot be swapped on a built"
-                        + " instance -- branch from a template configured for '"
-                        + entry.getValue() + "' instead.";
-            }
+            var wasBaked = baked.get(namespace);
+            if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(entry.getValue())) continue;
+            if (canRebake(setups.get(namespace))) continue;
+            return "Instance '" + instance + "' was built for " + namespace + " '"
+                    + wasBaked + "', but account '" + selection.get(namespace) + "' is '"
+                    + entry.getValue() + "'. That is baked into the container at build time and"
+                    + " cannot be changed on a built instance -- branch from a template"
+                    + " configured for '" + entry.getValue() + "' instead.";
         }
         return "";
+    }
+
+    private static boolean canRebake(ToolSetup setup) {
+        return setup != null && setup.canRebakeForAccount();
+    }
+
+    /**
+     * Namespaces whose baked identity on this instance no longer matches the account it is
+     * pinned to, mapped to the account it should be brought in line with. Each one's tool can
+     * re-derive -- the ones that cannot were refused at selection time.
+     */
+    public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
+                                                      String instance) {
+        var stale = new LinkedHashMap<String, String>();
+        var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
+        if (baked.isEmpty()) return stale;
+        var setups = namespaceSetups(config);
+        var selection = read(incus, instance);
+        bakedIdentities(config, effectiveSelection(selection, setups), setups)
+                .forEach((namespace, identity) -> {
+                    var wasBaked = baked.get(namespace);
+                    if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(identity)) return;
+                    if (!canRebake(setups.get(namespace))) return;
+                    stale.put(namespace, identity);
+                });
+        return stale;
+    }
+
+    /**
+     * The selection with every known namespace present, a null account meaning "whatever the
+     * configured default resolves to" -- which is the account a build with no explicit
+     * selection actually used.
+     */
+    public static Map<String, String> effectiveSelection(Map<String, String> selection,
+                                                         Map<String, ToolSetup> setups) {
+        var effective = new LinkedHashMap<String, String>();
+        setups.keySet().forEach(namespace -> effective.put(namespace, selection.get(namespace)));
+        return effective;
     }
 
     /** Render a selection for humans: {@code claude=work, github=acme-bot}. */
@@ -234,7 +277,7 @@ public final class AccountSelection {
      * project-local rejection, and offer the user a namespace the proxy will never serve.
      *
      * <p>Discovering the setups scans the filesystem, so callers that need both this and
-     * {@link #envClasses} should pass the map rather than asking twice.
+     * {@link #bakedIdentities} should pass the map rather than asking twice.
      */
     public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config) {
         var byNamespace = new LinkedHashMap<String, ToolSetup>();

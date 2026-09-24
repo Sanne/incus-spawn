@@ -246,6 +246,51 @@ class PerInstanceCredentialsTest {
         assertEquals(1, ToolProxyResolver.resolveAcrossAccounts(config, tools).size());
     }
 
+    /**
+     * End to end for the real gh tool, not a synthetic one: two GitHub accounts, and the
+     * instance's pin decides which token is injected into both the basic-auth (git over HTTPS)
+     * and bearer (API) entries.
+     */
+    @Test
+    void theRealGhToolResolvesPerAccount() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  accounts:
+                    personal:
+                      token: "ghp_personal"
+                    acme:
+                      token: "ghp_acme"
+                  default: personal
+                """, SpawnConfig.class);
+        var tools = Map.<String, ToolSetup>of("gh", new dev.incusspawn.tool.GhSetup());
+
+        assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of()), "ghp_personal");
+        assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of("github", "acme")), "ghp_acme");
+    }
+
+    /** A pre-accounts github block keeps working for the real tool too. */
+    @Test
+    void theRealGhToolStillResolvesAFlatToken() throws Exception {
+        var config = YAML.readValue("github:\n  token: \"ghp_flat\"\n", SpawnConfig.class);
+        var tools = Map.<String, ToolSetup>of("gh", new dev.incusspawn.tool.GhSetup());
+        assertAllTokens(ToolProxyResolver.resolve(config, tools, Map.of()), "ghp_flat");
+    }
+
+    private static void assertAllTokens(List<ResolvedToolProxy> resolved, String expectedToken) {
+        assertFalse(resolved.isEmpty(), "gh should contribute proxy entries");
+        for (var entry : resolved) {
+            var header = entry.computeHeaderValue();
+            if (header.startsWith("Bearer ")) {
+                assertEquals("Bearer " + expectedToken, header);
+            } else {
+                // Basic auth for git over HTTPS: x-access-token:<pat>, base64-encoded.
+                var decoded = new String(java.util.Base64.getDecoder()
+                        .decode(header.substring("Basic ".length())));
+                assertEquals("x-access-token:" + expectedToken, decoded);
+            }
+        }
+    }
+
     /** A tool naming another namespace's key outright, the way CopilotSetup shares gh's PAT. */
     private static ToolSetup toolBorrowing(String fullConfigPath) {
         var token = new ToolDef.ConfigEntry();

@@ -103,6 +103,43 @@ public final class AccountResolver {
         return names;
     }
 
+    /**
+     * A value under a namespace, preferring the selected account's copy of the key and falling
+     * back to the flat one.
+     *
+     * <p>The fallback is not just for pre-accounts configs: a namespace may hold some keys per
+     * account (the token) and others globally (an org-wide setting), so an account that omits a
+     * key inherits it rather than resolving to blank.
+     *
+     * @param accountName the resolved account, or blank for the flat layout
+     */
+    public static String value(JsonNode configTree, String namespace,
+                               String accountName, String key) {
+        if (namespace.isBlank() || key.isBlank()) return "";
+        if (accountName != null && !accountName.isBlank()) {
+            var fromAccount = navigate(configTree,
+                    namespace + "." + ACCOUNTS_KEY + "." + accountName + "." + key);
+            if (!fromAccount.isBlank()) return fromAccount;
+        }
+        return navigate(configTree, namespace + "." + key);
+    }
+
+    /**
+     * Read a dotted path out of a serialized config tree, or {@code ""} when any segment is
+     * missing or the leaf is not a value.
+     *
+     * <p>Lives here rather than in the proxy package because it is a plain config utility with
+     * two owners now: tool-proxy credential resolution and every account lookup above.
+     */
+    public static String navigate(JsonNode tree, String path) {
+        var node = tree;
+        for (var segment : path.split("\\.")) {
+            if (node == null || !node.isObject()) return "";
+            node = node.get(segment);
+        }
+        return node != null && node.isValueNode() ? node.asText() : "";
+    }
+
     /** The name in {@code <ns>.default}, or {@code ""}. */
     public static String defaultName(JsonNode configTree, String namespace) {
         var ns = configTree == null ? null : configTree.get(namespace);

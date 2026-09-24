@@ -88,11 +88,11 @@ public class AccountCommand extends BaseCommand {
                         + " for every credential.");
                 return CommandResult.SUCCESS;
             }
-            var envClasses = incus.configByPrefix(instance, Metadata.ENV_CLASS_PREFIX);
+            var identities = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
             selection.forEach((namespace, account) -> {
-                var envClass = envClasses.get(namespace);
+                var identity = identities.get(namespace);
                 System.out.println(namespace + " = " + account
-                        + (envClass == null || envClass.isBlank() ? "" : "  (built for " + envClass + ")"));
+                        + (identity == null || identity.isBlank() ? "" : "  (built for " + identity + ")"));
             });
             return CommandResult.SUCCESS;
         }

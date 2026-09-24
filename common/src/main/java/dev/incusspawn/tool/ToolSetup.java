@@ -44,23 +44,45 @@ public interface ToolSetup {
     default boolean hasOwnCredentials() { return true; }
 
     /**
-     * The class of container environment this account is baked with, or {@code ""} when the
-     * account makes no difference to what gets baked.
+     * What the build <em>derived</em> from this account and wrote into the image, or {@code ""}
+     * when the account makes no difference to what gets baked.
      *
-     * <p>Credentials never enter a container -- the proxy substitutes them -- so for most
-     * tools every account is interchangeable and a running instance can be re-pointed at
-     * another freely. Claude is the exception: its auth mode decides which variables
-     * {@code envEntries} writes into {@code /etc/profile.d/isx-env.sh}, so swapping between
-     * modes would leave the container describing an auth mode it is no longer using.
+     * <p>Credentials themselves never enter a container -- the proxy substitutes them -- so a
+     * tool that only has a header injected on its behalf bakes nothing and its accounts are
+     * freely interchangeable. Two tools are not like that. Claude's auth mode decides which
+     * variables {@code envEntries} writes into {@code isx-env.sh}, so it returns the mode:
+     * accounts of the same mode remain interchangeable. GitHub derives {@code user.name} and
+     * {@code user.email} from whoever the token belongs to, so it returns the account name:
+     * any change is a change of identity.
      *
-     * <p>Two accounts are swappable exactly when their env classes match. The build stamps the
-     * class onto the instance under {@link dev.incusspawn.incus.Metadata#envClassKey}, and
-     * selection refuses a mismatch rather than half-applying it.
+     * <p>The build stamps this under {@link dev.incusspawn.incus.Metadata#accountIdentityKey}.
+     * A later re-point compares against it and, when it differs, either asks the tool to bring
+     * the instance in line ({@link #rebakeForAccount}) or refuses the swap.
      *
      * @param accountName the account being considered, as named in {@code <ns>.accounts}
      */
-    default String envClass(dev.incusspawn.config.SpawnConfig config, String accountName) {
+    default String bakedAccountIdentity(dev.incusspawn.config.SpawnConfig config, String accountName) {
         return "";
+    }
+
+    /**
+     * Whether this tool can re-derive what it baked, so a re-point is reconciled rather than
+     * refused. Answerable without a container, because selection has to decide before any
+     * instance is started.
+     */
+    default boolean canRebakeForAccount() { return false; }
+
+    /**
+     * Bring an already-built instance in line with a different account, re-deriving whatever
+     * {@link #bakedAccountIdentity} describes. Only called when
+     * {@link #canRebakeForAccount()} is true.
+     *
+     * <p>GitHub clears the git identity and asks the API again, which resolves through the
+     * proxy and therefore answers for the new account by itself. Claude declines: its auth mode
+     * lives in the environment a running agent has already read.
+     */
+    default void rebakeForAccount(Container container, String accountName) {
+        throw new UnsupportedOperationException(name() + " cannot re-derive its baked identity");
     }
 
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
@@ -105,6 +127,15 @@ public interface ToolSetup {
     default java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams,
                                                 java.util.Map<String, String> accountSelection) {
         return envEntries(resolvedParams);
+    }
+
+    /**
+     * Install against a build that selected particular credential accounts. Only tools that
+     * derive something from the account need this; the default ignores it.
+     */
+    default void install(Container container, java.util.Map<String, String> resolvedParams,
+                         java.util.Map<String, String> accountSelection) {
+        install(container, resolvedParams);
     }
 
     default java.util.List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {

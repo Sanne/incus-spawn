@@ -13,6 +13,9 @@ import static dev.incusspawn.incus.Container.shellQuote;
 
 public class GhSetup implements ToolSetup {
 
+    /** Config namespace, matching the {@code config-namespace} declared in {@link #proxy()}. */
+    public static final String NAMESPACE = "github";
+
     private static final String PLACEHOLDER_TOKEN = "gho_placeholder";
     private static final long[] DEFAULT_RETRY_DELAYS_MS = {500, 500, 500, 500};
     long[] retryDelaysMs = DEFAULT_RETRY_DELAYS_MS;
@@ -46,7 +49,7 @@ public class GhSetup implements ToolSetup {
         bearerAuth.setToken("${token}");
 
         var proxy = new ToolDef.ProxyDef();
-        proxy.setConfigNamespace("github");
+        proxy.setConfigNamespace(NAMESPACE);
         proxy.setConfiguration(Map.of("token", token));
         proxy.setAuth(List.of(basicAuth, bearerAuth));
         return proxy;
@@ -57,6 +60,44 @@ public class GhSetup implements ToolSetup {
         return List.of("gh");
     }
 
+    /**
+     * The account name itself: {@code user.name} and {@code user.email} are derived from
+     * whoever the token belongs to, so any change of account is a change of identity -- unlike
+     * Claude, where two accounts of the same auth mode leave the image identical.
+     */
+    @Override
+    public String bakedAccountIdentity(SpawnConfig config, String accountName) {
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        return dev.incusspawn.config.AccountResolver.effectiveAccount(
+                tree, NAMESPACE, accountName);
+    }
+
+    @Override
+    public boolean canRebakeForAccount() { return true; }
+
+    /**
+     * Re-derive the git identity for a different account.
+     *
+     * <p>Clearing first is the whole mechanism: {@link #configureGitIdentity} skips when an
+     * identity is already present, so without this the instance would keep committing as the
+     * account it was branched from while pushing with the new one's token. The lookup itself
+     * needs no account argument beyond the config read -- {@code gh api user} goes through the
+     * proxy, which already knows which account this instance uses.
+     */
+    @Override
+    public void rebakeForAccount(Container container, String accountName) {
+        clearGitIdentity(container);
+        configureGitIdentity(container, accountName);
+    }
+
+    private void clearGitIdentity(Container c) {
+        // Not assertSuccess: git exits non-zero when the key is already absent, which is a
+        // perfectly good starting point for re-deriving it.
+        c.shAsUser("agentuser", "git config --global --unset-all user.name");
+        c.shAsUser("agentuser", "git config --global --unset-all user.email");
+    }
+
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         return List.of(EnvEntry.set("GH_TOKEN", PLACEHOLDER_TOKEN));
@@ -64,20 +105,50 @@ public class GhSetup implements ToolSetup {
 
     @Override
     public void install(Container c, java.util.Map<String, String> resolvedParams) {
+        install(c, resolvedParams, java.util.Map.of());
+    }
+
+    @Override
+    public void install(Container c, java.util.Map<String, String> resolvedParams,
+                        java.util.Map<String, String> accountSelection) {
         BuildOutput.stepStart("Installing GitHub CLI...");
-        configureGit(c);
+        configureGit(c, accountFrom(accountSelection));
         BuildOutput.stepDone();
     }
 
-    private void configureGit(Container c) {
+    /** The GitHub account this build or instance uses, resolved through the generic layers. */
+    private static String accountFrom(java.util.Map<String, String> accountSelection) {
+        var config = SpawnConfig.load();
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        return dev.incusspawn.config.AccountResolver.effectiveAccount(
+                tree, NAMESPACE, accountSelection.get(NAMESPACE));
+    }
+
+    private static String githubValue(String accountName, String key) {
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(SpawnConfig.load());
+        return dev.incusspawn.config.AccountResolver.value(tree, NAMESPACE, accountName, key);
+    }
+
+    private void configureGit(Container c, String accountName) {
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();
-        configureGitIdentity(c);
+        configureGitIdentity(c, accountName);
         if (!existingConfig) {
             configureGitDefaults(c);
         }
     }
 
-    private void configureGitIdentity(Container c) {
+    /**
+     * Resolve the git identity from whichever GitHub account applies and write it into
+     * {@code .gitconfig}.
+     *
+     * <p>The identity is derived by asking the API who the token belongs to, through the proxy
+     * -- so it follows the account the caller is pinned to without this code knowing which one
+     * that is. Skipped when an identity is already present, which is what makes it cheap to
+     * call again at branch time; {@link #clearGitIdentity} is how a re-point forces a refresh.
+     */
+    void configureGitIdentity(Container c, String accountName) {
         boolean hasName = gitConfigGet(c, "user.name");
         boolean hasEmail = gitConfigGet(c, "user.email");
         if (hasName && hasEmail) {
@@ -86,7 +157,7 @@ public class GhSetup implements ToolSetup {
 
         var command = "GH_TOKEN=" + PLACEHOLDER_TOKEN
                 + " gh api user --jq '[.login, .name, .email] | @tsv'";
-        var tokenConfigured = !SpawnConfig.load().getGithub().getToken().isBlank();
+        var tokenConfigured = !githubValue(accountName, "token").isBlank();
         var result = c.sh(command);
         if (tokenConfigured) {
             for (int attempt = 0; attempt < retryDelaysMs.length
@@ -122,7 +193,7 @@ public class GhSetup implements ToolSetup {
         }
 
         if (!hasEmail) {
-            var configEmail = SpawnConfig.load().getGithub().getEmail();
+            var configEmail = githubValue(accountName, "email");
             var email = configEmail.isBlank() ? null : configEmail;
             boolean publicEmailHidden = parts.length < 3 || parts[2].isEmpty();
             if (email == null) {

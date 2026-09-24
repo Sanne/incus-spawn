@@ -346,13 +346,9 @@ public final class ToolProxyResolver {
         }
     }
 
+    /** @deprecated use {@link AccountResolver#navigate} -- kept for existing callers. */
     public static String navigateConfigPath(JsonNode tree, String path) {
-        var node = tree;
-        for (var segment : path.split("\\.")) {
-            if (node == null || !node.isObject()) return "";
-            node = node.get(segment);
-        }
-        return node != null && node.isValueNode() ? node.asText() : "";
+        return AccountResolver.navigate(tree, path);
     }
 
     static String sha256(String input) {
