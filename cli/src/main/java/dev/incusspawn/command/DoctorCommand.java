@@ -20,6 +20,8 @@ import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.proxy.ToolProxyResolver;
+import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.vm.VmAgentClient;
 import dev.incusspawn.vm.VmManager;
@@ -37,9 +39,11 @@ import java.security.cert.CertificateNotYetValidException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -65,10 +69,18 @@ public class DoctorCommand extends BaseCommand {
             description = "Run per-instance checks (DNS, TLS, resolv.conf)")
     boolean deep;
 
+    /**
+     * {@code NOTE} states a fact that is neither healthy nor broken -- something the user may
+     * want to know about their setup, but which nothing is waiting on. It is deliberately not a
+     * quiet WARN: everything that reads a status ({@link #exitFor}, the "issues can be addressed"
+     * list, the closing summary) asks {@link #isProblem()}, so a note never turns a clean run
+     * into a reported problem.
+     */
     enum Status {
-        OK("✓"), WARN("⚠"), FAIL("✗");
+        OK("✓"), NOTE("·"), WARN("⚠"), FAIL("✗");
         final String symbol;
         Status(String symbol) { this.symbol = symbol; }
+        boolean isProblem() { return this == WARN || this == FAIL; }
     }
 
     /** A remediation a check can offer. {@code destructive} drives the confirmation wording. */
@@ -77,6 +89,7 @@ public class DoctorCommand extends BaseCommand {
 
     record Finding(Status status, String label, String detail, Remediation remediation) {
         static Finding ok(String label, String detail) { return new Finding(Status.OK, label, detail, null); }
+        static Finding note(String label, String detail) { return new Finding(Status.NOTE, label, detail, null); }
         static Finding warn(String label, String detail, Remediation r) { return new Finding(Status.WARN, label, detail, r); }
         static Finding fail(String label, String detail, Remediation r) { return new Finding(Status.FAIL, label, detail, r); }
     }
@@ -95,11 +108,11 @@ public class DoctorCommand extends BaseCommand {
         }
 
         var actionable = findings.stream()
-                .filter(f -> f.status() != Status.OK && f.remediation() != null)
+                .filter(f -> f.status().isProblem() && f.remediation() != null)
                 .toList();
 
         if (actionable.isEmpty()) {
-            boolean anyProblem = findings.stream().anyMatch(f -> f.status() != Status.OK);
+            boolean anyProblem = findings.stream().anyMatch(f -> f.status().isProblem());
             System.out.println("\n" + (anyProblem ? "Some checks reported issues with no automatic fix."
                     : "All checks passed."));
             return exitFor(findings);
@@ -125,6 +138,28 @@ public class DoctorCommand extends BaseCommand {
     private CommandResult exitFor(List<Finding> findings) {
         boolean anyFail = findings.stream().anyMatch(f -> f.status() == Status.FAIL);
         return anyFail ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
+    }
+
+    /** Either the loaded definitions or the message from a failed load -- never both null. */
+    private record ImageDefsLoad(LayeredDefinitions<ImageDef> loaded, String errorMessage) {}
+
+    private ImageDefsLoad imageDefsLoad;
+
+    /**
+     * Loads and caches the full image definition tree for this run. Layer 1 (credentials, via
+     * {@code toolInUse}) and Layer 6 ({@code checkTemplates}) both need it; a command instance
+     * lives for exactly one invocation, so caching here means the template tree is parsed from
+     * disk once per {@code isx doctor} run rather than twice.
+     */
+    private ImageDefsLoad loadImageDefs() {
+        if (imageDefsLoad == null) {
+            try {
+                imageDefsLoad = new ImageDefsLoad(ImageDef.loadAllWithConflicts(), null);
+            } catch (Exception e) {
+                imageDefsLoad = new ImageDefsLoad(null, e.getMessage());
+            }
+        }
+        return imageDefsLoad;
     }
 
     /** Prompt to apply a remediation (TTY), or print the suggestion when non-interactive. */
@@ -221,7 +256,11 @@ public class DoctorCommand extends BaseCommand {
     // ---- Layer 1: Host configuration ----
 
     private List<Finding> checkHostConfig() {
-        return List.of(checkConfigFile(), checkCaCertificate(), checkCredentials());
+        var findings = new ArrayList<Finding>();
+        findings.add(checkConfigFile());
+        findings.add(checkCaCertificate());
+        findings.addAll(checkCredentials());
+        return findings;
     }
 
     private Finding checkConfigFile() {
@@ -296,19 +335,84 @@ public class DoctorCommand extends BaseCommand {
         }
     }
 
-    private Finding checkCredentials() {
+    private List<Finding> checkCredentials() {
         var config = SpawnConfig.load();
-        var missing = new ArrayList<String>();
-        if (!config.getClaude().hasAuth()) {
-            missing.add("claude");
+        var unresolved = ToolProxyResolver.findUnresolved(config);
+        return credentialFindings(config.getClaude().hasAuth(), unresolved, toolInUse());
+    }
+
+    /**
+     * Whether a template the user wrote declares this tool, directly or transitively via a
+     * `requires:` chain -- the only evidence doctor has that they intend to run it. A wrapper
+     * tool that requires codex pulls codex into the build exactly as if the template had listed
+     * it directly, so the credential it needs must count as in use the same way. Built-in
+     * definitions don't count: they ship with isx and declare tools (`tpl-dev` has `gh`) for
+     * everyone, so counting them would warn every user about every credential again. Templates
+     * are also not the hard gate -- `isx build` and `isx branch` refuse to run without the
+     * credentials a template actually needs.
+     *
+     * <p>If the definitions can't be read, every tool counts as in use: the conservative
+     * direction is to keep reporting, and {@code checkTemplates} surfaces the load failure.
+     */
+    private Predicate<String> toolInUse() {
+        var loaded = loadImageDefs().loaded();
+        if (loaded == null) return name -> true;
+        var allTools = RuntimeServices.toolDefLoader().allToolSetups();
+        var declared = new HashSet<String>();
+        for (var def : loaded.defs().values()) {
+            if (def.isBuiltIn()) continue;
+            for (var toolRef : def.getTools()) {
+                addWithRequires(toolRef.getName(), allTools, declared);
+            }
         }
-        var unresolved = dev.incusspawn.proxy.ToolProxyResolver.findUnresolved(config);
+        return declared::contains;
+    }
+
+    /** Adds {@code name} and everything it (transitively) requires to {@code into}. */
+    static void addWithRequires(String name, Map<String, ToolSetup> allTools, HashSet<String> into) {
+        if (!into.add(name)) return; // already visited -- also guards against a requires cycle
+        var tool = allTools.get(name);
+        if (tool == null) return;
+        for (var dep : tool.requires()) {
+            addWithRequires(dep, allTools, into);
+        }
+    }
+
+    /**
+     * Every tool's credential is offered unconditionally, so "not configured" on its own says
+     * nothing about health: an OpenAI key is missing for the user who never touches codex just
+     * as it is for the one whose template installs it. Only the second is a warning; the first
+     * is a NOTE, which keeps `isx doctor` honest without training people to ignore it.
+     *
+     * <p>Anthropic credentials are the exception: isx itself uses them (`isx ask`), so there is
+     * no template to check against and a missing one is always worth flagging.
+     */
+    static List<Finding> credentialFindings(boolean claudeConfigured,
+            List<ToolProxyResolver.UnresolvedToolProxy> unresolved,
+            Predicate<String> toolInUse) {
+        var needed = new ArrayList<String>();
+        var unused = new ArrayList<String>();
+        if (!claudeConfigured) {
+            needed.add("claude");
+        }
         for (var u : unresolved) {
-            missing.add(u.toolName() + " " + u.configKey());
+            var entry = u.toolName() + " " + u.configKey();
+            if (toolInUse.test(u.toolName())) needed.add(entry); else unused.add(entry);
         }
-        if (missing.isEmpty()) return Finding.ok("Credentials", "configured");
-        return Finding.warn("Missing credentials", "(" + String.join(", ", missing) + ")",
-                new Remediation("Run 'isx init' to configure", false, null));
+
+        var findings = new ArrayList<Finding>();
+        if (!needed.isEmpty()) {
+            findings.add(Finding.warn("Missing credentials", "(" + String.join(", ", needed) + ")",
+                    new Remediation("Run 'isx init' to configure", false, null)));
+        } else {
+            findings.add(Finding.ok("Credentials",
+                    unused.isEmpty() ? "configured" : "configured for the tools in use"));
+        }
+        if (!unused.isEmpty()) {
+            findings.add(Finding.note("Credentials not configured",
+                    "(" + String.join(", ", unused) + ") — no template of yours uses these tools"));
+        }
+        return findings;
     }
 
     // ---- Layer 2: Incus daemon ----
@@ -930,8 +1034,7 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkBridgeDns(IncusClient incus) {
         try {
-            var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(
-                    SpawnConfig.load());
+            var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
             var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
             if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) {
                 return Finding.ok("Bridge DNS overrides",
@@ -1106,11 +1209,16 @@ public class DoctorCommand extends BaseCommand {
 
     private List<Finding> checkTemplates() {
         var findings = new ArrayList<Finding>();
+        var load = loadImageDefs();
+        if (load.loaded() == null) {
+            findings.add(Finding.warn("Templates", "(could not check: " + load.errorMessage() + ")", null));
+            return findings;
+        }
         try {
             var incus = RuntimeServices.incus();
             var caTrust = CertificateAuthority.CaTrust.snapshot();
             var currentVersion = BuildInfo.instance().version();
-            var loaded = ImageDef.loadAllWithConflicts();
+            var loaded = load.loaded();
             var allDefs = loaded.defs();
 
             // Same-directory collisions are always a mistake and make builds ambiguous;

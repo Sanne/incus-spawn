@@ -125,7 +125,7 @@ public class CodexSetup implements ToolSetup {
         var settings = new StringBuilder();
         appendIfPresent(settings, resolvedParams, "model", "model");
         appendIfPresent(settings, resolvedParams, "effort", "model_reasoning_effort");
-        var configToml = settings + """
+        settings.append("""
                 approval_policy = "never"
                 sandbox_mode = "danger-full-access"
                 forced_login_method = "api"
@@ -139,7 +139,8 @@ public class CodexSetup implements ToolSetup {
 
                 [projects."/home/agentuser"]
                 trust_level = "trusted"
-                """;
+                """);
+        var configToml = settings.toString();
         var authJson = """
                 {
                   "auth_mode": "apikey",

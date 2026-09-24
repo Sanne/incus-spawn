@@ -84,7 +84,7 @@ public class TemplatesCommand extends BaseCommand {
             boolean isBuiltinCopy = false;
             Path editPath;
 
-            if ("built-in".equals(def.getSource())) {
+            if (def.isBuiltIn()) {
                 var filename = ImageDef.filenameForName(name);
                 editPath = ImageDef.userImagesDir().resolve(filename);
 

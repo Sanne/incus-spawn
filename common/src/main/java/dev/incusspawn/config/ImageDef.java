@@ -210,6 +210,8 @@ public class ImageDef {
     }
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+    /** Whether this definition ships with isx itself, as opposed to one the user wrote. */
+    public boolean isBuiltIn() { return "built-in".equals(source); }
 
     /**
      * Groups the skills catalog repo and skill list under a single {@code skills} key.

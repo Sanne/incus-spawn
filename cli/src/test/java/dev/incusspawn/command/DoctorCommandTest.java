@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +11,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -171,6 +173,136 @@ class DoctorCommandTest {
     }
 
     // ---- Config permissions evaluation ----
+
+    // ---- Credential findings ----
+
+    private static final DoctorCommand.Status NOTE = DoctorCommand.Status.NOTE;
+
+    private static List<ToolProxyResolver.UnresolvedToolProxy> unresolved(String... pairs) {
+        var list = new ArrayList<ToolProxyResolver.UnresolvedToolProxy>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            list.add(new ToolProxyResolver.UnresolvedToolProxy(pairs[i], pairs[i + 1]));
+        }
+        return list;
+    }
+
+    // ---- Transitive `requires:` expansion (toolInUse's building block) ----
+
+    /** Bare-minimum ToolSetup: a name and the tools it requires, nothing else wired up. */
+    private static class FakeTool implements dev.incusspawn.tool.ToolSetup {
+        private final String name;
+        private final List<String> requires;
+        FakeTool(String name, String... requires) { this.name = name; this.requires = List.of(requires); }
+        @Override public String name() { return name; }
+        @Override public List<String> requires() { return requires; }
+        @Override public void install(dev.incusspawn.incus.Container c, Map<String, String> params) { }
+    }
+
+    private static Map<String, dev.incusspawn.tool.ToolSetup> toolMap(dev.incusspawn.tool.ToolSetup... tools) {
+        var map = new java.util.LinkedHashMap<String, dev.incusspawn.tool.ToolSetup>();
+        for (var t : tools) map.put(t.name(), t);
+        return map;
+    }
+
+    @Test
+    void addWithRequiresIncludesTheToolItself() {
+        var into = new java.util.HashSet<String>();
+        DoctorCommand.addWithRequires("codex", toolMap(new FakeTool("codex")), into);
+        assertEquals(java.util.Set.of("codex"), into);
+    }
+
+    @Test
+    void addWithRequiresExpandsTransitively() {
+        // A wrapper tool that requires codex pulls it into the build exactly as if the
+        // template had listed it directly -- this is the case that motivated the fix.
+        var tools = toolMap(
+                new FakeTool("my-wrapper", "codex"),
+                new FakeTool("codex", "nodejs"),
+                new FakeTool("nodejs"));
+        var into = new java.util.HashSet<String>();
+        DoctorCommand.addWithRequires("my-wrapper", tools, into);
+        assertEquals(java.util.Set.of("my-wrapper", "codex", "nodejs"), into);
+    }
+
+    @Test
+    void addWithRequiresToleratesACycleWithoutLooping() {
+        var tools = toolMap(new FakeTool("a", "b"), new FakeTool("b", "a"));
+        var into = new java.util.HashSet<String>();
+        DoctorCommand.addWithRequires("a", tools, into);
+        assertEquals(java.util.Set.of("a", "b"), into);
+    }
+
+    @Test
+    void addWithRequiresToleratesAnUnknownTool() {
+        var into = new java.util.HashSet<String>();
+        DoctorCommand.addWithRequires("ghost", Map.of(), into);
+        assertEquals(java.util.Set.of("ghost"), into);
+    }
+
+    @Test
+    void credentialsOkWhenNothingIsMissing() {
+        var findings = DoctorCommand.credentialFindings(true, List.of(), name -> true);
+
+        assertEquals(1, findings.size());
+        assertEquals(DoctorCommand.Status.OK, findings.getFirst().status());
+        assertEquals("configured", findings.getFirst().detail());
+    }
+
+    @Test
+    void unconfiguredCredentialForAnUnusedToolIsANeutralNote() {
+        var findings = DoctorCommand.credentialFindings(true, unresolved("codex", "api-key"), name -> false);
+
+        assertEquals(2, findings.size());
+        assertEquals(DoctorCommand.Status.OK, findings.get(0).status());
+        assertEquals("configured for the tools in use", findings.get(0).detail());
+
+        var note = findings.get(1);
+        assertEquals(NOTE, note.status());
+        assertTrue(note.detail().contains("codex api-key"), note.detail());
+        assertNull(note.remediation(), "a note is not something to fix");
+    }
+
+    @Test
+    void aNoteIsNotAProblemAndCannotFailTheRun() {
+        assertFalse(NOTE.isProblem());
+        assertFalse(DoctorCommand.Status.OK.isProblem());
+        assertTrue(DoctorCommand.Status.WARN.isProblem());
+        assertTrue(DoctorCommand.Status.FAIL.isProblem());
+    }
+
+    @Test
+    void unconfiguredCredentialForATemplatesToolWarns() {
+        var findings = DoctorCommand.credentialFindings(true, unresolved("codex", "api-key"),
+                name -> name.equals("codex"));
+
+        assertEquals(1, findings.size());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
+        assertTrue(findings.getFirst().detail().contains("codex api-key"));
+        assertNotNull(findings.getFirst().remediation());
+    }
+
+    @Test
+    void usedAndUnusedToolsAreReportedSeparately() {
+        var findings = DoctorCommand.credentialFindings(true,
+                unresolved("codex", "api-key", "bob", "api-key"), name -> name.equals("codex"));
+
+        assertEquals(2, findings.size());
+        assertEquals(DoctorCommand.Status.WARN, findings.get(0).status());
+        assertTrue(findings.get(0).detail().contains("codex api-key"));
+        assertFalse(findings.get(0).detail().contains("bob"));
+        assertEquals(NOTE, findings.get(1).status());
+        assertTrue(findings.get(1).detail().contains("bob api-key"));
+    }
+
+    @Test
+    void missingClaudeCredentialWarnsEvenWithNoTemplate() {
+        // isx itself uses the Anthropic credential (isx ask), so there is no template to check.
+        var findings = DoctorCommand.credentialFindings(false, List.of(), name -> false);
+
+        assertEquals(1, findings.size());
+        assertEquals(DoctorCommand.Status.WARN, findings.getFirst().status());
+        assertTrue(findings.getFirst().detail().contains("claude"));
+    }
 
     @Test
     void configPermissionsOkWhenOwnerOnly() {

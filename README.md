@@ -1394,6 +1394,11 @@ Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
 
+Findings are marked `✓` (healthy), `⚠` (worth a look), `✗` (broken), or `·` — a neutral note
+about your setup that nothing is waiting on. Credentials you have not configured are reported
+as a note when no template of yours uses the tool, and as a warning when one does. Notes never
+affect the exit code, so `isx doctor` still exits 0 when the only findings are notes.
+
 The bundle is meant to be attached to a GitHub issue. Credentials are removed before
 anything is written: values in `config.yaml` are replaced by a marker naming the key
 (`<isx:redacted:github.token>`), and the logs are scrubbed for those same values plus

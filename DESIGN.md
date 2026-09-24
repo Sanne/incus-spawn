@@ -1049,7 +1049,7 @@ Real API keys and tokens never enter containers, regardless of network mode. Con
 | Claude OAuth token (Pro/Max) | Placeholder `sk-ant-placeholder` | Proxy strips `x-api-key` and injects `Authorization: Bearer <oauth-token>`. Container configuration is identical to direct API key mode |
 | GCP credentials (Vertex mode) | **Nothing** | Container runs Claude Code in Vertex mode with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1`. Proxy injects GCP Bearer token from `gcloud` on the host. No GCP credentials, service accounts, or access tokens enter the container |
 | Pi Anthropic key | Placeholder `sk-ant-placeholder` in `ANTHROPIC_API_KEY` | Same as Claude direct/OAuth mode. Pi always uses standard API format; the proxy handles key injection, OAuth Bearer injection, or Vertex translation transparently |
-| OpenAI API key | Placeholder `sk-placeholder` in `OPENAI_API_KEY` | Proxy replaces `Authorization: Bearer` header with real key for `api.openai.com`. Behind `openai` feature flag |
+| OpenAI API key | Placeholder `sk-placeholder` in `OPENAI_API_KEY` | Proxy replaces `Authorization: Bearer` header with real key for `api.openai.com`. Used by `codex` and by `pi` with `provider: openai` |
 | GitHub token | Placeholder `gho_placeholder` in `GH_TOKEN` | Proxy replaces `Authorization` header with real token for GitHub domains (Basic auth for `github.com` git HTTP, Bearer for API) |
 
 The MITM TLS proxy provides credential isolation:
@@ -1058,6 +1058,14 @@ The MITM TLS proxy provides credential isolation:
 3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, iptables OUTPUT rules additionally block all egress except the proxy port (443) and DNS
+
+### Doctor: a finding that is neither healthy nor broken
+
+`isx doctor` reports four statuses, not three. `OK`/`WARN`/`FAIL` cover "fine", "you should look at this" and "this is broken"; `NOTE` (`·`) states something about the setup that nothing is waiting on. Only `WARN` and `FAIL` answer `Status.isProblem()`, which is what the exit code, the "N issue(s) can be addressed" list and the closing summary all consult — so a note can never turn a clean run into a reported problem, and never dilutes the exit status a script checks.
+
+It exists because of unconfigured credentials. Every tool's credential is offered unconditionally (`ToolProxyResolver.findUnresolved`), so "OpenAI key not set" says nothing about health on its own: it is missing for the user who has never touched codex exactly as it is for the user whose template installs it. Before `NOTE` those were the same yellow line, and the graduation of `codex` out of the `openai` feature flag would have added one to every existing user's `doctor` output — the classic way a diagnostic becomes something people learn to ignore.
+
+Doctor distinguishes the two by asking whether a template *the user wrote* declares the tool. Built-in definitions are excluded deliberately: they ship with isx and declare tools for everyone (`tpl-dev` has `gh`), so counting them would warn about every credential again and put us back where we started. Templates are only the triage signal, not the gate — `isx build` and `isx branch` already refuse to run without the credentials a template actually needs (`SpawnConfig.checkCredentials`), so a note here cannot let a broken build through. Anthropic credentials stay a `WARN` regardless: isx itself uses them for `isx ask`, so there is no template to check against. If the definitions can't be read at all, every tool counts as in use — the conservative direction is to keep reporting.
 
 ### Support bundles: redaction by construction
 
