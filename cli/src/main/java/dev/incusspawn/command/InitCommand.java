@@ -1326,13 +1326,9 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        // An environment credential configures the *default* account. These branches return on
-        // success without reaching the account menu, so aim them explicitly: left at the
-        // replace-all default they would delete every other configured account.
-        if (config.getClaude().hasAuth()) {
-            claudeAccountTarget = config.getClaude().accountName();
-            claudeReplaceAccounts = false;
-        }
+        var target = config.getClaude().hasAuth()
+                ? new AccountTarget(config.getClaude().accountName(), false)
+                : AccountTarget.FRESH;
 
         // Detect existing env vars
         var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
@@ -1354,8 +1350,8 @@ public class InitCommand extends BaseCommand {
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                    if (askConfirmation(console, envAccountPrompt(config, "  Use this configuration?"), true)) {
-                        saveVertexConfig(config, region, projectId);
+                    if (askConfirmation(console, envAccountPrompt(config, target, "  Use this configuration?"), true)) {
+                        saveVertexConfig(config, target, region, projectId);
                         System.out.println("  Claude auth configuration saved.");
                         return;
                     }
@@ -1363,7 +1359,7 @@ public class InitCommand extends BaseCommand {
                 } else {
                     System.out.println("  " + result.message());
                     if (askConfirmation(console, "  Save anyway? Press Enter to configure manually.", false)) {
-                        saveVertexConfig(config, region, projectId);
+                        saveVertexConfig(config, target, region, projectId);
                         System.out.println("  Claude auth configuration saved (unverified).");
                         return;
                     }
@@ -1375,8 +1371,8 @@ public class InitCommand extends BaseCommand {
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
-                if (askConfirmation(console, envAccountPrompt(config, "  Use this token?"), true)) {
-                    saveOauthConfig(config, envOauthToken);
+                if (askConfirmation(console, envAccountPrompt(config, target, "  Use this token?"), true)) {
+                    saveOauthConfig(config, target, envOauthToken);
                     System.out.println("  Claude auth configuration saved.");
                     return;
                 }
@@ -1391,8 +1387,8 @@ public class InitCommand extends BaseCommand {
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                if (askConfirmation(console, envAccountPrompt(config, "  Use this key?"), true)) {
-                    saveDirectConfig(config, envApiKey);
+                if (askConfirmation(console, envAccountPrompt(config, target, "  Use this key?"), true)) {
+                    saveDirectConfig(config, target, envApiKey);
                     System.out.println("  Claude auth configuration saved.");
                     return;
                 }
@@ -1406,8 +1402,10 @@ public class InitCommand extends BaseCommand {
         // Offer to keep, extend or re-point the configured accounts on re-run.
         // allAccounts() rather than hasAuth(): even when every account is incomplete, the
         // user must be able to see (and remove) them rather than hand-editing config.yaml.
-        if (!config.getClaude().allAccounts().isEmpty() && !manageClaudeAccounts(config, console)) {
-            return;
+        if (!config.getClaude().allAccounts().isEmpty()) {
+            var managed = manageClaudeAccounts(config, console);
+            if (managed.isEmpty()) return;
+            target = managed.get();
         }
 
         System.out.println("  How do you authenticate with Claude?");
@@ -1437,7 +1435,7 @@ public class InitCommand extends BaseCommand {
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
-                    saveVertexConfig(config, region, projectId);
+                    saveVertexConfig(config, target, region, projectId);
                     System.out.println("  Claude auth configuration saved.");
                     break;
                 } else {
@@ -1448,7 +1446,7 @@ public class InitCommand extends BaseCommand {
                             break;
                         }
                         case SAVE_UNVERIFIED -> {
-                            saveVertexConfig(config, region, projectId);
+                            saveVertexConfig(config, target, region, projectId);
                             System.out.println("  Claude auth configuration saved (unverified).");
                             break;
                         }
@@ -1460,7 +1458,7 @@ public class InitCommand extends BaseCommand {
                 }
             }
         } else if (authChoice.equals("2")) {
-            setupClaudeOauth(config, console);
+            setupClaudeOauth(config, console, target);
         } else if (authChoice.equals("1")) {
             while (true) {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
@@ -1474,7 +1472,7 @@ public class InitCommand extends BaseCommand {
                 var result = verifyAnthropicApiKey(key);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m✓ " + result.message() + "\u001B[0m");
-                    saveDirectConfig(config, key);
+                    saveDirectConfig(config, target, key);
                     System.out.println("  Claude auth configuration saved.");
                     break;
                 } else {
@@ -1485,7 +1483,7 @@ public class InitCommand extends BaseCommand {
                             break;
                         }
                         case SAVE_UNVERIFIED -> {
-                            saveDirectConfig(config, key);
+                            saveDirectConfig(config, target, key);
                             System.out.println("  Claude auth configuration saved (unverified).");
                             break;
                         }
@@ -1502,10 +1500,10 @@ public class InitCommand extends BaseCommand {
     }
 
     /** Names the account an environment credential will overwrite, when there is a choice. */
-    private String envAccountPrompt(SpawnConfig config, String question) {
+    private static String envAccountPrompt(SpawnConfig config, AccountTarget target, String question) {
         var accounts = config.getClaude().effectiveAccounts();
         if (accounts.size() < 2) return question;
-        return question + " (replaces account '" + claudeAccountTarget + "'; the others are kept)";
+        return question + " (replaces account '" + target.name() + "'; the others are kept)";
     }
 
     /** One line per account: marker, name, what it is, and a masked credential. */
@@ -1523,10 +1521,9 @@ public class InitCommand extends BaseCommand {
     /**
      * Shows the configured Claude accounts and lets the user keep, add, re-point or remove one.
      *
-     * @return true when the caller should go on to prompt for a credential (for the account now
-     *         named by {@code claudeAccountTarget}), false when there is nothing left to do.
+     * @return the account to configure next, or empty when there is nothing left to do.
      */
-    private boolean manageClaudeAccounts(SpawnConfig config, Console console) {
+    private Optional<AccountTarget> manageClaudeAccounts(SpawnConfig config, Console console) {
         var claude = config.getClaude();
         while (true) {
             var accounts = claude.allAccounts();
@@ -1552,19 +1549,15 @@ public class InitCommand extends BaseCommand {
 
             switch (choice) {
                 case "" -> {
-                    return false;
+                    return Optional.empty();
                 }
                 case "a" -> {
                     var name = askAccountName(console, accounts.keySet());
-                    if (name.isEmpty()) return false;
-                    claudeAccountTarget = name;
-                    claudeReplaceAccounts = false;
-                    return true;
+                    if (name.isEmpty()) return Optional.empty();
+                    return Optional.of(new AccountTarget(name, false));
                 }
                 case "r" -> {
-                    claudeAccountTarget = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
-                    claudeReplaceAccounts = true;
-                    return true;
+                    return Optional.of(AccountTarget.FRESH);
                 }
                 // 'd' and 'x' save immediately rather than on the way out of the menu: each
                 // prints a confirmation naming what changed, and the loop then returns to the
@@ -1746,32 +1739,28 @@ public class InitCommand extends BaseCommand {
         return secret.substring(0, prefixEnd) + "..." + secret.substring(secret.length() - 4);
     }
 
-    private void saveDirectConfig(SpawnConfig config, String apiKey) {
-        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofApiKey(apiKey));
+    record AccountTarget(String name, boolean replaceOthers) {
+        static final AccountTarget FRESH =
+                new AccountTarget(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME, true);
     }
 
-    private void saveOauthConfig(SpawnConfig config, String oauthToken) {
-        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
+    private void saveDirectConfig(SpawnConfig config, AccountTarget target, String apiKey) {
+        saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofApiKey(apiKey));
     }
 
-    private void saveVertexConfig(SpawnConfig config, String region, String projectId) {
-        saveClaudeAccount(config, SpawnConfig.ClaudeAccount.ofVertex(region, projectId));
+    private void saveOauthConfig(SpawnConfig config, AccountTarget target, String oauthToken) {
+        saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofOauth(oauthToken));
     }
 
-    /** Name of the Claude account being configured, and whether it replaces the others. */
-    private String claudeAccountTarget = SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME;
-    private boolean claudeReplaceAccounts = true;
+    private void saveVertexConfig(SpawnConfig config, AccountTarget target, String region, String projectId) {
+        saveClaudeAccount(config, target, SpawnConfig.ClaudeAccount.ofVertex(region, projectId));
+    }
 
-    /**
-     * Writes the account currently being configured. Replacing is the default so that a plain
-     * re-run of 'isx init' still leaves exactly one account, as it always has; only the
-     * explicit "add another" path keeps the existing ones.
-     */
-    private void saveClaudeAccount(SpawnConfig config, SpawnConfig.ClaudeAccount account) {
-        if (claudeReplaceAccounts) {
-            config.getClaude().setSingleAccount(claudeAccountTarget, account);
+    private void saveClaudeAccount(SpawnConfig config, AccountTarget target, SpawnConfig.ClaudeAccount account) {
+        if (target.replaceOthers()) {
+            config.getClaude().setSingleAccount(target.name(), account);
         } else {
-            config.getClaude().putAccount(claudeAccountTarget, account);
+            config.getClaude().putAccount(target.name(), account);
         }
         config.save();
         noteAiHelpNeedsDirectApiAccount(config);
@@ -1828,7 +1817,7 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private void setupClaudeOauth(SpawnConfig config, java.io.Console console) {
+    private void setupClaudeOauth(SpawnConfig config, java.io.Console console, AccountTarget target) {
         System.out.println("  A Pro/Max subscription does not come with an API key. What it can");
         System.out.println("  produce is a long-lived OAuth token (valid about a year):");
         System.out.println();
@@ -1878,7 +1867,7 @@ public class InitCommand extends BaseCommand {
             var result = verifyOauthToken(token);
             if (result.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                saveOauthConfig(config, token);
+                saveOauthConfig(config, target, token);
                 System.out.println("  Claude auth configuration saved.");
                 break;
             } else {
@@ -1889,7 +1878,7 @@ public class InitCommand extends BaseCommand {
                         break;
                     }
                     case SAVE_UNVERIFIED -> {
-                        saveOauthConfig(config, token);
+                        saveOauthConfig(config, target, token);
                         System.out.println("  Claude auth configuration saved (unverified).");
                         break;
                     }
