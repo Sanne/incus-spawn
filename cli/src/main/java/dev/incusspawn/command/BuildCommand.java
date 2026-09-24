@@ -554,6 +554,7 @@ public class BuildCommand extends BaseCommand {
         // applied, but by then the build container exists and the failure would leave it behind.
         try {
             HostResourceSetup.collectEffective(imageDef, defs);
+            requireConfinedBaseImages(imageDef, defs);
         } catch (HostResourceSetup.HostPathOutsideProjectException e) {
             System.err.println(e.getMessage());
             throw new BuildFailedException(canonicalName);
@@ -1317,6 +1318,35 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
+    /**
+     * A {@code file://} base image is a host path like any other: a project-local template may
+     * only name one inside its project (#765).
+     */
+    static void requireConfinedBaseImages(ImageDef imageDef, Map<String, ImageDef> defs) {
+        for (var def : ImageDef.chain(imageDef, defs)) {
+            if (def.getProjectRoot() == null) continue;
+            for (var url : java.util.Arrays.asList(def.getImageUrl(), def.getVmImageUrl())) {
+                if (url == null || !url.regionMatches(true, 0, "file:", 0, 5)) continue;
+                var resolved = resolveImageUrl(url, def.getImageTag());
+                String escape;
+                try {
+                    escape = HostResourceSetup.projectEscape(Path.of(java.net.URI.create(resolved)),
+                            def.getProjectRoot());
+                } catch (IllegalArgumentException e) {
+                    escape = "is not an absolute file:// URL";
+                }
+                if (escape != null) {
+                    throw HostResourceSetup.outsideProject(def, "base image '" + resolved + "'", escape);
+                }
+            }
+        }
+    }
+
+    private static String resolveImageUrl(String imageUrl, String tag) {
+        var resolved = imageUrl.replace("{arch}", normalizeHostArch());
+        return tag != null ? resolved.replace("{tag}", tag) : resolved;
+    }
+
     private void ensureBaseImage(ImageDef imageDef) {
         checkPinnedWarning(imageDef);
         downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
@@ -1347,16 +1377,13 @@ public class BuildCommand extends BaseCommand {
             incus.deleteImageAlias(localAlias);
             incus.deleteImage(existingFingerprint);
         }
-        var resolvedUrl = imageUrl.replace("{arch}", arch);
-        if (tag != null) {
-            resolvedUrl = resolvedUrl.replace("{tag}", tag);
-        }
+        var resolvedUrl = resolveImageUrl(imageUrl, tag);
 
         BuildOutput.stepStart("Downloading base image...");
 
         try {
             var cache = new DownloadCache();
-            var cached = cache.download(resolvedUrl, expectedSha256);
+            var cached = cache.downloadAllowingLocalFile(resolvedUrl, expectedSha256);
 
             var fingerprint = incus.importImage(cached);
 

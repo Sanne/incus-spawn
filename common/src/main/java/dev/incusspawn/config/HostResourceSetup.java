@@ -139,18 +139,31 @@ public final class HostResourceSetup {
         var root = realPath(def.getProjectRoot());
         var resolved = root.resolve(expandHostTilde(hr.getSource()));
         var escape = findEscape(resolved, root, hr.getMode());
-        var real = escape == null ? realPathOfExistingPrefix(resolved, new int[1]) : null;
-        if (real == null) {
-            throw new HostPathOutsideProjectException("Template '" + def.getName() + "' is project-local ("
-                    + def.getSource() + "),\n"
-                    + "  so its host-resources must stay inside the project directory " + root + ",\n"
-                    + "  but '" + hr.getSource() + "' " + (escape != null ? escape : UNRESOLVABLE) + ".\n"
-                    + "  A cloned repository must not be able to copy or mount your files into a container.\n"
-                    + "  If you trust this template, move it to " + ImageDef.userImagesDir()
-                    + " or a configured search path.");
-        }
+        if (escape != null) throw outsideProject(def, "host-resource '" + hr.getSource() + "'", escape);
+        var real = realPathOfExistingPrefix(resolved, new int[1]);
+        if (real == null) throw outsideProject(def, "host-resource '" + hr.getSource() + "'", UNRESOLVABLE);
         return new ImageDef.HostResource(real.toString(), containerPath,
                 hr.getMode(), root.toString());
+    }
+
+    /**
+     * Why {@code path} leaves {@code projectRoot}, or null if it stays inside: the check
+     * {@link #collectEffective} applies to host-resources, for other host paths a project-local
+     * template names (a {@code file://} base image).
+     */
+    public static String projectEscape(Path path, Path projectRoot) {
+        return findEscape(path, realPath(projectRoot), null);
+    }
+
+    public static HostPathOutsideProjectException outsideProject(ImageDef def, String what, String escape) {
+        return new HostPathOutsideProjectException("Template '" + def.getName() + "' is project-local ("
+                + def.getSource() + "),\n"
+                + "  so the host paths it uses must stay inside the project directory "
+                + realPath(def.getProjectRoot()) + ",\n"
+                + "  but " + what + " " + escape + ".\n"
+                + "  A cloned repository must not be able to copy or mount your files into a container.\n"
+                + "  If you trust this template, move it to " + ImageDef.userImagesDir()
+                + " or a configured search path.");
     }
 
     /**

@@ -236,7 +236,7 @@ You can also define a custom root image (no `parent`) by specifying `image`, `im
 
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
-- `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders)
+- `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders). `file://` is accepted here for testing locally built images, but a project-local template may only point inside its project. Loopback and link-local hosts are refused, as for tool downloads
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
 - `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is a VM with `/dev/kvm` passthrough for nested virtualization. Inherits from parent -- a child without `type` inherits its parent's type
@@ -554,7 +554,7 @@ Three modes are available:
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
-**Project-local templates** (`.incus-spawn/images/`) arrive with whatever repository you cloned, so their host-resources may only reference paths inside that project directory (relative paths resolve against it). `~/…`, absolute paths elsewhere, `..`, and symlinks leading out of the project are rejected at build time. For `copy` mode this also covers symlinks inside a copied directory. To give a template you trust access to other host paths, move it to `~/.config/incus-spawn/images/` or a configured search path.
+**Project-local templates** (`.incus-spawn/images/`) arrive with whatever repository you cloned, so their host-resources may only reference paths inside that project directory (relative paths resolve against it). `~/…`, absolute paths elsewhere, `..`, and symlinks leading out of the project are rejected at build time. The same applies to a `file://` `image_url`/`vm_image_url`. For `copy` mode this also covers symlinks inside a copied directory. To give a template you trust access to other host paths, move it to `~/.config/incus-spawn/images/` or a configured search path.
 
 **VM note:** VMs mount disk devices via virtiofs (asynchronously, after the incus-agent starts). For overlay mode, the build waits up to 15 seconds for the device to appear before mounting. File-level host resources (single files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for VMs.
 
@@ -623,7 +623,7 @@ Tool schema fields (all optional except `name`):
 - `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
 Download entry fields:
-- `url` (required) -- download URL
+- `url` (required) -- `http://` or `https://` download URL. Downloads run on the host, so `file://` URLs and hosts that resolve to loopback or link-local addresses (`localhost`, `127.0.0.1`, `169.254.169.254`, ...) are refused, including when a redirect leads to one
 - `sha256` (recommended) -- SHA-256 checksum; enables cache reuse and verifies integrity
 - `extract` (optional) -- directory in the container to extract into
 - `destination_file` (optional) -- exact path at which to expose the downloaded file in the container; `~/` resolves to `/home/agentuser/`
