@@ -46,19 +46,14 @@ public class AccountCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             var config = SpawnConfig.load();
-            var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
 
             boolean any = false;
-            for (var namespace : AccountSelection.knownNamespaces()) {
-                var names = SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)
-                        ? List.copyOf(config.getClaude().effectiveAccounts().keySet())
-                        : AccountResolver.accountNames(tree, namespace);
+            for (var namespace : AccountSelection.knownNamespaces(config)) {
+                var listing = AccountSelection.listAccounts(config, namespace);
+                var names = listing.names();
                 if (names.isEmpty()) continue;
                 any = true;
-                var defaultName = SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)
-                        ? config.getClaude().accountName()
-                        : AccountResolver.effectiveAccount(tree, namespace, null);
+                var defaultName = listing.defaultName();
                 System.out.println(namespace + ":");
                 for (var name : names) {
                     System.out.println("  " + name + (name.equals(defaultName) ? "  (default)" : ""));
@@ -93,8 +88,9 @@ public class AccountCommand extends BaseCommand {
                         + " for every credential.");
                 return CommandResult.SUCCESS;
             }
+            var envClasses = incus.configByPrefix(instance, Metadata.ENV_CLASS_PREFIX);
             selection.forEach((namespace, account) -> {
-                var envClass = incus.configGet(instance, Metadata.envClassKey(namespace));
+                var envClass = envClasses.get(namespace);
                 System.out.println(namespace + " = " + account
                         + (envClass == null || envClass.isBlank() ? "" : "  (built for " + envClass + ")"));
             });
@@ -146,9 +142,10 @@ public class AccountCommand extends BaseCommand {
             }
 
             // Merge rather than replace: naming one namespace must not silently unpin others.
-            var merged = new java.util.LinkedHashMap<>(AccountSelection.read(incus, instance));
+            var current = AccountSelection.read(incus, instance);
+            var merged = new java.util.LinkedHashMap<>(current);
             merged.putAll(requested);
-            AccountSelection.stamp(incus, instance, merged);
+            AccountSelection.stamp(incus, instance, merged, current);
             ProxyService.signalAccountRefresh();
 
             System.out.println(instance + " now uses " + AccountSelection.describe(merged) + ".");

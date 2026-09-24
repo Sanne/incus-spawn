@@ -15,8 +15,23 @@ class AccountResolverTest {
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /** Two accounts in file order; each test appends its own {@code default:} line. */
+    private static final String TWO_ACCOUNTS = """
+            github:
+              accounts:
+                personal:
+                  token: "ghp_personal"
+                acme:
+                  token: "ghp_acme"
+            """;
+
     private static com.fasterxml.jackson.databind.JsonNode tree(String yaml) throws Exception {
         return JSON.valueToTree(YAML.readValue(yaml, SpawnConfig.class));
+    }
+
+    private static com.fasterxml.jackson.databind.JsonNode twoAccountsWithDefault(String name)
+            throws Exception {
+        return tree(TWO_ACCOUNTS + "  default: " + name + "\n");
     }
 
     @Test
@@ -26,20 +41,12 @@ class AccountResolverTest {
                   token: "ghp_flat"
                 """);
         assertEquals("", AccountResolver.effectiveAccount(t, "github", null));
-        assertFalse(AccountResolver.hasAccounts(t, "github"));
+        assertTrue(AccountResolver.accountNames(t, "github").isEmpty());
     }
 
     @Test
     void namedDefaultWins() throws Exception {
-        var t = tree("""
-                github:
-                  accounts:
-                    personal:
-                      token: "ghp_personal"
-                    acme:
-                      token: "ghp_acme"
-                  default: acme
-                """);
+        var t = twoAccountsWithDefault("acme");
         assertEquals("acme", AccountResolver.effectiveAccount(t, "github", null));
         assertEquals(java.util.List.of("personal", "acme"),
                 AccountResolver.accountNames(t, "github"));
@@ -47,29 +54,13 @@ class AccountResolverTest {
 
     @Test
     void explicitSelectionOverridesTheDefault() throws Exception {
-        var t = tree("""
-                github:
-                  accounts:
-                    personal:
-                      token: "ghp_personal"
-                    acme:
-                      token: "ghp_acme"
-                  default: acme
-                """);
+        var t = twoAccountsWithDefault("acme");
         assertEquals("personal", AccountResolver.effectiveAccount(t, "github", "personal"));
     }
 
     @Test
     void missingDefaultFallsBackToFirstInFileOrder() throws Exception {
-        var t = tree("""
-                github:
-                  accounts:
-                    personal:
-                      token: "ghp_personal"
-                    acme:
-                      token: "ghp_acme"
-                  default: typo
-                """);
+        var t = twoAccountsWithDefault("typo");
         assertEquals("personal", AccountResolver.effectiveAccount(t, "github", null));
     }
 

@@ -67,24 +67,35 @@ public class PiSetup implements ToolSetup {
 
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
+        return envEntries(resolvedParams, java.util.Map.of());
+    }
+
+    /**
+     * Pi authenticates with the same Claude credential as Claude Code, so it has to resolve the
+     * same account -- the template's, not the global default. Both write into one
+     * {@code isx-env.sh}, so disagreeing here would describe two different auth modes at once.
+     */
+    @Override
+    public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams,
+                                     java.util.Map<String, String> accountSelection) {
         var entries = new ArrayList<EnvEntry>();
         var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
+        var account = SpawnConfig.load().getClaude()
+                .accountNamed(accountSelection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
+        var type = account == null ? null : account.effectiveType();
 
         if ("openai".equals(provider)) {
+            // OpenAI has its own credential; the Claude account is irrelevant here.
             entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
         } else if ("vertex".equals(provider) || "google".equals(provider)) {
-            var claude = SpawnConfig.load().getClaude();
-            if (claude.isUseVertex()) {
-                entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", claude.getVertexProjectId()));
-                entries.add(EnvEntry.set("GOOGLE_CLOUD_LOCATION", claude.getCloudMlRegion()));
+            if (type == SpawnConfig.ClaudeAccountType.VERTEX) {
+                entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", account.getVertexProjectId()));
+                entries.add(EnvEntry.set("GOOGLE_CLOUD_LOCATION", account.getCloudMlRegion()));
             }
+        } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
+            entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
         } else {
-            var claude = SpawnConfig.load().getClaude();
-            if (claude.isOauthMode()) {
-                entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
-            } else {
-                entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
-            }
+            entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));
         }
         entries.add(EnvEntry.set("PI_SKIP_VERSION_CHECK", "1"));
         return entries;

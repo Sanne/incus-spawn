@@ -41,6 +41,17 @@ public final class InstanceRegistry {
     /** How long a snapshot is served before a refresh is wanted. */
     public static final long STALE_AFTER_MS = 10_000L;
 
+    /**
+     * Floor between refreshes triggered by an unknown address.
+     *
+     * <p>A miss is not rare: only branches get a static IP, so template build containers and
+     * host-side traffic never appear in the map and miss on every single request. Without a
+     * floor, a build's steady stream of API calls would each schedule a full instance listing.
+     * {@code isx branch} and {@code isx destroy} signal the proxy directly, so the miss path is
+     * only a backstop and can afford to be lazy.
+     */
+    public static final long MISS_REFRESH_INTERVAL_MS = 1_000L;
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /** One instance's identity, as far as credential selection is concerned. */
@@ -80,7 +91,14 @@ public final class InstanceRegistry {
         return System.currentTimeMillis() - snapshot.takenAt() > STALE_AFTER_MS;
     }
 
-    public boolean isEmpty() { return snapshot.byAddress().isEmpty(); }
+    /**
+     * Whether an unknown address should trigger a refresh, rate-limited to
+     * {@link #MISS_REFRESH_INTERVAL_MS}. Callers that miss on every request -- which is the
+     * normal case for build containers -- would otherwise list every instance each time.
+     */
+    public boolean wantsMissRefresh() {
+        return System.currentTimeMillis() - snapshot.takenAt() > MISS_REFRESH_INTERVAL_MS;
+    }
 
     /**
      * Rebuild the snapshot from Incus. <strong>Blocks</strong> -- call from a worker thread.
@@ -105,6 +123,26 @@ public final class InstanceRegistry {
         } finally {
             refreshing.set(false);
         }
+    }
+
+    /** Every instance's pinned accounts, keyed by instance name, in one request. */
+    public static Map<String, Map<String, String>> accountsByInstance(IncusClient incus) {
+        var byInstance = new LinkedHashMap<String, Map<String, String>>();
+        try {
+            var root = JSON.readTree(incus.listJsonConfig());
+            if (!root.isArray()) return byInstance;
+            for (var instance : root) {
+                var name = instance.path("name").asText("");
+                var config = instance.path("config");
+                if (name.isEmpty() || !config.isObject()) continue;
+                var accounts = accountsOf(config);
+                if (!accounts.isEmpty()) byInstance.put(name, accounts);
+            }
+        } catch (Exception e) {
+            throw new dev.incusspawn.incus.IncusException(
+                    "Could not read instance account pinning: " + e.getMessage(), e);
+        }
+        return byInstance;
     }
 
     /**

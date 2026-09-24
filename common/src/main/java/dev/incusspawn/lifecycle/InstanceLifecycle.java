@@ -75,6 +75,8 @@ public final class InstanceLifecycle {
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
 
         BuildOutput.step("Assigning static IP " + ip + ".");
+        // Deliberately two calls, not one batched PATCH: failing to pin the address is fatal,
+        // failing to enable filtering only warns, and one call cannot report both.
         incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
         applyIpFiltering(incus, name, nicDevice);
         incus.configSetAll(name, Map.of(

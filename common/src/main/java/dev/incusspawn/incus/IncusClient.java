@@ -1599,6 +1599,39 @@ public class IncusClient {
      * Incus requires a complete device config in PATCH; a partial device (missing type) is rejected.
      * Uses a read-modify-write: GET expanded_devices, merge the key, PATCH back.
      */
+    /** Set several device properties in one PATCH. */
+    public void deviceConfigSetAll(String container, String deviceName, Map<String, String> entries) {
+        var resp = http().deviceConfigSetAll(container, deviceName, entries);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to set device config on " + container);
+        }
+    }
+
+    /** The NIC device attached to a network, with its expanded config. */
+    public record NicDevice(String name, Map<String, String> config) {}
+
+    /**
+     * Find the NIC on a network and return its config from the same request, so a caller that
+     * needs to check a property before writing it does not pay a second instance GET.
+     */
+    public NicDevice findNic(String instance, String networkName) {
+        var resp = http().get("/1.0/instances/" + instance);
+        if (!resp.isSuccess()) return null;
+        var expandedDevices = resp.body().path("metadata").path("expanded_devices");
+        for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
+            var entry = it.next();
+            var dev = entry.getValue();
+            if ("nic".equals(dev.path("type").asText())
+                    && (networkName.equals(dev.path("network").asText())
+                        || networkName.equals(dev.path("parent").asText()))) {
+                var config = new java.util.LinkedHashMap<String, String>();
+                dev.properties().forEach(e -> config.put(e.getKey(), e.getValue().asText("")));
+                return new NicDevice(entry.getKey(), config);
+            }
+        }
+        return null;
+    }
+
     public void deviceConfigSet(String container, String deviceName, String key, String value) {
         var resp = http().deviceConfigSet(container, deviceName, key, value);
         if (!resp.isSuccess()) {
@@ -1635,9 +1668,6 @@ public class IncusClient {
     }
 
     /**
-     * Get a specific config value. Returns empty string if the key is not set.
-     */
-    /**
      * Config entries whose key starts with {@code prefix}, keyed by the remainder.
      *
      * <p>One request for the whole group. {@link #configGet} does a full instance GET per key,
@@ -1658,6 +1688,9 @@ public class IncusClient {
         return result;
     }
 
+    /**
+     * Get a specific config value. Returns empty string if the key is not set.
+     */
     public String configGet(String name, String key) {
         var resp = http().get("/1.0/instances/" + name);
         if (!resp.isSuccess()) {

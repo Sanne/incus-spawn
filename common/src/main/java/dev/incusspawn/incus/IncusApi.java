@@ -163,6 +163,14 @@ class IncusApi {
      * profile-inherited device config), merge the new key in, then PATCH the full device.
      */
     ApiResponse deviceConfigSet(String instanceName, String deviceName, String key, String value) {
+        return deviceConfigSetAll(instanceName, deviceName, Map.of(key, value));
+    }
+
+    /**
+     * As above for several properties at once. Each call is a GET plus an awaited PATCH, so
+     * setting related keys one at a time doubles the cost for no reason.
+     */
+    ApiResponse deviceConfigSetAll(String instanceName, String deviceName, Map<String, String> entries) {
         var getResp = get("/1.0/instances/" + instanceName);
         if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
 
@@ -177,7 +185,7 @@ class IncusApi {
         if (!deviceNode.isMissingNode()) {
             deviceNode.fields().forEachRemaining(e -> merged.set(e.getKey(), e.getValue()));
         }
-        merged.put(key, value);
+        entries.forEach(merged::put);
 
         return requestAndWait("PATCH", "/1.0/instances/" + instanceName,
                 Map.of("devices", Map.of(deviceName, merged)));

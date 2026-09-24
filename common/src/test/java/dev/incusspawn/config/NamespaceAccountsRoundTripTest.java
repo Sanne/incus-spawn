@@ -42,8 +42,8 @@ class NamespaceAccountsRoundTripTest {
         var reloaded = YAML.readValue(out, SpawnConfig.class);
         var tree = new ObjectMapper().<com.fasterxml.jackson.databind.JsonNode>valueToTree(reloaded);
         assertEquals("acme", AccountResolver.effectiveAccount(tree, "github", null));
-        assertEquals("ghp_personal",
-                ToolProxyResolverAccess.navigate(tree, "github.accounts.personal.token"));
+        assertEquals("ghp_personal", dev.incusspawn.proxy.ToolProxyResolver
+                .navigateConfigPath(tree, "github.accounts.personal.token"));
     }
 
     @Test
@@ -79,6 +79,27 @@ class NamespaceAccountsRoundTripTest {
         assertTrue(out.contains("ghp_acme"), out);
     }
 
+    /**
+     * The fix only holds for classes that opt in, so a new namespace class that forgets
+     * {@code extends NamespaceConfig} would reintroduce credential deletion silently. Assert
+     * the rule structurally rather than naming today's three by hand -- the same drift-check
+     * shape as {@code NativeImageInitializationTest}.
+     */
+    @Test
+    void everyNamespaceConfigClassPreservesUnknownKeys() {
+        for (var nested : SpawnConfig.class.getDeclaredClasses()) {
+            if (!java.lang.reflect.Modifier.isPublic(nested.getModifiers())) continue;
+            if (nested.isEnum() || nested.isInterface() || nested.isRecord()) continue;
+            if (nested == SpawnConfig.NamespaceConfig.class) continue;
+            // ClaudeConfig declares `accounts` as a typed field, so it needs no any-setter.
+            if (nested == SpawnConfig.ClaudeConfig.class
+                    || nested == SpawnConfig.ClaudeAccount.class) continue;
+            assertTrue(SpawnConfig.NamespaceConfig.class.isAssignableFrom(nested),
+                    nested.getSimpleName() + " must extend NamespaceConfig, or an accounts:"
+                            + " block written into that namespace is deleted on the next save");
+        }
+    }
+
     /** A namespace with no Java class at all was already safe; keep it that way. */
     @Test
     void unknownNamespaceAccountsSurviveASave() throws Exception {
@@ -92,10 +113,4 @@ class NamespaceAccountsRoundTripTest {
         assertTrue(out.contains("art-acme"), out);
     }
 
-    /** Small bridge so this test can assert on the same navigation the resolver uses. */
-    private static final class ToolProxyResolverAccess {
-        static String navigate(com.fasterxml.jackson.databind.JsonNode tree, String path) {
-            return dev.incusspawn.proxy.ToolProxyResolver.navigateConfigPath(tree, path);
-        }
-    }
 }

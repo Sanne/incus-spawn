@@ -54,7 +54,7 @@ public class ClaudeSetup implements ToolSetup {
         auth.setType("anthropic");
 
         var proxy = new ToolDef.ProxyDef();
-        proxy.setConfigNamespace("claude");
+        proxy.setConfigNamespace(SpawnConfig.ClaudeConfig.NAMESPACE);
         proxy.setConfiguration(Map.of("api-key", apiKey, "oauth-token", oauthToken));
         proxy.setAuth(List.of(auth));
         return proxy;

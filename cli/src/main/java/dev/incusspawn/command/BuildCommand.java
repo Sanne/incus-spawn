@@ -2217,14 +2217,6 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Record which accounts this template was built against, and the env class each implies.
-     *
-     * <p>Both travel to every branch through the CoW copy. The account name is what the proxy
-     * reads to pick a credential; the env class is what
-     * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
-     * refuse a swap that the baked environment could not honour.
-     */
-    /**
      * The first template whose {@code accounts:} names something that is not configured, or
      * null when every definition resolves. Only definitions that select anything are examined,
      * so a host with no named accounts pays nothing.
@@ -2243,20 +2235,31 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
+    /**
+     * Record which accounts this template was built against, and the env class each implies.
+     *
+     * <p>Both travel to every branch through the CoW copy. The account name is what the proxy
+     * reads to pick a credential; the env class is what
+     * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
+     * refuse a swap that the baked environment could not honour.
+     */
     private void stampAccountSelection(String container, ImageDef imageDef,
                                        Map<String, ImageDef> defs) {
         var selection = ImageDef.resolveAccounts(imageDef, defs);
         if (!selection.isEmpty()) {
             AccountSelection.stamp(incus, container, selection);
         }
-        // Stamp the env class even with no explicit selection: the build still baked *some*
-        // auth mode (the configured default), and a later swap has to be checked against it.
+        // Every namespace gets an env class, not just the ones this template selected: the
+        // build baked *some* auth mode either way, and a later swap has to be checked against
+        // it. A null account means "this template made no choice", which resolves to the
+        // namespace's configured default -- the account the build actually used.
         var config = SpawnConfig.load();
-        var effective = new java.util.LinkedHashMap<>(selection);
-        for (var namespace : AccountSelection.knownNamespaces()) {
-            effective.putIfAbsent(namespace, null);
+        var setups = AccountSelection.namespaceSetups(config);
+        var effective = new java.util.LinkedHashMap<String, String>();
+        for (var namespace : setups.keySet()) {
+            effective.put(namespace, selection.get(namespace));
         }
-        var classes = AccountSelection.envClasses(config, effective);
+        var classes = AccountSelection.envClasses(config, effective, setups);
         if (classes.isEmpty()) return;
         var updates = new java.util.LinkedHashMap<String, String>();
         classes.forEach((namespace, envClass) ->

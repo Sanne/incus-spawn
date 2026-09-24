@@ -380,7 +380,8 @@ public class ToolDef {
                     || accountName == null || accountName.isBlank()) {
                 return "";
             }
-            return configNamespace + ".accounts." + accountName + "." + path;
+            return configNamespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY
+                    + "." + accountName + "." + path;
         }
     }
 

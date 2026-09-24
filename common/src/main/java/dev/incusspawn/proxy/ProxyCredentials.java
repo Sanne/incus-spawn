@@ -34,7 +34,7 @@ public record ProxyCredentials(
      * the generic tree walk, because its {@code type: anthropic} auth is handled directly in
      * {@code MitmProxy} instead of via tool proxies, and because {@code ClaudeConfig} also
      * synthesizes an account from the pre-accounts flat layout. Every other namespace goes
-     * through {@link ToolProxyResolver#resolveForAccounts}, which needs no per-tool code.
+     * through {@link ToolProxyResolver#resolve(SpawnConfig, java.util.Map, java.util.Map)}, which needs no per-tool code.
      *
      * @param accountsByNamespace config namespace → account name, as recorded on the instance
      * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException if a named account
