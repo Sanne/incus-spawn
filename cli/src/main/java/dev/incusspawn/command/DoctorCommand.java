@@ -16,6 +16,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
@@ -1042,15 +1043,13 @@ public class DoctorCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var config = SpawnConfig.load();
             var dangling = new ArrayList<String>();
-            for (var instance : incus.list()) {
-                var name = instance.get("name");
-                if (name == null || name.isBlank()) continue;
-                var selection = AccountSelection.read(incus, name);
-                if (selection.isEmpty()) continue;
+            // One request for every instance's pinning, rather than a full instance GET each:
+            // this check runs on every 'isx doctor', not only under --deep.
+            for (var entry : InstanceRegistry.accountsByInstance(incus).entrySet()) {
                 try {
-                    AccountSelection.validate(config, selection);
+                    AccountSelection.validate(config, entry.getValue());
                 } catch (AccountResolver.UnknownAccountException e) {
-                    dangling.add(name + " (" + e.namespace() + "=" + e.accountName() + ")");
+                    dangling.add(entry.getKey() + " (" + e.namespace() + "=" + e.accountName() + ")");
                 }
             }
             if (dangling.isEmpty()) {

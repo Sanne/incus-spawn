@@ -2,7 +2,6 @@ package dev.incusspawn.config;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 
 import java.util.LinkedHashMap;
@@ -28,6 +27,9 @@ import java.util.Map;
  * every existing command.
  */
 public final class AccountSelection {
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
 
     private AccountSelection() {}
 
@@ -91,8 +93,7 @@ public final class AccountSelection {
      */
     public static void validate(SpawnConfig config, Map<String, String> selection) {
         if (selection == null || selection.isEmpty()) return;
-        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        var tree = JSON.<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
         for (var entry : selection.entrySet()) {
             var namespace = entry.getKey();
             var account = entry.getValue();
@@ -105,6 +106,30 @@ public final class AccountSelection {
         }
     }
 
+    /** What a namespace offers: every configured account, and which one applies by default. */
+    public record AccountListing(List<String> names, String defaultName) {}
+
+    /**
+     * Every account configured under a namespace, and the one that applies when nothing
+     * narrower does.
+     *
+     * <p>Kept here rather than in the command so the "claude answers through its typed API,
+     * every other namespace through the tree" rule lives in one place. {@code isx account list}
+     * reporting a different default than the proxy actually serves would be the worst kind of
+     * wrong -- the user would be reading a reassurance that is not true.
+     */
+    public static AccountListing listAccounts(SpawnConfig config, String namespace) {
+        if (SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)) {
+            var claude = config.getClaude();
+            return new AccountListing(
+                    List.copyOf(claude.effectiveAccounts().keySet()), claude.accountName());
+        }
+        var tree = JSON.<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        return new AccountListing(
+                AccountResolver.accountNames(tree, namespace),
+                AccountResolver.effectiveAccount(tree, namespace, null));
+    }
+
     /**
      * The env class each selected account implies, for namespaces whose tool declares one.
      * Namespaces with no class are omitted -- their accounts are freely interchangeable.
@@ -112,9 +137,14 @@ public final class AccountSelection {
      * @see ToolSetup#envClass
      */
     public static Map<String, String> envClasses(SpawnConfig config, Map<String, String> selection) {
+        return envClasses(config, selection, namespaceSetups(config));
+    }
+
+    /** As {@link #envClasses(SpawnConfig, Map)}, against setups the caller already discovered. */
+    public static Map<String, String> envClasses(SpawnConfig config, Map<String, String> selection,
+                                                 Map<String, ToolSetup> setups) {
         var classes = new LinkedHashMap<String, String>();
         if (selection == null || selection.isEmpty()) return classes;
-        var setups = namespaceSetups();
         selection.forEach((namespace, account) -> {
             var setup = setups.get(namespace);
             if (setup == null) return;
@@ -132,9 +162,11 @@ public final class AccountSelection {
     public static String incompatibilityReason(SpawnConfig config, IncusClient incus,
                                                String instance, Map<String, String> selection) {
         var wanted = envClasses(config, selection);
+        if (wanted.isEmpty()) return "";
+        var bakedClasses = incus.configByPrefix(instance, Metadata.ENV_CLASS_PREFIX);
         for (var entry : wanted.entrySet()) {
             var namespace = entry.getKey();
-            var baked = incus.configGet(instance, Metadata.envClassKey(namespace));
+            var baked = bakedClasses.get(namespace);
             if (baked == null || baked.isBlank()) continue;
             if (!baked.equals(entry.getValue())) {
                 return "Instance '" + instance + "' was built for " + namespace + " auth mode '"
@@ -163,9 +195,14 @@ public final class AccountSelection {
      * the key to an empty value and leave it visible in {@code incus config show} forever.
      */
     public static void stamp(IncusClient incus, String instance, Map<String, String> selection) {
+        stamp(incus, instance, selection, read(incus, instance));
+    }
+
+    /** As {@link #stamp(IncusClient, String, Map)}, reusing a selection the caller just read. */
+    public static void stamp(IncusClient incus, String instance, Map<String, String> selection,
+                             Map<String, String> current) {
         var updates = new LinkedHashMap<String, Object>();
-        read(incus, instance).keySet()
-                .forEach(ns -> updates.put(Metadata.accountKey(ns), null));
+        current.keySet().forEach(ns -> updates.put(Metadata.accountKey(ns), null));
         selection.forEach((namespace, account) ->
                 updates.put(Metadata.accountKey(namespace), account));
         if (!updates.isEmpty()) incus.configUpdate(instance, updates);
@@ -188,19 +225,31 @@ public final class AccountSelection {
         return selection;
     }
 
-    /** Config namespaces any installed tool declares, plus Claude's built-in one. */
-    public static List<String> knownNamespaces() {
-        return namespaceSetups().keySet().stream().toList();
+    /**
+     * Config namespaces a tool declares, indexed to the tool that owns each.
+     *
+     * <p>Built from {@link dev.incusspawn.proxy.ToolProxyResolver#proxyToolSetups}, which is
+     * also what the proxy resolves against, so the two cannot disagree about which namespaces
+     * exist. Loading the setups separately here would drop that method's feature gate and its
+     * project-local rejection, and offer the user a namespace the proxy will never serve.
+     *
+     * <p>Discovering the setups scans the filesystem, so callers that need both this and
+     * {@link #envClasses} should pass the map rather than asking twice.
+     */
+    public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config) {
+        var byNamespace = new LinkedHashMap<String, ToolSetup>();
+        dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config)
+                .forEach((toolName, setup) -> {
+                    var proxyDef = setup.proxy();
+                    if (proxyDef == null) return;
+                    var namespace = proxyDef.getConfigNamespace();
+                    if (!namespace.isBlank()) byNamespace.putIfAbsent(namespace, setup);
+                });
+        return byNamespace;
     }
 
-    private static Map<String, ToolSetup> namespaceSetups() {
-        var byNamespace = new LinkedHashMap<String, ToolSetup>();
-        new ToolDefLoader().allToolSetups().forEach((toolName, setup) -> {
-            var proxyDef = setup.proxy();
-            if (proxyDef == null) return;
-            var namespace = proxyDef.getConfigNamespace();
-            if (!namespace.isBlank()) byNamespace.putIfAbsent(namespace, setup);
-        });
-        return byNamespace;
+    /** Config namespaces a tool declares. */
+    public static List<String> knownNamespaces(SpawnConfig config) {
+        return List.copyOf(namespaceSetups(config).keySet());
     }
 }

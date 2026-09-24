@@ -45,7 +45,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -214,7 +213,7 @@ public class MitmProxy {
      * pinned the same way share one entry. Built lazily off {@link #configSnapshot} and
      * cleared whenever config.yaml changes, so a rotated token is never served from here.
      */
-    private final Map<String, AccountBundle> credentialsBySelection = new ConcurrentHashMap<>();
+    private final Map<Map<String, String>, AccountBundle> credentialsBySelection = new ConcurrentHashMap<>();
 
     /**
      * The parsed config.yaml behind {@link #credentialsBySelection}. Held rather than
@@ -236,11 +235,7 @@ public class MitmProxy {
     /** What a single request needs to know about who asked and which credentials answer. */
     record RequestContext(String domain, String instanceName,
                           ProxyCredentials creds, ToolProxyRouting routing,
-                          boolean usesDefaultCredentials) {
-        String describeCaller() {
-            return instanceName == null || instanceName.isBlank() ? "unknown caller" : instanceName;
-        }
-    }
+                          boolean usesDefaultCredentials) {}
 
     /** Credentials plus the routing that indexes them, cached together per selection. */
     private record AccountBundle(ProxyCredentials creds, ToolProxyRouting routing) {}
@@ -256,13 +251,22 @@ public class MitmProxy {
 
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
+        // Tests construct without a config in hand, so the default account's entries stand in
+        // for the across-accounts domain set; fromConfig passes the real one.
+        this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress,
+                credentials, credentials.toolProxies());
+    }
+
+    public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
+                     String healthBindAddress, ProxyCredentials credentials,
+                     List<ResolvedToolProxy> proxiesAcrossAccounts) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
         this.credentials = credentials;
-        applyToolProxies(credentials.toolProxies(), credentials.toolProxies());
+        applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
         this.configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
     }
 
@@ -298,25 +302,28 @@ public class MitmProxy {
 
         var instance = registry.lookup(sourceAddress);
         // A miss is the case worth refreshing for: a branch that happened since the last
-        // snapshot. isx signals the proxy on branch, so this is only the backstop.
-        if (instance == null || registry.isStale()) scheduleRegistryRefresh(registry);
+        // snapshot. isx signals the proxy on branch, so this is only the backstop -- and it is
+        // rate-limited, because a build container has no static IP and so misses every time.
+        if (instance == null ? registry.wantsMissRefresh() : registry.isStale()) {
+            scheduleRegistryRefresh(registry);
+        }
 
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain,
                     instance == null ? null : instance.instanceName(), credentials, toolRouting, true);
         }
         var selection = instance.accountsByNamespace();
-        var bundle = credentialsBySelection.computeIfAbsent(selectionKey(selection), key -> {
+        // Plain get() first: this runs on the event loop for every intercepted request, and
+        // computeIfAbsent would allocate a capturing lambda even on a hit. The map is an
+        // immutable copy, so it is a sound key -- content-based and order-independent.
+        var bundle = credentialsBySelection.get(selection);
+        if (bundle == null) {
             var creds = ProxyCredentials.forAccounts(configSnapshot(), selection, toolSetups());
-            return new AccountBundle(creds, buildRouting(creds.toolProxies(), false));
-        });
+            bundle = new AccountBundle(creds, buildRouting(creds.toolProxies(), creds.toolProxies(), false));
+            credentialsBySelection.putIfAbsent(selection, bundle);
+        }
         return new RequestContext(domain, instance.instanceName(),
                 bundle.creds(), bundle.routing(), false);
-    }
-
-    /** Stable cache key for a selection map; sorted so ordering never splits the entry. */
-    private static String selectionKey(Map<String, String> selection) {
-        return new TreeMap<>(selection).toString();
     }
 
     private Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
@@ -389,10 +396,6 @@ public class MitmProxy {
      * so {@code warn} is set only for the global build; repeating collision warnings once per
      * selection would say nothing new.
      */
-    private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies, boolean warn) {
-        return buildRouting(proxies, proxies, warn);
-    }
-
     private static ToolProxyRouting buildRouting(List<ResolvedToolProxy> proxies,
                                                  List<ResolvedToolProxy> domainProxies,
                                                  boolean warn) {
@@ -418,14 +421,18 @@ public class MitmProxy {
             var domain = tp.domain();
             if (domain.startsWith("*.")) {
                 var suffix = domain.substring(1); // ".example.com"
-                var firstForSuffix = wildcards.stream()
-                        .filter(e -> e.getKey().equals(suffix))
-                        .findFirst().orElse(null);
-                if (warn && firstForSuffix != null
-                        && !firstForSuffix.getValue().toolName().equals(tp.toolName())) {
-                    ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
-                            + "' already registered by tool '" + firstForSuffix.getValue().toolName()
-                            + "' — first match wins");
+                if (warn) {
+                    // Only computed when it can be reported: the per-selection builds pass
+                    // warn=false, and this scan's sole consumer is the message below.
+                    var firstForSuffix = wildcards.stream()
+                            .filter(e -> e.getKey().equals(suffix))
+                            .findFirst().orElse(null);
+                    if (firstForSuffix != null
+                            && !firstForSuffix.getValue().toolName().equals(tp.toolName())) {
+                        ProxyLog.warn("Tool '" + tp.toolName() + "' claims wildcard '" + domain
+                                + "' already registered by tool '" + firstForSuffix.getValue().toolName()
+                                + "' — first match wins");
+                    }
                 }
                 wildcards.add(Map.entry(suffix, tp));
             } else {
@@ -482,24 +489,21 @@ public class MitmProxy {
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         var config = dev.incusspawn.config.SpawnConfig.load();
+        // Discovering tool setups scans every tool YAML, so do it once here and thread it
+        // through: ProxyCredentials.fromConfig would otherwise load its own copy and throw it
+        // away. The same map is kept on the proxy so resolving a per-instance selection later
+        // never reads the file or scans from the event loop.
+        var setups = ToolProxyResolver.proxyToolSetups(config);
         var proxy = new MitmProxy(
                 vertx,
                 gatewayIp,
                 ProxyConfig.DEFAULT_MITM_PORT,
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
-                ProxyCredentials.fromConfig(config));
-        // Keep the config and tool setups that produced those credentials, so resolving a
-        // per-instance selection later never reads the file or scans for tool YAMLs from the
-        // event loop.
-        proxy.configSnapshot = config;
-        var setups = ToolProxyResolver.proxyToolSetups(config);
-        proxy.toolSetupsSnapshot = setups;
-        // Re-publish the routing now that the config is in hand, so the intercepted domain set
-        // covers every account from the first request -- certificates are minted from it in
-        // start(), before any reload would widen it.
-        proxy.applyToolProxies(proxy.credentials.toolProxies(),
+                ProxyCredentials.forAccounts(config, Map.of(), setups),
                 ToolProxyResolver.resolveAcrossAccounts(config, setups));
+        proxy.configSnapshot = config;
+        proxy.toolSetupsSnapshot = setups;
         return proxy;
     }
 
@@ -547,15 +551,16 @@ public class MitmProxy {
         System.out.println("Reloading configuration...");
         try {
             var newConfig = dev.incusspawn.config.SpawnConfig.load();
-            var newCreds = ProxyCredentials.fromConfig(newConfig);
+            var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
+            var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
             configSnapshot = newConfig;
-            toolSetupsSnapshot = ToolProxyResolver.proxyToolSetups(newConfig);
+            toolSetupsSnapshot = newSetups;
             credentials = newCreds;
             // Drop per-selection credentials before publishing the new defaults: a rotated
             // token must not keep being served from a cache entry built off the old file.
             credentialsBySelection.clear();
             applyToolProxies(newCreds.toolProxies(),
-                    ToolProxyResolver.resolveAcrossAccounts(newConfig, toolSetupsSnapshot));
+                    ToolProxyResolver.resolveAcrossAccounts(newConfig, newSetups));
             invalidateVertexToken();
             // Account pinning is instance state, not config state, but a reload is the one
             // moment isx reliably signals -- so take the opportunity to re-read it too.
@@ -800,8 +805,9 @@ public class MitmProxy {
                 } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
                     // Fail closed: this instance is pinned to an account that is gone.
                     // Falling back to the default would quietly spend another account.
-                    ProxyLog.warn("Refusing " + domain + " for a caller pinned to missing "
-                            + e.namespace() + " account '" + e.accountName() + "'");
+                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq)
+                            + ", pinned to missing " + e.namespace()
+                            + " account '" + e.accountName() + "'");
                     sendError(clientReq.response(), 502, e.getMessage());
                     return;
                 }
@@ -834,6 +840,18 @@ public class MitmProxy {
         return remote == null ? null : remote.hostAddress();
     }
 
+    /** Name the caller for a log line: the instance if the registry knows it, else its address. */
+    private String describeCaller(HttpServerRequest req) {
+        return describeCaller(sourceAddressOf(req));
+    }
+
+    private String describeCaller(String sourceAddress) {
+        var registry = instanceRegistry;
+        var instance = registry == null ? null : registry.lookup(sourceAddress);
+        if (instance != null) return "instance '" + instance.instanceName() + "'";
+        return sourceAddress == null ? "an unknown caller" : "caller " + sourceAddress;
+    }
+
     private String extractDomain(HttpServerRequest req) {
         var host = req.getHeader("Host");
         if (host != null) {
@@ -860,7 +878,8 @@ public class MitmProxy {
         } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
             // Same fail-closed rule as the HTTP path: an instance pinned to an account
             // that is gone gets an error, never someone else's credential.
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for a caller pinned to missing "
+            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
+                    + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
                     + e.namespace() + " account '" + e.accountName() + "'");
             clientWs.reject(502);
             return;

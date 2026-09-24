@@ -28,22 +28,17 @@ public final class ToolProxyResolver {
     private static final Pattern REF_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
     private ToolProxyResolver() {}
 
-    public static List<ResolvedToolProxy> resolve(SpawnConfig config) {
-        return resolveForAccounts(config, Map.of());
-    }
-
     /**
-     * Resolve every tool's proxy entries against a per-namespace account selection.
+     * Resolve every tool's proxy entries against the configured default accounts.
      *
-     * @param accountsByNamespace config namespace → account name, as recorded on an
-     *     instance by {@link dev.incusspawn.incus.Metadata#accountKey}. A namespace absent
-     *     from the map falls back to its configured {@code default}; a name that is not
-     *     configured raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException}
-     *     rather than serving someone else's credential.
+     * <p>A namespace's selection is passed through {@code accountsByNamespace} on the
+     * overloads that take one: a namespace absent from that map falls back to its configured
+     * {@code default}, and a name that is not configured raises
+     * {@link dev.incusspawn.config.AccountResolver.UnknownAccountException} rather than serving
+     * someone else's credential.
      */
-    public static List<ResolvedToolProxy> resolveForAccounts(SpawnConfig config,
-                                                             Map<String, String> accountsByNamespace) {
-        return resolve(config, proxyToolSetups(config), accountsByNamespace);
+    public static List<ResolvedToolProxy> resolve(SpawnConfig config) {
+        return resolve(config, proxyToolSetups(config), Map.of());
     }
 
     /**
@@ -53,7 +48,7 @@ public final class ToolProxyResolver {
      * resolves a per-instance account selection on the event loop, which must never do that, so
      * it loads this once per config reload and hands the result to
      * {@link #resolve(SpawnConfig, Map, Map)} instead of calling
-     * {@link #resolveForAccounts} per request.
+     * {@link #resolve(SpawnConfig, Map, Map)} per request.
      */
     public static Map<String, ToolSetup> proxyToolSetups(SpawnConfig config) {
         var loader = new ToolDefLoader();
@@ -69,8 +64,18 @@ public final class ToolProxyResolver {
     public static List<ResolvedToolProxy> resolve(SpawnConfig config,
                                                   Map<String, ToolSetup> toolSetups,
                                                   Map<String, String> accountsByNamespace) {
+        return resolve(JSON.valueToTree(config), toolSetups, accountsByNamespace);
+    }
+
+    /**
+     * As above, against a config tree the caller already serialized. Serializing a whole
+     * {@link SpawnConfig} is not free, and {@link #resolveAcrossAccounts} resolves once per
+     * configured account.
+     */
+    public static List<ResolvedToolProxy> resolve(JsonNode configTree,
+                                                  Map<String, ToolSetup> toolSetups,
+                                                  Map<String, String> accountsByNamespace) {
         var result = new ArrayList<ResolvedToolProxy>();
-        var configTree = JSON.valueToTree(config);
         var namespaces = new java.util.HashMap<String, String>();
 
         for (var toolEntry : toolSetups.entrySet()) {
@@ -145,7 +150,7 @@ public final class ToolProxyResolver {
             }
         }
         for (var selection : selections) {
-            for (var resolved : resolve(config, toolSetups, selection)) {
+            for (var resolved : resolve(configTree, toolSetups, selection)) {
                 seen.putIfAbsent(resolved.toolName() + "\t" + resolved.domain(), resolved);
             }
         }

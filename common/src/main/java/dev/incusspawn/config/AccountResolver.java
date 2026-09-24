@@ -103,12 +103,6 @@ public final class AccountResolver {
         return names;
     }
 
-    /** Whether a namespace uses the accounts layout at all. */
-    public static boolean hasAccounts(JsonNode configTree, String namespace) {
-        var accounts = accountsNode(configTree, namespace);
-        return accounts != null && !accounts.isEmpty();
-    }
-
     /** The name in {@code <ns>.default}, or {@code ""}. */
     public static String defaultName(JsonNode configTree, String namespace) {
         var ns = configTree == null ? null : configTree.get(namespace);

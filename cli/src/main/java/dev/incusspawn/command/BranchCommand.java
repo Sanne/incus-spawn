@@ -242,19 +242,15 @@ public class BranchCommand extends BaseCommand {
                                                         Map<String, ImageDef> defs) {
         var profile = incus.configGet(resolvedSource, Metadata.PROFILE);
         var templateName = (profile != null && !profile.isEmpty()) ? profile : resolvedSource;
-        var selection = AccountSelection.resolve(
-                defs.get(templateName), defs, AccountSelection.parse(accounts));
 
-        // Branching from an instance that was re-pointed with 'isx account set' inherits that
-        // choice, not the template's: the source's selection is what the user can see, and the
-        // CoW copy carries it across anyway. An explicit --account still wins over both.
-        var sourceSelection = AccountSelection.read(incus, resolvedSource);
-        if (!sourceSelection.isEmpty()) {
-            var merged = new java.util.LinkedHashMap<>(selection);
-            merged.putAll(sourceSelection);
-            merged.putAll(AccountSelection.parse(accounts));
-            selection = merged;
-        }
+        // Lowest precedence first, each layer overwriting the last:
+        //   template chain  <  the source instance's own pins  <  --account
+        // The source's pins win over the template because a source re-pointed with
+        // 'isx account set' shows that choice to the user, and the CoW copy carries it across
+        // regardless -- resolving the template here would silently stamp over it.
+        var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
+        selection.putAll(AccountSelection.read(incus, resolvedSource));
+        selection.putAll(AccountSelection.parse(accounts));
 
         var config = SpawnConfig.load();
         AccountSelection.validate(config, selection);
