@@ -245,6 +245,55 @@ class GhSetupTest {
         }
     }
 
+    // ── re-pointing an instance to another GitHub account ───────────────────────
+
+    /**
+     * Found by running this against a real container: the re-bake used to clear the identity
+     * and then resolve, so any failure -- no network, a revoked token, gh missing -- left the
+     * instance with <em>no</em> author at all. That is worse than the stale one it had: commits
+     * made before the next attempt would be unattributed rather than merely attributed to the
+     * previous account.
+     */
+    @Test
+    void aFailedRepointLeavesThePreviousIdentityIntact() {
+        var incus = stubIncus();
+        existingIdentity(incus);
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api user --jq")))
+                .thenReturn(new IncusClient.ExecResult(127, "", "sh: gh: not found"));
+
+        var setup = new GhSetup();
+        setup.retryDelaysMs = new long[0];
+        assertThrows(IncusException.class, () ->
+                setup.rebakeForAccount(new Container(incus, CONTAINER), "acme"));
+
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"),
+                contains("--unset"));
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"),
+                and(contains("git config --global"), contains("user.name ")));
+    }
+
+    @Test
+    void aRepointOverwritesTheIdentityEvenThoughOneIsAlreadySet() {
+        var incus = stubIncus();
+        // Deliberately "already has an identity": install() would skip, a re-point must not.
+        existingIdentity(incus);
+        ghApiUserReturns(incus, "acme-bot\tAcme Bot\t\n");
+        ghApiEmailsReturns(incus, "bot@acme.example\n");
+
+        new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "acme");
+
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("Acme Bot"));
+        verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("bot@acme.example"));
+    }
+
+    @Test
+    void ghDeclaresItCanRepointAndClaudeDoesNot() {
+        assertTrue(new GhSetup().canRebakeForAccount(),
+                "the git identity is recomputable, so a GitHub swap is reconciled, not refused");
+        assertFalse(new ClaudeSetup().canRebakeForAccount(),
+                "the auth mode lives in an env file a running agent has already read");
+    }
+
     private static IncusClient stubIncus() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
