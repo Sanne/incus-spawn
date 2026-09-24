@@ -124,6 +124,44 @@ class ClaudeAccountsTest {
     }
 
     @Test
+    void allAccountsIncludesIncompleteEntries() throws Exception {
+        var yaml = """
+                claude:
+                  accounts:
+                    broken:
+                      type: vertex
+                      cloudMlRegion: europe-west1
+                    console:
+                      type: api-key
+                      apiKey: "sk-ant-api03-xyz"
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        var all = claude.allAccounts();
+        assertEquals(2, all.size());
+        assertTrue(all.containsKey("broken"));
+        assertTrue(all.containsKey("console"));
+        assertFalse(all.get("broken").isComplete());
+        assertTrue(all.get("console").isComplete());
+    }
+
+    @Test
+    void allAccountsIncludesUnknownTypeEntries() throws Exception {
+        var yaml = """
+                claude:
+                  accounts:
+                    weird:
+                      type: carrier-pigeon
+                    console:
+                      type: api-key
+                      apiKey: "sk-ant-api03-xyz"
+                """;
+        var claude = YAML.readValue(yaml, SpawnConfig.class).getClaude();
+        assertEquals(1, claude.effectiveAccounts().size());
+        assertEquals(2, claude.allAccounts().size());
+        assertEquals("incomplete account", claude.allAccounts().get("weird").describe());
+    }
+
+    @Test
     void writingAnAccountDropsTheLegacyLayout() throws Exception {
         var yaml = """
                 claude:
