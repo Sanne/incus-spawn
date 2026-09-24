@@ -1007,15 +1007,32 @@ isx account show review-1              # what this instance uses
 isx account set review-1 claude=personal
 ```
 
+The same works for GitHub, and for any credential a tool declares:
+
+```yaml
+github:
+  accounts:
+    personal:
+      token: "ghp_..."
+    acme-bot:
+      token: "ghp_..."
+      email: "bot@acme.example"
+  default: personal
+```
+
 Selections are always written `<namespace>=<account>`, where the namespace is the credential's
 section in `config.yaml` (`claude`, `github`, and any namespace a tool declares). Pass the flag
 more than once to set several.
 
 Because credentials live in the proxy and never inside the container, re-pointing a running
-instance takes effect on its next request -- nothing inside needs restarting. Moving *between
-Claude auth modes* (Pro/Max OAuth, API key, Vertex) is the exception: the mode is written into the
-container's environment when the template is built, so `isx account set` refuses that swap and
-tells you which template to branch from instead.
+instance takes effect on its next request -- nothing inside needs restarting. Re-pointing a
+GitHub account also refreshes the container's git identity (`user.name`, `user.email`) on its
+next use, so commits are authored by the account whose token pushes them.
+
+Moving *between Claude auth modes* (Pro/Max OAuth, API key, Vertex) is the one exception: the
+mode is written into the container's environment when the template is built and a running agent
+has already read it, so `isx account set` refuses that swap and tells you which template to
+branch from instead.
 
 If an instance names an account that has since been renamed or removed, its requests fail with a
 message saying so -- isx will not quietly spend a different account. `isx doctor` lists instances

@@ -35,8 +35,8 @@ public final class Metadata {
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
-    /** Prefix of the per-namespace baked env class; see {@link #envClassKey}. */
-    public static final String ENV_CLASS_PREFIX = PREFIX + "env-class.";
+    /** Prefix of what the build derived from each namespace's account; see {@link #accountIdentityKey}. */
+    public static final String ACCOUNT_IDENTITY_PREFIX = PREFIX + "account-identity.";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
     // Templates are immutable and rfer is stable, so this cached value stays correct; the TUI uses
     // it to show each template as a delta from its parent (see BtrfsUsage / ListCommand). Not part
@@ -65,16 +65,17 @@ public final class Metadata {
     }
 
     /**
-     * Key holding the env class a namespace's credential was baked with at build time.
-     * Swapping to an account of a different class would leave the container's
-     * {@code /etc/profile.d/isx-env.sh} describing an auth mode that is no longer in
-     * use, so such a swap is refused rather than silently half-applied.
+     * Key holding what the build derived from this namespace's account -- Claude's auth mode,
+     * GitHub's identity. A later re-point compares against it and either asks the tool to
+     * bring the instance in line or refuses the swap, rather than half-applying it.
      *
-     * <p>Empty for namespaces whose credential is pure header substitution (GitHub),
-     * where every account is interchangeable.
+     * <p>Absent for namespaces whose credential is pure header substitution, where nothing in
+     * the image depends on which account is in use and every account is interchangeable.
+     *
+     * @see dev.incusspawn.tool.ToolSetup#bakedAccountIdentity
      */
-    public static String envClassKey(String namespace) {
-        return ENV_CLASS_PREFIX + namespace;
+    public static String accountIdentityKey(String namespace) {
+        return ACCOUNT_IDENTITY_PREFIX + namespace;
     }
 
     public static String getType(IncusClient incus, String name) {

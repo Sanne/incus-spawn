@@ -2,6 +2,8 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.NamespaceAccounts;
+import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.CidrUtils;
@@ -2002,11 +2004,33 @@ public class InitCommand extends BaseCommand {
         return GhTokenOutcome.SAVED;
     }
 
+    /** Whether any GitHub credential is configured, flat or under an account. */
+    private static boolean githubConfigured(SpawnConfig config) {
+        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
+                tree, GhSetup.NAMESPACE, null);
+        return !dev.incusspawn.config.AccountResolver
+                .value(tree, GhSetup.NAMESPACE, account, "token").isBlank();
+    }
+
+    /**
+     * Which GitHub account the current {@code isx init} run is writing into: an account name,
+     * or {@code ""} for the flat single-credential layout. Set by the menu just before the
+     * prompts that collect the credential.
+     */
+    private String githubAccountTarget = "";
+
     /** Persists a verified GitHub token (and email, if any) and prints the matching "saved" line. */
     private void saveGitHubToken(SpawnConfig config, String token, String email) {
-        config.getGithub().setToken(token);
-        if (email != null) {
-            config.getGithub().setEmail(email);
+        if (githubAccountTarget == null || githubAccountTarget.isEmpty()) {
+            NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "token", token);
+            if (email != null) NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "email", email);
+        } else {
+            NamespaceAccounts.put(config, GhSetup.NAMESPACE, githubAccountTarget, "token", token);
+            if (email != null) {
+                NamespaceAccounts.put(config, GhSetup.NAMESPACE, githubAccountTarget, "email", email);
+            }
         }
         config.save();
         System.out.println(email != null
@@ -2066,6 +2090,114 @@ public class InitCommand extends BaseCommand {
         System.out.println();
     }
 
+    /** Config keys a GitHub account holds. Order matters only for the adopt-flat copy. */
+    private static final java.util.List<String> GITHUB_KEYS = java.util.List.of("token", "email");
+
+    /**
+     * Account menu for any credential namespace, driven entirely by the namespace name.
+     *
+     * <p>Nothing here knows what a GitHub token is, so the same menu serves Bob, OpenAI, or a
+     * credential that does not exist yet -- adding accounts to one becomes a matter of calling
+     * this and collecting its fields. Claude keeps its own menu for now: its accounts are
+     * typed, carry an auth mode, and it alone reports which of them can answer {@code isx ask}.
+     *
+     * @return the account to write credentials into, {@code ""} for the flat single-credential
+     *     layout, or null to leave everything as it is
+     */
+    private String chooseAccountTarget(SpawnConfig config, String namespace, String label,
+                                       java.util.List<String> keys, Console console) {
+        while (true) {
+            var accounts = NamespaceAccounts.names(config, namespace);
+            var defaultName = NamespaceAccounts.defaultName(config, namespace);
+
+            // One credential in the flat layout is the common case and should not have to
+            // learn about accounts to be replaced.
+            if (accounts.isEmpty()) {
+                System.out.println("  " + label + ": configured.");
+                System.out.println("    r. Replace it");
+                System.out.println("    a. Add a second account (keeps the current one)");
+                System.out.print("  Choice (Enter to keep as-is): ");
+                var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
+                switch (choice) {
+                    case "" -> { return null; }
+                    case "r" -> { return ""; }
+                    case "a" -> {
+                        NamespaceAccounts.adoptFlat(config, namespace, keys,
+                                NamespaceAccounts.DEFAULT_ACCOUNT_NAME);
+                        config.save();
+                        var name = askAccountName(console, java.util.Set.of(
+                                NamespaceAccounts.DEFAULT_ACCOUNT_NAME));
+                        if (name.isEmpty()) return null;
+                        return name;
+                    }
+                    default -> { continue; }
+                }
+            }
+
+            System.out.println("  " + label + " accounts:");
+            for (var name : accounts) {
+                System.out.println("    - " + name + (name.equals(defaultName) ? "  (default)" : ""));
+            }
+            System.out.println();
+            var canManageMultiple = accounts.size() > 1;
+            System.out.println("    a. Add another account");
+            System.out.println("    e. Replace an existing account's credentials");
+            System.out.println("    r. Replace all with a single account");
+            if (canManageMultiple) {
+                System.out.println("    d. Change which account is the default");
+                System.out.println("    x. Remove an account");
+            }
+            System.out.print("  Choice (Enter to keep as-is): ");
+            var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
+
+            switch (choice) {
+                case "" -> { return null; }
+                case "a" -> {
+                    var name = askAccountName(console, new java.util.LinkedHashSet<>(accounts));
+                    return name.isEmpty() ? null : name;
+                }
+                case "e" -> {
+                    System.out.print("  Name of the account to replace: ");
+                    var name = readInput(console.readLine());
+                    if (accounts.contains(name)) return name;
+                    if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
+                }
+                case "r" -> {
+                    NamespaceAccounts.clear(config, namespace, keys);
+                    config.save();
+                    return "";
+                }
+                // 'd' and 'x' save immediately and loop back to the listing, so an abort after
+                // this point cannot leave the confirmation they printed a lie.
+                case "d" -> {
+                    if (!canManageMultiple) continue;
+                    System.out.print("  Name of the account to make default: ");
+                    var name = readInput(console.readLine());
+                    if (accounts.contains(name)) {
+                        NamespaceAccounts.setDefault(config, namespace, name);
+                        config.save();
+                        System.out.println("  Default account is now '" + name + "'.");
+                    } else if (!name.isEmpty()) {
+                        System.out.println("  No account named '" + name + "'.");
+                    }
+                }
+                case "x" -> {
+                    if (!canManageMultiple) continue;
+                    System.out.print("  Name of the account to remove: ");
+                    var name = readInput(console.readLine());
+                    if (accounts.contains(name)) {
+                        NamespaceAccounts.remove(config, namespace, name);
+                        config.save();
+                        System.out.println("  Removed account '" + name + "'.");
+                    } else if (!name.isEmpty()) {
+                        System.out.println("  No account named '" + name + "'.");
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
     private void setupGitHubAuth() {
         startStep("GitHub Authentication",
                 "Sets up a GitHub PAT so containers can open PRs, push",
@@ -2082,12 +2214,15 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        // Offer to keep existing token on re-run
-        if (!config.getGithub().getToken().isBlank()) {
-            System.out.println("  GitHub auth: token configured (" + maskSecret(config.getGithub().getToken()) + ")");
-            if (askConfirmation(console, "  Keep current?", true, true)) {
-                return;
-            }
+        // On a re-run, offer account management rather than only replace-or-keep: the same
+        // menu every non-Claude credential gets, so adding a second GitHub identity needs no
+        // GitHub-specific UX.
+        if (githubConfigured(config)) {
+            githubAccountTarget = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub",
+                    GITHUB_KEYS, console);
+            if (githubAccountTarget == null) return;
+        } else {
+            githubAccountTarget = "";
         }
 
         // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
@@ -2143,14 +2278,11 @@ public class InitCommand extends BaseCommand {
                 saveGitHubToken(config, token, null);
                 break;
             }
-            config.getGithub().setToken(newToken);
-            if (newResult.email != null) {
-                config.getGithub().setEmail(newResult.email);
-                config.save();
-                System.out.println("  GitHub configuration saved.");
-            } else {
-                config.save();
-                System.out.println("  GitHub configuration saved (still without email).");
+            // Same target as every other save in this flow, so a re-minted PAT lands in the
+            // account the user picked rather than back in the flat field.
+            saveGitHubToken(config, newToken, newResult.email);
+            if (newResult.email == null) {
+                System.out.println("  (still without email)");
             }
             break;
         }

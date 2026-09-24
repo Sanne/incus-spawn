@@ -1010,7 +1010,7 @@ public class BuildCommand extends BaseCommand {
         enablePackageRepos(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
 
-        runToolSetup(container, toolResolution.effective());
+        runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
@@ -1254,7 +1254,7 @@ public class BuildCommand extends BaseCommand {
             enablePackageRepos(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
             installAllPackages(container, layer, toolResolution.effective(), toolResolution.ancestors(), defs);
 
-            runToolSetup(container, toolResolution.effective());
+            runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
             allTools.addAll(toolResolution.effective());
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
@@ -1799,7 +1799,8 @@ public class BuildCommand extends BaseCommand {
     /**
      * Run the non-package setup steps for each tool (scripts, files, env, verify).
      */
-    private void runToolSetup(Container container, List<ResolvedTool> tools) {
+    private void runToolSetup(Container container, List<ResolvedTool> tools,
+                              Map<String, String> accountSelection) {
         var installable = tools.stream().filter(t -> !t.reconfigureOnly()).toList();
         if (!installable.isEmpty()) {
             var names = installable.stream().map(ResolvedTool::name).toList();
@@ -1811,7 +1812,7 @@ public class BuildCommand extends BaseCommand {
             if (resolved.reconfigureOnly()) {
                 resolved.setup().reconfigure(container, resolved.parameters());
             } else {
-                resolved.setup().install(container, resolved.parameters());
+                resolved.setup().install(container, resolved.parameters(), accountSelection);
             }
         }
 
@@ -2259,11 +2260,11 @@ public class BuildCommand extends BaseCommand {
         for (var namespace : setups.keySet()) {
             effective.put(namespace, selection.get(namespace));
         }
-        var classes = AccountSelection.envClasses(config, effective, setups);
+        var classes = AccountSelection.bakedIdentities(config, effective, setups);
         if (classes.isEmpty()) return;
         var updates = new java.util.LinkedHashMap<String, String>();
         classes.forEach((namespace, envClass) ->
-                updates.put(Metadata.envClassKey(namespace), envClass));
+                updates.put(Metadata.accountIdentityKey(namespace), envClass));
         incus.configSetAll(container, updates);
     }
 

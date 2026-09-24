@@ -61,12 +61,17 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     /**
-     * Claude's auth mode is the env class: {@code envEntries} writes a different set of
-     * variables for each, so vertex/oauth/api-key accounts are not interchangeable on a
-     * container that has already been built. Accounts of the same type are.
+     * The auth mode, not the account name: {@code envEntries} writes a different set of
+     * variables for each mode, so vertex/oauth/api-key accounts are not interchangeable on a
+     * container that has already been built -- but two accounts of the same mode are, since
+     * nothing in the image distinguishes them.
+     *
+     * <p>No {@code rebakeForAccount}: the variables live in {@code /etc/profile.d}, which an
+     * already-running agent has read, so rewriting them would describe a mode the live process
+     * is not using. A cross-mode move means branching from a template built for it.
      */
     @Override
-    public String envClass(SpawnConfig config, String accountName) {
+    public String bakedAccountIdentity(SpawnConfig config, String accountName) {
         var account = config.getClaude().accountNamed(accountName);
         if (account == null) return "";
         var type = account.effectiveType();

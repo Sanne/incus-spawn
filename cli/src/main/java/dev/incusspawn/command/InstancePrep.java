@@ -1,9 +1,12 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
@@ -83,6 +86,7 @@ public class InstancePrep {
         }
 
         GuiPassthrough.checkGuiHealth(incus, name);
+        rebakeStaleAccountIdentities(incus, name);
 
         return templateName;
     }
@@ -123,6 +127,43 @@ public class InstancePrep {
             InstanceLifecycle.applyIpFiltering(incus, name, nic.name());
         } catch (Exception ignored) {
             // No bridge NIC (airgap, or a hand-made instance) -- nothing to filter.
+        }
+    }
+
+    /**
+     * Re-derive anything the build baked from a credential account the instance is no longer
+     * pinned to -- today, the git identity after {@code isx account set ... github=other}.
+     *
+     * <p>Runs after start, because re-deriving means asking the API through the proxy, which is
+     * also what makes it correct: the proxy already knows which account this instance uses, so
+     * the tool needs no argument beyond the account name to stamp back.
+     *
+     * <p>Only namespaces whose tool can re-derive appear here; the ones that cannot were
+     * refused at selection time, so there is nothing to reconcile.
+     */
+    private static void rebakeStaleAccountIdentities(IncusClient incus, String name) {
+        try {
+            var config = SpawnConfig.load();
+            var stale = AccountSelection.staleIdentities(config, incus, name);
+            if (stale.isEmpty()) return;
+
+            var container = new Container(incus, name);
+            var setups = AccountSelection.namespaceSetups(config);
+            var updates = new java.util.LinkedHashMap<String, String>();
+            stale.forEach((namespace, identity) -> {
+                var setup = setups.get(namespace);
+                if (setup == null) return;
+                BuildOutput.step("Updating " + namespace + " identity for account '"
+                        + identity + "'...");
+                setup.rebakeForAccount(container, identity);
+                updates.put(Metadata.accountIdentityKey(namespace), identity);
+            });
+            if (!updates.isEmpty()) incus.configSetAll(name, updates);
+        } catch (Exception e) {
+            // Best effort: a stale identity is a wrong commit author, not a broken instance,
+            // and the next use tries again because the stamp is only updated on success.
+            System.err.println("Warning: could not update credential identity for " + name
+                    + ": " + e.getMessage());
         }
     }
 

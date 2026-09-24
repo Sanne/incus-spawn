@@ -508,6 +508,58 @@ public class SpawnConfig {
     @JsonAnyGetter
     public Map<String, Object> getExtras() { return extras; }
 
+    /**
+     * Remove a dotted config path, and any ancestor left empty by the removal.
+     *
+     * <p>The counterpart to {@link #setConfigByPath}: blanking a key would leave an empty
+     * string behind, which reads back as a configured-but-empty credential rather than as
+     * absent. Pruning empty parents is what keeps a removed account from lingering as
+     * {@code accounts: {acme: {}}}, which {@code AccountResolver} would still list.
+     */
+    public void removeConfigPath(String dotPath) {
+        var segments = dotPath.split("\\.");
+        if (segments.length == 0) return;
+        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) YAML.valueToTree(this);
+        var chain = new java.util.ArrayList<com.fasterxml.jackson.databind.node.ObjectNode>();
+        var node = tree;
+        for (int i = 0; i < segments.length - 1; i++) {
+            chain.add(node);
+            var child = node.get(segments[i]);
+            if (!(child instanceof com.fasterxml.jackson.databind.node.ObjectNode object)) return;
+            node = object;
+        }
+        chain.add(node);
+        node.remove(segments[segments.length - 1]);
+        for (int i = chain.size() - 1; i > 0; i--) {
+            if (!chain.get(i).isEmpty()) break;
+            chain.get(i - 1).remove(segments[i - 1]);
+        }
+        try {
+            // readerForUpdating merges rather than replaces, so a removed key would survive.
+            // Re-read the pruned tree into a fresh instance and copy it over this one.
+            var replacement = YAML.treeToValue(tree, SpawnConfig.class);
+            copyFrom(replacement);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to remove config path " + dotPath, e);
+        }
+    }
+
+    /** Overwrite every field from another instance, for a whole-tree replacement. */
+    private void copyFrom(SpawnConfig other) {
+        this.claude = other.claude;
+        this.github = other.github;
+        this.bob = other.bob;
+        this.openai = other.openai;
+        this.features = other.features;
+        this.searchPaths = other.searchPaths;
+        this.hostPath = other.hostPath;
+        this.hostPaths = other.hostPaths;
+        this.repoPaths = other.repoPaths;
+        this.incusBridgeGateway = other.incusBridgeGateway;
+        this.autoCloneRepos = other.autoCloneRepos;
+        this.extras = other.extras;
+    }
+
     public void setConfigByPath(String dotPath, String value) {
         var segments = dotPath.split("\\.");
         if (segments.length == 0) return;
@@ -582,7 +634,13 @@ public class SpawnConfig {
             }
         }
         if (tools.contains("gh")) {
-            if (config.getGithub().getToken().isBlank()) {
+            // Account-aware: the token may live under the template's account rather than the
+            // flat field, and AccountResolver.value falls back to the flat one either way.
+            var tree = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+            var account = AccountResolver.effectiveAccount(tree, "github",
+                    ImageDef.resolveAccounts(imageDef, allDefs).get("github"));
+            if (AccountResolver.value(tree, "github", account, "token").isBlank()) {
                 missing.add("GitHub token");
             }
         }
