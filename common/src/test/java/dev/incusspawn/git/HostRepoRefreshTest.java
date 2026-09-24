@@ -232,4 +232,24 @@ class HostRepoRefreshTest {
         entry.setUrl(url);
         return entry;
     }
+
+    @Test
+    void projectLocalReposAreNeverRefreshedOnTheHost() {
+        var parent = new ImageDef();
+        parent.setName("tpl-user");
+        var trustedRepo = new ImageDef.RepoEntry();
+        trustedRepo.setUrl("https://github.com/org/trusted.git");
+        parent.setRepos(List.of(trustedRepo));
+
+        var child = new ImageDef();
+        child.setName("tpl-project");
+        child.setParent("tpl-user");
+        child.setProjectRoot(java.nio.file.Path.of("/work/repo"));
+        var localRepo = new ImageDef.RepoEntry();
+        localRepo.setUrl("file:///home/me/private");
+        child.setRepos(List.of(localRepo));
+
+        var repos = HostRepoRefresh.collectAllRepos(child, Map.of("tpl-user", parent, "tpl-project", child));
+        assertEquals(List.of("https://github.com/org/trusted.git"), repos.stream().map(ImageDef.RepoEntry::getUrl).toList());
+    }
 }
