@@ -24,11 +24,6 @@ public class CodexSetup implements ToolSetup {
     }
 
     @Override
-    public String feature() {
-        return "openai";
-    }
-
-    @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
         apiKey.setConfigPath("apiKey");

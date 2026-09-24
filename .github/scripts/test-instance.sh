@@ -154,46 +154,10 @@ assert "npm install scoped package through proxy" \
 rm -rf /tmp/npm-test
 echo ""
 
-# --- 8. Codex CLI config validation ---
-# Installs Codex and validates that the generated config.toml parses
-# successfully. Codex will fail on auth (no real API key), but must
-# not fail on config parsing — that was the "full-auto" regression.
-echo "[8] Codex CLI Config Validation"
-assert "install @openai/codex globally" \
-    npm install -g --ignore-scripts --loglevel=error @openai/codex
-mkdir -p /home/agentuser/.codex
-cat > /home/agentuser/.codex/config.toml << 'TOML'
-model = "o4-mini"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-forced_login_method = "api"
-check_for_update_on_startup = false
-
-[notice]
-hide_full_access_warning = true
-
-[tui]
-show_tooltips = false
-
-[projects."/home/agentuser"]
-trust_level = "trusted"
-TOML
-cat > /home/agentuser/.codex/auth.json << 'JSON'
-{
-  "auth_mode": "apikey",
-  "OPENAI_API_KEY": "sk-placeholder"
-}
-JSON
-chown -R agentuser:agentuser /home/agentuser/.codex
-assert "codex config.toml parses without errors" \
-    bash -c "output=\$(su -l agentuser -c 'OPENAI_API_KEY=sk-test timeout 5 codex \"test\" </dev/null' 2>&1 || true); \
-        ! echo \"\$output\" | grep -q 'Error loading config'"
-echo ""
-
-# --- 9. TLS certificate quality (AKI/SKI extensions) ---
+# --- 8. TLS certificate quality (AKI/SKI extensions) ---
 # Python 3.14+ (OpenSSL 3.5+) rejects MITM leaf certs missing Authority
 # Key Identifier or Subject Key Identifier extensions.
-echo "[9] TLS Certificate Quality (AKI/SKI)"
+echo "[8] TLS Certificate Quality (AKI/SKI)"
 # Installed rather than assumed: tpl-minimal ships neither. Asserted so a failure
 # here is reported as a missing tool, not as three confusing cert failures.
 assert "python3 and openssl installable through the proxy" \
@@ -224,33 +188,33 @@ assert "trusted MITM CA cert has Subject Key Identifier" \
         | grep -q 'Subject Key Identifier'"
 echo ""
 
-# --- 10. Tool-contributed proxy credential injection ---
+# --- 9. Tool-contributed proxy credential injection ---
 # An HTTPS echo server on the host echoes back request headers so we can
 # verify the proxy injects the right credentials for each auth type and
 # for the built-in GitHub/OpenAI/Anthropic tools.
-echo "10. Tool-contributed proxy credential injection"
+echo "[9] Tool-contributed proxy credential injection"
 
-# 10a. Test fixture tool — bearer auth
+# 9a. Test fixture tool — bearer auth
 assert "tool proxy bearer: Authorization header injected" \
     bash -c "curl -sf https://echo.incus-spawn.test/ | grep -q 'Bearer test-bearer-token-for-ci'"
 
-# 10b. Test fixture tool — basic auth
+# 9b. Test fixture tool — basic auth
 assert "tool proxy basic: Authorization header injected" \
     bash -c "curl -sf https://echo-basic.incus-spawn.test/ | grep -q 'Basic '"
 
-# 10c. Test fixture tool — custom header auth
+# 9c. Test fixture tool — custom header auth
 assert "tool proxy header: X-Custom-Auth header injected" \
     bash -c "curl -sf https://echo-header.incus-spawn.test/ | grep -q 'Key test-api-key-for-ci'"
 
-# 10d. Built-in codex tool — bearer auth via config-path
+# 9d. Built-in codex tool — bearer auth via config-path
 assert "codex: Bearer token injected for api.openai.com" \
     bash -c "curl -sf https://api.openai.com/ | grep -q 'Bearer sk-test-openai-key-for-ci'"
 
-# 10e. Built-in Anthropic — x-api-key header (hardcoded handler)
+# 9e. Built-in Anthropic — x-api-key header (hardcoded handler)
 assert "anthropic: x-api-key header injected for api.anthropic.com" \
     bash -c "curl -sf https://api.anthropic.com/ | grep -q 'sk-ant-placeholder-for-ci'"
 
-# 10f. Built-in gh.yaml — bearer auth via wildcard *.github.com
+# 9f. Built-in gh.yaml — bearer auth via wildcard *.github.com
 assert "github: Bearer token injected for api.github.com (wildcard)" \
     bash -c "curl -sf https://api.github.com/ | grep -q 'Bearer '"
 echo ""

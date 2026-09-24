@@ -44,6 +44,13 @@ class CodexSetupTest {
     }
 
     @Test
+    void declaresNoFeatureGate() {
+        // Codex graduated from the 'openai' experimental feature flag: it must be
+        // offered by init, build and the TUI without opting into anything.
+        assertNull(new CodexSetup().feature());
+    }
+
+    @Test
     void declaresNodejsPackage() {
         assertEquals(java.util.List.of("nodejs"), new CodexSetup().packages());
     }

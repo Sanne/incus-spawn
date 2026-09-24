@@ -579,11 +579,7 @@ public class SpawnConfig {
     public java.util.List<String> getFeatures() { return features; }
     public void setFeatures(java.util.List<String> features) { this.features = features == null ? java.util.List.of() : features; }
     public boolean isFeatureEnabled(String feature) {
-        if (features.contains(feature)) return true;
-        // Implicitly enable features when the user already has credentials configured,
-        // so upgrading doesn't silently break existing setups.
-        if ("openai".equals(feature)) return openai.hasAuth();
-        return false;
+        return features.contains(feature);
     }
 
     public ClaudeConfig getClaude() { return claude; }
@@ -768,8 +764,7 @@ public class SpawnConfig {
         if (tools.contains("bob") && !configured.test("bob", "apiKey")) {
             missing.add("Bob API key");
         }
-        if (tools.contains("codex") && config.isFeatureEnabled("openai")
-                && !configured.test("openai", "apiKey")) {
+        if (tools.contains("codex") && !configured.test("openai", "apiKey")) {
             missing.add("OpenAI API key");
         }
 

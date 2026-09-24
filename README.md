@@ -355,7 +355,26 @@ When omitted, Claude Code uses its own default. Model IDs follow the `claude-*` 
 
 ### Codex CLI
 
-Add Codex CLI to a template with `tools: [codex]` (requires the `openai` feature). To configure its model and reasoning effort:
+Codex CLI is OpenAI's coding agent. Add it to any template with `tools: [codex]`:
+
+```yaml
+name: tpl-codex-dev
+description: Isolated dev environment with Codex CLI
+parent: tpl-dev
+repos:
+  - url: https://github.com/myorg/myproject.git
+    path: ~/myproject
+workdir: ~/myproject
+tools:
+  - codex
+default-action: codex
+```
+
+Codex requires an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts). Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it into requests to `api.openai.com`. The container only ever holds a `sk-placeholder` value in `OPENAI_API_KEY` and `~/.codex/auth.json`.
+
+The build configures Codex for unattended use (`approval_policy = "never"`, full filesystem access, API login, no update checks) and marks the template's repo directories as trusted. The default action resumes the most recent session in its original working directory, falling back to a fresh session.
+
+To pick a model and reasoning effort:
 
 ```yaml
 tools:
@@ -364,7 +383,9 @@ tools:
       effort: high
 ```
 
-The `model` parameter defaults to `o4-mini`. The `effort` parameter defaults to `high` and maps to `model_reasoning_effort` in `~/.codex/config.toml`. Supported effort values are `minimal`, `low`, `medium`, `high`, and `xhigh`, depending on the model. Both parameters can be overridden by child templates without reinstalling Codex.
+`model` is written straight into `~/.codex/config.toml`, so any slug Codex accepts works: the Codex-tuned `gpt-5.3-codex`, its low-latency `gpt-5.3-codex-spark` variant, or a general-purpose model. Which slugs you can actually use depends on what your OpenAI account has access to ([model list](https://platform.openai.com/docs/models)) — isx does not validate the name beyond its shape. It defaults to `o4-mini`, so set it explicitly if you want a Codex-tuned model.
+
+`effort` defaults to `high` and maps to `model_reasoning_effort`; accepted values are `minimal`, `low`, `medium`, `high`, and `xhigh`, but which of them a given model honours is up to the model. Both parameters are reconfigurable: changing them in a child template rewrites the config without reinstalling Codex.
 
 ### Pi Coding Agent
 
@@ -383,7 +404,18 @@ tools:
 shell-command: pi
 ```
 
-Pi works out of the box with all three auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](#credential-isolation) injects credentials transparently. To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
+Pi works out of the box with all three Anthropic auth modes (API key, Claude Pro/Max OAuth, Vertex AI) — the [MITM proxy](#credential-isolation) injects credentials transparently. To use Pi without making it the default shell, omit `shell-command` and launch it manually after `isx shell`.
+
+Pi can also run against OpenAI, using the same key as [Codex CLI](#codex-cli):
+
+```yaml
+tools:
+  - pi:
+      provider: openai
+      model: gpt-5.3
+```
+
+`provider` defaults to `anthropic` and also accepts `vertex`/`google`; `model` defaults to `claude-sonnet-4-6`. Both are reconfigurable, and the credential check follows the provider — a template with `provider: openai` asks for an OpenAI key rather than an Anthropic one.
 
 ### Bob Shell
 
@@ -568,7 +600,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `gh` | GitHub: PAT for git operations |
 | `pi` | Pi: AI coding assistant |
 | `bob` | Bob Shell: IBM AI coding assistant |
-| `codex` | Codex CLI: OpenAI coding assistant (requires `openai` feature) |
+| `codex` | Codex CLI: OpenAI coding assistant |
 | `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |

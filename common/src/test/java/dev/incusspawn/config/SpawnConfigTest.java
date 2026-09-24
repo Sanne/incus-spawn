@@ -157,13 +157,13 @@ class SpawnConfigTest {
     void deserializeFeatures() throws Exception {
         var yaml = """
                 features:
-                  - openai
                   - aider
+                  - cursor
                 """;
         var config = YAML.readValue(yaml, SpawnConfig.class);
-        assertEquals(java.util.List.of("openai", "aider"), config.getFeatures());
-        assertTrue(config.isFeatureEnabled("openai"));
+        assertEquals(java.util.List.of("aider", "cursor"), config.getFeatures());
         assertTrue(config.isFeatureEnabled("aider"));
+        assertTrue(config.isFeatureEnabled("cursor"));
         assertFalse(config.isFeatureEnabled("unknown"));
     }
 
@@ -171,23 +171,20 @@ class SpawnConfigTest {
     void featuresDefaultsToEmpty() throws Exception {
         var config = YAML.readValue("{}", SpawnConfig.class);
         assertTrue(config.getFeatures().isEmpty());
-        assertFalse(config.isFeatureEnabled("openai"));
+        assertFalse(config.isFeatureEnabled("aider"));
     }
 
     @Test
-    void openaiFeatureImplicitlyEnabledWhenKeyConfigured() throws Exception {
+    void configuredCredentialsDoNotImplicitlyEnableAFeature() throws Exception {
+        // The features list is the only switch. OpenAI used to be implicitly enabled
+        // by a configured key while codex was gated; codex is now always available,
+        // so no credential enables a feature on its own.
         var yaml = """
                 openai:
                   apiKey: sk-test-key
                 """;
         var config = YAML.readValue(yaml, SpawnConfig.class);
         assertTrue(config.getFeatures().isEmpty());
-        assertTrue(config.isFeatureEnabled("openai"));
-    }
-
-    @Test
-    void openaiFeatureNotImplicitlyEnabledWithoutKey() throws Exception {
-        var config = YAML.readValue("{}", SpawnConfig.class);
         assertFalse(config.isFeatureEnabled("openai"));
     }
 

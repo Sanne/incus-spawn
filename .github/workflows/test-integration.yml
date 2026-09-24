@@ -538,6 +538,17 @@ jobs:
           parent: tpl-minimal
           type: vm
           EOF
+          # Non-default model/effort so test-codex.sh can tell the template's
+          # parameters apart from CodexSetup's built-in defaults.
+          cat > ~/.config/incus-spawn/images/test-codex.yaml << 'EOF'
+          name: tpl-test-codex
+          parent: tpl-minimal
+          tools:
+            - codex:
+                model: gpt-5.3-codex
+                effort: medium
+          default-action: codex
+          EOF
 
       - name: Build templates
         run: |
@@ -545,6 +556,7 @@ jobs:
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
           sg incus-admin -c "isx build tpl-test-accounts --yes"
+          sg incus-admin -c "isx build tpl-test-codex --yes"
 
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
@@ -632,6 +644,20 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/test-podman.sh test-podman/tmp/"
           sg incus-admin -c "incus exec test-podman -- bash /tmp/test-podman.sh"
 
+      - name: Test codex tool
+        run: |
+          sg incus-admin -c "isx branch test-codex --from tpl-test-codex --no-start"
+          sg incus-admin -c "incus start test-codex"
+          echo "Waiting for container network..."
+          sg incus-admin -c "incus exec test-codex -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for i in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-codex.sh test-codex/tmp/"
+          sg incus-admin -c "incus exec test-codex -- bash /tmp/test-codex.sh"
+
       - name: Test VM
         run: |
           # Pinned to an account so the VM path is covered too: a VM reaches the proxy
@@ -703,6 +729,7 @@ jobs:
         run: |
           sg incus-admin -c "isx destroy test-container" || true
           sg incus-admin -c "isx destroy test-podman" || true
+          sg incus-admin -c "isx destroy test-codex" || true
           sg incus-admin -c "isx destroy test-vm" || true
 
   # Regression: isx init must produce a working setup on a machine where a pool exists but
