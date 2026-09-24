@@ -1403,8 +1403,10 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        // Offer to keep, extend or re-point the configured accounts on re-run
-        if (config.getClaude().hasAuth() && !manageClaudeAccounts(config, console)) {
+        // Offer to keep, extend or re-point the configured accounts on re-run.
+        // allAccounts() rather than hasAuth(): even when every account is incomplete, the
+        // user must be able to see (and remove) them rather than hand-editing config.yaml.
+        if (!config.getClaude().allAccounts().isEmpty() && !manageClaudeAccounts(config, console)) {
             return;
         }
 
@@ -1508,13 +1510,14 @@ public class InitCommand extends BaseCommand {
 
     /** One line per account: marker, name, what it is, and a masked credential. */
     private static String describeClaudeAccount(String name, SpawnConfig.ClaudeAccount account, boolean isDefault) {
-        var secret = switch (account.effectiveType()) {
+        var resolved = account.effectiveType();
+        var secret = resolved == null ? "" : switch (resolved) {
             case API_KEY -> " (" + maskSecret(account.getApiKey()) + ")";
             case OAUTH -> " (" + maskSecret(account.getOauthToken()) + ")";
             case VERTEX -> "";
         };
-        return (isDefault ? "  * " : "    ") + name + "  —  " + account.describe() + secret
-                + (isDefault ? "  [default]" : "");
+        var tag = isDefault ? "  [default]" : !account.isComplete() ? "  [incomplete]" : "";
+        return (isDefault ? "  * " : "    ") + name + "  —  " + account.describe() + secret + tag;
     }
 
     /**
@@ -1526,7 +1529,7 @@ public class InitCommand extends BaseCommand {
     private boolean manageClaudeAccounts(SpawnConfig config, Console console) {
         var claude = config.getClaude();
         while (true) {
-            var accounts = claude.effectiveAccounts();
+            var accounts = claude.allAccounts();
             var defaultName = claude.accountName();
             System.out.println("  Claude accounts:");
             accounts.forEach((name, account) ->
@@ -1571,9 +1574,14 @@ public class InitCommand extends BaseCommand {
                         System.out.print("  Name of the account to make default: ");
                         var name = readInput(console.readLine());
                         if (accounts.containsKey(name)) {
-                            claude.setDefaultAccount(name);
-                            config.save();
-                            System.out.println("  Default account is now '" + name + "'.");
+                            var account = accounts.get(name);
+                            if (!account.isComplete()) {
+                                System.out.println("  Account '" + name + "' is incomplete — fix it before making it the default.");
+                            } else {
+                                claude.setDefaultAccount(name);
+                                config.save();
+                                System.out.println("  Default account is now '" + name + "'.");
+                            }
                         } else if (!name.isEmpty()) {
                             System.out.println("  No account named '" + name + "'.");
                         }
@@ -1585,16 +1593,17 @@ public class InitCommand extends BaseCommand {
                         System.out.print("  Name of the account to remove: ");
                         var name = readInput(console.readLine());
                         if (accounts.containsKey(name)) {
-                            claude.getAccounts().remove(name);
-                            if (name.equals(claude.getDefaultAccount())) {
-                                // Never leave the default pointing at an account that is gone.
-                                claude.setDefaultAccount(claude.accountName());
+                            var account = accounts.get(name);
+                            if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
+                                System.out.println("  Cannot remove '" + name + "' — it is the only working account.");
+                            } else {
+                                claude.getAccounts().remove(name);
+                                if (name.equals(claude.getDefaultAccount())) {
+                                    claude.setDefaultAccount(claude.accountName());
+                                }
+                                config.save();
+                                System.out.println("  Removed account '" + name + "'.");
                             }
-                            config.save();
-                            System.out.println("  Removed account '" + name + "'.");
-                            // No "nothing left" branch: 'x' is only offered when
-                            // effectiveAccounts() holds more than one complete account, so a
-                            // removal always leaves at least one behind.
                         } else if (!name.isEmpty()) {
                             System.out.println("  No account named '" + name + "'.");
                         }

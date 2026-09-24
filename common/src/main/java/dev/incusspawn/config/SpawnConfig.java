@@ -219,24 +219,38 @@ public class SpawnConfig {
         }
 
         /**
-         * Every configured account, in file order. A pre-accounts config.yaml contributes a
-         * single synthesized entry so the rest of isx only ever deals with accounts.
+         * Every configured account including incomplete ones, in file order. A pre-accounts
+         * config.yaml contributes a single synthesized entry so the rest of isx only ever
+         * deals with accounts. Used by the init UI so incomplete accounts are visible and
+         * removable; credential resolution should use {@link #effectiveAccounts()} instead.
          */
-        public Map<String, ClaudeAccount> effectiveAccounts() {
+        public Map<String, ClaudeAccount> allAccounts() {
             if (!accounts.isEmpty()) {
-                var complete = new java.util.LinkedHashMap<String, ClaudeAccount>();
+                var all = new java.util.LinkedHashMap<String, ClaudeAccount>();
                 accounts.forEach((name, account) -> {
-                    if (account != null && account.isComplete()) complete.put(name, account);
+                    if (account != null) all.put(name, account);
                 });
-                return complete;
+                return all;
             }
-            // Deliberately unfiltered, unlike the map path above: a flat 'useVertex: true' with
-            // no region or project must still present as a Vertex account, because ProxyMain
-            // relies on isUseVertex() to report exactly that misconfiguration. Dropping it here
-            // would silently turn a diagnosable error into "no credentials". Such an account is
-            // still not complete(), so it never serves a direct API call.
             var legacy = legacyAccount();
             return legacy == null ? Map.of() : Map.of(LEGACY_ACCOUNT_NAME, legacy);
+        }
+
+        /**
+         * Every complete account, in file order — the subset of {@link #allAccounts()} that
+         * carries the credential its type needs. The legacy path is deliberately unfiltered:
+         * a flat {@code useVertex: true} with no region or project must still present as a
+         * Vertex account so ProxyMain can report exactly that misconfiguration rather than
+         * silently turning it into "no credentials".
+         */
+        public Map<String, ClaudeAccount> effectiveAccounts() {
+            var all = allAccounts();
+            if (accounts.isEmpty()) return all;
+            var complete = new java.util.LinkedHashMap<String, ClaudeAccount>();
+            all.forEach((name, account) -> {
+                if (account.isComplete()) complete.put(name, account);
+            });
+            return complete;
         }
 
         private ClaudeAccount legacyAccount() {
