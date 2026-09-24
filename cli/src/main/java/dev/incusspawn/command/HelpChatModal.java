@@ -240,7 +240,7 @@ final class HelpChatModal {
     /** Cycles focus in on-screen order; the account is only a stop when there is a choice. */
     private void moveFocus(int step) {
         var order = hasAccountChoice()
-                ? List.of(Field.ACCOUNT, Field.QUESTION, Field.ATTACH)
+                ? List.of(Field.QUESTION, Field.ATTACH, Field.ACCOUNT)
                 : List.of(Field.QUESTION, Field.ATTACH);
         int i = order.indexOf(field);
         field = order.get(Math.floorMod(i + step, order.size()));
@@ -361,17 +361,16 @@ final class HelpChatModal {
 
         InputLayout(int contentWidth, Rect screen) {
             int indented = Math.max(1, contentWidth - modal.toggleLabelColumn());
-            intro = ModalRenderer.wrapText(introText(), contentWidth);
+            intro = ModalRenderer.wrapText(INTRO, contentWidth);
             accountNote = subscriptionAccounts.isEmpty() ? List.of()
-                    : ModalRenderer.wrapText(subscriptionNote(), indented);
-            attachNote = ModalRenderer.wrapText("Sent to " + target().provider().serviceName()
-                    + " with your question, for better answers about your own setup.", indented);
+                    : ModalRenderer.wrapText(subscriptionNote(), Math.max(1, contentWidth - accountValueColumn()));
+            attachNote = ModalRenderer.wrapText("Helps the AI answer questions about your own setup.", indented);
             inputRows = inputRows(contentWidth - ModalRenderer.FIELD_PREFIX, screen);
         }
 
         int height() {
-            // Border (2); spacers after the intro, account, question box and attach note (4);
-            // account, "Question:", checkbox and hint rows (4).
+            // Border (2); spacers after the intro, question box, attach note and account (4);
+            // "Question:", checkbox, account and hint rows (4).
             return 2 + 4 + 4 + intro.size() + accountNote.size() + inputRows + attachNote.size();
         }
     }
@@ -381,14 +380,14 @@ final class HelpChatModal {
                 .constraints(
                         Constraint.length(layout.intro.size()),
                         Constraint.length(1),                          // spacer
-                        Constraint.length(1),                          // account
-                        Constraint.length(layout.accountNote.size()),  // unusable accounts
-                        Constraint.length(1),                          // spacer
                         Constraint.length(1),                          // "Question:"
                         Constraint.length(layout.inputRows),           // question box
                         Constraint.length(1),                          // spacer
                         Constraint.length(1),                          // attach checkbox
                         Constraint.length(layout.attachNote.size()),   // where it is sent
+                        Constraint.length(1),                          // spacer
+                        Constraint.length(1),                          // account
+                        Constraint.length(layout.accountNote.size()),  // unusable accounts
                         Constraint.length(1),                          // spacer
                         Constraint.fill())                             // hints
                 .split(inner);
@@ -396,15 +395,9 @@ final class HelpChatModal {
         var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
         renderLines(frame, rows.get(0), layout.intro, "", dimStyle);
 
-        if (hasAccountChoice()) {
-            modal.renderSelect(frame, rows.get(2), "Account:", accountSelect, field == Field.ACCOUNT);
-        } else {
-            modal.renderValue(frame, rows.get(2), "Account:", target().label());
-        }
-        var noteIndent = " ".repeat(modal.toggleLabelColumn());
-        renderLines(frame, rows.get(3), layout.accountNote, noteIndent, dimStyle);
-
-        modal.renderLabel(frame, rows.get(5), "Question:", field == Field.QUESTION);
+        // The question leads; which account to bill is a rarely changed setting, so it sits
+        // last, next to the key hints where it is checked before asking.
+        modal.renderLabel(frame, rows.get(2), "Question:", field == Field.QUESTION);
 
         var inputStyle = field == Field.QUESTION
                 ? Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg())
@@ -414,12 +407,19 @@ final class HelpChatModal {
                 .style(inputStyle)
                 .overflow(Overflow.WRAP_WORD)
                 .build()
-                .renderWithCursor(rows.get(6).inner(new Margin(0, 0, 0, ModalRenderer.FIELD_PREFIX)),
+                .renderWithCursor(rows.get(3).inner(new Margin(0, 0, 0, ModalRenderer.FIELD_PREFIX)),
                         frame.buffer(), input, frame);
 
-        modal.renderToggle(frame, rows.get(8), "Attach my template and tool definitions" + attachmentSize(),
+        modal.renderToggle(frame, rows.get(5), "Attach my template and tool definitions" + attachmentSize(),
                 attachCheck, field == Field.ATTACH);
-        renderLines(frame, rows.get(9), layout.attachNote, noteIndent, dimStyle);
+        renderLines(frame, rows.get(6), layout.attachNote, " ".repeat(modal.toggleLabelColumn()), dimStyle);
+
+        if (hasAccountChoice()) {
+            modal.renderSelect(frame, rows.get(8), ACCOUNT_LABEL, accountSelect, field == Field.ACCOUNT);
+        } else {
+            modal.renderValue(frame, rows.get(8), ACCOUNT_LABEL, target().label());
+        }
+        renderLines(frame, rows.get(9), layout.accountNote, " ".repeat(accountValueColumn()), dimStyle);
 
         var hintSpans = new ArrayList<Span>();
         switch (field) {
@@ -441,21 +441,29 @@ final class HelpChatModal {
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(11));
     }
 
+    /** Column where the account's value starts, so its footnote lines up beneath it. */
+    private static int accountValueColumn() {
+        return ModalRenderer.FIELD_PREFIX + ACCOUNT_LABEL.length() + 1;
+    }
+
     private static void renderLines(Frame frame, Rect area, List<String> lines, String indent, Style style) {
         if (lines.isEmpty()) return;
         frame.renderWidget(Paragraph.from(Text.from(lines.stream()
                 .map(l -> Line.styled(indent + l, style)).toList())), area);
     }
 
-    private String introText() {
-        return "Your question is processed by an LLM using the account "
-                + (hasAccountChoice() ? "selected" : "shown") + " below; its usage is billed to that account.";
-    }
+    private static final String INTRO = "Ask anything about incus-spawn: an AI model answers from the"
+            + " project's documentation. Your question is sent to the AI account below, which is billed for it.";
 
+    private static final String ACCOUNT_LABEL = "AI account:";
+
+    /** A footnote to the account field, so a subscriber isn't left wondering where theirs went. */
     private String subscriptionNote() {
-        var names = String.join(", ", subscriptionAccounts.stream().map(n -> "\"" + n + "\"").toList());
-        return "Not available: " + names + (subscriptionAccounts.size() > 1 ? " are" : " is")
-                + " a Claude Pro/Max subscription, whose token only works in Claude Code itself.";
+        var names = subscriptionAccounts.stream().map(n -> "\"" + n + "\"").toList();
+        var listed = names.size() == 1 ? names.getFirst()
+                : String.join(", ", names.subList(0, names.size() - 1)) + " and " + names.getLast();
+        return "(" + listed + (names.size() > 1 ? " are" : " is")
+                + " not listed: Claude Pro/Max subscriptions only work in Claude Code.)";
     }
 
     private String attachmentSize() {
