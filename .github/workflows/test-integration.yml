@@ -33,10 +33,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Oracle GraalVM 25.3
+      - name: Install Oracle GraalVM 25.4
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.3'
+          version: '25.4'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -73,10 +73,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Oracle GraalVM 25.3
+      - name: Install Oracle GraalVM 25.4
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.3'
+          version: '25.4'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -132,10 +132,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Oracle GraalVM 25.3
+      - name: Install Oracle GraalVM 25.4
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.3'
+          version: '25.4'
           java-version: '25'
           distribution: 'graalvm'
 
@@ -162,10 +162,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Oracle GraalVM 25.3
+      - name: Install Oracle GraalVM 25.4
         uses: graalvm/setup-graalvm@v1
         with:
-          version: '25.3'
+          version: '25.4'
           java-version: '25'
           distribution: 'graalvm'
 
