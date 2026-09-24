@@ -94,9 +94,7 @@ public final class ToolProxyResolver {
                 }
             }
 
-            var accountName = AccountResolver.effectiveAccount(
-                    configTree, ns, accountsByNamespace.get(ns));
-            var allConfigValues = resolveConfiguration(proxyDef, configTree, accountName);
+            var allConfigValues = resolveConfiguration(proxyDef, configTree, accountsByNamespace);
 
             for (var authEntry : proxyDef.getAuth()) {
                 if (authEntry.getDomains() == null || authEntry.getDomains().isEmpty()) continue;
@@ -143,10 +141,16 @@ public final class ToolProxyResolver {
         selections.add(Map.of());
         for (var tool : toolSetups.values()) {
             var proxyDef = tool.proxy();
-            if (proxyDef == null || proxyDef.getConfigNamespace().isBlank()) continue;
-            var namespace = proxyDef.getConfigNamespace();
-            for (var account : AccountResolver.accountNames(configTree, namespace)) {
-                selections.add(Map.of(namespace, account));
+            if (proxyDef == null) continue;
+            // Per entry, not per tool: a tool that borrows another namespace's credential
+            // declares no namespace of its own, and its domains must still be intercepted
+            // when only that other namespace's named account carries the token.
+            for (var configDef : proxyDef.getConfiguration().values()) {
+                var namespace = proxyDef.namespaceOf(configDef);
+                if (namespace.isBlank()) continue;
+                for (var account : AccountResolver.accountNames(configTree, namespace)) {
+                    selections.add(Map.of(namespace, account));
+                }
             }
         }
         for (var selection : selections) {
@@ -184,16 +188,14 @@ public final class ToolProxyResolver {
                     .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
             if (!hasNonAnthropicAuth) continue;
 
-            // Resolve against the namespace's default account, so a namespace that has
-            // moved to the accounts layout is not reported as missing its credential.
-            var accountName = AccountResolver.effectiveAccount(
-                    configTree, proxyDef.getConfigNamespace(), null);
-
             for (var configEntry : proxyDef.getConfiguration().entrySet()) {
                 var configKey = configEntry.getKey();
                 var configDef = configEntry.getValue();
                 if (configDef.isConfirm()) continue;
-                var value = resolveConfigValue(proxyDef, configDef, configTree, accountName);
+                // Map.of() means "no pin", so each entry resolves against its namespace's
+                // default -- a namespace on the accounts layout is not reported as missing
+                // its credential just because the flat field is empty.
+                var value = resolveConfigValue(proxyDef, configDef, configTree, Map.of());
                 if (value == null || value.isBlank()) {
                     result.add(new UnresolvedToolProxy(toolName, configKey));
                 }
@@ -265,15 +267,29 @@ public final class ToolProxyResolver {
     private static Map<String, String> resolveConfiguration(
             ToolDef.ProxyDef proxyDef,
             JsonNode configTree,
-            String accountName) {
+            Map<String, String> accountsByNamespace) {
         var resolved = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
-            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree, accountName);
+            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree, accountsByNamespace);
             if (value != null && !value.isBlank()) {
                 resolved.put(entry.getKey(), value);
             }
         }
         return resolved;
+    }
+
+    /**
+     * The account applying to one config entry, resolved against the namespace that entry
+     * actually belongs to -- which is not always the tool's own.
+     *
+     * @see ToolDef.ProxyDef#namespaceOf
+     */
+    private static String accountFor(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry configDef,
+                                     JsonNode configTree, Map<String, String> accountsByNamespace) {
+        var namespace = proxyDef.namespaceOf(configDef);
+        if (namespace.isBlank()) return "";
+        return AccountResolver.effectiveAccount(
+                configTree, namespace, accountsByNamespace.get(namespace));
     }
 
     /**
@@ -290,11 +306,12 @@ public final class ToolProxyResolver {
             ToolDef.ProxyDef proxyDef,
             ToolDef.ConfigEntry configDef,
             JsonNode configTree,
-            String accountName) {
+            Map<String, String> accountsByNamespace) {
         if (!configDef.getValue().isBlank()) {
             return configDef.getValue();
         }
-        if (accountName != null && !accountName.isBlank()) {
+        var accountName = accountFor(proxyDef, configDef, configTree, accountsByNamespace);
+        if (!accountName.isBlank()) {
             var accountPath = proxyDef.accountConfigPath(configDef, accountName);
             if (!accountPath.isBlank()) {
                 var value = navigateConfigPath(configTree, accountPath);

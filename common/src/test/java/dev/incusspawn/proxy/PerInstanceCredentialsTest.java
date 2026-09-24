@@ -201,6 +201,75 @@ class PerInstanceCredentialsTest {
         assertEquals("api.example.com", across.get(0).domain());
     }
 
+    /**
+     * A tool that borrows another namespace's credential -- CopilotSetup points at
+     * {@code github.token} and declares no namespace of its own -- must follow the same
+     * account selection as the tool it borrows from. Otherwise gh authenticates as the pinned
+     * account while copilot keeps using the flat token: two GitHub identities in one container.
+     */
+    @Test
+    void aToolBorrowingAnotherNamespaceFollowsThatNamespacesAccount() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  token: "ghp_flat"
+                  accounts:
+                    acme:
+                      token: "ghp_acme"
+                """, SpawnConfig.class);
+
+        var borrower = toolBorrowing("github.token");
+        var tools = Map.of("gh", toolWithNamespace("github"), "copilot", borrower);
+
+        var pinned = ToolProxyResolver.resolve(config, tools, Map.of("github", "acme"));
+        assertFalse(pinned.isEmpty());
+        for (var resolved : pinned) {
+            assertEquals("Bearer ghp_acme", resolved.computeHeaderValue(),
+                    resolved.toolName() + " should use the pinned account's token");
+        }
+    }
+
+    @Test
+    void aBorrowedNamespacesAccountsStillWidenTheInterceptedDomainSet() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  accounts:
+                    personal:
+                      email: "me@example.com"
+                    acme:
+                      token: "ghp_acme"
+                  default: personal
+                """, SpawnConfig.class);
+        // The default account carries no token, so only the across-accounts pass can see
+        // that this domain is worth intercepting at all.
+        var tools = Map.of("copilot", toolBorrowing("github.token"));
+        assertTrue(ToolProxyResolver.resolve(config, tools, Map.of()).isEmpty());
+        assertEquals(1, ToolProxyResolver.resolveAcrossAccounts(config, tools).size());
+    }
+
+    /** A tool naming another namespace's key outright, the way CopilotSetup shares gh's PAT. */
+    private static ToolSetup toolBorrowing(String fullConfigPath) {
+        var token = new ToolDef.ConfigEntry();
+        token.setConfigPath(fullConfigPath);
+        token.setSecret(true);
+
+        var auth = new ToolDef.AuthDef();
+        auth.setDomains(List.of("api.borrower.example"));
+        auth.setType("bearer");
+        auth.setToken("${token}");
+
+        var proxyDef = new ToolDef.ProxyDef();
+        // Deliberately no config-namespace: that is what makes it a borrower.
+        proxyDef.setConfiguration(Map.of("token", token));
+        proxyDef.setAuth(List.of(auth));
+
+        return new ToolSetup() {
+            @Override public String name() { return "borrower"; }
+            @Override public ToolDef.ProxyDef proxy() { return proxyDef; }
+            @Override public void install(dev.incusspawn.incus.Container container,
+                                          Map<String, String> resolvedParams) {}
+        };
+    }
+
     @Test
     void pinningAnUnknownAccountInAToolNamespaceFailsClosed() throws Exception {
         var config = YAML.readValue("""
