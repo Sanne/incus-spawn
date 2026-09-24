@@ -404,6 +404,25 @@ default-action: bob
 
 Bob Shell requires an IBM API key ([create one here](https://bob.ibm.com/docs/ide/account/api-keys#create-an-api-key)). Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it transparently. Containers only hold a placeholder value. During `isx init` you'll be asked to accept the IBM license agreement; accepting pre-configures it in all containers so Bob Shell won't prompt again. The default action launches Bob with `--auto-approve` (auto-approve all tool calls); running `bob` manually in a shell uses normal approval mode.
 
+### GitHub Copilot CLI
+
+Add GitHub Copilot CLI to a template with `tools: [copilot]`:
+
+```yaml
+name: tpl-copilot-dev
+description: Isolated dev environment with GitHub Copilot CLI
+parent: tpl-dev
+repos:
+  - url: https://github.com/myorg/myproject.git
+    path: ~/myproject
+workdir: ~/myproject
+tools:
+  - copilot
+shell-command: copilot
+```
+
+Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already. No separate credential is needed. The [MITM proxy](#credential-isolation) injects the token transparently into requests to `*.githubcopilot.com`. Containers are pre-configured with full permissions (`allow-all`), matching the isolation-boundary reasoning used for Claude's `bypassPermissions` and Codex's `--dangerously-auto-approve-everything`.
+
 ### Claude Code Skills
 
 Template images can declare [Claude Code skills](https://skills.sh) to bake in at build time. Skills are installed once into the template and inherited by every instance branched from it.
@@ -548,6 +567,7 @@ These tools ship with incus-spawn and can be referenced by name in a template's 
 | `pi` | Pi: AI coding assistant |
 | `bob` | Bob Shell: IBM AI coding assistant |
 | `codex` | Codex CLI: OpenAI coding assistant (requires `openai` feature) |
+| `copilot` | GitHub Copilot CLI: AI coding assistant (shares `gh` token) |
 | `maven-3` | Apache Maven |
 | `mvnd` | Apache Maven Daemon |
 | `podman` | Podman container runtime configured for Testcontainers |
@@ -655,7 +675,7 @@ env:
 
 #### Proxy Credentials
 
-Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, and `codex` tools use this mechanism -- but you can declare the same for your own tools.
+Tools can register domains with the [MITM proxy](#credential-isolation) for transparent credential injection. This lets you add authentication to any HTTPS API without exposing secrets inside containers. The built-in `claude`, `gh`, `bob`, `codex`, and `copilot` tools use this mechanism -- but you can declare the same for your own tools.
 
 A `proxy:` block has three parts: a `config-namespace` that scopes config paths, a `configuration` map that declares what credentials are needed, and `auth` entries that map domains to authentication rules.
 
