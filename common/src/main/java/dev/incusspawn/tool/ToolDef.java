@@ -375,13 +375,34 @@ public class ToolDef {
          * {@link #fullConfigPath(ConfigEntry)} -- the flat, pre-accounts layout.
          */
         public String accountConfigPath(ConfigEntry entry, String accountName) {
+            if (accountName == null || accountName.isBlank()) return "";
+            var namespace = namespaceOf(entry);
+            if (namespace.isBlank()) return "";
+            var path = fullConfigPath(entry);
+            var leaf = path.substring(namespace.length() + 1);
+            return namespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY
+                    + "." + accountName + "." + leaf;
+        }
+
+        /**
+         * The config namespace a single entry belongs to -- normally the tool's own, but a tool
+         * may instead <em>borrow</em> another namespace's credential by naming it fully in
+         * {@code config-path} and declaring no {@code config-namespace} at all. {@code
+         * CopilotSetup} does exactly that, pointing at {@code github.token} to share the
+         * {@code gh} tool's PAT rather than prompting for a second one.
+         *
+         * <p>Deriving the namespace per entry rather than per tool is what makes such a tool
+         * follow the same account selection as the tool it borrows from. Keying off the tool's
+         * own namespace would leave {@code gh} authenticating as the pinned account while
+         * copilot kept using the flat token -- two GitHub identities inside one container.
+         */
+        public String namespaceOf(ConfigEntry entry) {
+            if (!configNamespace.isBlank()) return configNamespace;
             var path = entry.getConfigPath();
-            if (path.isBlank() || configNamespace.isBlank()
-                    || accountName == null || accountName.isBlank()) {
-                return "";
-            }
-            return configNamespace + "." + dev.incusspawn.config.AccountResolver.ACCOUNTS_KEY
-                    + "." + accountName + "." + path;
+            var dot = path.indexOf('.');
+            // A single-segment path with no namespace names a top-level key, which no
+            // namespace owns and so no account can vary.
+            return dot <= 0 || dot == path.length() - 1 ? "" : path.substring(0, dot);
         }
     }
 
