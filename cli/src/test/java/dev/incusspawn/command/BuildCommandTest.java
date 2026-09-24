@@ -2302,4 +2302,33 @@ class BuildCommandTest {
 
         verifyNoInteractions(incus);
     }
+
+    @Test
+    void projectLocalFileBaseImageMustStayInsideProject(@TempDir Path tmp) throws Exception {
+        var project = Files.createDirectories(tmp.resolve("project")).toRealPath();
+        var inside = Files.writeString(project.resolve("fedora.tar.xz"), "image");
+        var outside = Files.writeString(tmp.resolve("backup.tar.xz"), "private");
+
+        var def = new ImageDef();
+        def.setName("tpl-project");
+        def.setSource(project.resolve(".incus-spawn/images/project.yaml").toString());
+        def.setProjectRoot(project);
+        var defs = Map.of("tpl-project", def);
+
+        def.setImageUrl(inside.toUri().toString());
+        BuildCommand.requireConfinedBaseImages(def, defs);
+
+        def.setImageUrl(outside.toUri().toString());
+        assertThrows(dev.incusspawn.config.HostResourceSetup.HostPathOutsideProjectException.class,
+                () -> BuildCommand.requireConfinedBaseImages(def, defs));
+
+        def.setImageUrl(inside.toUri().toString());
+        def.setVmImageUrl("file://" + project + "/../backup.tar.xz");
+        assertThrows(dev.incusspawn.config.HostResourceSetup.HostPathOutsideProjectException.class,
+                () -> BuildCommand.requireConfinedBaseImages(def, defs));
+
+        // The same URL is fine from a trusted layer: that is the local image-testing workflow.
+        def.setProjectRoot(null);
+        BuildCommand.requireConfinedBaseImages(def, defs);
+    }
 }
