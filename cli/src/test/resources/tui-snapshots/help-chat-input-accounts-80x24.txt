@@ -1,0 +1,24 @@
+
+
+  ╔ AI Help ═════════════════════════════════════════════════════════════════╗
+  ║ Your question is processed by an LLM using the account selected below;   ║
+  ║ its usage is billed to that account.                                     ║
+  ║                                                                          ║
+  ║  ▸ Account: < Anthropic API key · "work" · claude-sonnet-5 >             ║
+  ║        Not available: "personal" is a Claude Pro/Max subscription, whose ║
+  ║        token only works in Claude Code itself.                           ║
+  ║                                                                          ║
+  ║    Question:                                                             ║
+  ║    ask anything about incus-spawn…                                       ║
+  ║                                                                          ║
+  ║                                                                          ║
+  ║                                                                          ║
+  ║    [ ] Attach my template and tool definitions (~12.2 KB)                ║
+  ║        Sent to Anthropic with your question, for better answers about    ║
+  ║        your own setup.                                                   ║
+  ║                                                                          ║
+  ║  Ctrl+S/Enter Ask   ←/→ Change   Tab Next field   Esc Close              ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+

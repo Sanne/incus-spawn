@@ -20,8 +20,6 @@ import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.util.TerminalLink;
-import dev.incusspawn.util.TerminalProgress;
 import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -67,6 +65,7 @@ import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.select.SelectState;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -117,6 +116,8 @@ public class ListCommand extends BaseCommand {
 
     // Background operation state
     private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
+    /** Redraw on the next tick without reloading data -- for state that changed off the UI thread. */
+    private final AtomicBoolean needsRepaint = new AtomicBoolean(false);
     private final AtomicReference<String> pendingStatusMessage = new AtomicReference<>();
     private long lastRefreshTime = 0;
     private static final long REFRESH_DEBOUNCE_MS = 1000;
@@ -178,16 +179,8 @@ public class ListCommand extends BaseCommand {
     // Info modal state
     private int infoScrollOffset;
     // AI Help modal state
-    private TextInputState helpInput;
-    private CheckboxState helpTemplatesCheck;
-    private int helpFieldIndex;
-    private volatile boolean helpLoading;
-    private volatile Thread helpThread;
-    private volatile List<String> helpResponseLines;
-    private volatile String helpError;
-    private int helpScrollOffset;
-    private String helpProviderLabel;
-    private SpawnConfig helpConfig;
+    /** Kept after closing, so reopening preselects the account used last. */
+    private volatile HelpChatModal helpChat;
     // Actions modal state
     private java.util.List<ToolAction> actionsList;
     private int actionsSelectedIndex;
@@ -1070,9 +1063,10 @@ public class ListCommand extends BaseCommand {
                 }
                 setStatusMessage("Proxy restart failed. Try: isx proxy start");
             }
-            return needsRefresh.get() || pendingStatusMessage.get() != null
+            boolean repaint = needsRepaint.getAndSet(false);
+            return repaint || needsRefresh.get() || pendingStatusMessage.get() != null
                     || !backgroundTasks.getActiveTasks().isEmpty()
-                    || helpLoading;
+                    || (helpChat != null && helpChat.isLoading());
         }
         if (!(event instanceof KeyEvent key)) return false;
         if (searchActive) return handleSearchEvent(key, tableState);
@@ -1088,7 +1082,10 @@ public class ListCommand extends BaseCommand {
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case INFO -> handleInfoEvent(key);
-            case HELP_CHAT -> handleHelpChatEvent(key);
+            case HELP_CHAT -> {
+                if (!helpChat.handleKey(key)) mode = Mode.BROWSE;
+                yield true;
+            }
             case ERROR -> { mode = Mode.BROWSE; yield true; }
             case CLEAN_CONFIRM -> handleCleanConfirmEvent(key, tui, tableState);
             case CLEAN_RESULT -> { mode = Mode.BROWSE; yield true; }
@@ -1148,21 +1145,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (!key.hasCtrl() && key.isChar('?')) {
-            var config = SpawnConfig.load();
-            if (AiHelpClient.detectProvider(config) == null) {
-                statusMessage = AiHelpClient.noProviderMessage(config);
-                return true;
-            }
-            helpInput = new TextInputState();
-            helpTemplatesCheck = new CheckboxState(false);
-            helpFieldIndex = 0;
-            helpLoading = false;
-            helpResponseLines = null;
-            helpError = null;
-            helpScrollOffset = 0;
-            helpProviderLabel = null;
-            helpConfig = config;
-            mode = Mode.HELP_CHAT;
+            openHelpChat(SpawnConfig.load());
             return true;
         }
 
@@ -2745,7 +2728,7 @@ public class ListCommand extends BaseCommand {
             case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
-            case HELP_CHAT -> renderHelpChatModal(frame, screen);
+            case HELP_CHAT -> helpChat.render(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
             case CLEAN_CONFIRM -> renderCleanConfirmModal(frame, screen);
@@ -3035,120 +3018,37 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isChar('?')) {
-            var config = SpawnConfig.load();
-            if (AiHelpClient.detectProvider(config) == null) {
-                statusMessage = AiHelpClient.noProviderMessage(config);
-                mode = Mode.BROWSE;
-                return true;
-            }
-            helpInput = new TextInputState();
-            helpTemplatesCheck = new CheckboxState(false);
-            helpFieldIndex = 0;
-            helpLoading = false;
-            helpResponseLines = null;
-            helpError = null;
-            helpScrollOffset = 0;
-            helpProviderLabel = null;
-            helpConfig = config;
-            mode = Mode.HELP_CHAT;
+            openHelpChat(SpawnConfig.load());
             return true;
         }
         return true;
     }
 
-    private boolean handleHelpChatEvent(KeyEvent key) {
-        if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
-            if (helpLoading) {
-                var t = helpThread;
-                if (t != null) t.interrupt();
-                helpLoading = false;
-                helpError = "Cancelled.";
-                return true;
-            }
+    /** Opens AI Help, or explains in the status bar why no configured account can answer. */
+    private void openHelpChat(SpawnConfig config) {
+        var targets = AiHelpClient.targets(config);
+        if (targets.isEmpty()) {
+            statusMessage = AiHelpClient.noProviderMessage(config);
             mode = Mode.BROWSE;
-            return true;
+            return;
         }
-
-        // Response mode: scrollable response or error
-        if (helpResponseLines != null || helpError != null) {
-            if (key.isKey(KeyCode.DOWN) || key.isChar('j')) { helpScrollOffset++; return true; }
-            if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-                if (helpScrollOffset > 0) helpScrollOffset--;
-                return true;
-            }
-            if (key.isKey(KeyCode.HOME) || key.isChar('g')) { helpScrollOffset = 0; return true; }
-            if (key.isKey(KeyCode.END) || key.isChar('G')) {
-                helpScrollOffset = Integer.MAX_VALUE;
-                return true;
-            }
-            if (key.isCharIgnoreCase('n') && !key.hasCtrl()) {
-                helpInput = new TextInputState();
-                helpResponseLines = null;
-                helpError = null;
-                helpScrollOffset = 0;
-                helpFieldIndex = 0;
-                return true;
-            }
-            if (key.isCharIgnoreCase('q') && !key.hasCtrl()) {
-                mode = Mode.BROWSE;
-                return true;
-            }
-            return true;
-        }
-
-        if (helpLoading) return true;
-
-        // Input mode
-        if (key.isKey(KeyCode.ENTER)) {
-            var question = helpInput.text().strip();
-            if (question.isEmpty()) return true;
-            helpLoading = true;
-            var includeTemplates = helpTemplatesCheck.isChecked();
-            helpProviderLabel = switch (AiHelpClient.detectProvider(helpConfig)) {
-                case ANTHROPIC -> "Anthropic";
-                case VERTEX -> "Vertex AI";
-                case OPENAI -> "OpenAI";
-            };
-            helpThread = Thread.startVirtualThread(() -> {
-                try {
-                    var systemPrompt = HelpContext.buildSystemPrompt(includeTemplates);
-                    var response = AiHelpClient.ask(question, systemPrompt, helpConfig);
-                    helpResponseLines = response.content().lines().toList();
-                } catch (Exception e) {
-                    if (!Thread.currentThread().isInterrupted()) {
-                        var msg = e.getMessage();
-                        helpError = msg != null ? msg : e.getClass().getSimpleName();
-                    }
-                }
-                helpLoading = false;
-                helpThread = null;
-                needsRefresh.set(true);
-            });
-            return true;
-        }
-        if (key.isKey(KeyCode.TAB)) {
-            helpFieldIndex = helpFieldIndex == 0 ? 1 : 0;
-            return true;
-        }
-        if (helpFieldIndex == 1) {
-            if (key.isChar(' ')) {
-                helpTemplatesCheck.toggle();
-                return true;
-            }
-            return true;
-        }
-        // Text input handling (field 0)
-        if (key.isKey(KeyCode.BACKSPACE)) { helpInput.deleteBackward(); return true; }
-        if (key.isKey(KeyCode.DELETE))    { helpInput.deleteForward(); return true; }
-        if (key.isKey(KeyCode.LEFT))      { helpInput.moveCursorLeft(); return true; }
-        if (key.isKey(KeyCode.RIGHT))     { helpInput.moveCursorRight(); return true; }
-        if (key.isKey(KeyCode.HOME))      { helpInput.moveCursorToStart(); return true; }
-        if (key.isKey(KeyCode.END))       { helpInput.moveCursorToEnd(); return true; }
-        if (key.code() == KeyCode.CHAR && !key.hasCtrl() && !key.hasAlt()) {
-            helpInput.insert(key.character());
-            return true;
-        }
-        return true;
+        // Reading every definition takes a moment, so build them once, off the UI thread: the
+        // same string sizes the checkbox and is what gets sent when it is ticked.
+        var definitions = java.util.concurrent.CompletableFuture.supplyAsync(
+                HelpContext::definitions, Thread::startVirtualThread);
+        var previous = helpChat;
+        var chat = new HelpChatModal(modal, theme, targets, previous != null ? previous.target() : null,
+                AiHelpClient.subscriptionAccounts(config),
+                (target, question, attach) -> AiHelpClient.ask(question, attach
+                        ? List.of(HelpContext.documentation(), definitions.join())
+                        : List.of(HelpContext.documentation()), config, target),
+                Thread::startVirtualThread, () -> needsRepaint.set(true));
+        definitions.thenAccept(text -> {
+            chat.setAttachmentBytes(text.getBytes(StandardCharsets.UTF_8).length);
+            needsRepaint.set(true);
+        });
+        helpChat = chat;
+        mode = Mode.HELP_CHAT;
     }
 
     private boolean handleActionsEvent(KeyEvent key, TuiRunner tui) {
@@ -3526,191 +3426,12 @@ public class ListCommand extends BaseCommand {
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        infoScrollOffset = renderScrollableContent(frame, rows.get(0), lines, infoScrollOffset);
+        infoScrollOffset = modal.renderScrollableContent(frame, rows.get(0), lines, infoScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F1/Esc", "Close");
         modal.addKey(hintSpans, "?", "AI-assisted help");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
-    }
-
-    private void renderHelpChatModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        boolean showResponse = helpResponseLines != null || helpError != null;
-        int width = showResponse ? Math.min(76, screen.width() - 4) : 62;
-        int maxHeight = screen.height() - 2;
-        int height = showResponse ? Math.min(maxHeight, 24) : 11;
-
-        var modalArea = ModalRenderer.centerRect(screen, width, height);
-        var titleText = helpProviderLabel != null
-                ? " AI Help — " + helpProviderLabel + " "
-                : " AI Help ";
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(titleText, modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        if (showResponse) {
-            var rows = Layout.vertical()
-                    .constraints(Constraint.fill(), Constraint.length(1))
-                    .split(inner);
-
-            var contentLines = new ArrayList<Line>();
-            int wrapWidth = rows.get(0).width() - 1;
-            if (helpError != null) {
-                contentLines.add(Line.styled("Error: " + helpError,
-                        Style.EMPTY.fg(modal.warn()).bg(modal.bg())));
-            } else {
-                for (var line : helpResponseLines) {
-                    var segments = TerminalLink.parseSegments(line);
-                    if (TerminalLink.displayLength(segments) <= wrapWidth || wrapWidth <= 0) {
-                        contentLines.add(helpLineFromSegments(segments));
-                    } else {
-                        for (var wrappedSegs : TerminalLink.wrapSegments(segments, wrapWidth)) {
-                            contentLines.add(helpLineFromSegments(wrappedSegs));
-                        }
-                    }
-                }
-            }
-            helpScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, helpScrollOffset);
-
-            var hintSpans = new ArrayList<Span>();
-            modal.addKey(hintSpans, "n", "New question");
-            modal.addKey(hintSpans, "q/Esc", "Close");
-            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
-            return;
-        }
-
-        if (helpLoading) {
-            var rows = Layout.vertical()
-                    .constraints(Constraint.length(1), Constraint.fill(), Constraint.length(1))
-                    .split(inner);
-            var spinnerFrames = TerminalProgress.SPINNER;
-            var spin = spinnerFrames[(int) ((System.currentTimeMillis() / 100) % spinnerFrames.length)];
-            frame.renderWidget(Paragraph.from(Line.styled(
-                    spin + " Thinking…", Style.EMPTY.fg(modal.accent()).bg(modal.bg()))), rows.get(0));
-            var hintSpans = new ArrayList<Span>();
-            modal.addKey(hintSpans, "Esc", "Cancel");
-            frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(2));
-            return;
-        }
-
-        // Input mode
-        var rows = Layout.vertical()
-                .constraints(
-                        Constraint.length(1), // disclaimer
-                        Constraint.length(1), // spacer
-                        Constraint.length(1), // label
-                        Constraint.length(1), // text input
-                        Constraint.length(1), // spacer
-                        Constraint.length(1), // checkbox
-                        Constraint.length(1), // spacer
-                        Constraint.fill())     // hints
-                .split(inner);
-
-        frame.renderWidget(Paragraph.from(Line.styled(
-                "Uses your configured AI credentials — tokens will be consumed.",
-                Style.EMPTY.fg(theme.textDim()).bg(modal.bg()))), rows.get(0));
-        frame.renderWidget(Paragraph.from(Line.styled(
-                "Question:", Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(2));
-
-        var inputStyle = helpFieldIndex == 0
-                ? Style.EMPTY.fg(theme.focusedLabel()).bg(theme.inputBg())
-                : Style.EMPTY.fg(modal.fg()).bg(theme.inputInactiveBg());
-        TextInput.builder()
-                .placeholder("ask anything about incus-spawn…")
-                .style(inputStyle)
-                .build()
-                .renderWithCursor(rows.get(3), frame.buffer(), helpInput, frame);
-
-        modal.renderToggle(frame, rows.get(5),
-                "Include template definitions", helpTemplatesCheck, helpFieldIndex == 1);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Enter", "Ask");
-        modal.addKey(hintSpans, "Tab", "Toggle");
-        modal.addKey(hintSpans, "Esc", "Close");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(7));
-    }
-
-    private int renderScrollableContent(dev.tamboui.terminal.Frame frame,
-                                        dev.tamboui.layout.Rect contentArea,
-                                        List<Line> contentLines, int scrollOffset) {
-        boolean needsScroll = contentLines.size() > contentArea.height();
-        dev.tamboui.layout.Rect textArea;
-        dev.tamboui.layout.Rect scrollbarArea;
-        if (needsScroll) {
-            var cols = Layout.horizontal()
-                    .constraints(Constraint.fill(), Constraint.length(1))
-                    .split(contentArea);
-            textArea = cols.get(0);
-            scrollbarArea = cols.get(1);
-        } else {
-            textArea = contentArea;
-            scrollbarArea = null;
-        }
-
-        int visibleHeight = textArea.height();
-        int maxScroll = Math.max(0, contentLines.size() - visibleHeight);
-        scrollOffset = Math.min(scrollOffset, maxScroll);
-
-        var visibleLines = contentLines.subList(
-                scrollOffset,
-                Math.min(scrollOffset + visibleHeight, contentLines.size()));
-        frame.renderWidget(Paragraph.from(Text.from(visibleLines)), textArea);
-
-        if (scrollbarArea != null) {
-            var scrollbar = Scrollbar.builder()
-                    .orientation(ScrollbarOrientation.VERTICAL_RIGHT)
-                    .thumbStyle(Style.EMPTY.fg(modal.accent()))
-                    .trackStyle(Style.EMPTY.fg(theme.scrollbarTrack()))
-                    .style(Style.EMPTY.bg(modal.bg()))
-                    .build();
-            var state = new ScrollbarState()
-                    .contentLength(contentLines.size())
-                    .viewportContentLength(visibleHeight)
-                    .position(scrollOffset);
-            frame.renderStatefulWidget(scrollbar, scrollbarArea, state);
-        }
-        return scrollOffset;
-    }
-
-    private Line helpLineFromSegments(List<TerminalLink.Segment> segments) {
-        if (segments.size() == 1 && segments.getFirst() instanceof TerminalLink.Segment.Text t) {
-            return Line.styled(t.text(), Style.EMPTY.fg(modal.fg()).bg(modal.bg()));
-        }
-        var spans = new ArrayList<Span>();
-        for (var seg : segments) {
-            switch (seg) {
-                case TerminalLink.Segment.Text t ->
-                    spans.add(Span.styled(t.text(), Style.EMPTY.fg(modal.fg()).bg(modal.bg())));
-                case TerminalLink.Segment.Link l ->
-                    spans.add(Span.styled(l.label(),
-                            Style.EMPTY.fg(modal.accent()).bg(modal.bg()).hyperlink(l.url())));
-            }
-        }
-        return Line.from(spans);
-    }
-
-    private static List<String> wordWrap(String text, int width) {
-        var result = new ArrayList<String>();
-        int pos = 0;
-        while (pos < text.length()) {
-            if (pos + width >= text.length()) {
-                result.add(text.substring(pos));
-                break;
-            }
-            int breakAt = text.lastIndexOf(' ', pos + width);
-            if (breakAt <= pos) breakAt = pos + width;
-            result.add(text.substring(pos, breakAt));
-            pos = breakAt;
-            if (pos < text.length() && text.charAt(pos) == ' ') pos++;
-        }
-        return result;
     }
 
     private static String buildStatusMessage(String[] args, boolean success, java.time.Instant buildStart) {
@@ -3801,7 +3522,7 @@ public class ListCommand extends BaseCommand {
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        detailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, detailScrollOffset);
+        detailScrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, detailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
@@ -3841,7 +3562,7 @@ public class ListCommand extends BaseCommand {
                 .constraints(Constraint.fill(), Constraint.length(1))
                 .split(inner);
 
-        instanceDetailScrollOffset = renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
+        instanceDetailScrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, instanceDetailScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
@@ -4660,7 +4381,7 @@ public class ListCommand extends BaseCommand {
         frame.renderWidget(dev.tamboui.widgets.paragraph.Paragraph.from(
                 Line.styled("", Style.EMPTY.bg(modal.bg()))), rows.get(0));
 
-        renderScrollableContent(frame, rows.get(1), lines, 0);
+        modal.renderScrollableContent(frame, rows.get(1), lines, 0);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "1-" + buildMenuOptions.size(), "Select");
@@ -4720,7 +4441,7 @@ public class ListCommand extends BaseCommand {
             actionsScrollOffset = actionsSelectedIndex - contentHeight + 1;
         }
 
-        actionsScrollOffset = renderScrollableContent(frame, rows.get(0), lines, actionsScrollOffset);
+        actionsScrollOffset = modal.renderScrollableContent(frame, rows.get(0), lines, actionsScrollOffset);
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "Enter", "Run");

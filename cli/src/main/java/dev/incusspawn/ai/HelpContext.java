@@ -71,55 +71,69 @@ public class HelpContext {
         return cached;
     }
 
-    public static String buildSystemPrompt(boolean includeTemplates) {
-        var sb = new StringBuilder(basePrompt());
-        sb.append("The user is running on ").append(Platform.isMacOS() ? "macOS" : "Linux");
-        sb.append(" (").append(System.getProperty("os.arch", "unknown")).append(").\n\n");
+    /**
+     * The system prompt as separately cacheable blocks: the fixed documentation first, then the
+     * user's definitions when attached. Keeping the attachment in its own block means ticking
+     * it still reuses the cached documentation. Nothing that varies per request may go in the
+     * first block -- any byte change there invalidates the provider's cache for every question.
+     */
+    public static List<String> systemBlocks(boolean includeTemplates) {
+        return includeTemplates ? List.of(documentation(), definitions()) : List.of(documentation());
+    }
 
-        if (includeTemplates) {
-            sb.append("--- Available Tools ---\n");
-            sb.append("YAML tool definitions (fields using ${...} are credential placeholders):\n\n");
-            for (var file : ToolDefLoader.BUILTIN_TOOLS) {
-                appendResource(sb, "tools/" + file, file);
-            }
-            appendUserToolFiles(sb, SpawnConfig.configDir().resolve("tools"));
-            for (var searchPath : SpawnConfig.load().getSearchPaths()) {
-                var toolsDir = Path.of(searchPath).resolve("tools");
-                appendUserToolFiles(sb, toolsDir);
-            }
-            sb.append("Java-based tools (always available, installed when a template references them):\n");
-            for (var tool : RuntimeConstants.CDI_TOOLS) {
-                sb.append("- ").append(tool.name());
-                var desc = tool.description();
-                if (desc != null && !desc.isBlank()) sb.append(": ").append(desc);
-                sb.append("\n");
+    /** The fixed first block: instructions, README and DESIGN.md, and the host platform. */
+    public static String documentation() {
+        return basePrompt() + "The user is running on " + (Platform.isMacOS() ? "macOS" : "Linux")
+                + " (" + System.getProperty("os.arch", "unknown") + ").\n\n";
+    }
+
+    /**
+     * The optional second block: every tool and template definition, including the user's own.
+     * Reads and parses them all, so callers that need it more than once should keep the result.
+     */
+    public static String definitions() {
+        var sb = new StringBuilder();
+        sb.append("--- Available Tools ---\n");
+        sb.append("YAML tool definitions (fields using ${...} are credential placeholders):\n\n");
+        for (var file : ToolDefLoader.BUILTIN_TOOLS) {
+            appendResource(sb, "tools/" + file, file);
+        }
+        appendUserToolFiles(sb, SpawnConfig.configDir().resolve("tools"));
+        for (var searchPath : SpawnConfig.load().getSearchPaths()) {
+            var toolsDir = Path.of(searchPath).resolve("tools");
+            appendUserToolFiles(sb, toolsDir);
+        }
+        sb.append("Java-based tools (always available, installed when a template references them):\n");
+        for (var tool : RuntimeConstants.CDI_TOOLS) {
+            sb.append("- ").append(tool.name());
+            var desc = tool.description();
+            if (desc != null && !desc.isBlank()) sb.append(": ").append(desc);
+            sb.append("\n");
+        }
+        sb.append("\n");
+
+        sb.append("--- Image Templates ---\n");
+        sb.append("All resolved templates (built-in, user, search paths, project):\n\n");
+        var allImages = ImageDef.loadAll(w -> {});
+        for (var entry : allImages.entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByKey()).toList()) {
+            var img = entry.getValue();
+            sb.append("# ").append(img.getName());
+            if (img.getDescription() != null && !img.getDescription().isBlank()) {
+                sb.append(" — ").append(img.getDescription());
             }
             sb.append("\n");
-
-            sb.append("--- Image Templates ---\n");
-            sb.append("All resolved templates (built-in, user, search paths, project):\n\n");
-            var allImages = ImageDef.loadAll(w -> {});
-            for (var entry : allImages.entrySet().stream()
-                    .sorted(java.util.Map.Entry.comparingByKey()).toList()) {
-                var img = entry.getValue();
-                sb.append("# ").append(img.getName());
-                if (img.getDescription() != null && !img.getDescription().isBlank()) {
-                    sb.append(" — ").append(img.getDescription());
-                }
-                sb.append("\n");
-                if (img.getParent() != null) sb.append("  parent: ").append(img.getParent()).append("\n");
-                if (img.getType() != null) sb.append("  type: ").append(img.getType()).append("\n");
-                if (img.getPackages() != null && !img.getPackages().isEmpty()) {
-                    sb.append("  packages: ").append(String.join(", ", img.getPackages())).append("\n");
-                }
-                if (img.getTools() != null && !img.getTools().isEmpty()) {
-                    sb.append("  tools: ").append(img.getTools().stream()
-                            .map(t -> t.getName()).collect(Collectors.joining(", "))).append("\n");
-                }
-                sb.append("\n");
+            if (img.getParent() != null) sb.append("  parent: ").append(img.getParent()).append("\n");
+            if (img.getType() != null) sb.append("  type: ").append(img.getType()).append("\n");
+            if (img.getPackages() != null && !img.getPackages().isEmpty()) {
+                sb.append("  packages: ").append(String.join(", ", img.getPackages())).append("\n");
             }
+            if (img.getTools() != null && !img.getTools().isEmpty()) {
+                sb.append("  tools: ").append(img.getTools().stream()
+                        .map(t -> t.getName()).collect(Collectors.joining(", "))).append("\n");
+            }
+            sb.append("\n");
         }
-
         return sb.toString();
     }
 

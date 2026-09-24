@@ -1,0 +1,60 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                             ╔ AI Help ═══════════════════════════════════════════════════════════════════════════════════════════════════╗
+                                             ║ Your question is processed by an LLM using the account shown below; its usage is billed to that account.   ║
+                                             ║                                                                                                            ║
+                                             ║    Account: Anthropic API key · "work" · claude-sonnet-5                                                   ║
+                                             ║                                                                                                            ║
+                                             ║    Question:                                                                                               ║
+                                             ║    ask anything about incus-spawn…                                                                         ║
+                                             ║                                                                                                            ║
+                                             ║                                                                                                            ║
+                                             ║                                                                                                            ║
+                                             ║  ▸ [x] Attach my template and tool definitions (~12.2 KB)                                                  ║
+                                             ║        Sent to Anthropic with your question, for better answers about your own setup.                      ║
+                                             ║                                                                                                            ║
+                                             ║  Ctrl+S/Enter Ask   Space Toggle   Tab Next field   Esc Close                                              ║
+                                             ╚════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
