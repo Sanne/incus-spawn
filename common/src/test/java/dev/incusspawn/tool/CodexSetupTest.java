@@ -76,8 +76,6 @@ class CodexSetupTest {
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
-                        arg.contains("model = \"o4-mini\"") &&
-                        arg.contains("model_reasoning_effort = \"high\"") &&
                         arg.contains("approval_policy = \"never\"") &&
                         arg.contains("sandbox_mode = \"danger-full-access\"") &&
                         arg.contains("forced_login_method = \"api\"") &&
@@ -85,6 +83,22 @@ class CodexSetupTest {
                         arg.contains("hide_full_access_warning = true") &&
                         arg.contains("show_tooltips = false") &&
                         arg.contains("trust_level = \"trusted\"")));
+    }
+
+    @Test
+    void installOmitsModelAndEffortWhenNotProvided() {
+        // Codex picks both from its own server-side catalog when the config is silent;
+        // a default baked in here would override that and age the way o4-mini did.
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+
+        new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), argThat(arg ->
+                        arg.contains(CodexSetup.CONFIG_PATH) &&
+                        !arg.contains("model = ") &&
+                        !arg.contains("model_reasoning_effort = ")));
     }
 
     @Test
@@ -99,8 +113,7 @@ class CodexSetupTest {
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
                         arg.contains("model = \"gpt-5.3-codex\"") &&
-                        arg.contains("model_reasoning_effort = \"high\"") &&
-                        !arg.contains("model = \"o4-mini\"")));
+                        !arg.contains("model_reasoning_effort = ")));
     }
 
     @Test
@@ -114,9 +127,8 @@ class CodexSetupTest {
         verify(incus).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg ->
                         arg.contains(CodexSetup.CONFIG_PATH) &&
-                        arg.contains("model = \"o4-mini\"") &&
                         arg.contains("model_reasoning_effort = \"low\"") &&
-                        !arg.contains("model_reasoning_effort = \"high\"")));
+                        !arg.contains("model = \"")));
     }
 
     @Test
@@ -151,11 +163,11 @@ class CodexSetupTest {
     }
 
     @Test
-    void parametersResolveDefaultsWhenNotProvided() {
+    void parametersResolveToNothingWhenNotProvided() {
         var result = ParameterResolver.resolve(new CodexSetup().parameters(), Map.of());
 
         assertFalse(result.hasErrors());
-        assertEquals(Map.of("model", "o4-mini", "effort", "high"), result.resolvedValues());
+        assertEquals(Map.of(), result.resolvedValues());
     }
 
     @Test

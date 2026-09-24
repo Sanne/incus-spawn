@@ -10,9 +10,6 @@ import java.util.Map;
 
 public class CodexSetup implements ToolSetup {
 
-    private static final String DEFAULT_MODEL = "o4-mini";
-    private static final String DEFAULT_EFFORT = "high";
-
     @Override
     public String name() {
         return "codex";
@@ -69,13 +66,13 @@ public class CodexSetup implements ToolSetup {
     public Map<String, ToolDef.ParameterDef> parameters() {
         var params = new java.util.LinkedHashMap<String, ToolDef.ParameterDef>();
 
+        // Neither parameter declares a default: see configureSettings().
         var model = new ToolDef.ParameterDef();
         model.setType("string");
-        model.setDescription("OpenAI model ID (e.g. o4-mini, gpt-5.3-codex)");
+        model.setDescription("OpenAI model ID (e.g. gpt-5.3-codex, gpt-5.3-codex-spark)");
         model.setPattern("^[a-zA-Z0-9][-a-zA-Z0-9._@:]*$");
         model.setOptional(true);
         model.setReconfigurable(true);
-        model.setDefault(DEFAULT_MODEL);
         params.put("model", model);
 
         var effort = new ToolDef.ParameterDef();
@@ -84,7 +81,6 @@ public class CodexSetup implements ToolSetup {
         effort.setPattern("^(minimal|low|medium|high|xhigh)$");
         effort.setOptional(true);
         effort.setReconfigurable(true);
-        effort.setDefault(DEFAULT_EFFORT);
         params.put("effort", effort);
 
         return params;
@@ -118,13 +114,18 @@ public class CodexSetup implements ToolSetup {
     public static final String CONFIG_PATH = "/home/agentuser/.codex/config.toml";
     static final String AUTH_PATH = "/home/agentuser/.codex/auth.json";
 
+    /**
+     * Writes Codex's config. Model and reasoning effort appear only when the template asked
+     * for them: Codex resolves both from a server-side catalog that moves, so a slug baked in
+     * here would silently override whatever OpenAI currently promotes -- and would age exactly
+     * the way the old {@code o4-mini} default did. Same reasoning as the claude tool.
+     */
     private void configureSettings(Container c, Map<String, String> resolvedParams) {
         BuildOutput.stepStart("Configuring Codex CLI...");
-        var model = resolvedParams.getOrDefault("model", DEFAULT_MODEL);
-        var effort = resolvedParams.getOrDefault("effort", DEFAULT_EFFORT);
-        var configToml = """
-                model = "%s"
-                model_reasoning_effort = "%s"
+        var settings = new StringBuilder();
+        appendIfPresent(settings, resolvedParams, "model", "model");
+        appendIfPresent(settings, resolvedParams, "effort", "model_reasoning_effort");
+        var configToml = settings + """
                 approval_policy = "never"
                 sandbox_mode = "danger-full-access"
                 forced_login_method = "api"
@@ -138,7 +139,7 @@ public class CodexSetup implements ToolSetup {
 
                 [projects."/home/agentuser"]
                 trust_level = "trusted"
-                """.formatted(model, effort);
+                """;
         var authJson = """
                 {
                   "auth_mode": "apikey",
@@ -150,6 +151,14 @@ public class CodexSetup implements ToolSetup {
         c.writeFile(AUTH_PATH, authJson);
         c.chown("/home/agentuser/.codex", "agentuser:agentuser");
         BuildOutput.stepDone();
+    }
+
+    private static void appendIfPresent(StringBuilder toml, Map<String, String> params,
+                                        String paramKey, String tomlKey) {
+        var value = params.get(paramKey);
+        if (value != null) {
+            toml.append(tomlKey).append(" = \"").append(value).append("\"\n");
+        }
     }
 
 }

@@ -383,9 +383,9 @@ tools:
       effort: high
 ```
 
-`model` is written straight into `~/.codex/config.toml`, so any slug Codex accepts works: the Codex-tuned `gpt-5.3-codex`, its low-latency `gpt-5.3-codex-spark` variant, or a general-purpose model. Which slugs you can actually use depends on what your OpenAI account has access to ([model list](https://platform.openai.com/docs/models)) — isx does not validate the name beyond its shape. It defaults to `o4-mini`, so set it explicitly if you want a Codex-tuned model.
+Both are optional, and omitting them is the normal case: isx leaves the corresponding keys out of `~/.codex/config.toml` entirely, so Codex uses whatever model and effort it picks for your account. Set them when you want something specific pinned to a template.
 
-`effort` defaults to `high` and maps to `model_reasoning_effort`; accepted values are `minimal`, `low`, `medium`, `high`, and `xhigh`, but which of them a given model honours is up to the model. Both parameters are reconfigurable: changing them in a child template rewrites the config without reinstalling Codex.
+`model` takes any slug Codex accepts — the Codex-tuned `gpt-5.3-codex`, its low-latency `gpt-5.3-codex-spark` variant, or a general-purpose model. Which ones you can actually use depends on what your OpenAI account has access to ([model list](https://platform.openai.com/docs/models)); isx passes the name through without validating it beyond its shape. `effort` maps to `model_reasoning_effort` and accepts `minimal`, `low`, `medium`, `high`, and `xhigh`, though which of them a given model honours is up to the model. Both parameters are reconfigurable: changing them in a child template rewrites the config without reinstalling Codex.
 
 ### Pi Coding Agent
 
