@@ -421,7 +421,7 @@ tools:
 shell-command: copilot
 ```
 
-Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already. No separate credential is needed. The [MITM proxy](#credential-isolation) injects the token transparently into requests to `*.githubcopilot.com`. Containers are pre-configured with full permissions (`allow-all`), matching the isolation-boundary reasoning used for Claude's `bypassPermissions` and Codex's `--dangerously-auto-approve-everything`.
+Copilot uses the same GitHub PAT as the `gh` tool -- run `isx init` to configure your GitHub token if you haven't already. No separate credential is needed.
 
 ### Claude Code Skills
 
