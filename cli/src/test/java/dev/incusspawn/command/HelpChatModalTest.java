@@ -115,7 +115,7 @@ class HelpChatModalTest {
     }
 
     @Test
-    void attachmentNoteNamesTheSelectedService() {
+    void choosingAnotherAccount() {
         var modal = answering(List.of(API_KEY, VERTEX), List.of(), ANSWER);
         modal.handleKey(KeyEvent.ofKey(KeyCode.TAB));
         modal.handleKey(KeyEvent.ofKey(KeyCode.TAB));
@@ -191,7 +191,7 @@ class HelpChatModalTest {
             var joined = String.join(" ", text.lines()
                     .map(l -> l.replaceAll("^[\\s║]+|[\\s║]+$", ""))
                     .toList());
-            assertTrue(joined.contains("its usage is billed to that account."),
+            assertTrue(joined.contains("sent to the AI account below, which is billed for it."),
                     "disclaimer truncated at width " + width + ":\n" + text);
         }
     }

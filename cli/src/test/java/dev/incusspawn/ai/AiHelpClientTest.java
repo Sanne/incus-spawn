@@ -108,13 +108,12 @@ class AiHelpClientTest {
 
     @Test
     void labelsNameTheAccountUnlessItIsTheLegacyOne() {
-        var named = new AiHelpClient.Target(AiHelpClient.Provider.ANTHROPIC, "work", "claude-sonnet-5");
-        assertEquals("Anthropic API key · \"work\" · claude-sonnet-5", named.label());
+        var named = new AiHelpClient.Target(AiHelpClient.Provider.VERTEX, "redhat", "claude-sonnet-5");
+        assertEquals("redhat (Vertex AI)", named.label());
 
         var config = config();
         config.getClaude().setApiKey("sk-ant-api03-test");
-        assertEquals("Anthropic API key · " + AiHelpClient.ANTHROPIC_MODEL,
-                AiHelpClient.targets(config).getFirst().label());
+        assertEquals("Anthropic API key", AiHelpClient.targets(config).getFirst().label());
     }
 
     @Test

@@ -1,12 +1,9 @@
 
 
   ╔ AI Help ═════════════════════════════════════════════════════════════════╗
-  ║ Your question is processed by an LLM using the account selected below;   ║
-  ║ its usage is billed to that account.                                     ║
-  ║                                                                          ║
-  ║  ▸ Account: < Anthropic API key · "work" · claude-sonnet-5 >             ║
-  ║        Not available: "personal" is a Claude Pro/Max subscription, whose ║
-  ║        token only works in Claude Code itself.                           ║
+  ║ Ask anything about incus-spawn: an AI model answers from the project's   ║
+  ║ documentation. Your question is sent to the AI account below, which is   ║
+  ║ billed for it.                                                           ║
   ║                                                                          ║
   ║    Question:                                                             ║
   ║    ask anything about incus-spawn…                                       ║
@@ -14,8 +11,11 @@
   ║                                                                          ║
   ║                                                                          ║
   ║    [ ] Attach my template and tool definitions (~12.2 KB)                ║
-  ║        Sent to Anthropic with your question, for better answers about    ║
-  ║        your own setup.                                                   ║
+  ║        Helps the AI answer questions about your own setup.               ║
+  ║                                                                          ║
+  ║  ▸ AI account: < work (Anthropic API key) >                              ║
+  ║                ("personal" is not listed: Claude Pro/Max subscriptions   ║
+  ║                only work in Claude Code.)                                ║
   ║                                                                          ║
   ║  Ctrl+S/Enter Ask   ←/→ Change   Tab Next field   Esc Close              ║
   ╚══════════════════════════════════════════════════════════════════════════╝

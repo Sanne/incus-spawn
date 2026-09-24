@@ -9,10 +9,9 @@
 
 
                     ╔ AI Help ═════════════════════════════════════════════════════════════════════╗
-                    ║ Your question is processed by an LLM using the account shown below; its      ║
-                    ║ usage is billed to that account.                                             ║
-                    ║                                                                              ║
-                    ║    Account: Anthropic API key · "work" · claude-sonnet-5                     ║
+                    ║ Ask anything about incus-spawn: an AI model answers from the project's       ║
+                    ║ documentation. Your question is sent to the AI account below, which is       ║
+                    ║ billed for it.                                                               ║
                     ║                                                                              ║
                     ║  ▸ Question:                                                                 ║
                     ║    Why does this fail?                                                       ║
@@ -22,8 +21,9 @@
                     ║                                                                              ║
                     ║                                                                              ║
                     ║    [ ] Attach my template and tool definitions (~12.2 KB)                    ║
-                    ║        Sent to Anthropic with your question, for better answers about your   ║
-                    ║        own setup.                                                            ║
+                    ║        Helps the AI answer questions about your own setup.                   ║
+                    ║                                                                              ║
+                    ║    AI account: work (Anthropic API key)                                      ║
                     ║                                                                              ║
                     ║  Ctrl+S Ask   Enter New line   Tab Next field   Esc Close                    ║
                     ╚══════════════════════════════════════════════════════════════════════════════╝

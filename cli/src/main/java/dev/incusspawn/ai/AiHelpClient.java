@@ -35,20 +35,15 @@ public class AiHelpClient {
     }
 
     public enum Provider {
-        ANTHROPIC("Anthropic", "Anthropic API key"),
-        OPENAI("OpenAI", "OpenAI API key"),
-        VERTEX("Google Vertex AI", "Vertex AI");
+        ANTHROPIC("Anthropic API key"),
+        OPENAI("OpenAI API key"),
+        VERTEX("Vertex AI");
 
-        private final String serviceName;
         private final String credentialKind;
 
-        Provider(String serviceName, String credentialKind) {
-            this.serviceName = serviceName;
+        Provider(String credentialKind) {
             this.credentialKind = credentialKind;
         }
-
-        /** Who processes the question, as the user would name them. */
-        public String serviceName() { return serviceName; }
 
         /** The kind of credential an account for this provider holds. */
         public String credentialKind() { return credentialKind; }
@@ -79,12 +74,16 @@ public class AiHelpClient {
      */
     public record Target(Provider provider, String accountName, String model) {
 
-        /** One-line description for choosing between targets: kind, account name, model. */
+        /**
+         * Compact description for choosing between targets: the account's name as the user gave
+         * it, with its kind -- {@code redhat (Vertex AI)}. The model is left out: it is fixed per
+         * provider, so it never tells two accounts apart.
+         */
         public String label() {
-            // The legacy flat config has no user-chosen name, so there is nothing to show.
+            // The legacy flat config has no user-chosen name, so the kind alone names it.
             var named = !accountName.isEmpty()
                     && !accountName.equals(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME);
-            return provider.credentialKind() + (named ? " · \"" + accountName + "\"" : "") + " · " + model;
+            return named ? accountName + " (" + provider.credentialKind() + ")" : provider.credentialKind();
         }
     }
 
