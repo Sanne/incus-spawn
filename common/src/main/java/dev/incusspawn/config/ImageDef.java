@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
@@ -131,6 +132,17 @@ public class ImageDef {
     @JsonIgnore
     private String source = "unknown";
 
+    /**
+     * The project directory of a project-local definition ({@code .incus-spawn/images/} in the
+     * working directory), null for every trusted layer. Such a definition arrives with whatever
+     * repository was cloned, so its host-resources are confined to this directory (#765).
+     * Never read from YAML: a definition must not be able to vouch for itself.
+     */
+    @JsonIgnore
+    private Path projectRoot;
+
+    public Path getProjectRoot() { return projectRoot; }
+    public void setProjectRoot(Path projectRoot) { this.projectRoot = projectRoot; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getDescription() { return description; }
@@ -317,6 +329,14 @@ public class ImageDef {
         private String source;
         private String path;
         private String mode = "readonly";
+        /**
+         * Set by {@link HostResourceSetup#collectEffective} (never by the user: any value in
+         * YAML is discarded there) when the declaring template is project-local. The source is
+         * then an absolute real path that must stay inside this directory every time it is used.
+         */
+        @JsonProperty("confined-to")
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String confinedTo;
 
         public HostResource() {}
 
@@ -326,12 +346,19 @@ public class ImageDef {
             this.mode = mode != null ? mode : "readonly";
         }
 
+        public HostResource(String source, String path, String mode, String confinedTo) {
+            this(source, path, mode);
+            this.confinedTo = confinedTo;
+        }
+
         public String getSource() { return source; }
         public void setSource(String source) { this.source = source; }
         public String getPath() { return path; }
         public void setPath(String path) { this.path = path; }
         public String getMode() { return mode; }
         public void setMode(String mode) { this.mode = mode; }
+        public String getConfinedTo() { return confinedTo; }
+        public void setConfinedTo(String confinedTo) { this.confinedTo = confinedTo; }
     }
 
     public String contentFingerprint(Map<String, String> toolFingerprints) {
@@ -524,12 +551,12 @@ public class ImageDef {
     static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {
         var defs = new LayeredDefinitions<ImageDef>("image");
         loadBuiltins(defs, warnings);
-        loadFromDirectory(userImagesDir(), defs, warnings);
+        loadFromDirectory(userImagesDir(), defs, warnings, null);
         for (var searchPath : searchPaths) {
             var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
-            loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings);
+            loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings, null);
         }
-        loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings);
+        loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
         inheritTypes(defs.defs());
         return defs;
     }
@@ -576,7 +603,13 @@ public class ImageDef {
         }
     }
 
-    private static void loadFromDirectory(Path dir, LayeredDefinitions<ImageDef> defs, Consumer<String> warnings) {
+    /** The directory whose {@code .incus-spawn/images/} supplies the project-local layer. */
+    static Path projectRoot() {
+        return PROJECT_IMAGES_DIR.toAbsolutePath().getParent().getParent();
+    }
+
+    private static void loadFromDirectory(Path dir, LayeredDefinitions<ImageDef> defs, Consumer<String> warnings,
+                                          Path projectRoot) {
         if (!Files.isDirectory(dir)) return;
         defs.beginDirectory();
         try (var stream = Files.list(dir)) {
@@ -590,6 +623,7 @@ public class ImageDef {
                     if (def.getName() != null) {
                         var source = path.toAbsolutePath().normalize();
                         def.setSource(source.toString());
+                        def.setProjectRoot(projectRoot);
                         validate(def, path.getFileName().toString(), warnings);
                         defs.put(def.getName(), def, source);
                     }

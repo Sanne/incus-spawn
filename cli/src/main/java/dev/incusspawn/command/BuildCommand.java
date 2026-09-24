@@ -550,6 +550,15 @@ public class BuildCommand extends BaseCommand {
 
         BuildOutput.buildHeader(canonicalName, buildIndex, buildTotal);
 
+        // Refuse before anything is created: the same check runs again when the resources are
+        // applied, but by then the build container exists and the failure would leave it behind.
+        try {
+            HostResourceSetup.collectEffective(imageDef, defs);
+        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+            System.err.println(e.getMessage());
+            throw new BuildFailedException(canonicalName);
+        }
+
         if (incus.exists(canonicalName)) {
             if (!yes) {
                 BuildOutput.step("Image already exists. It will be replaced if the build succeeds.");
@@ -2106,19 +2115,25 @@ public class BuildCommand extends BaseCommand {
         var tools = new LinkedHashMap<String, dev.incusspawn.tool.ToolDef>();
         var toolInstances = new LinkedHashMap<String, BuildSource.ToolInstance>();
         var sources = new LinkedHashMap<String, String>();
+        var projectRoots = new LinkedHashMap<String, String>();
 
         var visited = new HashSet<String>();
         var current = imageDef;
         while (current != null) {
             definitions.put(current.getName(), current);
             sources.put(current.getName(), current.getSource());
+            if (current.getProjectRoot() != null) {
+                projectRoots.put(current.getName(), current.getProjectRoot().toString());
+            }
             collectToolDefs(current, tools, visited);
             collectToolInstances(current, toolInstances);
             if (current.isRoot()) break;
             current = defs.get(current.getParent());
         }
 
-        return new BuildSource(definitions, tools, toolInstances, sources);
+        var buildSource = new BuildSource(definitions, tools, toolInstances, sources);
+        buildSource.setProjectRoots(projectRoots);
+        return buildSource;
     }
 
     private void collectToolInstances(ImageDef imageDef, Map<String, BuildSource.ToolInstance> instances) {

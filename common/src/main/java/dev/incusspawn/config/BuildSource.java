@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.tool.ToolDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -24,6 +25,8 @@ public class BuildSource {
     private Map<String, ToolDef> tools = new LinkedHashMap<>();
     private Map<String, ToolInstance> toolInstances = new LinkedHashMap<>();
     private Map<String, String> sources = new LinkedHashMap<>();
+    /** Project directory of each project-local definition; see {@link ImageDef#getProjectRoot()}. */
+    private Map<String, String> projectRoots = new LinkedHashMap<>();
 
     public BuildSource() {}
 
@@ -48,6 +51,11 @@ public class BuildSource {
     public Map<String, String> getSources() { return sources; }
     public void setSources(Map<String, String> sources) {
         this.sources = sources != null ? sources : new LinkedHashMap<>();
+    }
+
+    public Map<String, String> getProjectRoots() { return projectRoots; }
+    public void setProjectRoots(Map<String, String> projectRoots) {
+        this.projectRoots = projectRoots != null ? projectRoots : new LinkedHashMap<>();
     }
 
     public Map<String, ToolInstance> getToolInstances() { return toolInstances; }
@@ -89,6 +97,18 @@ public class BuildSource {
         }
     }
 
+    /**
+     * Metadata written before {@code projectRoots} existed only has the definition's file,
+     * {@code <project>/.incus-spawn/images/<name>.yaml} for a project-local one.
+     */
+    private static String legacyProjectRoot(String source) {
+        if (source == null || !source.startsWith("/")) return null;
+        var images = Path.of(source).getParent();
+        if (images == null || !images.endsWith(ImageDef.projectImagesDir())) return null;
+        var root = images.getParent().getParent();
+        return root != null ? root.toString() : null;
+    }
+
     public static BuildSource fromJson(String json) {
         if (json == null || json.isBlank()) return null;
         try {
@@ -97,6 +117,10 @@ public class BuildSource {
             for (var entry : bs.definitions.entrySet()) {
                 var source = bs.sources.get(entry.getKey());
                 entry.getValue().setSource(source != null ? source : "stored");
+                // A rebuild from stored metadata must stay as confined as the original build.
+                var projectRoot = bs.projectRoots.get(entry.getKey());
+                if (projectRoot == null) projectRoot = legacyProjectRoot(source);
+                if (projectRoot != null) entry.getValue().setProjectRoot(Path.of(projectRoot));
             }
             return bs;
         } catch (Exception e) {

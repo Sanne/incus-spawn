@@ -554,6 +554,8 @@ Three modes are available:
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
+**Project-local templates** (`.incus-spawn/images/`) arrive with whatever repository you cloned, so their host-resources may only reference paths inside that project directory (relative paths resolve against it). `~/…`, absolute paths elsewhere, `..`, and symlinks leading out of the project are rejected at build time. For `copy` mode this also covers symlinks inside a copied directory. To give a template you trust access to other host paths, move it to `~/.config/incus-spawn/images/` or a configured search path.
+
 **VM note:** VMs mount disk devices via virtiofs (asynchronously, after the incus-agent starts). For overlay mode, the build waits up to 15 seconds for the device to appear before mounting. File-level host resources (single files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for VMs.
 
 ## Built-in Tools
