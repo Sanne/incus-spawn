@@ -1050,7 +1050,7 @@ public class BuildCommand extends BaseCommand {
             var vmAlias = rootDef.getImage() + "-vm";
             ensureBaseImage(imageDef);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
-                    rootDef.getVmImageSha256(), rootDef.getImageTag());
+                    rootDef.getVmImageSha256(), rootDef.getImageTag(), rootDef);
             image = vmAlias;
             prebaked = true;
         } else {
@@ -1079,6 +1079,8 @@ public class BuildCommand extends BaseCommand {
                 }
             }
         }
+
+        requireImageTrustedFor(image, rootDef);
 
         // Create instance — for VMs, expand the disk before first boot so
         // cloud-init's growpart module handles partition + filesystem resize.
@@ -1350,13 +1352,29 @@ public class BuildCommand extends BaseCommand {
     private void ensureBaseImage(ImageDef imageDef) {
         checkPinnedWarning(imageDef);
         downloadAndAliasImage(imageDef.getImage(), imageDef.getImageUrl(),
-                imageDef.getImageSha256(), imageDef.getImageTag());
+                imageDef.getImageSha256(), imageDef.getImageTag(), imageDef);
     }
 
-    private void downloadAndAliasImage(String localAlias, String imageUrl,
-            Map<String, String> sha256Map, String tag) {
+    /**
+     * Image property recording which project's project-local template imported an image: the
+     * project root, or empty for an import by a trusted definition. Always written after import,
+     * so a value shipped in the image tarball itself never survives.
+     */
+    static final String IMAGE_PROJECT_PROPERTY = "incus-spawn.project";
+
+    /**
+     * Local image aliases are shared by every template on the host, so a project-local template
+     * that could replace one would swap the base image of the user's own templates (#765). It
+     * may therefore only replace images it imported itself, and an image it imported is never
+     * reused by a trusted definition: one with an {@code image_url} re-imports it, and any other
+     * build refuses it in {@link #requireImageTrustedFor}.
+     */
+    void downloadAndAliasImage(String localAlias, String imageUrl,
+            Map<String, String> sha256Map, String tag, ImageDef owner) {
         if (imageUrl == null || imageUrl.isBlank()) return;
         if (localAlias.contains(":")) return;
+        var ownerProject = projectOf(owner);
+        // Fail closed: a failed lookup must not read as "no alias" or "imported by a trusted definition".
 
         var arch = normalizeHostArch();
         String expectedSha256 = null;
@@ -1364,16 +1382,31 @@ public class BuildCommand extends BaseCommand {
             expectedSha256 = sha256Map.get(arch);
         }
 
-        var existingFingerprint = incus.imageAliasTarget(localAlias);
+        var existingFingerprint = incus.imageAliasTargetOrThrow(localAlias);
         if (existingFingerprint != null) {
+            var importedBy = importingProject(existingFingerprint);
+            if (!ownerProject.isEmpty() && !ownerProject.equals(importedBy)) {
+                throw new IllegalStateException("Template '" + owner.getName() + "' is project-local ("
+                        + owner.getSource() + "),\n"
+                        + "  and its image_url would replace the existing local image '" + localAlias + "'.\n"
+                        + "  A project-local template may only replace images it imported itself;"
+                        + " otherwise a cloned repository could swap the base image of your own templates.\n"
+                        + "  Give it an image name of its own, or, if you trust it, move it to "
+                        + ImageDef.userImagesDir() + " or a configured search path.");
+            }
             var installedTag = incus.getImageProperty(existingFingerprint, "incus-spawn.tag");
-            if (tag != null && tag.equals(installedTag)) {
+            if (tag != null && tag.equals(installedTag) && ownerProject.equals(importedBy)) {
                 BuildOutput.step("Base image '" + localAlias + "' is up to date (" + tag + ").");
                 return;
             }
-            BuildOutput.step("Base image '" + localAlias + "' is outdated"
-                    + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
-                    + ", replacing...");
+            if (!ownerProject.equals(importedBy)) {
+                BuildOutput.step("Base image '" + localAlias + "' was imported by a project-local template ("
+                        + importedBy + "), replacing...");
+            } else {
+                BuildOutput.step("Base image '" + localAlias + "' is outdated"
+                        + (installedTag != null ? " (" + installedTag + " -> " + tag + ")" : "")
+                        + ", replacing...");
+            }
             incus.deleteImageAlias(localAlias);
             incus.deleteImage(existingFingerprint);
         }
@@ -1382,11 +1415,26 @@ public class BuildCommand extends BaseCommand {
         BuildOutput.stepStart("Downloading base image...");
 
         try {
-            var cache = new DownloadCache();
-            var cached = cache.downloadAllowingLocalFile(resolvedUrl, expectedSha256);
+            var cached = newDownloadCache().downloadAllowingLocalFile(resolvedUrl, expectedSha256);
 
             var fingerprint = incus.importImage(cached);
 
+            // Stamped before the alias exists, and verified: setImageProperty fails silently, and
+            // a project's import that lost its stamp would pass for a trusted one.
+            incus.setImageProperty(fingerprint, IMAGE_PROJECT_PROPERTY, ownerProject);
+            // The resulting value is what matters, not whether this particular write landed: a
+            // tarball that already carried the expected value is stamped correctly either way.
+            boolean stamped;
+            try {
+                stamped = ownerProject.equals(importingProject(fingerprint));
+            } catch (IncusException e) {
+                stamped = false;
+            }
+            if (!stamped) {
+                incus.deleteImage(fingerprint);
+                throw new IllegalStateException("Could not record which project imported base image '"
+                        + localAlias + "'; the imported image was deleted.");
+            }
             if (tag != null) {
                 incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
             }
@@ -1397,6 +1445,42 @@ public class BuildCommand extends BaseCommand {
             throw new RuntimeException(
                     "Failed to download base image from " + resolvedUrl + ": " + e.getMessage(), e);
         }
+    }
+
+    DownloadCache newDownloadCache() {
+        return new DownloadCache();
+    }
+
+    /** The {@link #IMAGE_PROJECT_PROPERTY} value for imports on behalf of {@code def}. */
+    private static String projectOf(ImageDef def) {
+        return def.getProjectRoot() != null ? def.getProjectRoot().toString() : "";
+    }
+
+    /**
+     * Which project imported the image; empty for a trusted import or one that predates the
+     * stamp. Throws when the image cannot be read, rather than mistaking that for "trusted".
+     */
+    private String importingProject(String fingerprint) {
+        var project = incus.imagePropertyOrThrow(fingerprint, IMAGE_PROJECT_PROPERTY);
+        return project != null ? project : "";
+    }
+
+    /**
+     * A build may only start from a local image imported by a trusted definition or by its own
+     * project: a trusted template naming an alias without an {@code image_url} never reaches
+     * {@link #downloadAndAliasImage}, so this is where a project's import is kept out of it.
+     */
+    void requireImageTrustedFor(String image, ImageDef rootDef) {
+        if (image.contains(":")) return; // a remote image, fetched by Incus itself
+        var fingerprint = incus.imageAliasTargetOrThrow(image);
+        if (fingerprint == null) return;
+        var importedBy = importingProject(fingerprint);
+        if (importedBy.isEmpty() || importedBy.equals(projectOf(rootDef))) return;
+        throw new IllegalStateException("Local image '" + image + "' was imported by a project-local template in "
+                + importedBy + ",\n"
+                + "  so '" + rootDef.getName() + "' will not be built on it.\n"
+                + "  Delete it with 'incus image delete " + fingerprint + "' and rebuild"
+                + " (a template with an image_url re-imports it automatically).");
     }
 
     private void prepareContainerForPackageInstall(Container container) {
@@ -2654,14 +2738,19 @@ public class BuildCommand extends BaseCommand {
      * <p>Repos are cloned concurrently (bounded to high-performance core count
      * and, on macOS, a vsock tunnel connection budget) with an animated
      * per-repo progress display. Each repo's
-     * declared {@code prime} command runs in the same worker as soon as that
-     * repo's clone finishes, so priming pipelines with the remaining clones
-     * instead of waiting for the whole clone batch to complete. Incus config
-     * mutations — mounting/removing the host-reference disk devices — are kept
-     * out of the parallel section (serial phases before and after) because
-     * concurrent instance-config edits can conflict. Each reference stays mounted
-     * across its clone and URL fixup, so removal only happens once all clones
-     * are done.
+     * declared {@code prime} command runs in the same worker once that repo's
+     * clone finishes <em>and</em> every host reference has been detached, so
+     * priming still pipelines with the remaining network clones. A reference is
+     * the host checkout's whole working tree (untracked files, unpushed work),
+     * and a prime command is arbitrary code with network access, so no prime may
+     * run while one is mounted (#765). References are mounted serially up front
+     * and each is detached as soon as its own clone is done; the detaches are
+     * serialized by a lock because concurrent instance-config edits can
+     * conflict. A failed detach fails the build rather than prime next to it.
+     *
+     * <p>Project-local definitions get no host references at all: their repos
+     * are cloned from the network, since the reference would hand the host
+     * checkout to prime commands the cloned repository itself controls.
      *
      * <p>When a matching host-side checkout is available (via SpawnConfig
      * host-path/repo-paths), the clone runs locally from the mounted reference
@@ -2694,9 +2783,27 @@ public class BuildCommand extends BaseCommand {
 
         // Phase 1 (serial): mount all host-reference disk devices up front.
         var refs = new RepoReference[repos.size()];
+        var projectLocal = imageDef.getProjectRoot() != null;
         for (int i = 0; i < repos.size(); i++) {
-            refs[i] = tryMountReference(container, repos.get(i).getUrl(), config, isVm);
+            refs[i] = projectLocal
+                    ? RepoReference.skipped("project-local template, host checkouts are not shared")
+                    : tryMountReference(container, repos.get(i).getUrl(), config, isVm);
         }
+        var mountedCount = (int) java.util.Arrays.stream(refs).filter(r -> r != null && r.mounted()).count();
+        var referencesDetached = new java.util.concurrent.CountDownLatch(mountedCount);
+        var detached = new java.util.concurrent.atomic.AtomicReferenceArray<Boolean>(repos.size());
+        var detachLock = new Object();
+        java.util.function.IntPredicate detach = idx -> {
+            synchronized (detachLock) {
+                try {
+                    incus.deviceRemove(container.name(), refs[idx].deviceName());
+                    detached.set(idx, true);
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
+            }
+        };
 
         // Phase 2 (parallel, bounded): clone each repo from its reference (local)
         // or the remote (fallback), restore the fetch refspec, then prime it —
@@ -2706,23 +2813,23 @@ public class BuildCommand extends BaseCommand {
         for (int i = 0; i < repos.size(); i++) {
             states.set(i, StepProgress.running("Cloning"));
         }
-        int maxFromTunnel = Platform.isMacOS()
-                ? MACOS_TUNNEL_BUDGET / CONNECTIONS_PER_EXEC
-                : Integer.MAX_VALUE;
-        int concurrency = Math.min(repos.size(),
-                Math.min(CpuInfo.highPerfCores(), maxFromTunnel));
+        int concurrency = repoConcurrency(repos.size());
+        // Bounded here rather than by TerminalProgress: a worker waiting for the references to
+        // be detached must not hold a slot, or the clones that detach them could never start.
+        var limiter = new java.util.concurrent.Semaphore(concurrency);
         var failureSeen = new AtomicBoolean(false);
         try {
-            TerminalProgress.run(repos.size(), concurrency,
-                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen),
+            TerminalProgress.run(repos.size(), repos.size(),
+                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
+                            limiter, referencesDetached, detach),
                     (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
                             repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
                     idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
                     System.out::println);
         } finally {
-            // Phase 3 (serial): remove all reference devices.
+            // Phase 3 (serial): remove any reference a worker could not detach.
             for (int i = 0; i < repos.size(); i++) {
-                if (refs[i] != null && refs[i].mounted()) {
+                if (refs[i] != null && refs[i].mounted() && detached.get(i) == null) {
                     try {
                         incus.deviceRemove(container.name(), refs[i].deviceName());
                     } catch (Exception e) {
@@ -2743,7 +2850,42 @@ public class BuildCommand extends BaseCommand {
      *  completion — this only gates launching new ones. */
     void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
                     AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen) {
-        var clone = cloneOne(container, repo, ref, states, idx);
+        prepareOne(container, repo, ref, states, idx, failureSeen,
+                new java.util.concurrent.Semaphore(1), new java.util.concurrent.CountDownLatch(0), i -> true);
+    }
+
+    /** As above, with the coordination {@link #cloneRepos} needs: {@code limiter} bounds the
+     *  concurrent clones and primes, {@code detach} detaches this repo's host reference once its
+     *  clone is done, and no prime starts before {@code referencesDetached} reaches zero. */
+    void prepareOne(Container container, ImageDef.RepoEntry repo, RepoReference ref,
+                    AtomicReferenceArray<StepProgress> states, int idx, AtomicBoolean failureSeen,
+                    java.util.concurrent.Semaphore limiter, java.util.concurrent.CountDownLatch referencesDetached,
+                    java.util.function.IntPredicate detach) {
+        var clone = CloneResult.FAILED;
+        var detachedOk = true;
+        try {
+            limiter.acquireUninterruptibly();
+            try {
+                clone = cloneOne(container, repo, ref, states, idx);
+            } finally {
+                limiter.release();
+            }
+        } finally {
+            if (ref != null && ref.mounted()) {
+                try {
+                    detachedOk = detach.test(idx);
+                    // Before the count-down, so a prime woken by it already sees the failure.
+                    if (!detachedOk) failureSeen.set(true);
+                } finally {
+                    referencesDetached.countDown();
+                }
+            }
+        }
+        if (!detachedOk) {
+            states.set(idx, StepProgress.failed("could not detach host reference " + ref.deviceName()
+                    + "; refusing to run prime commands while it is mounted", null));
+            return;
+        }
         if (!clone.success()) {
             failureSeen.set(true);
             return; // failure already recorded in states[idx]
@@ -2756,6 +2898,10 @@ public class BuildCommand extends BaseCommand {
             highlight = true;
         }
         if (repo.hasPrime()) {
+            if (referencesDetached.getCount() > 0) {
+                states.set(idx, StepProgress.running("Waiting to prime"));
+                awaitUninterruptibly(referencesDetached);
+            }
             if (failureSeen.get()) {
                 // Another repo already failed; don't start priming a build that's
                 // going to abort. The clone itself succeeded, so say so.
@@ -2765,12 +2911,40 @@ public class BuildCommand extends BaseCommand {
                 return;
             }
             states.set(idx, StepProgress.running("Priming"));
-            if (!primeOne(container, repo, states, idx)) {
+            boolean primed;
+            limiter.acquireUninterruptibly();
+            try {
+                primed = primeOne(container, repo, states, idx);
+            } finally {
+                limiter.release();
+            }
+            if (!primed) {
                 failureSeen.set(true);
                 return; // failure recorded
             }
         }
         states.set(idx, highlight ? StepProgress.doneHighlight(note) : StepProgress.done(note));
+    }
+
+    /** How many repos clone or prime at once: high-performance cores, and on macOS the vsock tunnel budget. */
+    int repoConcurrency(int repoCount) {
+        int maxFromTunnel = Platform.isMacOS()
+                ? MACOS_TUNNEL_BUDGET / CONNECTIONS_PER_EXEC
+                : Integer.MAX_VALUE;
+        return Math.min(repoCount, Math.min(CpuInfo.highPerfCores(), maxFromTunnel));
+    }
+
+    private static void awaitUninterruptibly(java.util.concurrent.CountDownLatch latch) {
+        var interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     private record CloneResult(boolean success, boolean usedReference) {

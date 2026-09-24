@@ -293,10 +293,16 @@ public final class HostRepoRefresh {
         return new ArrayList<>(seen.values());
     }
 
+    /**
+     * The repos a host-side refresh may clone or fetch for {@code imageDef}'s chain. Project-local
+     * definitions contribute none: a host clone of their URL (possibly a local path) would be
+     * shared with the build, so their repos are only ever cloned inside the container (#765).
+     */
     public static List<ImageDef.RepoEntry> collectAllRepos(ImageDef imageDef, Map<String, ImageDef> defs) {
-        var repos = new ArrayList<>(imageDef.getRepos());
+        var repos = new ArrayList<ImageDef.RepoEntry>();
+        if (imageDef.getProjectRoot() == null) repos.addAll(imageDef.getRepos());
         for (var ancestor : ImageDef.ancestors(imageDef, defs)) {
-            repos.addAll(ancestor.getRepos());
+            if (ancestor.getProjectRoot() == null) repos.addAll(ancestor.getRepos());
         }
         return repos;
     }

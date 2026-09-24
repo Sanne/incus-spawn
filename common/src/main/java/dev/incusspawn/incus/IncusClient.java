@@ -1783,6 +1783,19 @@ public class IncusClient {
         return resp.body().path("metadata").path("target").asText(null);
     }
 
+    /**
+     * Like {@link #imageAliasTarget}, but only Incus answering that the alias does not exist
+     * yields null; any other failure throws. For decisions that must fail closed.
+     */
+    public String imageAliasTargetOrThrow(String alias) {
+        var resp = http().get("/1.0/images/aliases/" + alias);
+        if (resp.statusCode() == 404) return null;
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to look up image alias '" + alias + "' (HTTP " + resp.statusCode() + ")");
+        }
+        return resp.body().path("metadata").path("target").asText(null);
+    }
+
     public void deleteImageAlias(String alias) {
         http().delete("/1.0/images/aliases/" + alias);
     }
@@ -1831,6 +1844,19 @@ public class IncusClient {
     public String getImageProperty(String fingerprint, String key) {
         var resp = http().get("/1.0/images/" + fingerprint);
         if (!resp.isSuccess()) return null;
+        var val = resp.body().path("metadata").path("properties").path(key);
+        return val.isMissingNode() ? null : val.asText(null);
+    }
+
+    /**
+     * Like {@link #getImageProperty}, but null means only that the image has no such property;
+     * failing to read the image throws. For decisions that must fail closed.
+     */
+    public String imagePropertyOrThrow(String fingerprint, String key) {
+        var resp = http().get("/1.0/images/" + fingerprint);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read image " + fingerprint + " (HTTP " + resp.statusCode() + ")");
+        }
         var val = resp.body().path("metadata").path("properties").path(key);
         return val.isMissingNode() ? null : val.asText(null);
     }
