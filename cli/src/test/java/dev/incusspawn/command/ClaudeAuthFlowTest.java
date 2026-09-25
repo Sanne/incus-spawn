@@ -211,6 +211,80 @@ class ClaudeAuthFlowTest {
         assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
     }
 
+    private static FakeInit withVertexEnv(String region, String projectId) {
+        var init = new FakeInit();
+        init.env.put("CLAUDE_CODE_USE_VERTEX", "1");
+        init.env.put("CLOUD_ML_REGION", region);
+        init.env.put("ANTHROPIC_VERTEX_PROJECT_ID", projectId);
+        return init;
+    }
+
+    @Test
+    void aVerifiedEnvironmentVertexConfigIsSavedOnEnter() {
+        var init = withVertexEnv("us-east5", "my-project");
+        init.validVertex.add("us-east5/my-project");
+        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+
+        var account = SpawnConfig.load().getClaude().account();
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, account.effectiveType());
+        assertEquals("us-east5", account.getCloudMlRegion());
+        assertEquals("my-project", account.getVertexProjectId());
+    }
+
+    /** Unverified, the environment config is saved only on an explicit yes; Enter means "set up manually". */
+    @Test
+    void anUnverifiedEnvironmentVertexConfigIsNotSavedOnEnter() {
+        run(withVertexEnv("us-east5", "my-project"), new SpawnConfig(), ScriptedPrompts.lines("", ""));
+        assertFalse(Files.exists(configFile()));
+    }
+
+    @Test
+    void anUnverifiedEnvironmentVertexConfigCanBeSavedAnyway() {
+        run(withVertexEnv("us-east5", "my-project"), new SpawnConfig(), ScriptedPrompts.lines("y"));
+        assertEquals("my-project", SpawnConfig.load().getClaude().account().getVertexProjectId());
+    }
+
+    /** Half a Vertex config cannot be verified, so nothing is offered: straight to manual setup. */
+    @Test
+    void anIncompleteEnvironmentVertexConfigGoesStraightToManualSetup() {
+        var init = withVertexEnv("us-east5", "");
+        init.validKeys.add(API_KEY);
+        run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret(API_KEY));
+        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
+    }
+
+    /** CLAUDE_CODE_USE_VERTEX wins over a key or token in the same environment, as it does for Claude Code. */
+    @Test
+    void vertexInTheEnvironmentTakesPrecedenceOverAKey() {
+        var init = withVertexEnv("us-east5", "my-project");
+        init.validVertex.add("us-east5/my-project");
+        init.env.put("ANTHROPIC_API_KEY", API_KEY);
+        init.validKeys.add(API_KEY);
+        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX,
+                SpawnConfig.load().getClaude().account().effectiveType());
+    }
+
+    @Test
+    void aVerifiedEnvironmentOauthTokenIsSavedOnEnter() {
+        var init = new FakeInit();
+        init.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN);
+        init.validOauth.add(OAUTH_TOKEN);
+        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+
+        assertEquals(OAUTH_TOKEN, SpawnConfig.load().getClaude().account().getOauthToken());
+    }
+
+    /** A rejected environment token is not offered for saving at all. */
+    @Test
+    void aRejectedEnvironmentOauthTokenGoesStraightToManualSetup() {
+        var init = new FakeInit();
+        init.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN);
+        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+        assertFalse(Files.exists(configFile()));
+    }
+
     /**
      * With several accounts, an environment credential replaces the default one and nothing
      * else -- the prompt says so, and the other accounts must survive.

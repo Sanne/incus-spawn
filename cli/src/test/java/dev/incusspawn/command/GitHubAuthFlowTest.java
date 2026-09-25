@@ -334,4 +334,60 @@ class GitHubAuthFlowTest {
         assertEquals("ghp_flat", saved("github.accounts.default.token"));
         assertEquals("default", saved("github.default"));
     }
+
+    // ── choosing the commit email ────────────────────────────────────────────────
+
+    private static final String SEVERAL_EMAILS = """
+            [{"email":"me@work.example","verified":true,"primary":true},
+             {"email":"me@home.example","verified":true,"primary":false},
+             {"email":"unverified@example.com","verified":false,"primary":false},
+             {"email":"1234+me@users.noreply.github.com","verified":true,"primary":false}]""";
+
+    private static String chooseEmail(String json, String... input) {
+        var prompts = ScriptedPrompts.lines(input);
+        var email = InitCommand.chooseEmail(InitCommand.parseGitHubEmails(json), prompts);
+        prompts.assertFullyConsumed();
+        return email;
+    }
+
+    /** The default must be the private address, so pressing Enter never publishes a real one. */
+    @Test
+    void enterPicksTheNoreplyAddress() {
+        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, ""));
+    }
+
+    @Test
+    void closedStdinPicksTheNoreplyAddress() {
+        var email = InitCommand.chooseEmail(InitCommand.parseGitHubEmails(SEVERAL_EMAILS), new ScriptedPrompts());
+        assertEquals("1234+me@users.noreply.github.com", email);
+    }
+
+    @Test
+    void aNumberPicksThatAddress() {
+        // Listed as: 1. noreply, 2. work (primary), 3. home -- unverified ones never appear.
+        assertEquals("me@work.example", chooseEmail(SEVERAL_EMAILS, "2"));
+        assertEquals("me@home.example", chooseEmail(SEVERAL_EMAILS, " 3 "));
+    }
+
+    @Test
+    void anOutOfRangeOrUnreadableChoiceFallsBackToTheFirst() {
+        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "4"));
+        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "0"));
+        assertEquals("1234+me@users.noreply.github.com", chooseEmail(SEVERAL_EMAILS, "me@home.example"));
+    }
+
+    @Test
+    void aSingleVerifiedAddressIsTakenWithoutAsking() {
+        // assertFullyConsumed fails if a question was asked.
+        assertEquals("only@example.com", chooseEmail("""
+                [{"email":"only@example.com","verified":true,"primary":true},
+                 {"email":"other@example.com","verified":false,"primary":false}]"""));
+    }
+
+    @Test
+    void withoutANoreplyAddressEnterTakesTheFirstVerifiedOne() {
+        assertEquals("me@work.example", chooseEmail("""
+                [{"email":"me@work.example","verified":true,"primary":true},
+                 {"email":"me@home.example","verified":true,"primary":false}]""", ""));
+    }
 }
