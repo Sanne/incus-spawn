@@ -1,0 +1,19 @@
+# A credential namespace used only to observe per-instance account selection.
+#
+# Deliberately separate from test-proxy-tool: that one pins the flat,
+# pre-accounts layout, and the two shapes have to keep working side by side.
+# Being a YAML-only tool is part of what is under test -- named accounts are
+# meant to reach a namespace isx has no Java for, with no code of its own.
+name: test-account-tool
+proxy:
+  config-namespace: testAccountTool
+  configuration:
+    token:
+      config-path: "token"
+      description: Test account token
+      secret: true
+  auth:
+    - domains:
+        - echo-accounts.incus-spawn.test
+      type: bearer
+      token: "${token}"

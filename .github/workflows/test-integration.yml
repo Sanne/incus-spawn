@@ -346,6 +346,7 @@ jobs:
         run: |
           mkdir -p ~/.config/incus-spawn/tools
           cp .github/test-fixtures/tools/test-proxy-tool.yaml ~/.config/incus-spawn/tools/
+          cp .github/test-fixtures/tools/test-account-tool.yaml ~/.config/incus-spawn/tools/
 
       - name: Start echo server for proxy credential test
         run: |
@@ -353,7 +354,7 @@ jobs:
           CA_KEY="$HOME/.config/incus-spawn/ca.key"
           ECHO_DIR="$HOME/.config/incus-spawn/echo-test"
           mkdir -p "$ECHO_DIR"
-          DOMAINS="echo.incus-spawn.test echo-basic.incus-spawn.test echo-header.incus-spawn.test api.openai.com api.anthropic.com api.github.com"
+          DOMAINS="echo.incus-spawn.test echo-basic.incus-spawn.test echo-header.incus-spawn.test echo-accounts.incus-spawn.test api.openai.com api.anthropic.com api.github.com"
           for d in $DOMAINS; do echo "127.0.0.1 $d"; done | sudo tee -a /etc/hosts
           SANS=$(echo "$DOMAINS" | tr ' ' '\n' | sed 's/^/DNS:/' | paste -sd,)
           openssl req -new -newkey rsa:2048 -nodes \
@@ -384,10 +385,27 @@ jobs:
           with open('$CFG') as f: cfg = yaml.safe_load(f) or {}
           cfg.setdefault('claude', {})['apiKey'] = 'sk-ant-placeholder-for-ci'
           cfg.setdefault('openai', {})['apiKey'] = 'sk-test-openai-key-for-ci'
-          cfg.setdefault('github', {})['token'] = os.environ['GH_CI_TOKEN']
+          # The real token stays the default, so the existing github assertions and
+          # the authenticated git clone keep using it. 'bot' is a second identity
+          # that only an instance pinned to it ever sees -- the echo server plays
+          # GitHub for it, which is why no second real credential is needed.
+          cfg.setdefault('github', {})['accounts'] = {
+              'ci': {'token': os.environ['GH_CI_TOKEN']},
+              'agent': {'token': 'ghp-acct-agent'},
+          }
+          cfg['github']['default'] = 'ci'
           cfg.setdefault('testProxyTool', {})['token'] = 'test-bearer-token-for-ci'
           cfg['testProxyTool']['password'] = 'test-password-for-ci'
           cfg['testProxyTool']['apiKey'] = 'test-api-key-for-ci'
+          # Two accounts under one namespace. The token names its own account, so
+          # an assertion reads as the claim: this instance got its own credential.
+          cfg['testAccountTool'] = {
+              'accounts': {
+                  'alpha': {'token': 'acct-token-alpha'},
+                  'beta': {'token': 'acct-token-beta'},
+              },
+              'default': 'alpha',
+          }
           with open('$CFG', 'w') as f: yaml.dump(cfg, f, default_flow_style=False)
           "
           cat "$CFG"
@@ -425,6 +443,12 @@ jobs:
           tools:
             - podman
           EOF
+          cat > ~/.config/incus-spawn/images/test-accounts.yaml << 'EOF'
+          name: tpl-test-accounts
+          parent: tpl-minimal
+          tools:
+            - gh
+          EOF
           cat > ~/.config/incus-spawn/images/test-vm.yaml << 'EOF'
           name: tpl-test-vm
           parent: tpl-minimal
@@ -436,6 +460,7 @@ jobs:
           sg incus-admin -c "isx build tpl-minimal --yes"
           sg incus-admin -c "isx build tpl-test-podman --yes"
           sg incus-admin -c "isx build tpl-test-vm --yes"
+          sg incus-admin -c "isx build tpl-test-accounts --yes"
 
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
@@ -453,6 +478,51 @@ jobs:
             done'"
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-container/tmp/"
           sg incus-admin -c "incus exec test-container -- bash /tmp/test-instance.sh"
+
+      - name: Test per-instance credential accounts
+        run: |
+          # Two instances of the same template, differing only in the account
+          # they are pinned to -- which is the whole claim: one shared proxy,
+          # different real credentials, decided by who asked.
+          sg incus-admin -c "isx branch acct-alpha --from tpl-minimal --no-start \
+              --account testAccountTool=alpha"
+          sg incus-admin -c "isx branch acct-beta --from tpl-minimal --no-start \
+              --account testAccountTool=beta"
+          for i in acct-alpha acct-beta; do
+            sg incus-admin -c "incus start $i"
+            sg incus-admin -c "incus exec $i -- bash -c '
+              systemctl start systemd-networkd 2>/dev/null
+              for n in \$(seq 1 30); do
+                ip -4 -o addr show eth0 | grep -q \"inet \" && break
+                sleep 0.5
+              done'"
+          done
+
+          sg incus-admin -c "isx account show acct-alpha"
+          sg incus-admin -c "isx account show acct-beta"
+
+          for i in alpha beta; do
+            sg incus-admin -c "incus file push .github/scripts/test-accounts.sh acct-$i/tmp/"
+            sg incus-admin -c "incus exec acct-$i -- bash /tmp/test-accounts.sh $i"
+          done
+
+          sg incus-admin -c "bash .github/scripts/test-account-switching.sh"
+
+          # GitHub is the one namespace where an account changes what the build
+          # baked: the git identity comes from whoever the token belongs to. The
+          # echo server answers /user as the account whose token reached it, so
+          # two identities are exercised without a second real credential.
+          sg incus-admin -c "isx branch acct-gh --from tpl-test-accounts --no-start \
+              --account github=agent"
+          sg incus-admin -c "incus start acct-gh"
+          sg incus-admin -c "incus exec acct-gh -- bash -c '
+            systemctl start systemd-networkd 2>/dev/null
+            for n in \$(seq 1 30); do
+              ip -4 -o addr show eth0 | grep -q \"inet \" && break
+              sleep 0.5
+            done'"
+          sg incus-admin -c "incus file push .github/scripts/test-git-identity.sh acct-gh/tmp/"
+          sg incus-admin -c "incus exec acct-gh -- bash /tmp/test-git-identity.sh agent"
 
       - name: Test rootless podman
         run: |
