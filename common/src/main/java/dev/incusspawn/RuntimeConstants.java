@@ -21,7 +21,7 @@ import java.util.List;
  *
  * <p>Without that flag GraalVM resolves these paths while <em>building</em> the image and bakes
  * the result into the image heap — on Linux that is the builder container's {@code /root}, which
- * no user can read. {@link dev.incusspawn.graal.BakedHostPathFeature} fails the build if it
+ * no user can read. {@link dev.incusspawn.graal.BakedHostStateFeature} fails the build if it
  * happens, and {@code .claude/rules/native-image.md} has the full rationale.
  *
  * <p>This is therefore the one place in {@code common} that may capture a host path, and also
