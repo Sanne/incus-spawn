@@ -48,6 +48,17 @@ public interface AccountShape {
     ObjectNode flatAccount(JsonNode namespace);
 
     /**
+     * Whether values collected for one account -- keys relative to the namespace, as in
+     * {@link #flatKeys()} -- include this shape's credential, i.e. whether writing them alone
+     * would give a usable account rather than one holding only its non-secret settings.
+     */
+    default boolean hasCredential(java.util.Map<String, String> values) {
+        var account = JsonNodeFactory.instance.objectNode();
+        values.forEach((key, value) -> set(account, key, value));
+        return hasFlatCredential(account);
+    }
+
+    /**
      * The flat keys {@link #flatAccount} replaces, removed once the account is written.
      * Anything else at the namespace level stays there, where every account inherits it.
      */

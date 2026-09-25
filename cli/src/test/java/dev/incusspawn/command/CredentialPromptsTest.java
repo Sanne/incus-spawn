@@ -12,11 +12,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static dev.incusspawn.command.IsolatedHome.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -78,14 +78,6 @@ class CredentialPromptsTest {
         return tool(name, Map.of("token", token));
     }
 
-    private static Path configFile() {
-        return Environment.configDir().resolve("config.yaml");
-    }
-
-    private static String saved(String path) {
-        return AccountResolver.navigate(SpawnConfig.load().tree(), path);
-    }
-
     private static void configure(SpawnConfig config, ScriptedPrompts prompts) {
         new InitCommand().setupGenericToolCredentials("acme", acme(), config, prompts);
         prompts.assertFullyConsumed();
@@ -115,13 +107,8 @@ class CredentialPromptsTest {
         // Answering the confirm (No) is a value; skipping the others must not become "".
         assertEquals("false", saved("acme.telemetry"));
         var acme = SpawnConfig.load().tree().get("acme");
-        assertEquals(List.of("telemetry"), iterableToList(acme.fieldNames()), acme.toString());
-    }
-
-    private static List<String> iterableToList(java.util.Iterator<String> names) {
-        var list = new java.util.ArrayList<String>();
-        names.forEachRemaining(list::add);
-        return list;
+        assertEquals(1, acme.size(), acme.toString());
+        assertTrue(acme.has("telemetry"), acme.toString());
     }
 
     @Test

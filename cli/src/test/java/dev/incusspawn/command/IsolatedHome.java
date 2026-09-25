@@ -9,12 +9,34 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 
+import dev.incusspawn.Environment;
+import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.SpawnConfig;
+
 /**
  * Points {@code user.home} at a fresh directory for each test, so anything that calls
  * {@code SpawnConfig.save()} writes there rather than over the developer's own
- * {@code ~/.config/incus-spawn/config.yaml}.
+ * {@code ~/.config/incus-spawn/config.yaml}. The static helpers read and write that file for
+ * the tests using it, so they can assert on what actually reached disk.
  */
 final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
+
+    /** The config.yaml the code under test reads and writes. */
+    static Path configFile() {
+        return Environment.configDir().resolve("config.yaml");
+    }
+
+    /** Writes {@code yaml} as the config file and loads it, as {@code isx init} would. */
+    static SpawnConfig seed(String yaml) throws IOException {
+        Files.createDirectories(configFile().getParent());
+        Files.writeString(configFile(), yaml);
+        return SpawnConfig.load();
+    }
+
+    /** A dotted path's value in the config as saved on disk, or {@code ""}. */
+    static String saved(String path) {
+        return AccountResolver.navigate(SpawnConfig.load().tree(), path);
+    }
 
     private static final ExtensionContext.Namespace NS = ExtensionContext.Namespace.create(IsolatedHome.class);
 
