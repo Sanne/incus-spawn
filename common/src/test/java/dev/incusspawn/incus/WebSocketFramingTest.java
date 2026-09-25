@@ -92,4 +92,69 @@ class WebSocketFramingTest {
         assertEquals(200, first.payload().length);
         assertTrue(UnixSocketTransport.wsReadFrame(in, p -> {}).fin());
     }
+
+    // --- Over a real socket: which read path is allowed to write ---
+
+    /**
+     * Serve one WebSocket client on a temp Unix socket: complete the handshake, send
+     * {@code frames}, then report every byte the client writes back until it disconnects.
+     */
+    private static java.util.concurrent.CompletableFuture<byte[]> serveOnce(java.nio.file.Path socket, byte[] frames)
+            throws Exception {
+        var server = java.nio.channels.ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX);
+        server.bind(java.net.UnixDomainSocketAddress.of(socket));
+        var written = new java.util.concurrent.CompletableFuture<byte[]>();
+        Thread.ofVirtual().start(() -> {
+            try (server; var ch = server.accept()) {
+                var in = java.nio.channels.Channels.newInputStream(ch);
+                var out = java.nio.channels.Channels.newOutputStream(ch);
+                var request = new StringBuilder();
+                while (!request.toString().endsWith("\r\n\r\n")) request.append((char) in.read());
+                out.write("HTTP/1.1 101 Switching Protocols\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                out.write(frames);
+                out.flush();
+                written.complete(in.readAllBytes());
+            } catch (Exception e) {
+                written.completeExceptionally(e);
+            }
+        });
+        return written;
+    }
+
+    @Test
+    void byteStreamReadsNeverWrite() throws Exception {
+        // The exec/shell path: a PING is skipped without a reply, exactly as before event
+        // subscriptions existed, so reading can never contend with a stdin writer.
+        var dir = java.nio.file.Files.createTempDirectory("ws-test");
+        var socket = dir.resolve("s.sock");
+        var wire = new ByteArrayOutputStream();
+        frame(wire, true, PING, "hb");
+        frame(wire, true, 0x2, "out");
+        var written = serveOnce(socket, wire.toByteArray());
+        try (var ws = new UnixSocketTransport(socket.toString()).openWebSocket("/x")) {
+            assertEquals("out", text(ws.readPayload()));
+        }
+        assertEquals(0, written.get(5, java.util.concurrent.TimeUnit.SECONDS).length);
+    }
+
+    @Test
+    void messageReadsAnswerPings() throws Exception {
+        var dir = java.nio.file.Files.createTempDirectory("ws-test");
+        var socket = dir.resolve("s.sock");
+        var wire = new ByteArrayOutputStream();
+        frame(wire, true, PING, "hb");
+        frame(wire, true, TEXT, "{}");
+        var written = serveOnce(socket, wire.toByteArray());
+        try (var ws = new UnixSocketTransport(socket.toString()).openWebSocket("/x")) {
+            assertEquals("{}", text(ws.readMessage()));
+            assertTrue(ws.millisSinceLastReceived() < 5_000);
+        }
+        var reply = written.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        // One masked PONG (client frames are masked): FIN|0xA, MASK|len 2, 4-byte key, 2 bytes.
+        assertEquals(8, reply.length);
+        assertEquals((byte) 0x8A, reply[0]);
+        assertEquals((byte) 0x82, reply[1]);
+        var payload = new byte[] {(byte) (reply[6] ^ reply[2]), (byte) (reply[7] ^ reply[3])};
+        assertEquals("hb", text(payload));
+    }
 }

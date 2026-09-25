@@ -375,9 +375,8 @@ class UnixSocketTransport implements IncusTransport {
     }
 
     /**
-     * Read the next data frame from the server (unmasked), answering any PING along the way.
-     * Returns null on close frame or EOF. Long-lived streams depend on the PONG: a server that
-     * heartbeats its listeners drops one that never answers.
+     * Read the next data frame from the server (unmasked), passing any PING or PONG met along
+     * the way to {@code control}. Returns null on close frame or EOF.
      */
     // Package-private for testing
     static WsFrame wsReadFrame(InputStream in, ControlFrames control) throws IOException {
@@ -490,7 +489,13 @@ class UnixSocketTransport implements IncusTransport {
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         private final boolean permit;
-        private final ControlFrames control = new ControlFrames() {
+        // Byte-stream reads (exec, shells) skip control frames exactly as they always have: Incus
+        // doesn't ping exec sockets, and a PONG sent from the reader thread would queue behind a
+        // stdin write holding writeLock -- a stall risk on the one channel that must never stall.
+        private static final ControlFrames IGNORE_CONTROL = payload -> {};
+        // Message reads (the long-lived event subscription) answer PINGs, which Incus requires of
+        // event listeners, and count every control frame as a sign the peer is alive.
+        private final ControlFrames answeringControl = new ControlFrames() {
             @Override public void ping(byte[] payload) throws IOException {
                 received();
                 sendPong(payload);
@@ -510,14 +515,13 @@ class UnixSocketTransport implements IncusTransport {
 
         @Override
         public byte[] readPayload() throws IOException {
-            var frame = wsReadFrame(in, control);
-            received();
+            var frame = wsReadFrame(in, IGNORE_CONTROL);
             return frame == null ? null : frame.payload();
         }
 
         @Override
         public byte[] readMessage() throws IOException {
-            var message = wsReadMessage(in, control);
+            var message = wsReadMessage(in, answeringControl);
             received();
             return message;
         }

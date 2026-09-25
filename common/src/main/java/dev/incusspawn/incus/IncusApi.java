@@ -168,8 +168,12 @@ class IncusApi {
                     if (ws.millisSinceLastReceived() > EVENTS_SILENCE_LIMIT_MS) break;
                     ws.sendPing();
                 }
-            } catch (IOException | InterruptedException ignored) {}
-            ws.close();
+            } catch (IOException | InterruptedException ignored) {
+            } finally {
+                // Whatever ends the keepalive, the stream must end with it: a stream nobody is
+                // watching could block its reader forever while the subscriber believes it's live.
+                ws.close();
+            }
         });
         return new IncusEventStream() {
             @Override

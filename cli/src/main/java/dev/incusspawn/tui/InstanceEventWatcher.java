@@ -20,6 +20,13 @@ import java.util.function.Supplier;
  * exponential backoff; while disconnected {@link #isConnected()} is false, which is the TUI's cue
  * to fall back to slow polling.
  *
+ * <p>Live updates are a convenience and must never cost the Incus channel anything, so the watcher
+ * gives up rather than keep knocking: after {@link #MAX_CONSECUTIVE_FAILURES} failures in a row --
+ * a connect that fails, or a subscription that drops within {@link #HEALTHY_SESSION_MS} -- it stops
+ * for good and calls {@code onGiveUp}. Each attempt is a new connection, which on macOS is a vsock
+ * stream through the appliance's forwarder, where closed streams can linger until reaped; a
+ * reconnect loop left running for days would keep adding to them.
+ *
  * <p>Listener callbacks run on the watcher thread, so they must only flip flags for the UI thread.
  */
 public final class InstanceEventWatcher implements AutoCloseable {
@@ -48,27 +55,43 @@ public final class InstanceEventWatcher implements AutoCloseable {
             "instance-started", "instance-restarted", "instance-resumed");
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    static final long INITIAL_BACKOFF_MS = 1_000;
-    static final long MAX_BACKOFF_MS = 30_000;
+    static final long INITIAL_BACKOFF_MS = 2_000;
+    static final int MAX_CONSECUTIVE_FAILURES = 3;
+    static final long HEALTHY_SESSION_MS = 60_000;
 
     private final Supplier<IncusEventStream> opener;
     private final Consumer<Change> onChange;
     private final Runnable onResync;
+    private final Runnable onGiveUp;
+    private final long initialBackoffMs;
+    private final long healthySessionMs;
     private final Thread thread;
     private final Object lock = new Object();
     private IncusEventStream current;       // guarded by lock
     private volatile boolean closed;
     private volatile boolean connected;
+    private volatile boolean gaveUp;
 
     /**
      * @param opener   opens a fresh lifecycle subscription; may throw when Incus is unreachable
      * @param onChange called for every relevant instance event
      * @param onResync called whenever a subscription (re)opens, so missed events are re-read
+     * @param onGiveUp called once if the watcher stops retrying (not when {@link #close()}d)
      */
-    public InstanceEventWatcher(Supplier<IncusEventStream> opener, Consumer<Change> onChange, Runnable onResync) {
+    public InstanceEventWatcher(Supplier<IncusEventStream> opener, Consumer<Change> onChange,
+                                Runnable onResync, Runnable onGiveUp) {
+        this(opener, onChange, onResync, onGiveUp, INITIAL_BACKOFF_MS, HEALTHY_SESSION_MS);
+    }
+
+    // Package-private for testing: the real thresholds would make give-up tests take minutes.
+    InstanceEventWatcher(Supplier<IncusEventStream> opener, Consumer<Change> onChange,
+                         Runnable onResync, Runnable onGiveUp, long initialBackoffMs, long healthySessionMs) {
+        this.initialBackoffMs = initialBackoffMs;
+        this.healthySessionMs = healthySessionMs;
         this.opener = opener;
         this.onChange = onChange;
         this.onResync = onResync;
+        this.onGiveUp = onGiveUp;
         this.thread = new Thread(this::run, "incus-events");
         this.thread.setDaemon(true);
     }
@@ -78,15 +101,22 @@ public final class InstanceEventWatcher implements AutoCloseable {
         return this;
     }
 
-    /** Whether a subscription is currently open. False while (re)connecting or after close. */
+    /** Whether a subscription is currently open. False while (re)connecting, after close or giving up. */
     public boolean isConnected() {
         return connected;
     }
 
+    /** Whether the watcher stopped retrying after repeated failures. */
+    public boolean hasGivenUp() {
+        return gaveUp;
+    }
+
     private void run() {
-        long backoff = INITIAL_BACKOFF_MS;
+        long backoff = initialBackoffMs;
+        int failures = 0;
         while (!closed) {
             IncusEventStream stream = null;
+            long connectedAt = -1;
             try {
                 stream = opener.get();
                 synchronized (lock) {
@@ -94,7 +124,7 @@ public final class InstanceEventWatcher implements AutoCloseable {
                     current = stream;
                 }
                 connected = true;
-                backoff = INITIAL_BACKOFF_MS;
+                connectedAt = System.nanoTime();
                 onResync.run();
                 String message;
                 while ((message = stream.next()) != null) {
@@ -112,12 +142,24 @@ public final class InstanceEventWatcher implements AutoCloseable {
                 if (stream != null) stream.close();
             }
             if (closed) break;
+            boolean healthy = connectedAt >= 0
+                    && (System.nanoTime() - connectedAt) / 1_000_000 >= healthySessionMs;
+            if (healthy) {
+                // A long-lived subscription that finally dropped (daemon restart, sleep/resume)
+                // starts a fresh budget.
+                failures = 0;
+                backoff = initialBackoffMs;
+            } else if (++failures >= MAX_CONSECUTIVE_FAILURES) {
+                gaveUp = true;
+                onGiveUp.run();
+                break;
+            }
             try {
                 Thread.sleep(backoff);
             } catch (InterruptedException e) {
                 break;
             }
-            backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+            backoff *= 2;
         }
         connected = false;
     }

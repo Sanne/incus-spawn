@@ -71,14 +71,17 @@ interface IncusTransport {
         /** Block until next data payload. Returns null on close/EOF. */
         byte[] readPayload() throws IOException;
         /**
-         * Block until the next complete message, reassembling fragmented frames. Returns null
-         * on close/EOF. Use this where frame boundaries matter (one JSON document per message);
-         * {@link #readPayload} is for byte streams, where they don't.
+         * Block until the next complete message, reassembling fragmented frames, and answer any
+         * PING with a PONG on the way. Returns null on close/EOF. For long-lived, message-framed
+         * streams (one JSON document per message, e.g. events). {@link #readPayload} is for byte
+         * streams: it ignores frame boundaries and never writes, so reading can't contend with a
+         * concurrent sender.
          */
         byte[] readMessage() throws IOException;
         /**
-         * Milliseconds since anything (data, PING or PONG) last arrived. A quiet long-lived
-         * stream that sends its own pings uses this to tell an idle peer from a vanished one.
+         * Milliseconds since anything (data, PING or PONG) last arrived through
+         * {@link #readMessage}. A quiet long-lived stream that sends its own pings uses this to
+         * tell an idle peer from a vanished one.
          */
         long millisSinceLastReceived();
         /** Send binary data to the server. */
