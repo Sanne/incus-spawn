@@ -379,6 +379,14 @@ class InitCommandTest {
     // --- pasted secrets ---
 
     @Test
+    void receivedSecretLineShowsLengthAndOnlyTheMaskedForm() {
+        assertEquals("\u2713 Received 27 characters (github_pat_...0000)",
+                InitCommand.describeReceivedSecret("github_pat_agent_0000000000"));
+        // Too short to mask safely: nothing of it is shown.
+        assertEquals("\u2713 Received 1 character (****)", InitCommand.describeReceivedSecret("x"));
+    }
+
+    @Test
     void readSecretStripsSurroundingWhitespaceAndToleratesNull() {
         assertEquals("sk-ant-oat01-abc", InitCommand.readSecret("  sk-ant-oat01-abc\t".toCharArray()));
         assertEquals("", InitCommand.readSecret(null));

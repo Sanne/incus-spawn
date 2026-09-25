@@ -1500,7 +1500,7 @@ public class InitCommand extends BaseCommand {
         } else if (authChoice.equals("1")) {
             while (true) {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
-                var key = readSecret(prompts.readPassword());
+                var key = askSecret(prompts);
                 if (key.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     break;
@@ -1698,6 +1698,29 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
+     * Reads a secret and confirms what arrived. {@code readPassword()} echoes nothing, so
+     * without this a paste that never landed looks exactly like one that did, and a truncated
+     * one only shows up as a rejection from the remote API. The line shows the length and the
+     * same masked form init already prints for a configured credential -- never more.
+     *
+     * <p>Dimmed and worded "received" rather than green: it says the input arrived, not that
+     * the credential works; verification still speaks for that.
+     */
+    static String askSecret(Prompts prompts) {
+        var secret = readSecret(prompts.readPassword());
+        if (!secret.isEmpty()) {
+            System.out.println("  " + DIM + describeReceivedSecret(secret) + RESET);
+        }
+        return secret;
+    }
+
+    static String describeReceivedSecret(String secret) {
+        var n = secret.length();
+        return "\u2713 Received " + n + (n == 1 ? " character" : " characters")
+                + " (" + maskSecret(secret) + ")";
+    }
+
+    /**
      * The plaintext counterpart to {@link #readSecret(char[])}: strips, and answers EOF with
      * {@code ""} rather than throwing.
      *
@@ -1888,7 +1911,7 @@ public class InitCommand extends BaseCommand {
 
         while (true) {
             System.out.print("  Paste your OAuth token (or press Enter to skip): ");
-            var token = readSecret(prompts.readPassword());
+            var token = askSecret(prompts);
             if (token.isBlank()) {
                 System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                 break;
@@ -2288,7 +2311,7 @@ public class InitCommand extends BaseCommand {
 
         while (true) {
             System.out.print("  GitHub PAT for the agent (or press Enter to skip): ");
-            var token = readSecret(prompts.readPassword());
+            var token = askSecret(prompts);
             if (token.isBlank()) {
                 // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
                 // agent act as you — so it is offered here (default No), never as the primary path.
@@ -2324,7 +2347,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("      " + TerminalLink.link(patSettingsUrl(token)));
             System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
-            var newToken = readSecret(prompts.readPassword());
+            var newToken = askSecret(prompts);
             if (newToken.isBlank()) {
                 saveGitHubToken(config, account, token, null);
                 break;
@@ -2565,7 +2588,7 @@ public class InitCommand extends BaseCommand {
             } else {
                 System.out.print("  " + label + " (or press Enter to skip): ");
                 if (configDef.isSecret()) {
-                    value = readSecret(prompts.readPassword());
+                    value = askSecret(prompts);
                 } else {
                     value = readInput(prompts.readLine());
                 }
