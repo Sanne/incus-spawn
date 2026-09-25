@@ -2115,6 +2115,23 @@ public class InitCommand extends BaseCommand {
      */
     private String chooseAccountTarget(SpawnConfig config, String namespace, String label,
                                        java.util.List<String> keys, Console console) {
+        return chooseAccountTarget(config, namespace, label, keys,
+                () -> readInput(console.readLine()),
+                taken -> askAccountName(console, taken));
+    }
+
+    /**
+     * As above, against a plain line source rather than a {@link Console}.
+     *
+     * <p>The menu needs lines, not a terminal. Taking them as a supplier is what makes its
+     * decisions testable -- {@code Console} is final and cannot be stood in for, so this code
+     * would otherwise be reachable only by a human at a keyboard, which is how both of the bugs
+     * it had went unnoticed.
+     */
+    String chooseAccountTarget(SpawnConfig config, String namespace, String label,
+                               java.util.List<String> keys,
+                               java.util.function.Supplier<String> readLine,
+                               java.util.function.Function<java.util.Set<String>, String> askName) {
         while (true) {
             var accounts = NamespaceAccounts.names(config, namespace);
             var defaultName = NamespaceAccounts.defaultName(config, namespace);
@@ -2126,7 +2143,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    r. Replace it");
                 System.out.println("    a. Add a second account (keeps the current one)");
                 System.out.print("  Choice (Enter to keep as-is): ");
-                var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
+                var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return null; }
                     case "r" -> { return ""; }
@@ -2136,8 +2153,7 @@ public class InitCommand extends BaseCommand {
                         // having rewritten the file -- and a config an older isx reads as
                         // having no credentials at all (#740). saveGitHubToken does it, once
                         // there is something to save.
-                        var name = askAccountName(console, java.util.Set.of(
-                                NamespaceAccounts.DEFAULT_ACCOUNT_NAME));
+                        var name = askName.apply(java.util.Set.of(NamespaceAccounts.DEFAULT_ACCOUNT_NAME));
                         if (name.isEmpty()) return null;
                         return name;
                     }
@@ -2159,17 +2175,17 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    x. Remove an account");
             }
             System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
+            var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> { return null; }
                 case "a" -> {
-                    var name = askAccountName(console, new java.util.LinkedHashSet<>(accounts));
+                    var name = askName.apply(new java.util.LinkedHashSet<>(accounts));
                     return name.isEmpty() ? null : name;
                 }
                 case "e" -> {
                     System.out.print("  Name of the account to replace: ");
-                    var name = readInput(console.readLine());
+                    var name = readLine.get();
                     if (accounts.contains(name)) return name;
                     if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
                 }
@@ -2183,7 +2199,7 @@ public class InitCommand extends BaseCommand {
                 case "d" -> {
                     if (!canManageMultiple) continue;
                     System.out.print("  Name of the account to make default: ");
-                    var name = readInput(console.readLine());
+                    var name = readLine.get();
                     if (accounts.contains(name)) {
                         NamespaceAccounts.setDefault(config, namespace, name);
                         config.save();
@@ -2195,7 +2211,7 @@ public class InitCommand extends BaseCommand {
                 case "x" -> {
                     if (!canManageMultiple) continue;
                     System.out.print("  Name of the account to remove: ");
-                    var name = readInput(console.readLine());
+                    var name = readLine.get();
                     if (accounts.contains(name)) {
                         NamespaceAccounts.remove(config, namespace, name);
                         config.save();

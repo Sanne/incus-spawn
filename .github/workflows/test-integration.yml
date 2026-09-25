@@ -540,7 +540,11 @@ jobs:
 
       - name: Test VM
         run: |
-          sg incus-admin -c "isx branch test-vm --from tpl-test-vm --no-start"
+          # Pinned to an account so the VM path is covered too: a VM reaches the proxy
+          # the same way a container does, but its metadata and file pushes go through
+          # the incus-agent, which is the part a container can never exercise.
+          sg incus-admin -c "isx branch test-vm --from tpl-test-vm --no-start \
+              --account testAccountTool=beta"
           sg incus-admin -c "incus start test-vm"
           echo "Waiting for VM agent..."
           for i in $(seq 1 60); do
@@ -556,6 +560,9 @@ jobs:
           done
           sg incus-admin -c "incus file push .github/scripts/test-instance.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-instance.sh"
+          sg incus-admin -c "isx account show test-vm"
+          sg incus-admin -c "incus file push .github/scripts/test-accounts.sh test-vm/tmp/"
+          sg incus-admin -c "incus exec test-vm -- bash /tmp/test-accounts.sh beta"
 
       - name: Assert proxy survived
         run: |
