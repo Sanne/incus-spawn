@@ -50,8 +50,10 @@ class SecretRedactorTest {
         var result = SecretRedactor.redactConfig(configuredConfig(), builtInLocations());
         assertFalse(result.redactedPaths().contains("claude.apiKey"),
                 "an unconfigured key was never redacted, so it must not be reported as such");
-        // apiKey is unset: it must serialize as empty, not as a marker.
-        assertTrue(result.yaml().contains("apiKey: \"\""), "actual yaml:\n" + result.yaml());
+        // apiKey is unset: it must not come out as a marker. (Unset keys are omitted outright
+        // now that no namespace writes its empty fields back, so absence is the evidence.)
+        assertFalse(result.yaml().contains("<isx:redacted:claude.apiKey>"), "actual yaml:\n" + result.yaml());
+        assertFalse(result.yaml().contains("<isx:redacted:bob.apiKey>"), "actual yaml:\n" + result.yaml());
     }
 
     @Test

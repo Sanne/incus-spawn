@@ -60,6 +60,11 @@ public class ClaudeSetup implements ToolSetup {
         return proxy;
     }
 
+    @Override
+    public dev.incusspawn.config.AccountShape accountShape() {
+        return SpawnConfig.ClaudeConfig.ACCOUNT_SHAPE;
+    }
+
     /**
      * The auth mode, not the account name: {@code envEntries} writes a different set of
      * variables for each mode, so vertex/oauth/api-key accounts are not interchangeable on a

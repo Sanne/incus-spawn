@@ -44,6 +44,17 @@ public interface ToolSetup {
     default boolean hasOwnCredentials() { return true; }
 
     /**
+     * What this tool's credential accounts look like: which keys hold the credential, and when an
+     * account is unusable. Derived from the {@code secret: true} entries of {@link #proxy()}, so
+     * a tool -- including one defined only in YAML -- has to declare nothing further to get named
+     * accounts. Override only when usability depends on more than those keys being set, as it
+     * does for Claude, whose accounts each carry an auth type.
+     */
+    default dev.incusspawn.config.AccountShape accountShape() {
+        return dev.incusspawn.config.AccountShape.declaredBy(proxy());
+    }
+
+    /**
      * What the build <em>derived</em> from this account and wrote into the image, or {@code ""}
      * when the account makes no difference to what gets baked.
      *

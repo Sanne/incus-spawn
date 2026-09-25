@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.quarkus.runtime.annotations.RegisterForReflection;
@@ -208,8 +209,8 @@ public class SpawnConfig {
         public static final String OAUTH_TOKEN_PREFIX = "sk-ant-oat01-";
         public static final String PLACEHOLDER_OAUTH_TOKEN = OAUTH_TOKEN_PREFIX + "placeholder";
 
-        /** Name given to the account synthesized from a pre-accounts config.yaml. */
-        public static final String LEGACY_ACCOUNT_NAME = "default";
+        /** Name the flat credential of a pre-accounts config.yaml presents as. */
+        public static final String LEGACY_ACCOUNT_NAME = AccountResolver.FLAT_ACCOUNT_NAME;
 
         /** Config namespace, matching the {@code config-namespace} ClaudeSetup declares. */
         public static final String NAMESPACE = "claude";
@@ -246,38 +247,93 @@ public class SpawnConfig {
         }
 
         /**
-         * Every configured account including incomplete ones, in file order. A pre-accounts
-         * config.yaml contributes a single synthesized entry so the rest of isx only ever
-         * deals with accounts. Used by the init UI so incomplete accounts are visible and
-         * removable; credential resolution should use {@link #effectiveAccounts()} instead.
+         * Claude's accounts as {@link AccountResolver} sees them.
+         *
+         * <p>Two things differ from a shape derived from secret keys. The pre-accounts layout
+         * holds a Vertex credential that is not a secret at all -- {@code useVertex: true} with a
+         * region and project -- and it must present as the account {@code default} even when
+         * the region or project is missing, so ProxyMain can report exactly that
+         * misconfiguration rather than "no credentials". And whether an account is usable
+         * depends on its type: a Vertex account needs a region and a project, the others a key.
          */
-        public Map<String, ClaudeAccount> allAccounts() {
-            if (!accounts.isEmpty()) {
-                var all = new java.util.LinkedHashMap<String, ClaudeAccount>();
-                accounts.forEach((name, account) -> {
-                    if (account != null) all.put(name, account);
-                });
-                return all;
+        public static final AccountShape ACCOUNT_SHAPE = new AccountShape() {
+            @Override
+            public boolean hasFlatCredential(JsonNode namespace) {
+                var flat = bind(namespace, ClaudeConfig.class);
+                return flat != null && flat.legacyAccount() != null;
             }
-            var legacy = legacyAccount();
-            return legacy == null ? Map.of() : Map.of(LEGACY_ACCOUNT_NAME, legacy);
+
+            @Override
+            public com.fasterxml.jackson.databind.node.ObjectNode flatAccount(JsonNode namespace) {
+                var flat = bind(namespace, ClaudeConfig.class);
+                var legacy = flat == null ? null : flat.legacyAccount();
+                return legacy == null ? TREE.createObjectNode() : TREE.valueToTree(legacy);
+            }
+
+            @Override
+            public java.util.List<String> flatKeys() {
+                return java.util.List.of("useVertex", "cloudMlRegion", "vertexProjectId", "apiKey", "oauthToken");
+            }
+
+            @Override
+            public String problem(JsonNode account, JsonNode namespace) {
+                var typed = bind(account, ClaudeAccount.class);
+                if (typed == null || typed.effectiveType() == null) return "it holds no credential";
+                if (typed.isComplete()) return "";
+                return "a " + typed.effectiveType().wireName() + " account is missing the fields its type requires";
+            }
+        };
+
+        private static <T> T bind(JsonNode node, Class<T> type) {
+            if (node == null || !node.isObject()) return null;
+            try {
+                return TREE.treeToValue(node, type);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        /** This namespace alone, placed where {@link AccountResolver} expects to find it. */
+        private JsonNode asConfigTree() {
+            var root = TREE.createObjectNode();
+            root.set(NAMESPACE, TREE.valueToTree(this));
+            return root;
+        }
+
+        /** The typed account a resolved name refers to -- the flat credential for {@code default} on a pre-accounts file. */
+        private ClaudeAccount typedAccount(String name) {
+            if (accounts.isEmpty()) return LEGACY_ACCOUNT_NAME.equals(name) ? legacyAccount() : null;
+            return accounts.get(name);
         }
 
         /**
-         * Every complete account, in file order — the subset of {@link #allAccounts()} that
-         * carries the credential its type needs. The legacy path is deliberately unfiltered:
+         * Every configured account including incomplete ones, in file order. A pre-accounts
+         * config.yaml contributes the single account its flat credential presents as, so the rest
+         * of isx only ever deals with accounts. Used by the init UI so incomplete accounts are
+         * visible and removable; credential resolution should use {@link #effectiveAccounts()}.
+         */
+        public Map<String, ClaudeAccount> allAccounts() {
+            return accountsNamed(AccountResolver.accountNames(asConfigTree(), NAMESPACE, ACCOUNT_SHAPE));
+        }
+
+        /**
+         * Every usable account, in file order -- the subset of {@link #allAccounts()} that
+         * {@link AccountResolver} would serve. The flat credential is deliberately never filtered:
          * a flat {@code useVertex: true} with no region or project must still present as a
          * Vertex account so ProxyMain can report exactly that misconfiguration rather than
          * silently turning it into "no credentials".
          */
         public Map<String, ClaudeAccount> effectiveAccounts() {
-            var all = allAccounts();
-            if (accounts.isEmpty()) return all;
-            var complete = new java.util.LinkedHashMap<String, ClaudeAccount>();
-            all.forEach((name, account) -> {
-                if (account.isComplete()) complete.put(name, account);
-            });
-            return complete;
+            return accountsNamed(AccountResolver.usableAccountNames(asConfigTree(), NAMESPACE, ACCOUNT_SHAPE));
+        }
+
+        private Map<String, ClaudeAccount> accountsNamed(java.util.List<String> names) {
+            var result = new java.util.LinkedHashMap<String, ClaudeAccount>();
+            for (var name : names) {
+                var account = typedAccount(name);
+                if (account != null) result.put(name, account);
+            }
+            return result;
         }
 
         private ClaudeAccount legacyAccount() {
@@ -296,26 +352,16 @@ public class SpawnConfig {
          * The account an instance or template explicitly named, or {@link #account()} when
          * it named none.
          *
-         * <p><strong>Fails closed.</strong> A name that is not configured raises rather than
-         * falling back to the default: an instance pinned to one client's subscription must
-         * never quietly start spending another's (#351). The two failure messages are kept
-         * apart because an incomplete entry is invisible in {@code isx init} (#742), so
-         * "configured but unusable" would otherwise read as "never existed".
+         * <p><strong>Fails closed</strong>, through the same {@link AccountResolver} rule every
+         * namespace follows: a name that is not configured raises rather than falling back to
+         * the default, because an instance pinned to one client's subscription must never quietly
+         * start spending another's (#351). An incomplete account is reported as such rather than
+         * as missing, because it is easy to overlook in {@code isx init} (#742).
          */
         public ClaudeAccount accountNamed(String name) {
             if (name == null || name.isBlank()) return account();
-            var usable = effectiveAccounts();
-            var found = usable.get(name);
-            if (found != null) return found;
-            if (accounts.containsKey(name)) {
-                throw new AccountResolver.UnknownAccountException("claude", name,
-                        "Claude account '" + name + "' is configured but incomplete"
-                                + " -- it is missing the fields its type requires."
-                                + " Repair it in ~/.config/incus-spawn/config.yaml.");
-            }
-            throw new AccountResolver.UnknownAccountException("claude", name,
-                    "Claude account '" + name + "' is not configured. Configured: "
-                            + (usable.isEmpty() ? "(none)" : String.join(", ", usable.keySet())));
+            var resolved = AccountResolver.effectiveAccount(asConfigTree(), NAMESPACE, ACCOUNT_SHAPE, name);
+            return typedAccount(resolved);
         }
 
         /** Name of the account {@link #account()} resolves to, or "" when none is configured. */
@@ -371,7 +417,11 @@ public class SpawnConfig {
             clearLegacyFields();
         }
 
-        /** Moves a pre-accounts credential into the map under its synthesized name, once. */
+        /**
+         * Moves a pre-accounts credential into {@code accounts.default}, the account it already
+         * presents as, before the first typed write: the equivalent of
+         * {@link NamespaceAccounts#materialize} for writes made through this typed API.
+         */
         private void adoptLegacyAccount() {
             if (!accounts.isEmpty()) return;
             var legacy = legacyAccount();
@@ -454,6 +504,27 @@ public class SpawnConfig {
 
         @com.fasterxml.jackson.annotation.JsonAnyGetter
         public Map<String, Object> getExtras() { return extras; }
+
+        /** The config namespace this class holds, matching its tool's {@code config-namespace}. */
+        protected abstract String namespace();
+
+        /**
+         * {@code key} for the account this namespace resolves to by default, whether the
+         * credential is saved under {@code accounts:} or in the flat, pre-accounts layout.
+         *
+         * <p>The typed getters read only the flat field, which is empty once a credential lives in
+         * an account; asking "is this configured" of them would say no for every file written
+         * since. Resolved against the built-in tool's shape, which every typed namespace has, so
+         * this never scans for tool definitions.
+         */
+        public String defaultValue(String key) {
+            var namespace = namespace();
+            var tree = TREE.createObjectNode();
+            tree.set(namespace, TREE.valueToTree(this));
+            var shape = AccountResolver.shapeOf(Map.of(), namespace);
+            var account = AccountResolver.effectiveAccount(tree, namespace, shape, null);
+            return AccountResolver.value(tree, namespace, account, key);
+        }
     }
 
     // NON_EMPTY, like ClaudeConfig: once a credential moves into an account the flat fields
@@ -465,31 +536,44 @@ public class SpawnConfig {
         private String token = "";
         private String email = "";
 
+        /** The flat, pre-accounts token; see {@link #defaultValue} for the one actually in use. */
         public String getToken() { return token; }
         public void setToken(String token) { this.token = token == null ? "" : token.strip(); }
         public String getEmail() { return email; }
         public void setEmail(String email) { this.email = email == null ? "" : email; }
+        @Override protected String namespace() { return "github"; }
     }
 
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class BobConfig extends NamespaceConfig {
         private String apiKey = "";
         private boolean licenseConsent;
 
+        /** The flat, pre-accounts key; see {@link #effectiveApiKey} for the one actually in use. */
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
-        public boolean hasAuth() { return !apiKey.isBlank(); }
+        /** The key of the account Bob resolves to by default, flat or under {@code accounts:}. */
+        public String effectiveApiKey() { return defaultValue("apiKey"); }
+        public boolean hasAuth() { return !effectiveApiKey().isBlank(); }
+        /** Shared by every account: consenting to the licence is not a property of one key. */
         public boolean isLicenseConsent() { return licenseConsent; }
         public void setLicenseConsent(boolean licenseConsent) { this.licenseConsent = licenseConsent; }
+        @Override protected String namespace() { return "bob"; }
     }
 
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class OpenaiConfig extends NamespaceConfig {
         private String apiKey = "";
 
+        /** The flat, pre-accounts key; see {@link #effectiveApiKey} for the one actually in use. */
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey == null ? "" : apiKey.strip(); }
-        public boolean hasAuth() { return !apiKey.isBlank(); }
+        /** The key of the account OpenAI resolves to by default, flat or under {@code accounts:}. */
+        public String effectiveApiKey() { return defaultValue("apiKey"); }
+        public boolean hasAuth() { return !effectiveApiKey().isBlank(); }
+        @Override protected String namespace() { return "openai"; }
     }
 
     public java.util.List<String> getFeatures() { return features; }
@@ -666,26 +750,27 @@ public class SpawnConfig {
                 }
             }
         }
-        if (tools.contains("gh")) {
-            // Account-aware: the token may live under the template's account rather than the
-            // flat field, and AccountResolver.value falls back to the flat one either way.
-            var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
-            var account = AccountResolver.effectiveAccount(tree, "github",
-                    ImageDef.resolveAccounts(imageDef, allDefs).get("github"));
-            if (AccountResolver.value(tree, "github", account, "token").isBlank()) {
-                missing.add("GitHub token");
+        // Account-aware: a credential may live under the template's account rather than the flat
+        // field, and AccountResolver.value falls back to the flat one either way. A pin to an
+        // account that does not exist is reported below, so it does not also count as missing.
+        var selection = ImageDef.resolveAccounts(imageDef, allDefs);
+        java.util.function.BiPredicate<String, String> configured = (namespace, key) -> {
+            try {
+                var account = AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
+                return !AccountResolver.value(config, namespace, account, key).isBlank();
+            } catch (AccountResolver.UnknownAccountException e) {
+                return true;
             }
+        };
+        if (tools.contains("gh") && !configured.test("github", "token")) {
+            missing.add("GitHub token");
         }
-        if (tools.contains("bob")) {
-            if (!config.getBob().hasAuth()) {
-                missing.add("Bob API key");
-            }
+        if (tools.contains("bob") && !configured.test("bob", "apiKey")) {
+            missing.add("Bob API key");
         }
-        if (tools.contains("codex") && config.isFeatureEnabled("openai")) {
-            if (!config.getOpenai().hasAuth()) {
-                missing.add("OpenAI API key");
-            }
+        if (tools.contains("codex") && config.isFeatureEnabled("openai")
+                && !configured.test("openai", "apiKey")) {
+            missing.add("OpenAI API key");
         }
 
         // A template naming an account that is not configured is a configuration problem and

@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class AccountMenuTest {
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
-    private static final List<String> KEYS = List.of("token", "email");
 
     private static final String ONE_FLAT_CREDENTIAL = """
             github:
@@ -43,11 +42,15 @@ class AccountMenuTest {
             """;
 
     /** Drives the menu with canned keystrokes; account names come from the same queue. */
-    private static String choose(SpawnConfig config, String... input) {
+    private static InitCommand.AccountTarget choose(SpawnConfig config, String... input) {
         var lines = new ArrayDeque<>(List.of(input));
-        return new InitCommand().chooseAccountTarget(config, "github", "GitHub", KEYS,
+        return new InitCommand().chooseAccountTarget(config, "github", "GitHub",
                 () -> lines.isEmpty() ? "" : lines.poll(),
-                taken -> lines.isEmpty() ? "" : lines.poll());
+                taken -> lines.isEmpty() ? "" : lines.poll()).orElse(null);
+    }
+
+    private static InitCommand.AccountTarget target(String name, boolean replaceOthers) {
+        return new InitCommand.AccountTarget(name, replaceOthers);
     }
 
     private static String value(SpawnConfig config, String path) {
@@ -61,17 +64,18 @@ class AccountMenuTest {
         assertEquals("ghp_flat", value(config, "github.token"));
     }
 
+    /** The flat credential is the account 'default', so replacing it targets that account. */
     @Test
-    void replaceTargetsTheFlatLayout() throws Exception {
+    void replaceTargetsTheAccountTheFlatCredentialIs() throws Exception {
         var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
-        assertEquals("", choose(config, "r"),
-                "an empty target means the flat layout, which a single credential keeps");
+        assertEquals(target("default", true), choose(config, "r"));
+        assertEquals("ghp_flat", value(config, "github.token"), "choosing is not writing");
     }
 
     @Test
     void addingASecondAccountReturnsItsName() throws Exception {
         var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
-        assertEquals("acme-bot", choose(config, "a", "acme-bot"));
+        assertEquals(target("acme-bot", false), choose(config, "a", "acme-bot"));
     }
 
     /**
@@ -90,7 +94,8 @@ class AccountMenuTest {
         assertEquals(before, YAML.writeValueAsString(config),
                 "the menu must not write anything; saving is the caller's job");
         assertEquals("ghp_flat", value(config, "github.token"));
-        assertTrue(NamespaceAccounts.names(config, "github").isEmpty());
+        assertEquals(List.of("default"), NamespaceAccounts.names(config, "github"),
+                "still just the flat credential, presented as its account");
     }
 
     @Test
@@ -105,7 +110,7 @@ class AccountMenuTest {
     @Test
     void anExistingAccountCanBeTargetedForReplacement() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        assertEquals("acme", choose(config, "e", "acme"));
+        assertEquals(target("acme", false), choose(config, "e", "acme"));
     }
 
     @Test
@@ -133,11 +138,28 @@ class AccountMenuTest {
                 "the default must never name an account that was just removed");
     }
 
+    /**
+     * "Replace all" is a target like any other: the accounts go only once the replacement is
+     * saved, so abandoning the flow afterwards cannot leave the namespace with nothing.
+     */
     @Test
-    void replaceAllClearsEveryAccount() throws Exception {
+    void replaceAllIsDeferredUntilSomethingIsSaved() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        assertEquals("", choose(config, "r"));
-        assertTrue(NamespaceAccounts.names(config, "github").isEmpty());
+        assertEquals(target("default", true), choose(config, "r"));
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+
+        InitCommand.saveAccount(config, "github", target("default", true),
+                java.util.Map.of("token", "ghp_new"));
+        assertEquals(List.of("default"), NamespaceAccounts.names(config, "github"));
+        assertEquals("default", value(config, "github.default"));
+    }
+
+    /** Skipping every prompt after "replace all" collected nothing, so nothing is replaced. */
+    @Test
+    void savingNothingReplacesNothing() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        InitCommand.saveAccount(config, "github", target("default", true), java.util.Map.of());
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
     }
 
     /** With one account, the destructive options are not offered -- and not reachable blind. */
@@ -152,5 +174,37 @@ class AccountMenuTest {
                 """, SpawnConfig.class);
         assertNull(choose(config, "x", ""));
         assertEquals(List.of("only"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** Not configured at all: there is nothing to choose between, so the credential is the only one. */
+    @Test
+    void anUnconfiguredNamespaceTargetsAFreshDefaultAccount() throws Exception {
+        var config = YAML.readValue("github: {}\n", SpawnConfig.class);
+        assertEquals(InitCommand.AccountTarget.FRESH, choose(config));
+    }
+
+    /**
+     * The default account has no token but another account has one. Asking only whether the
+     * default is configured said no, skipped the menu, and the next saved token replaced the
+     * whole namespace -- deleting 'b' and its token without a word.
+     */
+    @Test
+    void anyAccountIsWorthAskingAboutEvenWhenTheDefaultHasNoCredential() throws Exception {
+        var config = YAML.readValue("""
+                github:
+                  accounts:
+                    a:
+                      email: "x@example.com"
+                    b:
+                      token: "ghp_b"
+                  default: a
+                """, SpawnConfig.class);
+        assertEquals("", AccountResolver.defaultValue(config, "github", "token"),
+                "the trap: the default account alone looks unconfigured");
+        assertTrue(InitCommand.hasAccountsToPreserve(config, "github"));
+
+        assertFalse(InitCommand.hasAccountsToPreserve(
+                YAML.readValue("github:\n  email: \"x@example.com\"\n", SpawnConfig.class), "github"),
+                "a leftover email is not an account, so a first credential needs no menu");
     }
 }

@@ -37,6 +37,8 @@ keywords = ["sk-ant-oat01-"]
     '''common/src/test/java/dev/incusspawn/proxy/ProxyCredentialsAccountsTest\.java$''',
     '''common/src/test/java/dev/incusspawn/config/SecretRedactorTest\.java$''',
     '''common/src/test/java/dev/incusspawn/config/ExistingConfigCompatTest\.java$''',
+    # config.yaml files as a previous release wrote them (PreviousReleaseConfigCompatTest).
+    '''common/src/test/resources/config-compat/''',
     '''common/src/test/java/dev/incusspawn/proxy/PerInstanceCredentialsTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/command/SupportBundleTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',

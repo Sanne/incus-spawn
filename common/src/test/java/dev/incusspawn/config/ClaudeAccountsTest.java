@@ -161,6 +161,55 @@ class ClaudeAccountsTest {
         assertEquals("incomplete account", claude.allAccounts().get("weird").describe());
     }
 
+    /**
+     * #742: an incomplete account is easy to miss in 'isx init', so pinning one must say it is
+     * incomplete, and why -- not that it does not exist. The same answer comes back whichever
+     * way the pin is checked: the typed API, or the resolver every namespace shares.
+     */
+    @Test
+    void pinningAnIncompleteAccountSaysWhyRatherThanThatItIsMissing() throws Exception {
+        var config = YAML.readValue("""
+                claude:
+                  accounts:
+                    broken:
+                      type: vertex
+                      cloudMlRegion: europe-west1
+                    console:
+                      type: api-key
+                      apiKey: "sk-ant-api03-xyz"
+                  default: broken
+                """, SpawnConfig.class);
+        assertEquals("console", config.getClaude().accountName(), "an unusable default is skipped");
+
+        var typed = assertThrows(AccountResolver.UnknownAccountException.class,
+                () -> config.getClaude().accountNamed("broken"));
+        var generic = assertThrows(AccountResolver.UnknownAccountException.class,
+                () -> AccountSelection.validate(config, java.util.Map.of("claude", "broken")));
+        for (var e : java.util.List.of(typed, generic)) {
+            assertTrue(e.getMessage().contains("incomplete"), e.getMessage());
+            assertTrue(e.getMessage().contains("vertex"), "names what is wrong: " + e.getMessage());
+        }
+
+        var missing = assertThrows(AccountResolver.UnknownAccountException.class,
+                () -> config.getClaude().accountNamed("ghost"));
+        assertTrue(missing.getMessage().contains("not configured"), missing.getMessage());
+        assertFalse(missing.getMessage().contains("incomplete"), missing.getMessage());
+    }
+
+    /** #773: the flat credential is 'default' to the shared resolver too, not only to ClaudeConfig. */
+    @Test
+    void aFlatClaudeCredentialIsTheDefaultAccountEverywhere() throws Exception {
+        var config = YAML.readValue("""
+                claude:
+                  apiKey: "sk-ant-api03-flat"
+                """, SpawnConfig.class);
+        assertDoesNotThrow(() -> AccountSelection.validate(config, java.util.Map.of("claude", "default")));
+        var listing = AccountSelection.listAccounts(config, "claude");
+        assertEquals(java.util.List.of("default"), listing.names());
+        assertEquals("default", listing.defaultName());
+        assertEquals("sk-ant-api03-flat", config.getClaude().accountNamed("default").getApiKey());
+    }
+
     @Test
     void writingAnAccountDropsTheLegacyLayout() throws Exception {
         var yaml = """

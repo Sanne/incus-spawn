@@ -1,0 +1,23 @@
+---
+claude:
+  useVertex: true
+  cloudMlRegion: "us-east5"
+  vertexProjectId: "my-project"
+  apiKey: ""
+  oauthToken: ""
+  oauthMode: false
+github:
+  token: ""
+  email: ""
+bob:
+  apiKey: ""
+  licenseConsent: false
+openai:
+  apiKey: ""
+features: []
+searchPaths: []
+host-path: ""
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""

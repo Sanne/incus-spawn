@@ -18,6 +18,7 @@ import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.RuntimeServices;
@@ -1264,7 +1265,7 @@ public class InitCommand extends BaseCommand {
             var toolName = entry.getKey();
             var tool = entry.getValue();
             var desc = tool.description().isBlank() ? toolName : tool.description();
-            var tag = isToolConfigured(toolName, tool, config, configTree) ? " [configured]" : "";
+            var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " [configured]" : "";
             System.out.println("    " + (i + 1) + ". " + desc + tag);
         }
         System.out.println();
@@ -1293,7 +1294,8 @@ public class InitCommand extends BaseCommand {
     }
 
     private static boolean isToolConfigured(String toolName, ToolSetup tool,
-            SpawnConfig config, com.fasterxml.jackson.databind.JsonNode configTree) {
+            SpawnConfig config, com.fasterxml.jackson.databind.JsonNode configTree,
+            Map<String, ToolSetup> allTools) {
         if ("claude".equals(toolName)) return config.getClaude().hasAuth();
         var proxyDef = tool.proxy();
         if (proxyDef == null) return false;
@@ -1304,13 +1306,28 @@ public class InitCommand extends BaseCommand {
             if (configDef.isConfirm()) continue;
             if (configDef.getConfigPath().isBlank()) continue;
             anyChecked = true;
-            var v = ToolProxyResolver.navigateConfigPath(configTree,
-                    proxyDef.fullConfigPath(configDef));
-            if (v.isBlank()) return false;
+            if (configuredValue(proxyDef, configDef, configTree, allTools).isBlank()) return false;
         }
         // If no config-path entries were checked, all config is hardcoded — tool is configured
         return anyChecked || proxyDef.getConfiguration().values().stream()
                 .anyMatch(c -> !c.getValue().isBlank());
+    }
+
+    /**
+     * What an entry resolves to for its namespace's default account -- flat or under
+     * {@code accounts:}, the same answer the proxy would serve an instance that pins nothing.
+     */
+    private static String configuredValue(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry configDef,
+            com.fasterxml.jackson.databind.JsonNode configTree, Map<String, ToolSetup> allTools) {
+        var fullPath = proxyDef.fullConfigPath(configDef);
+        var namespace = proxyDef.namespaceOf(configDef);
+        if (namespace.isBlank() || !fullPath.startsWith(namespace + ".")) {
+            return dev.incusspawn.config.AccountResolver.navigate(configTree, fullPath);
+        }
+        var account = dev.incusspawn.config.AccountResolver.effectiveAccount(configTree, namespace,
+                dev.incusspawn.config.AccountResolver.shapeOf(allTools, namespace), null);
+        return dev.incusspawn.config.AccountResolver.value(configTree, namespace, account,
+                fullPath.substring(namespace.length() + 1));
     }
 
     private void setupClaudeAuth() {
@@ -1740,9 +1757,16 @@ public class InitCommand extends BaseCommand {
         return secret.substring(0, prefixEnd) + "..." + secret.substring(secret.length() - 4);
     }
 
+    /**
+     * Where a credential being configured goes, for every namespace alike: the account it is
+     * written into, and whether every other account of the namespace goes with it. Kept apart
+     * because they are separate questions -- "replace all" and "replace this one" differ only in
+     * the second. Absent ({@code Optional.empty()}) means leave everything as it is.
+     */
     record AccountTarget(String name, boolean replaceOthers) {
+        /** A namespace's only account, under the name a single credential is saved as. */
         static final AccountTarget FRESH =
-                new AccountTarget(SpawnConfig.ClaudeConfig.LEGACY_ACCOUNT_NAME, true);
+                new AccountTarget(NamespaceAccounts.DEFAULT_ACCOUNT_NAME, true);
     }
 
     private void saveDirectConfig(SpawnConfig config, AccountTarget target, String apiKey) {
@@ -1972,7 +1996,7 @@ public class InitCommand extends BaseCommand {
      */
     private enum GhTokenOutcome { SAVED, NOT_OFFERED, FAILED }
 
-    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console, String account) {
+    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console, AccountTarget account) {
         // 'gh auth status' exits 0 only when gh is installed and logged in; a missing binary or no
         // active login exits non-zero, so this one check gates the whole fallback.
         if (runHostCapturingExit("gh", "auth", "status") != 0) {
@@ -2004,47 +2028,50 @@ public class InitCommand extends BaseCommand {
         return GhTokenOutcome.SAVED;
     }
 
-    /** Whether any GitHub credential is configured, flat or under an account. */
-    private static boolean githubConfigured(SpawnConfig config) {
-        var tree = config.tree();
-        var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
-                tree, GhSetup.NAMESPACE, null);
-        return !dev.incusspawn.config.AccountResolver
-                .value(tree, GhSetup.NAMESPACE, account, "token").isBlank();
+    /**
+     * Whether saving a credential into this namespace has something to preserve, and so must ask
+     * where it goes rather than assume {@link AccountTarget#FRESH} -- which replaces every account.
+     *
+     * <p>Any account counts, usable or not. Asking whether the <em>default</em> has a credential
+     * is not enough: a default without a token beside another account with one would skip the
+     * menu, and the next save would delete that other account without a word.
+     */
+    static boolean hasAccountsToPreserve(SpawnConfig config, String namespace) {
+        return !NamespaceAccounts.names(config, namespace).isEmpty();
     }
 
     /**
      * Persist a verified GitHub token (and email, if any) and print the matching "saved" line.
      *
-     * <p>{@code account} is passed rather than parked on the instance: the Claude flow's
+     * <p>{@code target} is passed rather than parked on the instance: the Claude flow's
      * equivalent mutable field is how a credential wipe shipped once already (#741), because a
      * code path that returns early leaves a stale target for a later write to act on. An
      * argument cannot go stale.
-     *
-     * @param account the account to write into, or {@code ""} for the flat single-credential
-     *     layout a namespace keeps until it has a second account
      */
-    private void saveGitHubToken(SpawnConfig config, String account, String token, String email) {
-        if (account != null && !account.isEmpty()) {
-            // Materialize any flat credential first, so adding a second account keeps the
-            // first rather than displacing it -- and so this only happens once a credential
-            // has actually been collected.
-            NamespaceAccounts.adoptFlat(config, GhSetup.NAMESPACE, GITHUB_KEYS,
-                    NamespaceAccounts.DEFAULT_ACCOUNT_NAME);
-        }
-        if (account == null || account.isEmpty()) {
-            NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "token", token);
-            if (email != null) NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "email", email);
-        } else {
-            NamespaceAccounts.put(config, GhSetup.NAMESPACE, account, "token", token);
-            if (email != null) {
-                NamespaceAccounts.put(config, GhSetup.NAMESPACE, account, "email", email);
-            }
-        }
+    private void saveGitHubToken(SpawnConfig config, AccountTarget target, String token, String email) {
+        var values = new java.util.LinkedHashMap<String, String>();
+        values.put("token", token);
+        if (email != null) values.put("email", email);
+        saveAccount(config, GhSetup.NAMESPACE, target, values);
         config.save();
         System.out.println(email != null
                 ? "  GitHub configuration saved."
                 : "  GitHub configuration saved (without email).");
+    }
+
+    /**
+     * Write one account's values the way {@code target} says: into that account alone, or as the
+     * only account left. Nothing is written for an empty map, so skipping every prompt of a
+     * "replace all" leaves the existing accounts in place rather than clearing them.
+     */
+    static void saveAccount(SpawnConfig config, String namespace, AccountTarget target,
+                            Map<String, String> values) {
+        if (values.isEmpty()) return;
+        if (target.replaceOthers()) {
+            NamespaceAccounts.replaceAll(config, namespace, target.name(), values);
+        } else {
+            values.forEach((key, value) -> NamespaceAccounts.put(config, namespace, target.name(), key, value));
+        }
     }
 
     /** Reads the token backing the current 'gh' login (stdout of 'gh auth token'). */
@@ -2099,23 +2126,23 @@ public class InitCommand extends BaseCommand {
         System.out.println();
     }
 
-    /** Config keys a GitHub account holds. Order matters only for the adopt-flat copy. */
-    private static final java.util.List<String> GITHUB_KEYS = java.util.List.of("token", "email");
-
     /**
      * Account menu for any credential namespace, driven entirely by the namespace name.
      *
-     * <p>Nothing here knows what a GitHub token is, so the same menu serves Bob, OpenAI, or a
-     * credential that does not exist yet -- adding accounts to one becomes a matter of calling
-     * this and collecting its fields. Claude keeps its own menu for now: its accounts are
-     * typed, carry an auth mode, and it alone reports which of them can answer {@code isx ask}.
+     * <p>Nothing here knows what a GitHub token is, so the same menu serves GitHub, Bob, OpenAI
+     * and any credential a YAML tool declares. Claude keeps its own menu: its accounts are typed,
+     * carry an auth mode, and it alone reports which of them can answer {@code isx ask}. Both
+     * answer in the same vocabulary, an {@link AccountTarget}.
      *
-     * @return the account to write credentials into, {@code ""} for the flat single-credential
-     *     layout, or null to leave everything as it is
+     * <p>The menu writes nothing except where it says so ('d', 'x'): what a target means is
+     * applied only once a credential has been collected, so an abandoned flow leaves the file
+     * exactly as it was.
+     *
+     * @return the account to write credentials into, or empty to leave everything as it is
      */
-    private String chooseAccountTarget(SpawnConfig config, String namespace, String label,
-                                       java.util.List<String> keys, Console console) {
-        return chooseAccountTarget(config, namespace, label, keys,
+    private Optional<AccountTarget> chooseAccountTarget(SpawnConfig config, String namespace, String label,
+                                                        Console console) {
+        return chooseAccountTarget(config, namespace, label,
                 () -> readInput(console.readLine()),
                 taken -> askAccountName(console, taken));
     }
@@ -2128,34 +2155,29 @@ public class InitCommand extends BaseCommand {
      * would otherwise be reachable only by a human at a keyboard, which is how both of the bugs
      * it had went unnoticed.
      */
-    String chooseAccountTarget(SpawnConfig config, String namespace, String label,
-                               java.util.List<String> keys,
-                               java.util.function.Supplier<String> readLine,
-                               java.util.function.Function<java.util.Set<String>, String> askName) {
+    Optional<AccountTarget> chooseAccountTarget(SpawnConfig config, String namespace, String label,
+                                                java.util.function.Supplier<String> readLine,
+                                                java.util.function.Function<java.util.Set<String>, String> askName) {
         while (true) {
             var accounts = NamespaceAccounts.names(config, namespace);
             var defaultName = NamespaceAccounts.defaultName(config, namespace);
+            if (accounts.isEmpty()) return Optional.of(AccountTarget.FRESH);
 
-            // One credential in the flat layout is the common case and should not have to
-            // learn about accounts to be replaced.
-            if (accounts.isEmpty()) {
+            // One credential is the common case and should not have to learn about accounts to
+            // be replaced -- whether it is a flat one from an older isx or accounts.default.
+            if (accounts.size() == 1) {
+                var only = accounts.get(0);
                 System.out.println("  " + label + ": configured.");
                 System.out.println("    r. Replace it");
                 System.out.println("    a. Add a second account (keeps the current one)");
                 System.out.print("  Choice (Enter to keep as-is): ");
                 var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
-                    case "" -> { return null; }
-                    case "r" -> { return ""; }
+                    case "" -> { return Optional.empty(); }
+                    case "r" -> { return Optional.of(new AccountTarget(only, true)); }
                     case "a" -> {
-                        // Deliberately no migration here. Moving the flat credential into
-                        // accounts.default before one is collected leaves an abandoned flow
-                        // having rewritten the file -- and a config an older isx reads as
-                        // having no credentials at all (#740). saveGitHubToken does it, once
-                        // there is something to save.
-                        var name = askName.apply(java.util.Set.of(NamespaceAccounts.DEFAULT_ACCOUNT_NAME));
-                        if (name.isEmpty()) return null;
-                        return name;
+                        var name = askName.apply(new java.util.LinkedHashSet<>(accounts));
+                        return name.isEmpty() ? Optional.empty() : Optional.of(new AccountTarget(name, false));
                     }
                     default -> { continue; }
                 }
@@ -2166,38 +2188,30 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    - " + name + (name.equals(defaultName) ? "  (default)" : ""));
             }
             System.out.println();
-            var canManageMultiple = accounts.size() > 1;
             System.out.println("    a. Add another account");
             System.out.println("    e. Replace an existing account's credentials");
             System.out.println("    r. Replace all with a single account");
-            if (canManageMultiple) {
-                System.out.println("    d. Change which account is the default");
-                System.out.println("    x. Remove an account");
-            }
+            System.out.println("    d. Change which account is the default");
+            System.out.println("    x. Remove an account");
             System.out.print("  Choice (Enter to keep as-is): ");
             var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
-                case "" -> { return null; }
+                case "" -> { return Optional.empty(); }
                 case "a" -> {
                     var name = askName.apply(new java.util.LinkedHashSet<>(accounts));
-                    return name.isEmpty() ? null : name;
+                    return name.isEmpty() ? Optional.empty() : Optional.of(new AccountTarget(name, false));
                 }
                 case "e" -> {
                     System.out.print("  Name of the account to replace: ");
                     var name = readLine.get();
-                    if (accounts.contains(name)) return name;
+                    if (accounts.contains(name)) return Optional.of(new AccountTarget(name, false));
                     if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
                 }
-                case "r" -> {
-                    NamespaceAccounts.clear(config, namespace, keys);
-                    config.save();
-                    return "";
-                }
+                case "r" -> { return Optional.of(AccountTarget.FRESH); }
                 // 'd' and 'x' save immediately and loop back to the listing, so an abort after
                 // this point cannot leave the confirmation they printed a lie.
                 case "d" -> {
-                    if (!canManageMultiple) continue;
                     System.out.print("  Name of the account to make default: ");
                     var name = readLine.get();
                     if (accounts.contains(name)) {
@@ -2209,7 +2223,6 @@ public class InitCommand extends BaseCommand {
                     }
                 }
                 case "x" -> {
-                    if (!canManageMultiple) continue;
                     System.out.print("  Name of the account to remove: ");
                     var name = readLine.get();
                     if (accounts.contains(name)) {
@@ -2244,10 +2257,11 @@ public class InitCommand extends BaseCommand {
         // On a re-run, offer account management rather than only replace-or-keep: the same
         // menu every non-Claude credential gets, so adding a second GitHub identity needs no
         // GitHub-specific UX.
-        String account = "";
-        if (githubConfigured(config)) {
-            account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", GITHUB_KEYS, console);
-            if (account == null) return;
+        var account = AccountTarget.FRESH;
+        if (hasAccountsToPreserve(config, GhSetup.NAMESPACE)) {
+            var chosen = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", console);
+            if (chosen.isEmpty()) return;
+            account = chosen.get();
         }
 
         // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
@@ -2464,8 +2478,25 @@ public class InitCommand extends BaseCommand {
         var proxyDef = tool.proxy();
         if (proxyDef == null) return;
 
-        var configTree = JSON.valueToTree(config);
-        boolean savedAny = false;
+        // A tool with a namespace of its own gets named accounts, through the same menu GitHub
+        // uses: nothing below knows what the credential is. A tool without one (or borrowing
+        // another tool's) has nothing to hold accounts in, and writes its paths directly.
+        var namespace = proxyDef.getConfigNamespace();
+        var shape = tool.accountShape();
+        AccountTarget target = null;
+        if (!namespace.isBlank()) {
+            if (!hasAccountsToPreserve(config, namespace)) {
+                target = AccountTarget.FRESH;
+            } else {
+                var chosen = chooseAccountTarget(config, namespace, desc, console);
+                if (chosen.isEmpty()) return;
+                target = chosen.get();
+            }
+        }
+
+        var configTree = config.tree();
+        var accountValues = new LinkedHashMap<String, String>();
+        var sharedValues = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
             var configKey = entry.getKey();
             var configDef = entry.getValue();
@@ -2474,12 +2505,32 @@ public class InitCommand extends BaseCommand {
 
             var label = configDef.getDescription().isBlank() ? configKey : configDef.getDescription();
 
+            // Per account: what the shape says an identity holds. Everything else -- a licence
+            // consent -- belongs to the namespace, and every account inherits it.
             var fullPath = proxyDef.fullConfigPath(configDef);
-            var existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
+            var key = target != null && fullPath.startsWith(namespace + ".")
+                    ? fullPath.substring(namespace.length() + 1) : "";
+            var perAccount = !key.isEmpty() && shape.flatKeys().contains(key);
+            String existing;
+            if (perAccount) {
+                // Only the account being written counts as "current": a new account starts
+                // empty, and "replace all" replaces rather than offering to keep.
+                var exists = !target.replaceOthers()
+                        && NamespaceAccounts.names(config, namespace).contains(target.name());
+                existing = exists
+                        ? dev.incusspawn.config.AccountResolver.value(configTree, namespace, target.name(), key)
+                        : "";
+            } else {
+                existing = ToolProxyResolver.navigateConfigPath(configTree, fullPath);
+            }
             boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
             if (hasExisting) {
                 System.out.println("  " + label + ": " + maskSecret(existing));
-                if (askConfirmation(console, "  Keep current?", true, true)) continue;
+                if (askConfirmation(console, "  Keep current?", true, true)) {
+                    // A kept value still has to travel with a "replace" into the new layout.
+                    if (perAccount) accountValues.put(key, existing);
+                    continue;
+                }
             }
 
             for (var helpLine : configDef.getHelp()) {
@@ -2500,10 +2551,25 @@ public class InitCommand extends BaseCommand {
                     value = readInput(console.readLine());
                 }
             }
-            if (!value.isBlank()) {
-                config.setConfigByPath(fullPath, value);
-                savedAny = true;
+            if (value.isBlank()) continue;
+            if (perAccount) {
+                accountValues.put(key, value);
+            } else {
+                sharedValues.put(fullPath, value);
             }
+        }
+
+        // Nothing collected means nothing written: skipping every prompt must not leave behind
+        // an empty account, nor clear the others for a "replace all" (saveAccount ignores an
+        // empty map).
+        boolean savedAny = false;
+        if (target != null && !accountValues.isEmpty()) {
+            saveAccount(config, namespace, target, accountValues);
+            savedAny = true;
+        }
+        for (var shared : sharedValues.entrySet()) {
+            config.setConfigByPath(shared.getKey(), shared.getValue());
+            savedAny = true;
         }
 
         if (savedAny) {

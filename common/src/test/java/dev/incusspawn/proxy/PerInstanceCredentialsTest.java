@@ -80,10 +80,10 @@ class PerInstanceCredentialsTest {
     }
 
     /**
-     * A pre-accounts config.yaml has no `claude.accounts` in the serialized tree, but
-     * ClaudeConfig still presents one synthesized account named `default` -- which is what
-     * `isx account list` shows and what a user would therefore pin to. Resolving that name
-     * generically as well as typed would fail closed and 502 every request.
+     * A pre-accounts config.yaml has no `claude.accounts` in the serialized tree, but its flat
+     * credential presents as the account `default` -- which is what `isx account list` shows
+     * and what a user would therefore pin to. The generic resolver has to agree, or the proxy
+     * would fail closed and 502 every request for a pin the CLI accepted.
      */
     @Test
     void pinningTheSynthesizedAccountOnAFlatConfigResolves() throws Exception {
@@ -199,6 +199,31 @@ class PerInstanceCredentialsTest {
         var across = ToolProxyResolver.resolveAcrossAccounts(config, tools);
         assertEquals(1, across.size());
         assertEquals("api.example.com", across.get(0).domain());
+    }
+
+    /**
+     * An incomplete account is listed but never resolved: widening the domain set across
+     * accounts must skip it, or one half-configured Claude account would make the proxy
+     * fail to start and to reload -- hiding exactly the state #742 wants kept visible.
+     */
+    @Test
+    void anIncompleteAccountDoesNotStopTheProxyResolvingTheOthers() throws Exception {
+        var config = YAML.readValue("""
+                claude:
+                  accounts:
+                    broken:
+                      type: vertex
+                    console:
+                      type: api-key
+                      apiKey: "sk-ant-api03-xyz"
+                  default: console
+                """, SpawnConfig.class);
+        Map<String, ToolSetup> tools = Map.of("claude", new dev.incusspawn.tool.ClaudeSetup());
+
+        var across = assertDoesNotThrow(() -> ToolProxyResolver.resolveAcrossAccounts(config, tools));
+        assertFalse(across.isEmpty(), "the usable account still resolves");
+        assertEquals("sk-ant-api03-xyz",
+                ProxyCredentials.forAccounts(config, Map.of(), tools).anthropicApiKey());
     }
 
     /**

@@ -574,6 +574,16 @@ jobs:
           sg incus-admin -c "incus file push .github/scripts/test-accounts.sh test-vm/tmp/"
           sg incus-admin -c "incus exec test-vm -- bash /tmp/test-accounts.sh beta"
 
+      - name: Test previous releases' config.yaml
+        run: |
+          # Swaps in each release's committed config.yaml fixture (every credential flat, as
+          # that release wrote it) and checks it is listed, pinnable and served as before.
+          # v0.3.7 is kept because users are still on it. The script restores the original
+          # config on exit, so later steps are unaffected.
+          for release in v0.3.7 v0.3.8; do
+            sg incus-admin -c "bash .github/scripts/test-previous-release-config.sh $release"
+          done
+
       - name: Assert proxy survived
         run: |
           PROXY_PID=$(pgrep -nf 'isx-proxy|incus-spawn-proxy' || true)

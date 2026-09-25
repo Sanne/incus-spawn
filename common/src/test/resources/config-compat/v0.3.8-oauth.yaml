@@ -1,0 +1,22 @@
+---
+claude:
+  useVertex: false
+  cloudMlRegion: ""
+  vertexProjectId: ""
+  apiKey: ""
+  oauthToken: "sk-ant-oat01-fixture"
+  oauthMode: true
+github:
+  token: "ghp_fixture"
+  email: ""
+bob:
+  apiKey: ""
+  licenseConsent: false
+openai:
+  apiKey: ""
+features: []
+searchPaths: []
+host-paths: []
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""
