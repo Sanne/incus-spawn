@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static dev.incusspawn.command.IsolatedHome.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -21,10 +21,6 @@ class PathListPromptsTest {
 
     private static Path home() {
         return Path.of(System.getProperty("user.home"));
-    }
-
-    private static Path configFile() {
-        return Environment.configDir().resolve("config.yaml");
     }
 
     private static Path dir(String name) throws Exception {

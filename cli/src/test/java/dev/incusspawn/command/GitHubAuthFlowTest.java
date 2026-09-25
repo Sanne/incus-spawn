@@ -1,19 +1,17 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.Environment;
-import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static dev.incusspawn.command.IsolatedHome.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -80,20 +78,6 @@ class GitHubAuthFlowTest {
             opened.add(url);
             return true;
         }
-    }
-
-    private static Path configFile() {
-        return Environment.configDir().resolve("config.yaml");
-    }
-
-    private static SpawnConfig seed(String yaml) throws Exception {
-        Files.createDirectories(configFile().getParent());
-        Files.writeString(configFile(), yaml);
-        return SpawnConfig.load();
-    }
-
-    private static String saved(String path) {
-        return AccountResolver.navigate(SpawnConfig.load().tree(), path);
     }
 
     private static void run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {

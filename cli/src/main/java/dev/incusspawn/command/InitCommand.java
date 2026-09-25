@@ -28,7 +28,6 @@ import dev.incusspawn.Platform;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 
-import java.io.Console;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -391,6 +390,13 @@ public class InitCommand extends BaseCommand {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** The terminal, or null after saying why interactive setup cannot run without one. */
+    private static Prompts consoleOrExplain() {
+        var prompts = Prompts.console();
+        if (prompts == null) System.err.println("  Error: no console available for interactive setup.");
+        return prompts;
     }
 
     // Pass-throughs to the host, overridable so the credential flows can be driven without an
@@ -1282,7 +1288,7 @@ public class InitCommand extends BaseCommand {
             var entry = toolsWithProxy.get(i);
             var toolName = entry.getKey();
             var tool = entry.getValue();
-            var desc = tool.description().isBlank() ? toolName : tool.description();
+            var desc = describeTool(toolName, tool);
             var tag = isToolConfigured(toolName, tool, config, configTree, allTools) ? " [configured]" : "";
             System.out.println("    " + (i + 1) + ". " + desc + tag);
         }
@@ -1355,12 +1361,8 @@ public class InitCommand extends BaseCommand {
                 "token, or Google Cloud Vertex AI. The credential stays on",
                 "your host and is injected at runtime via the MITM proxy —",
                 "containers never see the real key.");
-        var prompts = Prompts.console();
-        if (prompts == null) {
-            System.err.println("  Error: no console available for interactive setup.");
-            return;
-        }
-        setupClaudeAuth(SpawnConfig.load(), prompts);
+        var prompts = consoleOrExplain();
+        if (prompts != null) setupClaudeAuth(SpawnConfig.load(), prompts);
     }
 
     void setupClaudeAuth(SpawnConfig config, Prompts prompts) {
@@ -1724,7 +1726,7 @@ public class InitCommand extends BaseCommand {
      * The plaintext counterpart to {@link #readSecret(char[])}: strips, and answers EOF with
      * {@code ""} rather than throwing.
      *
-     * <p>{@link Console#readLine()} returns null once stdin is closed, so a bare
+     * <p>{@link Prompts#readLine()} returns null once stdin is closed, so a bare
      * {@code readLine().strip()} ends init with a {@code NullPointerException} the moment it is
      * run non-interactively -- piped input that runs out, a terminated parent, a CI job. Empty
      * is the right answer because every prompt here already reads it as "skip", "finish" or
@@ -2113,7 +2115,8 @@ public class InitCommand extends BaseCommand {
         var values = new java.util.LinkedHashMap<String, String>();
         values.put("token", token);
         if (email != null) values.put("email", email);
-        saveAccount(config, GhSetup.NAMESPACE, target, values);
+        saveAccount(config, GhSetup.NAMESPACE,
+                dev.incusspawn.config.AccountResolver.shapeOf(config, GhSetup.NAMESPACE), target, values);
         config.save();
         System.out.println(email != null
                 ? "  GitHub configuration saved."
@@ -2122,17 +2125,28 @@ public class InitCommand extends BaseCommand {
 
     /**
      * Write one account's values the way {@code target} says: into that account alone, or as the
-     * only account left. Nothing is written for an empty map, so skipping every prompt of a
-     * "replace all" leaves the existing accounts in place rather than clearing them.
+     * only account left.
+     *
+     * <p>Nothing is written unless the values carry the credential, so skipping the secret --
+     * or every prompt -- neither leaves an account without one behind nor clears the others
+     * for a "replace all", which would swap a working credential for a region and nothing else.
+     * Only an account that already exists, whose credential stays put, may have its other
+     * values edited on their own.
+     *
+     * @return whether anything was written
      */
-    static void saveAccount(SpawnConfig config, String namespace, AccountTarget target,
-                            Map<String, String> values) {
-        if (values.isEmpty()) return;
+    static boolean saveAccount(SpawnConfig config, String namespace, dev.incusspawn.config.AccountShape shape,
+                               AccountTarget target, Map<String, String> values) {
+        if (values.isEmpty()) return false;
+        var keepsCredential = !target.replaceOthers() && dev.incusspawn.config.AccountResolver
+                .accountNames(config.tree(), namespace, shape).contains(target.name());
+        if (!keepsCredential && !shape.hasCredential(values)) return false;
         if (target.replaceOthers()) {
             NamespaceAccounts.replaceAll(config, namespace, target.name(), values);
         } else {
             values.forEach((key, value) -> NamespaceAccounts.put(config, namespace, target.name(), key, value));
         }
+        return true;
     }
 
     /**
@@ -2301,12 +2315,8 @@ public class InitCommand extends BaseCommand {
                 "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
                 "just the repos and permissions the agent needs. That keeps the",
                 "agent's actions attributable to it and its blast radius small.");
-        var prompts = Prompts.console();
-        if (prompts == null) {
-            System.err.println("  Error: no console available for interactive setup.");
-            return;
-        }
-        setupGitHubAuth(SpawnConfig.load(), prompts);
+        var prompts = consoleOrExplain();
+        if (prompts != null) setupGitHubAuth(SpawnConfig.load(), prompts);
     }
 
     void setupGitHubAuth(SpawnConfig config, Prompts prompts) {
@@ -2520,28 +2530,34 @@ public class InitCommand extends BaseCommand {
         return "https://github.com/settings/tokens";
     }
 
+    private void printCurrentPaths(java.util.List<String> paths) {
+        if (paths.isEmpty()) return;
+        System.out.println("  Current paths:");
+        printNumberedPaths(paths);
+    }
+
     private void printNumberedPaths(java.util.List<String> paths) {
         for (int i = 0; i < paths.size(); i++) {
             System.out.println("    " + (i + 1) + ". " + paths.get(i));
         }
     }
 
+    private static String describeTool(String toolName, ToolSetup tool) {
+        return tool.description().isBlank() ? toolName : tool.description();
+    }
+
     private void setupGenericToolCredentials(String toolName, ToolSetup tool) {
-        var desc = tool.description().isBlank() ? toolName : tool.description();
+        var desc = describeTool(toolName, tool);
         startStep(desc,
                 "Configures credentials for " + desc + ".",
                 "Real credentials stay on your host — containers only hold",
                 "placeholders, and the MITM proxy injects real values.");
-        var prompts = Prompts.console();
-        if (prompts == null) {
-            System.err.println("  Error: no console available for interactive setup.");
-            return;
-        }
-        setupGenericToolCredentials(toolName, tool, SpawnConfig.load(), prompts);
+        var prompts = consoleOrExplain();
+        if (prompts != null) setupGenericToolCredentials(toolName, tool, SpawnConfig.load(), prompts);
     }
 
     void setupGenericToolCredentials(String toolName, ToolSetup tool, SpawnConfig config, Prompts prompts) {
-        var desc = tool.description().isBlank() ? toolName : tool.description();
+        var desc = describeTool(toolName, tool);
         var proxyDef = tool.proxy();
         if (proxyDef == null) return;
 
@@ -2562,10 +2578,10 @@ public class InitCommand extends BaseCommand {
         }
 
         var configTree = config.tree();
-        // An account that already exists keeps its credential through a partial edit ('e');
-        // anything else -- a new account, or a "replace" that clears the rest -- starts empty.
-        var targetKeepsCredential = target != null && !target.replaceOthers()
-                && NamespaceAccounts.names(config, namespace).contains(target.name());
+        // Only the account being written counts as "current": a new account starts empty, and
+        // "replace all" replaces rather than offering to keep.
+        var targetExists = target != null && !target.replaceOthers() && dev.incusspawn.config.AccountResolver
+                .accountNames(configTree, namespace, shape).contains(target.name());
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
@@ -2584,11 +2600,7 @@ public class InitCommand extends BaseCommand {
             var perAccount = !key.isEmpty() && shape.flatKeys().contains(key);
             String existing;
             if (perAccount) {
-                // Only the account being written counts as "current": a new account starts
-                // empty, and "replace all" replaces rather than offering to keep.
-                var exists = !target.replaceOthers()
-                        && NamespaceAccounts.names(config, namespace).contains(target.name());
-                existing = exists
+                existing = targetExists
                         ? dev.incusspawn.config.AccountResolver.value(configTree, namespace, target.name(), key)
                         : "";
             } else {
@@ -2630,18 +2642,10 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        // No credential collected means no account written: skipping the secret must not leave
-        // behind an account without one, nor clear the others for a "replace all" -- which would
-        // swap a working credential for a region and nothing else. Only an existing account,
-        // whose credential stays put, may have its other values edited on their own.
         boolean savedAny = false;
         if (target != null && !accountValues.isEmpty()) {
-            if (targetKeepsCredential || carriesCredential(shape, accountValues)) {
-                saveAccount(config, namespace, target, accountValues);
-                savedAny = true;
-            } else {
-                System.out.println("  No credential entered, so no account was changed.");
-            }
+            savedAny = saveAccount(config, namespace, shape, target, accountValues);
+            if (!savedAny) System.out.println("  No credential entered, so no account was changed.");
         }
         for (var shared : sharedValues.entrySet()) {
             config.setConfigByPath(shared.getKey(), shared.getValue());
@@ -2656,37 +2660,17 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** Whether the values collected for one account include what makes it usable. */
-    static boolean carriesCredential(dev.incusspawn.config.AccountShape shape, Map<String, String> values) {
-        var account = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
-        values.forEach((key, value) -> {
-            var segments = key.split("\\.");
-            var node = account;
-            for (int i = 0; i < segments.length - 1; i++) {
-                node = node.get(segments[i]) instanceof com.fasterxml.jackson.databind.node.ObjectNode child
-                        ? child : node.putObject(segments[i]);
-            }
-            node.put(segments[segments.length - 1], value);
-        });
-        return shape.hasFlatCredential(account);
-    }
-
     private void setupPathList(
             java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
             String skipMessage) {
-        var prompts = Prompts.console();
         var config = SpawnConfig.load();
-        if (prompts == null) {
-            var existing = getter.apply(config);
-            if (!existing.isEmpty()) {
-                System.out.println("  Current paths:");
-                printNumberedPaths(existing);
-            }
-            System.err.println("  Error: no console available for interactive setup.");
-            return;
+        var prompts = consoleOrExplain();
+        if (prompts != null) {
+            setupPathList(getter, setter, skipMessage, config, prompts);
+        } else {
+            printCurrentPaths(getter.apply(config));
         }
-        setupPathList(getter, setter, skipMessage, config, prompts);
     }
 
     void setupPathList(
@@ -2694,11 +2678,7 @@ public class InitCommand extends BaseCommand {
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
             String skipMessage, SpawnConfig config, Prompts prompts) {
         var existing = getter.apply(config);
-
-        if (!existing.isEmpty()) {
-            System.out.println("  Current paths:");
-            printNumberedPaths(existing);
-        }
+        printCurrentPaths(existing);
 
         var paths = new java.util.ArrayList<>(existing);
         while (true) {

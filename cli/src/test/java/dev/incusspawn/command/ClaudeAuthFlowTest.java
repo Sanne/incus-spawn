@@ -1,18 +1,17 @@
 package dev.incusspawn.command;
 
-import dev.incusspawn.Environment;
 import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static dev.incusspawn.command.IsolatedHome.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -81,16 +80,6 @@ class ClaudeAuthFlowTest {
         void runClaudeSetupToken() {
             setupTokenRuns++;
         }
-    }
-
-    private static Path configFile() {
-        return Environment.configDir().resolve("config.yaml");
-    }
-
-    private static SpawnConfig seed(String yaml) throws Exception {
-        Files.createDirectories(configFile().getParent());
-        Files.writeString(configFile(), yaml);
-        return SpawnConfig.load();
     }
 
     private static Map<String, SpawnConfig.ClaudeAccount> savedAccounts() {

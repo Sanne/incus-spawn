@@ -1,8 +1,10 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.AccountShape;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.tool.GhSetup;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AccountMenuTest {
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final AccountShape GITHUB = new GhSetup().accountShape();
 
     private static final String ONE_FLAT_CREDENTIAL = """
             github:
@@ -149,7 +152,7 @@ class AccountMenuTest {
         assertEquals(target("default", true), choose(config, "r"));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
 
-        InitCommand.saveAccount(config, "github", target("default", true),
+        InitCommand.saveAccount(config, "github", GITHUB, target("default", true),
                 java.util.Map.of("token", "ghp_new"));
         assertEquals(List.of("default"), NamespaceAccounts.names(config, "github"));
         assertEquals("default", value(config, "github.default"));
@@ -159,8 +162,27 @@ class AccountMenuTest {
     @Test
     void savingNothingReplacesNothing() throws Exception {
         var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
-        InitCommand.saveAccount(config, "github", target("default", true), java.util.Map.of());
+        assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true), java.util.Map.of()));
         assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** Values without the credential (an email alone) are not an account, so nothing is replaced. */
+    @Test
+    void savingWithoutTheCredentialReplacesNothing() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        assertFalse(InitCommand.saveAccount(config, "github", GITHUB, target("default", true),
+                java.util.Map.of("email", "me@example.com")));
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** An existing account keeps its credential, so its other values may change on their own. */
+    @Test
+    void anExistingAccountMayBeEditedWithoutItsCredential() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        assertTrue(InitCommand.saveAccount(config, "github", GITHUB, target("acme", false),
+                java.util.Map.of("email", "bot@example.com")));
+        assertEquals("ghp_acme", value(config, "github.accounts.acme.token"));
+        assertEquals("bot@example.com", value(config, "github.accounts.acme.email"));
     }
 
     /** With one account, the destructive options are not offered -- and not reachable blind. */

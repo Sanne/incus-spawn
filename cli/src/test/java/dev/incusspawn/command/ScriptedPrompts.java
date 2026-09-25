@@ -36,30 +36,27 @@ final class ScriptedPrompts implements Prompts {
 
     @Override
     public String readLine() {
-        var answer = answers.poll();
-        if (answer == null) {
-            readsPastEnd++;
-            return null;
-        }
-        if (answer.secret()) {
-            throw new AssertionError("an echoing prompt read '" + answer.value()
-                    + "', which the script expects to be entered as a secret");
-        }
-        return answer.value();
+        return next(false);
     }
 
     @Override
     public char[] readPassword() {
+        var value = next(true);
+        return value == null ? null : value.toCharArray();
+    }
+
+    private String next(boolean secret) {
         var answer = answers.poll();
         if (answer == null) {
             readsPastEnd++;
             return null;
         }
-        if (!answer.secret()) {
-            throw new AssertionError("a secret prompt read '" + answer.value()
-                    + "', which the script expects to be an ordinary line");
+        if (answer.secret() != secret) {
+            throw new AssertionError(secret
+                    ? "a secret prompt read '" + answer.value() + "', which the script expects to be an ordinary line"
+                    : "an echoing prompt read '" + answer.value() + "', which the script expects to be entered as a secret");
         }
-        return answer.value().toCharArray();
+        return answer.value();
     }
 
     /** Every scripted answer was asked for, and nothing was asked beyond them. */
