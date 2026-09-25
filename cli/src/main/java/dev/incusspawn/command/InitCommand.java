@@ -2006,8 +2006,7 @@ public class InitCommand extends BaseCommand {
 
     /** Whether any GitHub credential is configured, flat or under an account. */
     private static boolean githubConfigured(SpawnConfig config) {
-        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        var tree = config.tree();
         var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
                 tree, GhSetup.NAMESPACE, null);
         return !dev.incusspawn.config.AccountResolver
