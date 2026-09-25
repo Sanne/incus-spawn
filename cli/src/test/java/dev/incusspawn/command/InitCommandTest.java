@@ -49,7 +49,35 @@ class InitCommandTest {
 
     @Test
     void maskSecretOauthToken() {
-        assertEquals("eyJh...xK2m", InitCommand.maskSecret("eyJhbGciOiJSUzI1NixK2m"));
+        // 22 characters, no known prefix: both ends would be 8 of 22, so only the tail shows.
+        assertEquals("...xK2m", InitCommand.maskSecret("eyJhbGciOiJSUzI1NixK2m"));
+        assertEquals("eyJh...xK2m", InitCommand.maskSecret("eyJhbGciOiJSUzI1NiIsInR5xK2m"));
+    }
+
+    /** The review finding: a flat first-4/last-4 showed 8 of a 9-character password. */
+    @Test
+    void maskSecretHidesShortSecretsEntirely() {
+        assertEquals("****", InitCommand.maskSecret("abcdefghi"));
+        assertEquals("****", InitCommand.maskSecret("abcdefghijk"));
+        assertEquals("...ijkl", InitCommand.maskSecret("abcdefghijkl"));
+        assertEquals("****", InitCommand.maskSecret("ghp_abcdefghijk"));
+        assertEquals("ghp_...ijkl", InitCommand.maskSecret("ghp_abcdefghijkl"));
+    }
+
+    /** Whatever the length, at most a third of the secret material is ever shown. */
+    @Test
+    void maskSecretNeverRevealsMoreThanAThird() {
+        var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for (var prefix : new String[] {"", "ghp_", "sk-ant-", "github_pat_"}) {
+            for (int n = 0; n <= 40; n++) {
+                var secret = prefix + alphabet.substring(0, n);
+                var masked = InitCommand.maskSecret(secret);
+                var shown = masked.replace("...", "").replace("****", "");
+                if (shown.startsWith(prefix)) shown = shown.substring(prefix.length());
+                assertTrue(3 * shown.length() <= n,
+                        secret + " -> " + masked + " shows " + shown.length() + " of " + n);
+            }
+        }
     }
 
     @Test
