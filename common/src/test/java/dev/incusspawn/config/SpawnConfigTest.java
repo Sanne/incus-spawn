@@ -119,6 +119,41 @@ class SpawnConfigTest {
     }
 
     @Test
+    void tuiLiveRefreshDefaultsToOn() throws Exception {
+        assertTrue(YAML.readValue("{}", SpawnConfig.class).tuiLiveRefreshEnabled());
+    }
+
+    @Test
+    void tuiLiveRefreshCanBeTurnedOff() throws Exception {
+        assertFalse(YAML.readValue("tui-live-refresh: false", SpawnConfig.class).tuiLiveRefreshEnabled());
+        assertTrue(YAML.readValue("tui-live-refresh: true", SpawnConfig.class).tuiLiveRefreshEnabled());
+    }
+
+    @Test
+    void tuiLiveRefreshCanBeRemoved() throws Exception {
+        // removeConfigPath rebuilds the object via copyFrom; a field it skips keeps its old value,
+        // so removing the switch would silently leave live refresh off.
+        var config = YAML.readValue("""
+                tui-live-refresh: false
+                incus-bridge-gateway: "10.1.2.3"
+                """, SpawnConfig.class);
+        config.removeConfigPath("incus-bridge-gateway");
+        assertFalse(config.tuiLiveRefreshEnabled(), "an unrelated removal must not touch it");
+        config.removeConfigPath("tui-live-refresh");
+        assertTrue(config.tuiLiveRefreshEnabled(), "removing it restores the default");
+    }
+
+    @Test
+    void tuiLiveRefreshDefaultIsNotWrittenBack() throws Exception {
+        assertFalse(YAML.writeValueAsString(new SpawnConfig()).contains("live-refresh"));
+        var off = new SpawnConfig();
+        off.setTuiLiveRefresh(false);
+        var yaml = YAML.writeValueAsString(off);
+        assertTrue(yaml.contains("tui-live-refresh: false"), yaml);
+        assertFalse(YAML.readValue(yaml, SpawnConfig.class).tuiLiveRefreshEnabled());
+    }
+
+    @Test
     void deserializeFeatures() throws Exception {
         var yaml = """
                 features:

@@ -1060,6 +1060,12 @@ Resolution order (later sources override earlier ones with the same name):
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
 
+The TUI keeps itself current by following Incus's event stream, so instances started, stopped, created or deleted elsewhere show up without pressing `r`. If the stream can't be kept open it falls back to refreshing every 60 seconds. To turn automatic refreshing off entirely:
+
+```yaml
+tui-live-refresh: false
+```
+
 ## FAQ
 
 ### Why can't I mount a host directory read-write to follow agent work in my IDE?

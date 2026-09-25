@@ -59,6 +59,12 @@ public class SpawnConfig {
     private String incusBridgeGateway = "";
     @JsonProperty("auto-clone-repos")
     private String autoCloneRepos = "";
+    // Escape hatch for the TUI's live refresh (Incus event subscription plus its polling
+    // fallback). Null means the default, on, and is never written back, so saving a config
+    // doesn't pin today's default into every user's file.
+    @JsonProperty("tui-live-refresh")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean tuiLiveRefresh;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
@@ -523,6 +529,10 @@ public class SpawnConfig {
     public String getIncusBridgeGateway() { return incusBridgeGateway; }
     public void setIncusBridgeGateway(String incusBridgeGateway) { this.incusBridgeGateway = incusBridgeGateway == null ? "" : incusBridgeGateway; }
     public String getAutoCloneRepos() { return autoCloneRepos; }
+
+    // Deliberately not a bean getter: Jackson would serialize its boolean, writing the default out.
+    public boolean tuiLiveRefreshEnabled() { return tuiLiveRefresh == null || tuiLiveRefresh; }
+    public void setTuiLiveRefresh(Boolean enabled) { this.tuiLiveRefresh = enabled; }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JsonAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
@@ -579,6 +589,7 @@ public class SpawnConfig {
         this.repoPaths = other.repoPaths;
         this.incusBridgeGateway = other.incusBridgeGateway;
         this.autoCloneRepos = other.autoCloneRepos;
+        this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.extras = other.extras;
     }
 

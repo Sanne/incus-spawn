@@ -129,6 +129,9 @@ public class ListCommand extends BaseCommand {
     // parts of reloadData() (definitions on disk, btrfs accounting probes, proxy health) keep
     // their own cadences and never run per event. See DESIGN.md "Keeping a long-lived TUI current".
     private InstanceEventWatcher eventWatcher;
+    // `tui-live-refresh: false` in config.yaml: no subscription and no polling -- only the
+    // manual `r` and the reloads the TUI already did (re-entry, its own background tasks).
+    private boolean liveRefreshEnabled;
     private final AtomicBoolean liveRefreshRequested = new AtomicBoolean(false);
     private final AtomicBoolean liveRefreshInFlight = new AtomicBoolean(false);
     private final AtomicReference<LiveSnapshot> pendingLiveSnapshot = new AtomicReference<>();
@@ -359,11 +362,18 @@ public class ListCommand extends BaseCommand {
     // --- TUI lifecycle ---
 
     private void runTuiLoop() {
+        liveRefreshEnabled = SpawnConfig.load().tuiLiveRefreshEnabled();
+        if (!liveRefreshEnabled) {
+            runTuiSessions();
+            return;
+        }
         // One subscription for the whole session, including while the TUI is suspended for a
         // shell: an event then just leaves a refresh request that the next TUI entry, which
         // reloads anyway, absorbs.
         eventWatcher = new InstanceEventWatcher(incus::openLifecycleEvents,
-                this::onInstanceEvent, () -> liveRefreshRequested.set(true)).start();
+                this::onInstanceEvent, () -> liveRefreshRequested.set(true),
+                () -> pendingStatusMessage.set("Live updates unavailable -- refreshing every "
+                        + FALLBACK_POLL_MS / 1000 + "s instead")).start();
         try {
             runTuiSessions();
         } finally {
@@ -4913,12 +4923,12 @@ public class ListCommand extends BaseCommand {
             due.clear();
             liveRefreshRequested.set(true);
         }
-        if ((eventWatcher == null || !eventWatcher.isConnected()) && now - lastDataLoadMs >= FALLBACK_POLL_MS) {
+        if (liveRefreshEnabled && !eventWatcher.isConnected() && now - lastDataLoadMs >= FALLBACK_POLL_MS) {
             liveRefreshRequested.set(true);
         }
         // Debounced like the background-task refresh, so a burst of events (isx clean, a
         // build's create/rename/delete) collapses into one listing.
-        if (liveRefreshRequested.get() && !liveRefreshInFlight.get()
+        if (liveRefreshEnabled && liveRefreshRequested.get() && !liveRefreshInFlight.get()
                 && now - lastLiveRefreshMs >= REFRESH_DEBOUNCE_MS) {
             liveRefreshRequested.set(false);
             lastLiveRefreshMs = now;
@@ -5000,22 +5010,39 @@ public class ListCommand extends BaseCommand {
     }
 
     /**
-     * Last-moment check before acting on an instance: the list can be up to a debounce behind,
-     * or the event feed down. On a vanished instance, say so and refresh instead of letting the
-     * action fail with a raw Incus error. A failed check lets the action proceed -- its own
-     * error handling is still there -- so an Incus hiccup never blocks the UI.
+     * Whether the listing on screen reflects every event received: subscribed, and no refresh
+     * requested, running or waiting to be applied. Then it can answer "does X exist" itself.
+     */
+    private boolean listIsCurrent() {
+        return eventWatcher != null && eventWatcher.isConnected()
+                && !liveRefreshRequested.get() && !liveRefreshInFlight.get()
+                && pendingLiveSnapshot.get() == null;
+    }
+
+    /**
+     * Last-moment check before acting on an instance. While {@link #listIsCurrent()} the listing
+     * answers, with no Incus call, so a wedged daemon can't freeze the UI on a keypress (the only
+     * gap left is an event still in transit, which the action's own error handling -- and
+     * shellInto's re-check -- cover). Otherwise one existence check. On a vanished instance, say so
+     * and refresh instead of letting the action fail with a raw Incus error. A failed check lets
+     * the action proceed, so an Incus hiccup never blocks the UI.
      */
     private boolean vanished(String name) {
         boolean exists;
-        try {
-            exists = incus.exists(name);
-        } catch (RuntimeException e) {
-            return false;
+        if (listIsCurrent()) {
+            exists = liveInstanceNames.contains(name);
+        } else {
+            try {
+                exists = incus.exists(name);
+            } catch (RuntimeException e) {
+                return false;
+            }
         }
         if (exists) return false;
         mode = Mode.BROWSE;
         statusMessage = name + " no longer exists";
-        liveRefreshRequested.set(true);
+        if (liveRefreshEnabled) liveRefreshRequested.set(true);
+        else needsRefresh.set(true);
         return true;
     }
 
