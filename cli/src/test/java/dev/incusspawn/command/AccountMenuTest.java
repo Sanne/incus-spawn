@@ -6,8 +6,8 @@ import dev.incusspawn.config.SpawnConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.util.ArrayDeque;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,10 +17,13 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>This code was reachable only by a human at a keyboard, which is how both of its bugs went
  * unnoticed until it was run under a PTY: a cancelled flow rewrote config.yaml, and the flat
- * fields it emptied stayed behind as {@code ""}. The menu now takes its lines from a supplier
+ * fields it emptied stayed behind as {@code ""}. The menu now takes its lines from {@link Prompts}
  * rather than a {@code Console} -- which is final, and so cannot be stood in for -- so its
  * decisions can be asserted here instead.
+ *
+ * <p>'d' and 'x' save as they go, hence the isolated home.
  */
+@ExtendWith(IsolatedHome.class)
 class AccountMenuTest {
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
@@ -43,10 +46,8 @@ class AccountMenuTest {
 
     /** Drives the menu with canned keystrokes; account names come from the same queue. */
     private static InitCommand.AccountTarget choose(SpawnConfig config, String... input) {
-        var lines = new ArrayDeque<>(List.of(input));
         return new InitCommand().chooseAccountTarget(config, "github", "GitHub",
-                () -> lines.isEmpty() ? "" : lines.poll(),
-                taken -> lines.isEmpty() ? "" : lines.poll()).orElse(null);
+                ScriptedPrompts.lines(input)).orElse(null);
     }
 
     private static InitCommand.AccountTarget target(String name, boolean replaceOthers) {

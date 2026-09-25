@@ -393,6 +393,22 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    // Pass-throughs to the host, overridable so the credential flows can be driven without an
+    // environment, a host 'claude' or a browser. Each is one line in production.
+
+    /** An environment variable, stripped; {@code ""} when unset. */
+    String env(String name) {
+        return Environment.strippedEnv(name);
+    }
+
+    boolean hostHasCommand(String command) {
+        return commandExists(command);
+    }
+
+    boolean openUrl(String url) {
+        return Platform.openUrl(url);
+    }
+
     private void installDependencies() {
         var installCmd = detectInstallCommand();
         if (installCmd == null) return;
@@ -1230,12 +1246,14 @@ public class InitCommand extends BaseCommand {
                 "Choose which API credentials to configure. Each credential",
                 "stays on your host — containers only hold placeholders, and",
                 "the MITM proxy injects real values transparently.");
-        var config = SpawnConfig.load();
-        var console = System.console();
-        if (console == null) {
+        var prompts = Prompts.console();
+        if (prompts == null) {
             return List.of();
         }
+        return selectCredentials(allTools, SpawnConfig.load(), prompts);
+    }
 
+    List<String> selectCredentials(Map<String, ToolSetup> allTools, SpawnConfig config, Prompts prompts) {
         var configTree = JSON.valueToTree(config);
 
         var toolsWithProxy = new ArrayList<Map.Entry<String, ToolSetup>>();
@@ -1270,7 +1288,7 @@ public class InitCommand extends BaseCommand {
         }
         System.out.println();
         System.out.print("  Enter numbers separated by commas, 'all', or press Enter to skip: ");
-        var input = readInput(console.readLine());
+        var input = readInput(prompts.readLine());
         if (input.isBlank()) {
             System.out.println("  Skipped credential setup.");
             return List.of();
@@ -1337,25 +1355,27 @@ public class InitCommand extends BaseCommand {
                 "token, or Google Cloud Vertex AI. The credential stays on",
                 "your host and is injected at runtime via the MITM proxy —",
                 "containers never see the real key.");
-        var config = SpawnConfig.load();
-        var console = System.console();
-        if (console == null) {
+        var prompts = Prompts.console();
+        if (prompts == null) {
             System.err.println("  Error: no console available for interactive setup.");
             return;
         }
+        setupClaudeAuth(SpawnConfig.load(), prompts);
+    }
 
+    void setupClaudeAuth(SpawnConfig config, Prompts prompts) {
         var target = config.getClaude().hasAuth()
                 ? new AccountTarget(config.getClaude().accountName(), false)
                 : AccountTarget.FRESH;
 
         // Detect existing env vars
-        var envVertex = System.getenv("CLAUDE_CODE_USE_VERTEX");
-        var envApiKey = Environment.strippedEnv("ANTHROPIC_API_KEY");
-        var envOauthToken = Environment.strippedEnv("CLAUDE_CODE_OAUTH_TOKEN");
+        var envVertex = env("CLAUDE_CODE_USE_VERTEX");
+        var envApiKey = env("ANTHROPIC_API_KEY");
+        var envOauthToken = env("CLAUDE_CODE_OAUTH_TOKEN");
 
         if ("1".equals(envVertex)) {
-            var region = Environment.strippedEnv("CLOUD_ML_REGION");
-            var projectId = Environment.strippedEnv("ANTHROPIC_VERTEX_PROJECT_ID");
+            var region = env("CLOUD_ML_REGION");
+            var projectId = env("ANTHROPIC_VERTEX_PROJECT_ID");
             System.out.println("  Detected Vertex AI configuration from environment:");
             System.out.println("    Region:  " + (region.isBlank() ? "(not set)" : region));
             System.out.println("    Project: " + (projectId.isBlank() ? "(not set)" : projectId));
@@ -1368,7 +1388,7 @@ public class InitCommand extends BaseCommand {
                 var result = verifyVertexConfig(region, projectId);
                 if (result.verified()) {
                     System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                    if (askConfirmation(console, envAccountPrompt(config, target, "  Use this configuration?"), true)) {
+                    if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this configuration?"), true)) {
                         saveVertexConfig(config, target, region, projectId);
                         System.out.println("  Claude auth configuration saved.");
                         return;
@@ -1376,7 +1396,7 @@ public class InitCommand extends BaseCommand {
                     System.out.println("  Skipping environment config. Continuing with manual setup...");
                 } else {
                     System.out.println("  " + result.message());
-                    if (askConfirmation(console, "  Save anyway? Press Enter to configure manually.", false)) {
+                    if (askConfirmation(prompts, "  Save anyway? Press Enter to configure manually.", false)) {
                         saveVertexConfig(config, target, region, projectId);
                         System.out.println("  Claude auth configuration saved (unverified).");
                         return;
@@ -1389,7 +1409,7 @@ public class InitCommand extends BaseCommand {
             var oauthResult = verifyOauthToken(envOauthToken);
             if (oauthResult.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + oauthResult.message() + "\u001B[0m");
-                if (askConfirmation(console, envAccountPrompt(config, target, "  Use this token?"), true)) {
+                if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this token?"), true)) {
                     saveOauthConfig(config, target, envOauthToken);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1405,7 +1425,7 @@ public class InitCommand extends BaseCommand {
             var result = verifyAnthropicApiKey(envApiKey);
             if (result.verified()) {
                 System.out.println("  \u001B[1;32m\u2713 " + result.message() + "\u001B[0m");
-                if (askConfirmation(console, envAccountPrompt(config, target, "  Use this key?"), true)) {
+                if (askConfirmation(prompts, envAccountPrompt(config, target, "  Use this key?"), true)) {
                     saveDirectConfig(config, target, envApiKey);
                     System.out.println("  Claude auth configuration saved.");
                     return;
@@ -1421,7 +1441,7 @@ public class InitCommand extends BaseCommand {
         // allAccounts() rather than hasAuth(): even when every account is incomplete, the
         // user must be able to see (and remove) them rather than hand-editing config.yaml.
         if (!config.getClaude().allAccounts().isEmpty()) {
-            var managed = manageClaudeAccounts(config, console);
+            var managed = manageClaudeAccounts(config, prompts);
             if (managed.isEmpty()) return;
             target = managed.get();
         }
@@ -1432,18 +1452,18 @@ public class InitCommand extends BaseCommand {
         System.out.println("    3. Google Cloud Vertex AI");
         System.out.println();
         System.out.print("  Choice (1/2/3, or Enter to skip): ");
-        var authChoice = readInput(console.readLine());
+        var authChoice = readInput(prompts.readLine());
 
         if (authChoice.equals("3")) {
             while (true) {
                 System.out.print("  CLOUD_ML_REGION (or press Enter to skip): ");
-                var region = readInput(console.readLine());
+                var region = readInput(prompts.readLine());
                 if (region.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     return;
                 }
                 System.out.print("  ANTHROPIC_VERTEX_PROJECT_ID: ");
-                var projectId = readInput(console.readLine());
+                var projectId = readInput(prompts.readLine());
                 if (projectId.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     return;
@@ -1458,7 +1478,7 @@ public class InitCommand extends BaseCommand {
                     break;
                 } else {
                     System.out.println("  " + result.message());
-                    switch (askVerificationFailureAction(console)) {
+                    switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
                             System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                             break;
@@ -1476,11 +1496,11 @@ public class InitCommand extends BaseCommand {
                 }
             }
         } else if (authChoice.equals("2")) {
-            setupClaudeOauth(config, console, target);
+            setupClaudeOauth(config, prompts, target);
         } else if (authChoice.equals("1")) {
             while (true) {
                 System.out.print("  ANTHROPIC_API_KEY (or press Enter to skip): ");
-                var key = readSecret(console.readPassword());
+                var key = readSecret(prompts.readPassword());
                 if (key.isBlank()) {
                     System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                     break;
@@ -1495,7 +1515,7 @@ public class InitCommand extends BaseCommand {
                     break;
                 } else {
                     System.out.println("  " + result.message());
-                    switch (askVerificationFailureAction(console)) {
+                    switch (askVerificationFailureAction(prompts)) {
                         case SKIP -> {
                             System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                             break;
@@ -1541,7 +1561,7 @@ public class InitCommand extends BaseCommand {
      *
      * @return the account to configure next, or empty when there is nothing left to do.
      */
-    private Optional<AccountTarget> manageClaudeAccounts(SpawnConfig config, Console console) {
+    private Optional<AccountTarget> manageClaudeAccounts(SpawnConfig config, Prompts prompts) {
         var claude = config.getClaude();
         while (true) {
             var accounts = claude.allAccounts();
@@ -1563,14 +1583,14 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    x. Remove an account");
             }
             System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readInput(console.readLine()).toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> {
                     return Optional.empty();
                 }
                 case "a" -> {
-                    var name = askAccountName(console, accounts.keySet());
+                    var name = askAccountName(prompts, accounts.keySet());
                     if (name.isEmpty()) return Optional.empty();
                     return Optional.of(new AccountTarget(name, false));
                 }
@@ -1583,7 +1603,7 @@ public class InitCommand extends BaseCommand {
                 case "d" -> {
                     if (canManageMultiple) {
                         System.out.print("  Name of the account to make default: ");
-                        var name = readInput(console.readLine());
+                        var name = readInput(prompts.readLine());
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (!account.isComplete()) {
@@ -1602,7 +1622,7 @@ public class InitCommand extends BaseCommand {
                 case "x" -> {
                     if (canManageMultiple) {
                         System.out.print("  Name of the account to remove: ");
-                        var name = readInput(console.readLine());
+                        var name = readInput(prompts.readLine());
                         if (accounts.containsKey(name)) {
                             var account = accounts.get(name);
                             if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
@@ -1628,10 +1648,10 @@ public class InitCommand extends BaseCommand {
     }
 
     /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
-    private static String askAccountName(Console console, java.util.Set<String> taken) {
+    private static String askAccountName(Prompts prompts, java.util.Set<String> taken) {
         while (true) {
             System.out.print("  Name for this account (e.g. personal, work — Enter to cancel): ");
-            var name = readInput(console.readLine());
+            var name = readInput(prompts.readLine());
             if (name.isEmpty()) return "";
             if (taken.contains(name)) {
                 System.out.println("  There is already an account named '" + name + "'.");
@@ -1645,14 +1665,14 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private record AuthResult(boolean verified, String message) {}
+    record AuthResult(boolean verified, String message) {}
 
     enum VerificationFailureAction { RETRY, SKIP, SAVE_UNVERIFIED }
 
-    private static VerificationFailureAction askVerificationFailureAction(Console console) {
+    private static VerificationFailureAction askVerificationFailureAction(Prompts prompts) {
         while (true) {
             System.out.print("  Try again? (Y/n/s to save anyway): ");
-            var action = parseVerificationFailureAction(console.readLine());
+            var action = parseVerificationFailureAction(prompts.readLine());
             if (action != null) return action;
             System.out.println("  Please answer y, n, or s.");
         }
@@ -1804,14 +1824,14 @@ public class InitCommand extends BaseCommand {
         System.out.println("  AI account as a second Claude account to enable them.");
     }
 
-    private AuthResult verifyAnthropicApiKey(String key) {
+    AuthResult verifyAnthropicApiKey(String key) {
         if (!key.startsWith("sk-ant-")) {
             System.out.println("  Note: key does not start with 'sk-ant-' (unexpected format).");
         }
         return verifyAnthropicCredential("x-api-key", key, "API key");
     }
 
-    private AuthResult verifyOauthToken(String token) {
+    AuthResult verifyOauthToken(String token) {
         oauthTokenShapeWarning(token).ifPresent(warning -> System.out.println("  " + warning));
         return verifyAnthropicCredential("Authorization", "Bearer " + token, "OAuth token");
     }
@@ -1842,7 +1862,7 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private void setupClaudeOauth(SpawnConfig config, java.io.Console console, AccountTarget target) {
+    private void setupClaudeOauth(SpawnConfig config, Prompts prompts, AccountTarget target) {
         System.out.println("  A Pro/Max subscription does not come with an API key. What it can");
         System.out.println("  produce is a long-lived OAuth token (valid about a year):");
         System.out.println();
@@ -1856,24 +1876,10 @@ public class InitCommand extends BaseCommand {
         System.out.println("  Re-run 'isx init' to paste a fresh token once this one expires.");
         System.out.println();
 
-        if (commandExists("claude")) {
+        if (hostHasCommand("claude")) {
             System.out.println("  Found 'claude' CLI on this host — steps 1 and 2 are already done.");
-            if (askConfirmation(console, "  Run 'claude setup-token' now?", true)) {
-                try {
-                    var pb = new ProcessBuilder("claude", "setup-token");
-                    pb.inheritIO();
-                    var process = pb.start();
-                    if (!process.waitFor(120, TimeUnit.SECONDS)) {
-                        process.destroyForcibly();
-                        System.err.println("  'claude setup-token' timed out after 2 minutes.");
-                    } else if (process.exitValue() != 0) {
-                        System.err.println("  'claude setup-token' exited with code " + process.exitValue() + ".");
-                    } else {
-                        System.out.println("  Token generation complete.");
-                    }
-                } catch (Exception e) {
-                    System.err.println("  Failed to run 'claude setup-token': " + e.getMessage());
-                }
+            if (askConfirmation(prompts, "  Run 'claude setup-token' now?", true)) {
+                runClaudeSetupToken();
             }
         } else {
             System.out.println("  'claude' CLI not found on this host — follow the steps above on any");
@@ -1882,7 +1888,7 @@ public class InitCommand extends BaseCommand {
 
         while (true) {
             System.out.print("  Paste your OAuth token (or press Enter to skip): ");
-            var token = readSecret(console.readPassword());
+            var token = readSecret(prompts.readPassword());
             if (token.isBlank()) {
                 System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                 break;
@@ -1897,7 +1903,7 @@ public class InitCommand extends BaseCommand {
                 break;
             } else {
                 System.out.println("  " + result.message());
-                switch (askVerificationFailureAction(console)) {
+                switch (askVerificationFailureAction(prompts)) {
                     case SKIP -> {
                         System.out.println("  Skipped Claude setup. Configure later with 'isx init'.");
                         break;
@@ -1916,7 +1922,26 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private AuthResult verifyVertexConfig(String region, String projectId) {
+    /** Runs 'claude setup-token' attached to the terminal, so its prompts reach the user. */
+    void runClaudeSetupToken() {
+        try {
+            var pb = new ProcessBuilder("claude", "setup-token");
+            pb.inheritIO();
+            var process = pb.start();
+            if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                System.err.println("  'claude setup-token' timed out after 2 minutes.");
+            } else if (process.exitValue() != 0) {
+                System.err.println("  'claude setup-token' exited with code " + process.exitValue() + ".");
+            } else {
+                System.out.println("  Token generation complete.");
+            }
+        } catch (Exception e) {
+            System.err.println("  Failed to run 'claude setup-token': " + e.getMessage());
+        }
+    }
+
+    AuthResult verifyVertexConfig(String region, String projectId) {
         if (!commandExists("gcloud")) {
             return new AuthResult(false,
                     "gcloud CLI not found. Install it from " + TerminalLink.link("https://cloud.google.com/sdk/docs/install") + "\n"
@@ -1996,10 +2021,8 @@ public class InitCommand extends BaseCommand {
      */
     private enum GhTokenOutcome { SAVED, NOT_OFFERED, FAILED }
 
-    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console, AccountTarget account) {
-        // 'gh auth status' exits 0 only when gh is installed and logged in; a missing binary or no
-        // active login exits non-zero, so this one check gates the whole fallback.
-        if (runHostCapturingExit("gh", "auth", "status") != 0) {
+    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Prompts prompts, AccountTarget account) {
+        if (!ghCliLoggedIn()) {
             return GhTokenOutcome.NOT_OFFERED;
         }
 
@@ -2007,7 +2030,7 @@ public class InitCommand extends BaseCommand {
         System.out.println("  " + DIM + "Not recommended: that login is almost certainly your personal identity,"
                 + " so the agent would act as you with whatever scopes 'gh' holds. Prefer a dedicated"
                 + " agent account and a fine-grained PAT (above)." + RESET);
-        if (!askConfirmation(console, "  Reuse your personal 'gh' token anyway?", false)) {
+        if (!askConfirmation(prompts, "  Reuse your personal 'gh' token anyway?", false)) {
             return GhTokenOutcome.NOT_OFFERED;
         }
 
@@ -2016,7 +2039,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("  Could not read a token from 'gh auth token' — continuing with manual setup.");
             return GhTokenOutcome.FAILED;
         }
-        var result = verifyGitHubToken(token);
+        var result = verifyGitHubToken(token, prompts);
         if (result == null) {
             System.out.println("  The 'gh' token failed verification — continuing with manual setup.");
             return GhTokenOutcome.FAILED;
@@ -2074,8 +2097,17 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    /**
+     * Whether the host has an authenticated 'gh' CLI. 'gh auth status' exits 0 only when gh is
+     * installed and logged in; a missing binary or no active login exits non-zero, so this one
+     * check gates the whole reuse fallback.
+     */
+    boolean ghCliLoggedIn() {
+        return runHostCapturingExit("gh", "auth", "status") == 0;
+    }
+
     /** Reads the token backing the current 'gh' login (stdout of 'gh auth token'). */
-    private static String readGhAuthToken() {
+    String readGhAuthToken() {
         try {
             // Discard stderr: gh warnings must not leak into the interactive init flow, and an
             // undrained stderr pipe could fill and block the process until the timeout below.
@@ -2097,7 +2129,7 @@ public class InitCommand extends BaseCommand {
     }
 
     /** Prints step-by-step instructions for creating a fine-grained PAT and offers to open the page. */
-    private void printGitHubPatGuide(Console console) {
+    private void printGitHubPatGuide(Prompts prompts) {
         System.out.println("  To create a fine-grained PAT (ideally signed in as the agent's account,");
         System.out.println("  not your personal one):");
         System.out.println();
@@ -2116,8 +2148,8 @@ public class InitCommand extends BaseCommand {
         System.out.println("  " + DIM + "Avoid admin, org, and delete permissions unless you need them." + RESET);
         System.out.println();
 
-        if (askConfirmation(console, "  Open the token page in your browser now?", true)) {
-            if (Platform.openUrl(GH_PAT_NEW_URL)) {
+        if (askConfirmation(prompts, "  Open the token page in your browser now?", true)) {
+            if (openUrl(GH_PAT_NEW_URL)) {
                 System.out.println("  Opened your browser — finish there, then paste the token below.");
             } else {
                 System.out.println("  Could not open a browser — visit the URL above manually.");
@@ -2140,24 +2172,8 @@ public class InitCommand extends BaseCommand {
      *
      * @return the account to write credentials into, or empty to leave everything as it is
      */
-    private Optional<AccountTarget> chooseAccountTarget(SpawnConfig config, String namespace, String label,
-                                                        Console console) {
-        return chooseAccountTarget(config, namespace, label,
-                () -> readInput(console.readLine()),
-                taken -> askAccountName(console, taken));
-    }
-
-    /**
-     * As above, against a plain line source rather than a {@link Console}.
-     *
-     * <p>The menu needs lines, not a terminal. Taking them as a supplier is what makes its
-     * decisions testable -- {@code Console} is final and cannot be stood in for, so this code
-     * would otherwise be reachable only by a human at a keyboard, which is how both of the bugs
-     * it had went unnoticed.
-     */
     Optional<AccountTarget> chooseAccountTarget(SpawnConfig config, String namespace, String label,
-                                                java.util.function.Supplier<String> readLine,
-                                                java.util.function.Function<java.util.Set<String>, String> askName) {
+                                                Prompts prompts) {
         while (true) {
             var accounts = NamespaceAccounts.names(config, namespace);
             var defaultName = NamespaceAccounts.defaultName(config, namespace);
@@ -2171,12 +2187,12 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    r. Replace it");
                 System.out.println("    a. Add a second account (keeps the current one)");
                 System.out.print("  Choice (Enter to keep as-is): ");
-                var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
+                var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
                 switch (choice) {
                     case "" -> { return Optional.empty(); }
                     case "r" -> { return Optional.of(new AccountTarget(only, true)); }
                     case "a" -> {
-                        var name = askName.apply(new java.util.LinkedHashSet<>(accounts));
+                        var name = askAccountName(prompts, new java.util.LinkedHashSet<>(accounts));
                         return name.isEmpty() ? Optional.empty() : Optional.of(new AccountTarget(name, false));
                     }
                     default -> { continue; }
@@ -2194,17 +2210,17 @@ public class InitCommand extends BaseCommand {
             System.out.println("    d. Change which account is the default");
             System.out.println("    x. Remove an account");
             System.out.print("  Choice (Enter to keep as-is): ");
-            var choice = readLine.get().toLowerCase(java.util.Locale.ROOT);
+            var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
 
             switch (choice) {
                 case "" -> { return Optional.empty(); }
                 case "a" -> {
-                    var name = askName.apply(new java.util.LinkedHashSet<>(accounts));
+                    var name = askAccountName(prompts, new java.util.LinkedHashSet<>(accounts));
                     return name.isEmpty() ? Optional.empty() : Optional.of(new AccountTarget(name, false));
                 }
                 case "e" -> {
                     System.out.print("  Name of the account to replace: ");
-                    var name = readLine.get();
+                    var name = readInput(prompts.readLine());
                     if (accounts.contains(name)) return Optional.of(new AccountTarget(name, false));
                     if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
                 }
@@ -2213,7 +2229,7 @@ public class InitCommand extends BaseCommand {
                 // this point cannot leave the confirmation they printed a lie.
                 case "d" -> {
                     System.out.print("  Name of the account to make default: ");
-                    var name = readLine.get();
+                    var name = readInput(prompts.readLine());
                     if (accounts.contains(name)) {
                         NamespaceAccounts.setDefault(config, namespace, name);
                         config.save();
@@ -2224,7 +2240,7 @@ public class InitCommand extends BaseCommand {
                 }
                 case "x" -> {
                     System.out.print("  Name of the account to remove: ");
-                    var name = readLine.get();
+                    var name = readInput(prompts.readLine());
                     if (accounts.contains(name)) {
                         NamespaceAccounts.remove(config, namespace, name);
                         config.save();
@@ -2247,33 +2263,36 @@ public class InitCommand extends BaseCommand {
                 "yourname-ai-bot) and mint a fine-grained PAT for it, scoped to",
                 "just the repos and permissions the agent needs. That keeps the",
                 "agent's actions attributable to it and its blast radius small.");
-        var config = SpawnConfig.load();
-        var console = System.console();
-        if (console == null) {
+        var prompts = Prompts.console();
+        if (prompts == null) {
             System.err.println("  Error: no console available for interactive setup.");
             return;
         }
+        setupGitHubAuth(SpawnConfig.load(), prompts);
+    }
+
+    void setupGitHubAuth(SpawnConfig config, Prompts prompts) {
 
         // On a re-run, offer account management rather than only replace-or-keep: the same
         // menu every non-Claude credential gets, so adding a second GitHub identity needs no
         // GitHub-specific UX.
         var account = AccountTarget.FRESH;
         if (hasAccountsToPreserve(config, GhSetup.NAMESPACE)) {
-            var chosen = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", console);
+            var chosen = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
             if (chosen.isEmpty()) return;
             account = chosen.get();
         }
 
         // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
-        printGitHubPatGuide(console);
+        printGitHubPatGuide(prompts);
 
         while (true) {
             System.out.print("  GitHub PAT for the agent (or press Enter to skip): ");
-            var token = readSecret(console.readPassword());
+            var token = readSecret(prompts.readPassword());
             if (token.isBlank()) {
                 // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
                 // agent act as you — so it is offered here (default No), never as the primary path.
-                var outcome = offerGhCliToken(config, console, account);
+                var outcome = offerGhCliToken(config, prompts, account);
                 if (outcome == GhTokenOutcome.SAVED) {
                     break;
                 }
@@ -2285,9 +2304,9 @@ public class InitCommand extends BaseCommand {
                 break;
             }
 
-            var result = verifyGitHubToken(token);
+            var result = verifyGitHubToken(token, prompts);
             if (result == null) {
-                if (!askConfirmation(console, "  Try again?", true)) {
+                if (!askConfirmation(prompts, "  Try again?", true)) {
                     System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
                     break;
                 }
@@ -2305,13 +2324,13 @@ public class InitCommand extends BaseCommand {
             System.out.println("      " + TerminalLink.link(patSettingsUrl(token)));
             System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
-            var newToken = readSecret(console.readPassword());
+            var newToken = readSecret(prompts.readPassword());
             if (newToken.isBlank()) {
                 saveGitHubToken(config, account, token, null);
                 break;
             }
 
-            var newResult = verifyGitHubToken(newToken);
+            var newResult = verifyGitHubToken(newToken, prompts);
             if (newResult == null) {
                 System.out.println("  New token failed verification — keeping the original token.");
                 saveGitHubToken(config, account, token, null);
@@ -2327,11 +2346,12 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private record GitHubVerifyResult(String login, String email) {}
+    record GitHubVerifyResult(String login, String email) {}
 
     record EmailParseResult(java.util.List<String> verified, String primary) {}
 
-    private GitHubVerifyResult verifyGitHubToken(String token) {
+    /** @param prompts picks between several verified emails, when the account has them */
+    GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
         System.out.println("  Testing GitHub token...");
         try {
             var client = getHttpClient();
@@ -2350,7 +2370,7 @@ public class InitCommand extends BaseCommand {
             var login = json.has("login") ? json.get("login").asText(null) : null;
             var email = json.has("email") && !json.get("email").isNull() ? json.get("email").asText(null) : null;
             if (email == null) {
-                email = checkGitHubEmail(client, token);
+                email = checkGitHubEmail(client, token, prompts);
             }
 
             if (login != null) {
@@ -2370,7 +2390,7 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private String checkGitHubEmail(java.net.http.HttpClient client, String token) {
+    private String checkGitHubEmail(java.net.http.HttpClient client, String token, Prompts prompts) {
         try {
             var request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.github.com/user/emails"))
@@ -2390,10 +2410,6 @@ public class InitCommand extends BaseCommand {
                 return parsed.verified.get(0);
             }
 
-            var console = System.console();
-            if (console == null) {
-                return parsed.verified.get(0);
-            }
             System.out.println("  Multiple verified emails found:");
             for (int i = 0; i < parsed.verified.size(); i++) {
                 var label = parsed.verified.get(i);
@@ -2402,7 +2418,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    " + (i + 1) + ". " + label);
             }
             System.out.print("  Select email for git commits [1]: ");
-            var choice = readInput(console.readLine());
+            var choice = readInput(prompts.readLine());
             if (choice.isEmpty()) {
                 return parsed.verified.get(0);
             }
@@ -2468,13 +2484,16 @@ public class InitCommand extends BaseCommand {
                 "Configures credentials for " + desc + ".",
                 "Real credentials stay on your host — containers only hold",
                 "placeholders, and the MITM proxy injects real values.");
-        var config = SpawnConfig.load();
-        var console = System.console();
-        if (console == null) {
+        var prompts = Prompts.console();
+        if (prompts == null) {
             System.err.println("  Error: no console available for interactive setup.");
             return;
         }
+        setupGenericToolCredentials(toolName, tool, SpawnConfig.load(), prompts);
+    }
 
+    void setupGenericToolCredentials(String toolName, ToolSetup tool, SpawnConfig config, Prompts prompts) {
+        var desc = tool.description().isBlank() ? toolName : tool.description();
         var proxyDef = tool.proxy();
         if (proxyDef == null) return;
 
@@ -2488,7 +2507,7 @@ public class InitCommand extends BaseCommand {
             if (!hasAccountsToPreserve(config, namespace)) {
                 target = AccountTarget.FRESH;
             } else {
-                var chosen = chooseAccountTarget(config, namespace, desc, console);
+                var chosen = chooseAccountTarget(config, namespace, desc, prompts);
                 if (chosen.isEmpty()) return;
                 target = chosen.get();
             }
@@ -2526,7 +2545,7 @@ public class InitCommand extends BaseCommand {
             boolean hasExisting = configDef.isConfirm() ? "true".equals(existing) : !existing.isBlank();
             if (hasExisting) {
                 System.out.println("  " + label + ": " + maskSecret(existing));
-                if (askConfirmation(console, "  Keep current?", true, true)) {
+                if (askConfirmation(prompts, "  Keep current?", true, true)) {
                     // A kept value still has to travel with a "replace" into the new layout.
                     if (perAccount) accountValues.put(key, existing);
                     continue;
@@ -2542,13 +2561,13 @@ public class InitCommand extends BaseCommand {
 
             String value;
             if (configDef.isConfirm()) {
-                value = askConfirmation(console, "  " + label + "?", false, true) ? "true" : "false";
+                value = askConfirmation(prompts, "  " + label + "?", false, true) ? "true" : "false";
             } else {
                 System.out.print("  " + label + " (or press Enter to skip): ");
                 if (configDef.isSecret()) {
-                    value = readSecret(console.readPassword());
+                    value = readSecret(prompts.readPassword());
                 } else {
-                    value = readInput(console.readLine());
+                    value = readInput(prompts.readLine());
                 }
             }
             if (value.isBlank()) continue;
@@ -2584,18 +2603,29 @@ public class InitCommand extends BaseCommand {
             java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
             java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
             String skipMessage) {
+        var prompts = Prompts.console();
         var config = SpawnConfig.load();
+        if (prompts == null) {
+            var existing = getter.apply(config);
+            if (!existing.isEmpty()) {
+                System.out.println("  Current paths:");
+                printNumberedPaths(existing);
+            }
+            System.err.println("  Error: no console available for interactive setup.");
+            return;
+        }
+        setupPathList(getter, setter, skipMessage, config, prompts);
+    }
+
+    void setupPathList(
+            java.util.function.Function<SpawnConfig, java.util.List<String>> getter,
+            java.util.function.BiConsumer<SpawnConfig, java.util.List<String>> setter,
+            String skipMessage, SpawnConfig config, Prompts prompts) {
         var existing = getter.apply(config);
 
         if (!existing.isEmpty()) {
             System.out.println("  Current paths:");
             printNumberedPaths(existing);
-        }
-
-        var console = System.console();
-        if (console == null) {
-            System.err.println("  Error: no console available for interactive setup.");
-            return;
         }
 
         var paths = new java.util.ArrayList<>(existing);
@@ -2604,7 +2634,7 @@ public class InitCommand extends BaseCommand {
             System.out.print("  Add a local directory"
                     + (hasEntries ? " or # to remove" : "")
                     + " (or press Enter to " + (hasEntries ? "finish" : "skip") + "): ");
-            var input = readInput(console.readLine());
+            var input = readInput(prompts.readLine());
             if (input.isEmpty()) break;
 
             if (input.contains("://")) {
@@ -2691,8 +2721,8 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        var console = System.console();
-        if (console == null) {
+        var prompts = Prompts.console();
+        if (prompts == null) {
             System.out.println("  For community templates, see (clone and add the local path):");
             System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
@@ -2700,9 +2730,9 @@ public class InitCommand extends BaseCommand {
         }
 
         if (ghRepoExists(login + "/" + TEMPLATES_REPO)) {
-            offerCloneTemplates(console, login);
+            offerCloneTemplates(prompts, login);
         } else {
-            offerForkAndCloneTemplates(console, login);
+            offerForkAndCloneTemplates(prompts, login);
         }
     }
 
@@ -2724,17 +2754,17 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    private void offerCloneTemplates(Console console, String login) {
+    private void offerCloneTemplates(Prompts prompts, String login) {
         System.out.println("  Found " + BOLD + login + "/" + TEMPLATES_REPO + RESET + " on GitHub.");
         var defaultPath = defaultClonePath();
-        var clonePath = askClonePath(console, defaultPath);
+        var clonePath = askClonePath(prompts, defaultPath);
         if (clonePath == null) return;
-        cloneAndAddSearchPath(login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
+        cloneAndAddSearchPath(prompts, login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
     }
 
-    private void offerForkAndCloneTemplates(Console console, String login) {
+    private void offerForkAndCloneTemplates(Prompts prompts, String login) {
         System.out.println("  You don't have a " + BOLD + TEMPLATES_REPO + RESET + " repo yet.");
-        if (!askConfirmation(console, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
+        if (!askConfirmation(prompts, "  Fork " + TEMPLATES_UPSTREAM + " to your account?", true)) {
             System.out.println("  Skipped. You can fork it manually at:");
             System.out.println("  " + TerminalLink.link("https://github.com/" + TEMPLATES_UPSTREAM));
             System.out.println();
@@ -2752,36 +2782,35 @@ public class InitCommand extends BaseCommand {
         System.out.println("  " + GREEN_BOLD + "✓" + RESET + " Forked to " + login + "/" + TEMPLATES_REPO);
 
         var defaultPath = defaultClonePath();
-        var clonePath = askClonePath(console, defaultPath);
+        var clonePath = askClonePath(prompts, defaultPath);
         if (clonePath == null) {
             System.out.println("  You can clone it later with: gh repo clone " + login + "/" + TEMPLATES_REPO);
             System.out.println();
             return;
         }
-        cloneAndAddSearchPath(login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
+        cloneAndAddSearchPath(prompts, login + "/" + TEMPLATES_REPO, clonePath, clonePath.equals(defaultPath));
     }
 
     private static String defaultClonePath() {
         return Environment.configDir().resolve(TEMPLATES_REPO).toString();
     }
 
-    private String askClonePath(Console console, String defaultPath) {
+    static String askClonePath(Prompts prompts, String defaultPath) {
         System.out.print("  Clone to " + defaultPath + "? (Y/path/n): ");
-        var answer = readInput(console.readLine());
+        var answer = readInput(prompts.readLine());
         if (answer.equalsIgnoreCase("n")) return null;
         if (answer.isEmpty() || answer.equalsIgnoreCase("y")) return defaultPath;
 
         if (answer.equalsIgnoreCase("path")) {
             System.out.print("  Clone path: ");
-            var path = readInput(console.readLine());
+            var path = readInput(prompts.readLine());
             if (path.isEmpty()) return defaultPath;
             return HostResourceSetup.expandHostTilde(path);
         }
         return HostResourceSetup.expandHostTilde(answer);
     }
 
-    private void cloneAndAddSearchPath(String nwo, String targetPath, boolean alreadyConfirmed) {
-        var console = System.console();
+    private void cloneAndAddSearchPath(Prompts prompts, String nwo, String targetPath, boolean alreadyConfirmed) {
         var target = Path.of(targetPath).toAbsolutePath().normalize();
         var adjusted = false;
         if (Files.isDirectory(target) && !target.getFileName().toString().equals(TEMPLATES_REPO)) {
@@ -2794,8 +2823,8 @@ public class InitCommand extends BaseCommand {
             return;
         }
 
-        if (console != null && (!alreadyConfirmed || adjusted)) {
-            if (!askConfirmation(console, "  Will clone to " + target + ". Proceed?", true)) {
+        if (!alreadyConfirmed || adjusted) {
+            if (!askConfirmation(prompts, "  Will clone to " + target + ". Proceed?", true)) {
                 System.out.println("  Skipped cloning. You can add the path manually below.");
                 return;
             }

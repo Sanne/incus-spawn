@@ -50,9 +50,23 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
 
     protected static boolean askConfirmation(Console console, PrintStream output,
                                              String prompt, boolean defaultValue, boolean eofValue) {
+        return askConfirmation(Prompts.of(console), output, prompt, defaultValue, eofValue);
+    }
+
+    protected static boolean askConfirmation(Prompts prompts, String prompt, boolean defaultValue) {
+        return askConfirmation(prompts, System.out, prompt, defaultValue, false);
+    }
+
+    protected static boolean askConfirmation(Prompts prompts, String prompt,
+                                             boolean defaultValue, boolean eofValue) {
+        return askConfirmation(prompts, System.out, prompt, defaultValue, eofValue);
+    }
+
+    protected static boolean askConfirmation(Prompts prompts, PrintStream output,
+                                             String prompt, boolean defaultValue, boolean eofValue) {
         while (true) {
             output.print(prompt + (defaultValue ? " (Y/n): " : " (y/N): "));
-            var answer = console.readLine();
+            var answer = prompts.readLine();
             if (answer == null) return eofValue;
 
             var parsed = parseConfirmation(answer, defaultValue);
