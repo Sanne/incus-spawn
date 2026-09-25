@@ -368,8 +368,8 @@ public class ListCommand extends BaseCommand {
             return;
         }
         // One subscription for the whole session, including while the TUI is suspended for a
-        // shell: an event then just leaves a refresh request that the next TUI entry, which
-        // reloads anyway, absorbs.
+        // shell: an event then just leaves a refresh request, which the full reload on the next
+        // TUI entry clears (reloadData drops requests raised before it started).
         eventWatcher = new InstanceEventWatcher(incus::openLifecycleEvents,
                 this::onInstanceEvent, () -> liveRefreshRequested.set(true),
                 () -> pendingStatusMessage.set("Live updates unavailable -- refreshing every "
@@ -570,6 +570,10 @@ public class ListCommand extends BaseCommand {
      * (non-template instances only).
      */
     private void reloadData() {
+        // This reload reads everything, so it satisfies every request raised before it. Requests
+        // raised while it runs (events arriving mid-reload) set the flag again and still get served.
+        // Start follow-ups stay scheduled: they exist for an IPv4 that appears after this read.
+        liveRefreshRequested.set(false);
         dataGeneration++;
         lastDataLoadMs = System.currentTimeMillis();
         // The instance listing (GET /1.0/instances?recursion=2) is the heaviest single call.
@@ -5427,7 +5431,9 @@ public class ListCommand extends BaseCommand {
 
     private void shellInto(String name, String commandOverride) {
         var status = incus.getInstanceStatus(name);
-        if (status.isEmpty()) {
+        // An empty status means any failed lookup, not just a missing instance, so confirm before
+        // giving up: a daemon hiccup must not cancel a shell on an instance that's still there.
+        if (status.isEmpty() && !incus.exists(name)) {
             // Deleted between the TUI's check and now: report it back in the TUI (which reloads
             // on re-entry) instead of failing on a start or exec against a missing instance.
             statusMessage = name + " no longer exists";
