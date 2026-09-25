@@ -1786,18 +1786,33 @@ public class InitCommand extends BaseCommand {
 
     private static final String[] KNOWN_PREFIXES = {"github_pat_", "sk-ant-", "ghp_"};
 
+    /** Characters shown from each end of a secret, when showing them is safe at all. */
+    private static final int MASK_EDGE = 4;
+
+    /**
+     * A recognisable form of a secret that reveals at most a third of it.
+     *
+     * <p>A known prefix is a public format marker rather than secret material, so it is shown
+     * freely and does not count. Of the rest, a long secret shows its first and last four
+     * characters, a shorter one only its last four, and anything under twelve characters of
+     * material nothing at all. A flat "first four, last four" once showed eight of a
+     * nine-character password -- next to its exact length, in the "received" line.
+     */
     static String maskSecret(String secret) {
-        if (secret == null || secret.length() < 8) {
-            return "****";
-        }
-        int prefixEnd = 4;
+        if (secret == null) return "****";
+        var prefix = "";
         for (var p : KNOWN_PREFIXES) {
-            if (secret.startsWith(p)) { prefixEnd = p.length(); break; }
+            if (secret.startsWith(p)) { prefix = p; break; }
         }
-        if (prefixEnd + 4 >= secret.length()) {
-            return "****";
+        int material = secret.length() - prefix.length();
+        var tail = secret.substring(secret.length() - Math.min(MASK_EDGE, secret.length()));
+        if (prefix.isEmpty() && 3 * (2 * MASK_EDGE) <= material) {
+            return secret.substring(0, MASK_EDGE) + "..." + tail;
         }
-        return secret.substring(0, prefixEnd) + "..." + secret.substring(secret.length() - 4);
+        if (3 * MASK_EDGE <= material) {
+            return prefix + "..." + tail;
+        }
+        return "****";
     }
 
     /**
