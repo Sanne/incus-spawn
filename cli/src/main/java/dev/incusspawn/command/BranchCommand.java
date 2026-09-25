@@ -201,7 +201,7 @@ public class BranchCommand extends BaseCommand {
         }
 
         BuildOutput.stepStart((isVm ? "Starting VM..." : "Starting container..."));
-        incus.start(name);
+        InstanceLifecycle.startInstance(incus, name);
         BuildOutput.stepDone();
 
         if (isVm) {

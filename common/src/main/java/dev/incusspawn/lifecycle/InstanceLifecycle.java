@@ -115,6 +115,64 @@ public final class InstanceLifecycle {
         }
     }
 
+    /**
+     * Start an instance, falling back once if IP spoofing protection is what stops it.
+     *
+     * <p>Setting {@code security.ipv4_filtering} <em>succeeds</em> on a host that cannot enforce
+     * it; the failure only appears when the instance starts and Incus tries to install the
+     * per-NIC rules ("The kernel doesn't support the ebtables 'filter' table" on xtables, the
+     * equivalent nft error otherwise). Without this, such a host would accept every branch and
+     * then be unable to start any of them -- a working setup broken by a hardening step.
+     *
+     * <p>The fallback drops the setting, says plainly what is no longer enforced, and starts.
+     * An instance that works without separation beats an instance that does not work, but the
+     * user has to know which one they have.
+     */
+    public static void startInstance(IncusClient incus, String name) {
+        try {
+            incus.start(name);
+        } catch (RuntimeException e) {
+            if (!looksLikeIpFilteringFailure(e) || !disableIpFiltering(incus, name)) throw e;
+            incus.start(name);
+        }
+    }
+
+    /**
+     * Narrow on purpose: only a device-level failure naming the filtering machinery may strip a
+     * security setting. Any other start failure must surface as itself.
+     */
+    static boolean looksLikeIpFilteringFailure(Throwable e) {
+        for (var cause = e; cause != null; cause = cause.getCause()) {
+            var message = cause.getMessage();
+            if (message == null) continue;
+            var lower = message.toLowerCase(java.util.Locale.ROOT);
+            if (!lower.contains("failed to start device")) continue;
+            if (lower.contains("ebtables") || lower.contains("nft")
+                    || lower.contains("ipv4_filtering") || lower.contains("iptables")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean disableIpFiltering(IncusClient incus, String name) {
+        try {
+            var nic = incus.findNic(name, "incusbr0");
+            if (nic == null || !"true".equals(nic.config().get("security.ipv4_filtering"))) {
+                return false;
+            }
+            incus.deviceConfigSet(name, nic.name(), "security.ipv4_filtering", "false");
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Warning: this host cannot enforce IP spoofing protection, so it has been"
+                    + " disabled on " + name + ".");
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Instances on this host can impersonate each other's credential accounts.");
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     static int bridgePrefixLen(IncusClient incus) {
         var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
         return bridgeAddr.contains("/") ? CidrUtils.parseCidr(bridgeAddr).prefixLen() : 24;
