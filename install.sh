@@ -90,10 +90,10 @@ if $NATIVE; then
         fi
         GRAALVM_BASE="container-registry.oracle.com/graalvm/native-image:latest"
         # The tag is a local cache name, not a pull ref: the builder FROMs :latest.
-        # Bumping it here (25.2 -> 25.3) invalidates the cached builder so the next
-        # build re-pulls :latest and picks up the new GraalVM (25.3: Priority Inlining
-        # default, compressed references, Adaptive2 serial GC, loop vectorization).
-        BUILDER_TAG="incus-spawn-graalvm-builder:25.3"
+        # Bump it together with graalvm-version in .github/workflows/: that
+        # invalidates the cached builder so the next build re-pulls :latest and
+        # picks up the new GraalVM. Forgetting it leaves local builds on the old one.
+        BUILDER_TAG="incus-spawn-graalvm-builder:25.4"
         if ! $CTR image inspect "$BUILDER_TAG" >/dev/null 2>&1; then
             echo "Preparing GraalVM builder image (one-time)..."
             $CTR rmi "$GRAALVM_BASE" >/dev/null 2>&1 || true
