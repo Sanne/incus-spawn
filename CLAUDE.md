@@ -61,7 +61,7 @@ DESIGN.md "Build-time initialization must not capture host paths"). Eagerly reso
 in `RuntimeConstants` (`common`) or `RuntimeServices` (`cli`), both on the flag; everywhere else call
 the `Environment` method instead of storing its result. The flag is declared three times (each
 module's `resources-filtered/application.properties` plus `cli/pom.xml`'s `macos-native` profile) --
-`NativeImageInitializationTest` fails if one drifts, and `graal/BakedHostPathFeature` fails the
+`NativeImageInitializationTest` fails if one drifts, and `graal/BakedHostStateFeature` fails the
 native build if such a path reaches the image heap.
 
 Detailed architecture docs are in `.claude/rules/` and load automatically when you work on related files. Each rule file declares `paths:` globs that trigger it. When adding new source packages, renaming files, or restructuring modules, check whether `.claude/rules/` path globs need updating -- stale paths silently stop loading context. Prefer package-level globs (`incus/**`) over specific files; use specific files only for cross-cutting triggers (e.g. `BuildCommand.java` in `incus.md` to ensure pool-awareness context loads during build work).

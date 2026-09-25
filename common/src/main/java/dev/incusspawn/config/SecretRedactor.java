@@ -329,6 +329,12 @@ public final class SecretRedactor {
                     "$1" + marker("url-credentials") + "$2")
     );
 
+    /** Whether the text contains anything shaped like a credential (the patterns {@link #scrubText} removes). */
+    public static boolean hasSecretShape(String text) {
+        if (text == null || text.isEmpty()) return false;
+        return PATTERNS.stream().anyMatch(scrub -> scrub.pattern().matcher(text).find());
+    }
+
     /** Scrub known secret values and credential shapes out of unstructured text. */
     public static Scrubbed scrubText(String text, Map<String, String> secretValues) {
         if (text == null || text.isEmpty()) return new Scrubbed(text == null ? "" : text, Map.of());

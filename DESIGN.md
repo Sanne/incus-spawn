@@ -807,18 +807,38 @@ on the flag — so the binary carried `/root/.cache/incus-spawn/downloads` as a 
 because every other `Environment` read happens at runtime — so it read as a container problem, not a
 build-host leak. `DownloadCache` now names the directory it failed to create.
 
-Two mechanisms keep it from recurring. `BakedHostPathFeature` registers an object replacer — the
-analysis calls it for every object scanned into the image heap — and aborts the build if a constant
-is, or lives under, one of the *builder's* own directories (`user.home`, `user.dir`). Its precision
-comes from an explicit, reviewable allowed list rather than from guessing which paths matter: an
-earlier version only flagged builder paths containing `incus-spawn`, which would have tolerated a
-baked `~/.m2/repository`, `~/.config/incus/`, `~/.local/bin/isx` or bare `$HOME`. It checks `Path`
-objects as well as their string form, because `sun.nio.fs.UnixPath` stores bytes and computes its
-`String` lazily — a folded path can reach the heap with no matching `String` object at all (this
-regression produced both, and the guard reports both). Second, `NativeImageInitializationTest` parses
+Two mechanisms keep it from recurring. `BakedHostStateFeature` registers an object replacer (the
+analysis calls it for every object scanned into the image heap) and aborts the build if a constant
+reflects the build machine. Its primary check tests the configuration rather than the builder's
+identity: before analysis — and so before any build-time class initialization — it sets the
+builder's `user.home` and `user.name` to canaries carrying a random name, so a holder wrongly
+initialized at build time bakes the canary, which no literal can contain. Matching the builder's
+*real* home is kept as a second check, because some values reach the heap without reading the
+property during analysis — config Quarkus recorded in the Maven JVM, `getenv("HOME")`, JDK internals
+that cached `user.home` at startup. But that check needs the home to be distinctive, and it is not
+when building inside an isx instance: the build then runs as `agentuser`, and every
+`"/home/agentuser/..."` literal the tool setups write into instances looks like a leak (issue #708).
+Allowing the prefix would blind the check silently, exactly where isx is dogfooded, so instead the
+guard switches real-home matching off *and says so* when the two coincide, leaving the canaries to
+cover that build. An earlier version guessed at precision the other way, flagging only paths
+containing `incus-spawn`, which would have tolerated a baked `~/.m2/repository`, `~/.config/incus/`
+or bare `$HOME`. The guard also watches the builder's `user.dir`, and checks `Path` objects as well
+as their string form, because `sun.nio.fs.UnixPath` stores bytes and computes its `String` lazily —
+a folded path can reach the heap with no matching `String` object at all (the regression produced
+both, and the guard reports both).
+
+Environment variables are covered by GraalVM itself: `native-image` hands the builder a sanitized
+environment (measured: `HOME`, `LANG`, `PATH`, `PWD`), so a build-time `getenv("GITHUB_TOKEN")` in a
+CI release build returns null rather than baking the token into a public binary. Only `-E<name>`
+widens it, and `NativeImageInitializationTest` rejects that. The guard keeps a backstop anyway —
+any builder variable that is a credential by name or shape must not appear in the heap — and names
+the variable while withholding the value, since build logs are often public.
+
+Second, `NativeImageInitializationTest` parses
 all three declarations of the build arguments — each module's `resources-filtered/application.properties`
 plus the duplicate list in `cli/pom.xml`'s `macos-native` profile — and fails in `mvn test` if one
-stops deferring a class or stops registering a guard; a Linux build would otherwise never notice the
+stops deferring a class, stops registering a guard, or passes an environment variable through with
+`-E`; a Linux build would otherwise never notice the
 macOS copy drifting.
 
 The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property

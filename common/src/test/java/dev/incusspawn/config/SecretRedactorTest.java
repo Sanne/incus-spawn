@@ -428,4 +428,13 @@ class SecretRedactorTest {
         assertEquals(redaction.yaml(), scrubbed.text());
         assertTrue(scrubbed.hits().isEmpty());
     }
+
+    @Test
+    void secretShapeIsRecognisedInsideOtherText() {
+        assertTrue(SecretRedactor.hasSecretShape(GH_TOKEN));
+        assertTrue(SecretRedactor.hasSecretShape("token=" + OAUTH + ";"));
+        assertFalse(SecretRedactor.hasSecretShape("/home/agentuser/.claude/settings.json"));
+        assertFalse(SecretRedactor.hasSecretShape(""));
+        assertFalse(SecretRedactor.hasSecretShape(null));
+    }
 }

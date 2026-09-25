@@ -42,23 +42,39 @@ and into `ToolDefLoader`'s static initializer.
 
 The flag is declared in **three** places — each module's `resources-filtered/application.properties`
 plus the duplicate list in `cli/pom.xml`'s `macos-native` profile. `NativeImageInitializationTest`
-(in `cli`) parses all three and asserts each defers the right classes *and* registers both guards, so
-drift fails `mvn test` rather than shipping — a Linux build never exercises the macOS copy.
+(in `cli`) parses all three and asserts each defers the right classes, registers both guards *and*
+passes no `-E` environment variable to the builder, so drift fails `mvn test` rather than shipping —
+a Linux build never exercises the macOS copy.
 
 ## Build-time guards (`graal/`)
 
 Registered via `--features=` in both modules' `application.properties`, comma-escaped as `\\,` so
 Quarkus does not split the argument:
 
-- **`BakedHostPathFeature`** — registers an object replacer and aborts the build if any `String`,
-  `Path` or `File` in the image heap is, or lives under, one of the *builder's* own directories
-  (`user.home`, `user.dir`). Precision lives in its `ALLOWED` list (empty; add an entry only with a
-  reason), not in a guess about which paths matter — the first version matched only builder paths
-  containing `incus-spawn` and would have missed a baked `~/.m2/repository`, `~/.config/incus/`,
-  `~/.local/bin/isx` or bare `$HOME`. `user.name` is deliberately not checked: its value is usually
-  `root`, too common a substring to match safely. Verified by re-introducing the bug — it reports
-  both the `String` and the `UnixPath` (`sun.nio.fs.UnixPath` stores bytes and materializes its
-  `String` lazily, so a `String`-only check would have missed it).
+- **`BakedHostStateFeature`** — registers an object replacer and aborts the build if any `String`,
+  `Path` or `File` in the image heap trips one of four checks:
+  - **Canaries.** Before analysis (and so before build-time class initialization) it sets the
+    builder's `user.home` and `user.name` to values carrying a random name; a constant containing
+    one was derived at build time. Exact whoever builds and wherever. It is what catches the
+    regression that shipped: verified by dropping `RuntimeConstants` from the flag (reports the
+    download and skills caches as both `String` and `UnixPath`) and by a build-time
+    `System.getProperty("user.name")`.
+  - **The builder's real home** (`user.home` before the swap, and `$HOME`, which survives
+    `native-image`'s environment sanitization) and anything under it — catching what never reads
+    the property during analysis: values Quarkus recorded in the Maven JVM, `getenv("HOME")`, JDK
+    internals that cached `user.home` at startup. **Disabled, with a loud notice, when the builder's
+    home is `GUEST_HOME` (`/home/agentuser`)**: building inside an isx instance would otherwise flag
+    every guest-path literal the tool setups write into instances (issue #708). The canaries still
+    run there, so only those side routes go unwatched when dogfooding.
+  - **The builder's `user.dir`** (real value — the builder resolves relative paths against it; it
+    is the `target/` source-jar directory, which no literal matches).
+  - **Credentials in the builder's environment**, by name (`SecretRedactor.looksSecret`) or shape
+    (`SecretRedactor.hasSecretShape`); the report names the variable and withholds the value.
+    Normally inert: `native-image` gives the builder only `HOME`, `LANG`, `PATH`, `PWD` (measured),
+    so a build-time `getenv` of a token returns null. That sanitization is the real protection,
+    and `NativeImageInitializationTest` keeps it by failing on any `-E<name>` pass-through.
+  `sun.nio.fs.UnixPath` stores bytes and materializes its `String` lazily, which is why `Path` is
+  checked as well as `String`.
 - **`SyscallReachabilityFeature`** — meant to keep reachable GraalVM lazy system-property resolvers
   (`user.dir`/`user.home`/`os.name`) off the startup path of short-lived commands. **It cannot
   currently fail**: it resolves `userHomeValue`/`userDirValue`/… on the abstract

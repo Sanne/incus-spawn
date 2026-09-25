@@ -1,6 +1,6 @@
 package dev.incusspawn;
 
-import dev.incusspawn.graal.BakedHostPathFeature;
+import dev.incusspawn.graal.BakedHostStateFeature;
 import dev.incusspawn.graal.SyscallReachabilityFeature;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>
  * {@link RuntimeConstants} and {@link RuntimeServices} resolve host paths in their static
  * initializers and are only correct because {@code --initialize-at-run-time} defers them past image
- * build; {@link BakedHostPathFeature} is what catches it when that slips. Dropping either from one
+ * build; {@link BakedHostStateFeature} is what catches it when that slips. Dropping either from one
  * declaration yields a binary with the build machine's home directory baked in (that is how
  * {@code /root/.cache/incus-spawn/downloads} once shipped) — and a Linux build would never notice
  * the macOS profile drifting. This test fails in {@code mvn test}; the guards themselves only run
@@ -38,10 +39,10 @@ class NativeImageInitializationTest {
             List.of(Environment.class, RuntimeConstants.class, RuntimeServices.class);
 
     private static final List<Class<?>> GUARDS =
-            List.of(SyscallReachabilityFeature.class, BakedHostPathFeature.class);
+            List.of(SyscallReachabilityFeature.class, BakedHostStateFeature.class);
 
     @Test
-    void everyDeclarationDefersTheRightClassesAndRunsBothGuards() throws IOException {
+    void everyDeclarationDefersTheRightClassesRunsBothGuardsAndKeepsTheEnvironmentSanitized() throws IOException {
         var declarations = Map.of(
                 Path.of("src/main/resources-filtered/application.properties"), CLI_DEFERRED,
                 Path.of("pom.xml"), CLI_DEFERRED,  // macos-native profile
@@ -65,6 +66,15 @@ class NativeImageInitializationTest {
                 assertTrue(features.contains(guard.getName()),
                         guard.getName() + " must be registered via --features in " + path
                                 + ", otherwise that binary is built unguarded. Found: " + features);
+            }
+
+            // native-image hands the builder a sanitized environment (HOME, LANG, PATH, PWD), which
+            // is what keeps a build-time getenv() from baking a CI token into a public binary;
+            // -E<name> is the only way to widen it.
+            for (var argument : arguments) {
+                assertFalse(argument.startsWith("-E"), argument + " in " + path + " passes a builder"
+                        + " environment variable through to image-build time, where a build-time"
+                        + " initializer can bake its value into the binary. Read it at run time instead.");
             }
         }
     }
