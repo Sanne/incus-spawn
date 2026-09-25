@@ -97,24 +97,55 @@ public final class Metadata {
     }
 
     public static String ageDescription(String created) {
+        return ageDescription(created, LocalDateTime.now());
+    }
+
+    /**
+     * How long ago {@code created} was, relative to {@code now}. Elapsed-time wording ("3h ago")
+     * rather than a wall-clock time ("today 21:20"), so the text stays true for as long as a
+     * long-lived view keeps re-rendering it, and only changes at minute granularity -- see
+     * {@link #ageRefreshKey}. A legacy date-only stamp has no time of day, so it is described in
+     * calendar days rather than implying an hour it never recorded.
+     */
+    public static String ageDescription(String created, LocalDateTime now) {
+        // Count whole minutes between the two stamps' minutes, ignoring seconds, so the text
+        // changes exactly when the refresh key does -- not at whatever second the stamp carried.
+        now = ageRefreshKey(now);
         try {
-            // Try datetime first (new format), fall back to date-only (legacy)
-            LocalDateTime createdTime;
-            if (created.contains("T")) {
-                createdTime = LocalDateTime.parse(created, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            } else {
-                createdTime = LocalDate.parse(created, DateTimeFormatter.ISO_LOCAL_DATE).atStartOfDay();
+            if (!created.contains("T")) {
+                var date = LocalDate.parse(created, DateTimeFormatter.ISO_LOCAL_DATE);
+                var days = ChronoUnit.DAYS.between(date, now.toLocalDate());
+                if (days <= 0) return "today";
+                if (days == 1) return "yesterday";
+                return coarseAge(days);
             }
-            var now = LocalDateTime.now();
-            var days = ChronoUnit.DAYS.between(createdTime.toLocalDate(), now.toLocalDate());
-            var time = createdTime.format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-            if (days == 0) return "today " + time;
-            if (days == 1) return "yesterday " + time;
-            if (days < 7) return days + " days ago";
-            if (days < 30) return (days / 7) + " weeks ago";
-            return (days / 30) + " months ago";
+            var createdTime = ageRefreshKey(LocalDateTime.parse(created, DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+            var minutes = ChronoUnit.MINUTES.between(createdTime, now);
+            if (minutes < 1) return "just now"; // includes a stamp slightly ahead of this clock
+            if (minutes < 60) return minutes + " min ago";
+            if (minutes < 24 * 60) return (minutes / 60) + "h ago";
+            return coarseAge(minutes / (24 * 60));
         } catch (Exception e) {
             return "unknown";
         }
+    }
+
+    /**
+     * The instant granularity of {@link #ageDescription}: its output for any timestamp can only
+     * change when this value does, so a view re-renders ages when the key moves on and not
+     * otherwise.
+     */
+    public static LocalDateTime ageRefreshKey(LocalDateTime now) {
+        return now.truncatedTo(ChronoUnit.MINUTES);
+    }
+
+    private static String coarseAge(long days) {
+        if (days < 7) return plural(days, "day");
+        if (days < 30) return plural(days / 7, "week");
+        return plural(days / 30, "month");
+    }
+
+    private static String plural(long n, String unit) {
+        return n + " " + unit + (n == 1 ? "" : "s") + " ago";
     }
 }

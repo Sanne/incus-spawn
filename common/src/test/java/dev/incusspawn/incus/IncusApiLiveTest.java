@@ -561,4 +561,47 @@ class IncusApiLiveTest {
             } catch (Exception ignored) {}
         }
     }
+
+    @Test
+    @Timeout(60)
+    void lifecycleEventsReportCreateAndDelete() throws Exception {
+        if (skip()) return;
+        var name = "isx-events-test-" + ProcessHandle.current().pid();
+        var events = new java.util.concurrent.LinkedBlockingQueue<String>();
+        try (var stream = http.openEvents("lifecycle")) {
+            var reader = Thread.ofVirtual().start(() -> {
+                try {
+                    String message;
+                    while ((message = stream.next()) != null) events.add(message);
+                } catch (Exception ignored) {}
+            });
+            try {
+                // An empty instance needs no image, so this works on any daemon with a pool.
+                var created = http.requestAndWait("POST", "/1.0/instances",
+                        java.util.Map.of("name", name, "source", java.util.Map.of("type", "none")));
+                assertTrue(created.isSuccess(), "create failed: " + created.body());
+                awaitAction(events, "instance-created", name);
+                http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
+                awaitAction(events, "instance-deleted", name);
+            } finally {
+                try { http.requestAndWait("DELETE", "/1.0/instances/" + name, null); } catch (Exception ignored) {}
+            }
+            stream.close();
+            reader.join(5_000);
+            assertFalse(reader.isAlive(), "close() must unblock a pending next()");
+        }
+    }
+
+    private static void awaitAction(java.util.concurrent.BlockingQueue<String> events,
+                                    String action, String name) throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (System.currentTimeMillis() < deadline) {
+            var message = events.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+            if (message == null) continue;
+            var metadata = mapper.readTree(message).path("metadata");
+            if (action.equals(metadata.path("action").asText()) && name.equals(metadata.path("name").asText())) return;
+        }
+        fail("no " + action + " event for " + name);
+    }
 }

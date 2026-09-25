@@ -144,6 +144,48 @@ class IncusApi {
         }
     }
 
+    // An event subscription is quiet for as long as nothing changes, so it needs its own traffic
+    // to survive inactivity reapers (the macOS forwarder's socat -T) and to notice a half-open
+    // connection -- a vsock stream can lose its EOF across sleep/resume, leaving the read blocked
+    // forever. Incus heartbeats its event listeners with a ping about every 10s (measured on
+    // Incus 6.x; answered by UnixWsConnection, or Incus drops the listener), and our own pings
+    // draw pongs, so silence for five heartbeats means the peer is gone.
+    static final long EVENTS_PING_INTERVAL_MS = 15_000;
+    static final long EVENTS_SILENCE_LIMIT_MS = 50_000;
+
+    /**
+     * Subscribe to the daemon's event feed for the given event types (e.g. {@code "lifecycle"}).
+     * Scoped to the default project, like the instance listing. The subscription pings the
+     * daemon while open and closes itself when the daemon stops answering, so a reader sees a
+     * dead connection as end-of-stream rather than blocking forever.
+     */
+    IncusEventStream openEvents(String types) throws IOException {
+        var ws = transport.openWebSocket("/1.0/events?type=" + types);
+        var keepalive = Thread.ofVirtual().name("incus-events-keepalive").start(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    Thread.sleep(EVENTS_PING_INTERVAL_MS);
+                    if (ws.millisSinceLastReceived() > EVENTS_SILENCE_LIMIT_MS) break;
+                    ws.sendPing();
+                }
+            } catch (IOException | InterruptedException ignored) {}
+            ws.close();
+        });
+        return new IncusEventStream() {
+            @Override
+            public String next() throws IOException {
+                var message = ws.readMessage();
+                return message == null ? null : new String(message, java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            @Override
+            public void close() {
+                keepalive.interrupt();
+                ws.close();
+            }
+        };
+    }
+
     ApiResponse get(String path) {
         return request("GET", path, null);
     }

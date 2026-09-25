@@ -33,6 +33,7 @@ class UnixSocketTransport implements IncusTransport {
     private static final int WS_BINARY = 0x2;
     private static final int WS_CLOSE  = 0x8;
     private static final int WS_PING   = 0x9;
+    private static final int WS_PONG   = 0xA;
     // WebSocket masking is not a security mechanism (RFC 6455 §10.3 — it prevents
     // proxy confusion, not attacks). ThreadLocalRandom is sufficient and avoids
     // the GraalVM native-image issue with SecureRandom static fields captured at
@@ -361,15 +362,29 @@ class UnixSocketTransport implements IncusTransport {
         return out.toByteArray();
     }
 
+    /** One data frame as received: payload plus the FIN bit that ends a fragmented message. */
+    record WsFrame(boolean fin, byte[] payload) {}
+
+    /** Control frames seen while reading data frames. */
+    @FunctionalInterface
+    interface ControlFrames {
+        /** Answer a server PING with a PONG echoing its payload (RFC 6455 §5.5.3). */
+        void ping(byte[] payload) throws IOException;
+        /** A PONG arrived, answering one of our pings: the peer is still there. */
+        default void pong() {}
+    }
+
     /**
-     * Read one WebSocket frame from the server (unmasked).
-     * Returns the payload bytes, or null on close frame or EOF.
-     * Responds to PING frames with PONG automatically (skipped — Incus doesn't send pings).
+     * Read the next data frame from the server (unmasked), answering any PING along the way.
+     * Returns null on close frame or EOF. Long-lived streams depend on the PONG: a server that
+     * heartbeats its listeners drops one that never answers.
      */
-    private static byte[] wsReadPayload(InputStream in) throws IOException {
+    // Package-private for testing
+    static WsFrame wsReadFrame(InputStream in, ControlFrames control) throws IOException {
         while (true) {
             int b0 = in.read();
             if (b0 == -1) return null;
+            boolean fin = (b0 & 0x80) != 0;
             int opcode = b0 & 0x0F;
 
             int b1 = in.read();
@@ -386,13 +401,32 @@ class UnixSocketTransport implements IncusTransport {
 
             if (opcode == WS_CLOSE) return null;
             if (opcode == WS_PING) {
-                // Skip — Incus doesn't send pings in practice
+                control.ping(payload);
+                continue;
+            }
+            if (opcode == WS_PONG) {
+                control.pong();
                 continue;
             }
             if (opcode == WS_BINARY || opcode == 0x1 /* text */ || opcode == 0x0 /* continuation */) {
-                return payload;
+                return new WsFrame(fin, payload);
             }
             // Unknown opcode — skip frame
+        }
+    }
+
+    /** Read frames until one carries FIN, concatenating a fragmented message. Null on close/EOF. */
+    // Package-private for testing
+    static byte[] wsReadMessage(InputStream in, ControlFrames control) throws IOException {
+        var first = wsReadFrame(in, control);
+        if (first == null || first.fin()) return first == null ? null : first.payload();
+        var message = new ByteArrayOutputStream();
+        message.write(first.payload());
+        while (true) {
+            var next = wsReadFrame(in, control);
+            if (next == null) return null;
+            message.write(next.payload());
+            if (next.fin()) return message.toByteArray();
         }
     }
 
@@ -456,6 +490,16 @@ class UnixSocketTransport implements IncusTransport {
         private final java.util.concurrent.atomic.AtomicBoolean closed =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
         private final boolean permit;
+        private final ControlFrames control = new ControlFrames() {
+            @Override public void ping(byte[] payload) throws IOException {
+                received();
+                sendPong(payload);
+            }
+            @Override public void pong() {
+                received();
+            }
+        };
+        private volatile long lastReceivedNanos = System.nanoTime();
 
         UnixWsConnection(SocketChannel channel, OutputStream out, InputStream in, boolean permit) {
             this.channel = channel;
@@ -466,7 +510,31 @@ class UnixSocketTransport implements IncusTransport {
 
         @Override
         public byte[] readPayload() throws IOException {
-            return wsReadPayload(in);
+            var frame = wsReadFrame(in, control);
+            received();
+            return frame == null ? null : frame.payload();
+        }
+
+        @Override
+        public byte[] readMessage() throws IOException {
+            var message = wsReadMessage(in, control);
+            received();
+            return message;
+        }
+
+        @Override
+        public long millisSinceLastReceived() {
+            return (System.nanoTime() - lastReceivedNanos) / 1_000_000;
+        }
+
+        private void received() {
+            lastReceivedNanos = System.nanoTime();
+        }
+
+        private void sendPong(byte[] payload) throws IOException {
+            synchronized (writeLock) {
+                wsSendMasked(out, WS_PONG, payload, 0, payload.length);
+            }
         }
 
         @Override

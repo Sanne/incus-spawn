@@ -1797,6 +1797,18 @@ public class IncusClient {
     }
 
     /**
+     * Subscribe to instance lifecycle events (created, started, deleted, ...), so a long-lived
+     * view can follow changes made by other processes instead of polling.
+     */
+    public IncusEventStream openLifecycleEvents() {
+        try {
+            return http().openEvents("lifecycle");
+        } catch (java.io.IOException e) {
+            throw new IncusException("Failed to subscribe to Incus events: " + e.getMessage());
+        }
+    }
+
+    /**
      * Check if an instance exists.
      */
     public boolean exists(String name) {

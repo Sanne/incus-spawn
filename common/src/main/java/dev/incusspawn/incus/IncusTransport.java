@@ -70,6 +70,17 @@ interface IncusTransport {
     interface WsConnection extends AutoCloseable {
         /** Block until next data payload. Returns null on close/EOF. */
         byte[] readPayload() throws IOException;
+        /**
+         * Block until the next complete message, reassembling fragmented frames. Returns null
+         * on close/EOF. Use this where frame boundaries matter (one JSON document per message);
+         * {@link #readPayload} is for byte streams, where they don't.
+         */
+        byte[] readMessage() throws IOException;
+        /**
+         * Milliseconds since anything (data, PING or PONG) last arrived. A quiet long-lived
+         * stream that sends its own pings uses this to tell an idle peer from a vanished one.
+         */
+        long millisSinceLastReceived();
         /** Send binary data to the server. */
         void sendData(byte[] data, int offset, int length) throws IOException;
         /** Send a text frame to the server. */

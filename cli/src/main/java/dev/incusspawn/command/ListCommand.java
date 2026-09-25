@@ -30,6 +30,7 @@ import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tui.BackgroundTaskManager;
+import dev.incusspawn.tui.InstanceEventWatcher;
 import dev.incusspawn.tui.InstanceLockManager;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -121,6 +122,42 @@ public class ListCommand extends BaseCommand {
     private final AtomicReference<String> pendingStatusMessage = new AtomicReference<>();
     private long lastRefreshTime = 0;
     private static final long REFRESH_DEBOUNCE_MS = 1000;
+
+    // Live refresh: changes made outside this TUI (another terminal, a script, `incus` itself)
+    // arrive through the Incus event feed and trigger a *light* refresh -- just the instance
+    // listing (plus the pool gauge), fetched off the UI thread and swapped in on it. The heavy
+    // parts of reloadData() (definitions on disk, btrfs accounting probes, proxy health) keep
+    // their own cadences and never run per event. See DESIGN.md "Keeping a long-lived TUI current".
+    private InstanceEventWatcher eventWatcher;
+    private final AtomicBoolean liveRefreshRequested = new AtomicBoolean(false);
+    private final AtomicBoolean liveRefreshInFlight = new AtomicBoolean(false);
+    private final AtomicReference<LiveSnapshot> pendingLiveSnapshot = new AtomicReference<>();
+    // Due times (epoch ms) of follow-up refreshes scheduled after a start: the instance's IPv4
+    // shows up a few seconds after the start event, and nothing announces it.
+    private final java.util.concurrent.ConcurrentSkipListSet<Long> followUpRefreshes =
+            new java.util.concurrent.ConcurrentSkipListSet<>();
+    private static final long[] START_FOLLOW_UP_DELAYS_MS = {3_000, 10_000};
+    // Bumped by every full reload, so a light fetch that started before it can't overwrite it.
+    private long dataGeneration;
+    private long lastLiveRefreshMs;
+    private long lastDataLoadMs;
+    // Only while the event feed is down (older daemon, flaky appliance): poll slowly instead.
+    private static final long FALLBACK_POLL_MS = 60_000;
+    private boolean liveRefreshErrorShown;
+    // Live rfer values backfilled in memory by the last full reload; re-applied by light
+    // refreshes, which don't probe, so an unstamped template keeps its figure between them.
+    private java.util.Map<String, Long> backfilledReferenced = java.util.Map.of();
+    // The minute the age column ("3h ago") was last rendered for -- see Metadata.ageRefreshKey.
+    private java.time.LocalDateTime rowsAgeKey;
+    // Every instance name in the last listing (templates included): what "still exists" means
+    // for the action guards and for closing a dialog whose target was deleted elsewhere.
+    private java.util.Set<String> liveInstanceNames = java.util.Set.of();
+    // The instance the F3 detail dialog was opened on (it renders the current selection).
+    private String detailInstanceName;
+
+    /** Result of a light refresh, produced off the UI thread. Exactly one of instances/error is set. */
+    private record LiveSnapshot(long generation, List<InstanceInfo> instances,
+                                IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
     private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT }
@@ -322,6 +359,28 @@ public class ListCommand extends BaseCommand {
     // --- TUI lifecycle ---
 
     private void runTuiLoop() {
+        // One subscription for the whole session, including while the TUI is suspended for a
+        // shell: an event then just leaves a refresh request that the next TUI entry, which
+        // reloads anyway, absorbs.
+        eventWatcher = new InstanceEventWatcher(incus::openLifecycleEvents,
+                this::onInstanceEvent, () -> liveRefreshRequested.set(true)).start();
+        try {
+            runTuiSessions();
+        } finally {
+            eventWatcher.close();
+            eventWatcher = null;
+        }
+    }
+
+    private void onInstanceEvent(InstanceEventWatcher.Change change) {
+        liveRefreshRequested.set(true);
+        if (change.isStart()) {
+            long now = System.currentTimeMillis();
+            for (long delay : START_FOLLOW_UP_DELAYS_MS) followUpRefreshes.add(now + delay);
+        }
+    }
+
+    private void runTuiSessions() {
         while (true) {
             String reloadError = null;
             try {
@@ -501,6 +560,8 @@ public class ListCommand extends BaseCommand {
      * (non-template instances only).
      */
     private void reloadData() {
+        dataGeneration++;
+        lastDataLoadMs = System.currentTimeMillis();
         // The instance listing (GET /1.0/instances?recursion=2) is the heaviest single call.
         // Run it in the background while the main thread does filesystem I/O and pool probes.
         var instancesFuture = java.util.concurrent.CompletableFuture.supplyAsync(this::collectEntries);
@@ -536,8 +597,35 @@ public class ListCommand extends BaseCommand {
             throw new RuntimeException(cause);
         }
 
-        // Stale metadata cleanup: if pending-op is set but no process holds the lock,
-        // a previous process crashed — clear the stale marker.
+        allInstances = clearStalePendingOps(allInstances);
+        mergeInstances(allInstances);
+
+        refreshProxyAuthError();
+        refreshApplianceSkew();
+        refreshAccountingStatus();
+        applyDiskModel(true);
+        publishRows();
+    }
+
+    /**
+     * Swap in the instance listing from a light refresh (see {@link #startLiveRefresh}). Unlike
+     * {@link #reloadData()} it re-reads nothing from disk and runs no probes: the definitions
+     * can't have changed because an instance did, and the accounting reads keep their cadence.
+     */
+    private void applyLiveInstances(List<InstanceInfo> allInstances, IncusClient.PoolUsage usage) {
+        lastDataLoadMs = System.currentTimeMillis();
+        if (usage != null) applyPoolUsage(usage);
+        mergeInstances(allInstances);
+        applyDiskModel(false);
+        publishRows();
+    }
+
+    /**
+     * Clear a pending-op marker no process holds the lock for: the process that set it crashed.
+     * Returns the listing with those markers blanked, so the UI doesn't render stale indicators
+     * until the next reload. Safe off the UI thread (lock files and Incus calls only).
+     */
+    private List<InstanceInfo> clearStalePendingOps(List<InstanceInfo> allInstances) {
         var clearedInstances = new java.util.HashSet<String>();
         for (var inst : allInstances) {
             if (!inst.pendingOp.isEmpty()
@@ -569,6 +657,11 @@ public class ListCommand extends BaseCommand {
                     .toList();
         }
 
+        return allInstances;
+    }
+
+    /** Merge the Incus listing with the image definitions into the two panels' entry lists. */
+    private void mergeInstances(List<InstanceInfo> allInstances) {
         // Build template panel data by merging ImageDef definitions with Incus state
         templateEntries = new ArrayList<>();
         var templateNames = new java.util.HashSet<String>();
@@ -631,17 +724,28 @@ public class ListCommand extends BaseCommand {
             }
         }
 
-        refreshProxyAuthError();
-        refreshApplianceSkew();
-        refreshAccountingStatus();
+        liveInstanceNames = allInstances.stream().map(InstanceInfo::name)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /**
+     * Attribute disk weight to the rows. {@code probe} allows the live reads (stamp revalidation,
+     * rfer backfill); a light refresh passes false and reuses the last backfill instead.
+     */
+    private void applyDiskModel(boolean probe) {
         // Stamps taken from consistent accounting stay valid whatever the flag says now (templates
         // are immutable), so the delta model keeps running through a repair. What must wait for the
         // counters to be trustworthy is anything *read live*: backfilling a missing stamp, healing a
         // suspect one, or folding the pool's shared remainder onto the root.
         boolean accountingTrusted = qgroupStatus == null || !qgroupStatus.untrusted();
-        if (accountingTrusted) {
-            revalidateStampsIfNeeded();
-            fillMissingReferencedSizes();
+        if (probe) {
+            backfilledReferenced = java.util.Map.of();
+            if (accountingTrusted) {
+                revalidateStampsIfNeeded();
+                fillMissingReferencedSizes();
+            }
+        } else if (accountingTrusted && !backfilledReferenced.isEmpty()) {
+            templateEntries = fillMissingReferenced(templateEntries, backfilledReferenced);
         }
         if (canUseReferencedModel()) {
             applyReferencedTemplateDeltas();
@@ -650,7 +754,9 @@ public class ListCommand extends BaseCommand {
         } else {
             baseTemplateName = null;
         }
+    }
 
+    private void publishRows() {
         allTemplateEntries = new ArrayList<>(templateEntries);
         allEntries = new ArrayList<>(entries);
         rebuildRowData();
@@ -670,10 +776,14 @@ public class ListCommand extends BaseCommand {
                 usagePoolIsCow = cow != null;
                 usagePoolIsBtrfs = probe.isBtrfs();
             }
-            poolUsage = usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName);
+            applyPoolUsage(usagePoolName == null ? null : incus.getPoolUsageBytes(usagePoolName));
         } catch (Exception e) {
-            poolUsage = null;
+            applyPoolUsage(null);
         }
+    }
+
+    private void applyPoolUsage(IncusClient.PoolUsage usage) {
+        poolUsage = usage;
         if (poolUsage == null || poolUsage.totalBytes() == 0) {
             storageWarningShown = false;
             return;
@@ -915,6 +1025,7 @@ public class ListCommand extends BaseCommand {
         if (!hasUnstampedBuiltTemplate(templateEntries)) return;       // no gap — skip the probe entirely
         var live = dev.incusspawn.incus.BtrfsUsage.probe(usagePoolName, false);   // non-sync: light enough for refresh
         if (live.isEmpty()) return;
+        backfilledReferenced = live;
         templateEntries = fillMissingReferenced(templateEntries, live);
     }
 
@@ -1064,6 +1175,7 @@ public class ListCommand extends BaseCommand {
                 setStatusMessage("Proxy restart failed. Try: isx proxy start");
             }
             boolean repaint = needsRepaint.getAndSet(false);
+            repaint |= tickLiveRefresh(tableState);
             return repaint || needsRefresh.get() || pendingStatusMessage.get() != null
                     || !backgroundTasks.getActiveTasks().isEmpty()
                     || (helpChat != null && helpChat.isLoading());
@@ -1216,6 +1328,7 @@ public class ListCommand extends BaseCommand {
                 mode = Mode.CONFIRM_BUILD_FOR_BRANCH;
                 return true;
             }
+            if (vanished(template.name)) return true;
             openBranchModal(template.name, template.runtime);
             return true;
         }
@@ -1238,6 +1351,7 @@ public class ListCommand extends BaseCommand {
                 statusMessage = "Template is not built.";
                 return true;
             }
+            if (vanished(template.name)) return true;
             openDeleteConfirm(template.name);
             return true;
         }
@@ -1266,6 +1380,7 @@ public class ListCommand extends BaseCommand {
         // F3: Show instance details (always accessible, even during operations)
         if (key.isKey(KeyCode.F3)) {
             instanceDetailScrollOffset = 0;
+            detailInstanceName = selected.name;
             mode = Mode.INSTANCE_DETAIL;
             return true;
         }
@@ -1284,6 +1399,7 @@ public class ListCommand extends BaseCommand {
             statusMessage = "Operation in progress for " + selected.name;
             return true;
         }
+        if (isInstanceActionKey(key, selected) && vanished(selected.name)) return true;
 
         // F8 or Delete: Destroy instance
         if (key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE)) {
@@ -1350,6 +1466,13 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         return false;
+    }
+
+    /** Keys that act on the selected instance (as opposed to navigating or viewing it). */
+    private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
+        return key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE) || key.isKey(KeyCode.F2)
+                || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
+                || key.isKey(KeyCode.F9) || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
     private void openBuildMenu(TemplateInfo template) {
@@ -1507,6 +1630,7 @@ public class ListCommand extends BaseCommand {
                     }
                 }
             }
+            if (vanished(branchSourceName)) return true;
             pendingAction = PendingAction.BRANCH;
             pendingActionTarget = name;
             tui.quit();
@@ -1685,6 +1809,7 @@ public class ListCommand extends BaseCommand {
                 mode = Mode.BROWSE;
                 return true;
             }
+            if (vanished(renameSourceName)) return true;
             try {
                 incus.rename(renameSourceName, newName);
                 try {
@@ -1826,7 +1951,7 @@ public class ListCommand extends BaseCommand {
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
                     refreshDataAfterBackground();
                 });
-            } else {
+            } else if (!vanished(pendingDeleteName)) {
                 execInBackground("Deleting " + pendingDeleteName,
                         "Deleted " + pendingDeleteName,
                         pendingDeleteName,
@@ -1893,6 +2018,7 @@ public class ListCommand extends BaseCommand {
 
     private boolean handleConfirmStopForRenameEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
         if (key.isChar('y') || key.isChar('Y')) {
+            if (vanished(renameSourceName)) return true;
             mode = Mode.BROWSE;
             progressMessage = "Stopping " + renameSourceName + "...";
             tui.draw(frame -> render(frame, tableState));
@@ -2960,6 +3086,7 @@ public class ListCommand extends BaseCommand {
         if (key.isKey(KeyCode.F2)) {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
+                if (vanished(selected.name)) return true;
                 if (showProxyErrorIfNeeded(selected.name)) return true;
                 pendingAction = PendingAction.SHELL;
                 pendingActionTarget = selected.name;
@@ -2971,6 +3098,7 @@ public class ListCommand extends BaseCommand {
         if (key.isKey(KeyCode.ENTER)) {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
+                if (vanished(selected.name)) return true;
                 if (showProxyErrorIfNeeded(selected.name)) return true;
                 mode = Mode.BROWSE;
                 if (dispatchDefaultAction(selected)) tui.quit();
@@ -3077,6 +3205,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
+            if (vanished(actionsContext.instanceName())) return true;
             var action = actionsList.get(actionsSelectedIndex);
             mode = Mode.BROWSE;
             if (dispatchAction(action, actionsContext)) tui.quit();
@@ -4672,6 +4801,7 @@ public class ListCommand extends BaseCommand {
     }
 
     private void rebuildRowData() {
+        rowsAgeKey = Metadata.ageRefreshKey(java.time.LocalDateTime.now());
         if (searchActive && allTemplateEntries != null) {
             applySearchFilter();
         } else {
@@ -4715,19 +4845,27 @@ public class ListCommand extends BaseCommand {
     }
 
     private void refreshData(TableState tableState) {
-        // Remember selections by name
-        var selectedInstance = selectedEntry(tableState);
-        var selectedInstanceName = selectedInstance != null ? selectedInstance.name : null;
-        var selectedTpl = selectedTemplate();
-        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
-
         try {
-            reloadData();
+            preservingSelection(tableState, this::reloadData);
         } catch (IncusException e) {
             errorMessage = e.getMessage();
             mode = Mode.ERROR;
             return;
         }
+        closeDialogIfTargetVanished();
+    }
+
+    /**
+     * Run a data reload while keeping both panels' selections on the same names. A row that
+     * disappeared falls back to the first instance.
+     */
+    private void preservingSelection(TableState tableState, Runnable reload) {
+        var selectedInstance = selectedEntry(tableState);
+        var selectedInstanceName = selectedInstance != null ? selectedInstance.name : null;
+        var selectedTpl = selectedTemplate();
+        var selectedTplName = selectedTpl != null ? selectedTpl.name : null;
+
+        reload.run();
 
         // Restore template selection
         if (selectedTplName != null) {
@@ -4751,6 +4889,134 @@ public class ListCommand extends BaseCommand {
             }
         }
         if (!reselected) selectFirstDataRow(tableState);
+    }
+
+    // --- Live refresh ---
+
+    /**
+     * Tick-time upkeep for a long-lived session: re-render ages when the minute moves on, turn
+     * due follow-ups and (while the event feed is down) the fallback poll into refresh requests,
+     * start a light refresh when one is requested, and swap in any finished one.
+     * Returns true when the screen needs redrawing.
+     */
+    private boolean tickLiveRefresh(TableState tableState) {
+        boolean repaint = false;
+        var ageKey = Metadata.ageRefreshKey(java.time.LocalDateTime.now());
+        if (rowsAgeKey != null && !ageKey.equals(rowsAgeKey)) {
+            rebuildRowData();
+            repaint = true;
+        }
+
+        long now = System.currentTimeMillis();
+        var due = followUpRefreshes.headSet(now, true);
+        if (!due.isEmpty()) {
+            due.clear();
+            liveRefreshRequested.set(true);
+        }
+        if ((eventWatcher == null || !eventWatcher.isConnected()) && now - lastDataLoadMs >= FALLBACK_POLL_MS) {
+            liveRefreshRequested.set(true);
+        }
+        // Debounced like the background-task refresh, so a burst of events (isx clean, a
+        // build's create/rename/delete) collapses into one listing.
+        if (liveRefreshRequested.get() && !liveRefreshInFlight.get()
+                && now - lastLiveRefreshMs >= REFRESH_DEBOUNCE_MS) {
+            liveRefreshRequested.set(false);
+            lastLiveRefreshMs = now;
+            startLiveRefresh();
+        }
+
+        var snapshot = pendingLiveSnapshot.getAndSet(null);
+        if (snapshot != null) {
+            applyLiveSnapshot(snapshot, tableState);
+            repaint = true;
+        }
+        return repaint;
+    }
+
+    /** Fetch the instance listing and pool usage off the UI thread; the tick applies the result. */
+    private void startLiveRefresh() {
+        liveRefreshInFlight.set(true);
+        long generation = dataGeneration;
+        var pool = usagePoolName;
+        Thread.ofVirtual().name("tui-live-refresh").start(() -> {
+            LiveSnapshot snapshot;
+            try {
+                var instances = clearStalePendingOps(collectEntries());
+                IncusClient.PoolUsage usage = null;
+                if (pool != null) {
+                    try { usage = incus.getPoolUsageBytes(pool); } catch (Exception ignored) {}
+                }
+                snapshot = new LiveSnapshot(generation, instances, usage, null);
+            } catch (RuntimeException e) {
+                snapshot = new LiveSnapshot(generation, null, null, e);
+            }
+            pendingLiveSnapshot.set(snapshot);
+            liveRefreshInFlight.set(false);
+            needsRepaint.set(true);
+        });
+    }
+
+    private void applyLiveSnapshot(LiveSnapshot snapshot, TableState tableState) {
+        // A full reload ran while this was in flight: its data is at least as new, keep it.
+        if (snapshot.generation() != dataGeneration) return;
+        if (snapshot.error() != null) {
+            // Automatic refreshes stay quiet: no error dialog every minute while Incus is down,
+            // just one status line until a refresh succeeds again.
+            lastDataLoadMs = System.currentTimeMillis();
+            if (!liveRefreshErrorShown) {
+                statusMessage = "Couldn't refresh from Incus: " + snapshot.error().getMessage();
+                liveRefreshErrorShown = true;
+            }
+            return;
+        }
+        liveRefreshErrorShown = false;
+        preservingSelection(tableState, () -> applyLiveInstances(snapshot.instances(), snapshot.poolUsage()));
+        closeDialogIfTargetVanished();
+    }
+
+    /**
+     * The instance an open dialog acts on, or null for dialogs that aren't about one. The
+     * detail and actions dialogs follow the table selection, which a refresh moves off a
+     * deleted row -- so without this they would silently switch to showing another instance.
+     */
+    private String dialogTarget() {
+        return switch (mode) {
+            case CONFIRM_DELETE -> pendingDeleteName != null && !pendingDeleteName.startsWith("--")
+                    ? pendingDeleteName : null;
+            case CONFIRM_STOP_FOR_RENAME, RENAME -> renameSourceName;
+            case BRANCH -> branchSourceName;
+            case INSTANCE_DETAIL -> detailInstanceName;
+            case ACTIONS -> actionsContext != null ? actionsContext.instanceName() : null;
+            default -> null;
+        };
+    }
+
+    /** Close a dialog whose instance no longer exists, saying why rather than acting on nothing. */
+    private void closeDialogIfTargetVanished() {
+        var target = dialogTarget();
+        if (target == null || liveInstanceNames.contains(target)) return;
+        mode = Mode.BROWSE;
+        statusMessage = target + " no longer exists";
+    }
+
+    /**
+     * Last-moment check before acting on an instance: the list can be up to a debounce behind,
+     * or the event feed down. On a vanished instance, say so and refresh instead of letting the
+     * action fail with a raw Incus error. A failed check lets the action proceed -- its own
+     * error handling is still there -- so an Incus hiccup never blocks the UI.
+     */
+    private boolean vanished(String name) {
+        boolean exists;
+        try {
+            exists = incus.exists(name);
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (exists) return false;
+        mode = Mode.BROWSE;
+        statusMessage = name + " no longer exists";
+        liveRefreshRequested.set(true);
+        return true;
     }
 
     // --- Data ---
@@ -5133,7 +5399,14 @@ public class ListCommand extends BaseCommand {
     }
 
     private void shellInto(String name, String commandOverride) {
-        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
+        var status = incus.getInstanceStatus(name);
+        if (status.isEmpty()) {
+            // Deleted between the TUI's check and now: report it back in the TUI (which reloads
+            // on re-entry) instead of failing on a start or exec against a missing instance.
+            statusMessage = name + " no longer exists";
+            return;
+        }
+        if ("Stopped".equalsIgnoreCase(status)) {
             System.out.println("Starting " + name + "...");
             InstanceLifecycle.prepareHostDevicesForStart(incus, name);
             incus.start(name);
