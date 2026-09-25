@@ -216,6 +216,11 @@ public class BranchCommand extends BaseCommand {
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name);
             ProxyConfig.fixResolvConfIfNeeded(incus, name);
+            // The template baked its own account's identity; a branch pinned to a different one
+            // must not commit under it. Re-derived here rather than only on the next
+            // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
+            // Needs the CA and resolv.conf above -- re-deriving goes through the proxy.
+            InstanceLifecycle.reconcileAccountIdentities(incus, name);
         }
 
         BuildOutput.success(name + " is ready.");

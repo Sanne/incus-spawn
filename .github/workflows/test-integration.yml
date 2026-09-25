@@ -512,8 +512,13 @@ jobs:
           # baked: the git identity comes from whoever the token belongs to. The
           # echo server answers /user as the account whose token reached it, so
           # two identities are exercised without a second real credential.
-          sg incus-admin -c "isx branch acct-gh --from tpl-test-accounts --no-start \
-              --account github=agent"
+          # Branched on the template's own account, then re-pointed while running --
+          # which is the case the identity can actually get wrong: the token swaps on
+          # the next request, but the identity was baked at build time, so without a
+          # re-derive the instance would push as one account and commit as another.
+          # ('isx branch --account' reconciles too, at start; CI cannot drive it
+          # because a branch that starts also attaches a shell.)
+          sg incus-admin -c "isx branch acct-gh --from tpl-test-accounts --no-start"
           sg incus-admin -c "incus start acct-gh"
           sg incus-admin -c "incus exec acct-gh -- bash -c '
             systemctl start systemd-networkd 2>/dev/null
@@ -522,6 +527,11 @@ jobs:
               sleep 0.5
             done'"
           sg incus-admin -c "incus file push .github/scripts/test-git-identity.sh acct-gh/tmp/"
+          # Before the swap: the identity the template baked, from the default account.
+          # Asserted so the check below proves the re-point changed something, rather
+          # than passing on an identity that was already right.
+          sg incus-admin -c "incus exec acct-gh -- bash /tmp/test-git-identity.sh ci-user"
+          sg incus-admin -c "isx account set acct-gh github=agent"
           sg incus-admin -c "incus exec acct-gh -- bash /tmp/test-git-identity.sh agent"
 
       - name: Test rootless podman
