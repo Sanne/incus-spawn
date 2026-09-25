@@ -113,6 +113,39 @@ class GitHubAuthFlowTest {
         assertTrue(init.opened.isEmpty(), "declining the browser must not open it");
     }
 
+    /**
+     * readPassword() echoes nothing, so the flow confirms a paste arrived -- by length and
+     * masked form only. The token itself must never reach the terminal.
+     */
+    @Test
+    void anEnteredTokenIsAcknowledgedWithoutBeingShown() {
+        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
+        var out = captureStdout(() -> run(init, new SpawnConfig(),
+                new ScriptedPrompts().line("n").secret("  " + AGENT_PAT + " ")));
+
+        assertTrue(out.contains("Received 27 characters (github_pat_...0000)"), out);
+        assertFalse(out.contains(AGENT_PAT), "the token was printed:\n" + out);
+    }
+
+    @Test
+    void aSkippedTokenIsNotAcknowledged() {
+        var out = captureStdout(() -> run(new FakeInit(), new SpawnConfig(),
+                new ScriptedPrompts().line("n").secret("")));
+        assertFalse(out.contains("Received"), out);
+    }
+
+    private static String captureStdout(Runnable body) {
+        var original = System.out;
+        var buffer = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(buffer, true, java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            body.run();
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     @Test
     void theTokenPageOpensByDefault() {
         var init = new FakeInit();
