@@ -28,17 +28,17 @@ public final class NamespaceAccounts {
 
     /** Accounts configured under a namespace, in file order. */
     public static List<String> names(SpawnConfig config, String namespace) {
-        return AccountResolver.accountNames(tree(config), namespace);
+        return AccountResolver.accountNames(config.tree(), namespace);
     }
 
     /** The account that applies when nothing narrower does, or {@code ""}. */
     public static String defaultName(SpawnConfig config, String namespace) {
-        return AccountResolver.effectiveAccount(tree(config), namespace, null);
+        return AccountResolver.effectiveAccount(config.tree(), namespace, null);
     }
 
     /** Whether the namespace still holds its credential in the flat, pre-accounts layout. */
     public static boolean hasFlatCredential(SpawnConfig config, String namespace, List<String> keys) {
-        var tree = tree(config);
+        var tree = config.tree();
         return names(config, namespace).isEmpty()
                 && keys.stream().anyMatch(key -> !AccountResolver.navigate(tree, namespace + "." + key).isBlank());
     }
@@ -52,7 +52,7 @@ public final class NamespaceAccounts {
     public static void adoptFlat(SpawnConfig config, String namespace,
                                  List<String> keys, String name) {
         if (!hasFlatCredential(config, namespace, keys)) return;
-        var tree = tree(config);
+        var tree = config.tree();
         for (var key : keys) {
             var value = AccountResolver.navigate(tree, namespace + "." + key);
             if (!value.isBlank()) config.setConfigByPath(accountPath(namespace, name, key), value);
@@ -92,7 +92,7 @@ public final class NamespaceAccounts {
      */
     public static void remove(SpawnConfig config, String namespace, String account) {
         var wasDefault = account.equals(
-                AccountResolver.defaultName(tree(config), namespace));
+                AccountResolver.defaultName(config.tree(), namespace));
         config.removeConfigPath(namespace + "." + AccountResolver.ACCOUNTS_KEY + "." + account);
         if (!wasDefault) return;
         var remaining = names(config, namespace);
@@ -118,7 +118,4 @@ public final class NamespaceAccounts {
         return namespace + "." + AccountResolver.ACCOUNTS_KEY + "." + account + "." + key;
     }
 
-    private static com.fasterxml.jackson.databind.JsonNode tree(SpawnConfig config) {
-        return new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(config);
-    }
 }

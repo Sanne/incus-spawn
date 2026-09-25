@@ -28,9 +28,6 @@ import java.util.Map;
  */
 public final class AccountSelection {
 
-    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
-            new com.fasterxml.jackson.databind.ObjectMapper();
-
     private AccountSelection() {}
 
     /** Thrown for a malformed {@code --account} argument. */
@@ -93,7 +90,7 @@ public final class AccountSelection {
      */
     public static void validate(SpawnConfig config, Map<String, String> selection) {
         if (selection == null || selection.isEmpty()) return;
-        var tree = JSON.<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        var tree = config.tree();
         for (var entry : selection.entrySet()) {
             var namespace = entry.getKey();
             var account = entry.getValue();
@@ -124,7 +121,7 @@ public final class AccountSelection {
             return new AccountListing(
                     List.copyOf(claude.effectiveAccounts().keySet()), claude.accountName());
         }
-        var tree = JSON.<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
+        var tree = config.tree();
         return new AccountListing(
                 AccountResolver.accountNames(tree, namespace),
                 AccountResolver.effectiveAccount(tree, namespace, null));

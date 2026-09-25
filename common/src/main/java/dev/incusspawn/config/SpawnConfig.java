@@ -25,6 +25,24 @@ public class SpawnConfig {
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory())
             .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
 
+    /** For {@link #tree()}; separate from YAML so the view is a plain node, not YAML-flavoured. */
+    private static final ObjectMapper TREE = new ObjectMapper();
+
+    /**
+     * This config as a navigable tree.
+     *
+     * <p>Credential accounts are read off the serialized shape rather than typed fields -- that
+     * is what lets a namespace isx has no Java for have accounts at all -- so several callers
+     * need this view. Built here so none of them constructs an {@code ObjectMapper} of its own,
+     * which is one of Jackson's most expensive objects and was being created per lookup.
+     *
+     * <p>Deliberately not cached: this object is mutable, and a stale tree would answer for a
+     * credential that had just been changed. Hold the result when doing several lookups.
+     */
+    public com.fasterxml.jackson.databind.JsonNode tree() {
+        return TREE.valueToTree(this);
+    }
+
     private ClaudeConfig claude = new ClaudeConfig();
     private GitHubConfig github = new GitHubConfig();
     private BobConfig bob = new BobConfig();

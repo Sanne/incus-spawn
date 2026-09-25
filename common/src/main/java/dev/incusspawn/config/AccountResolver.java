@@ -95,6 +95,26 @@ public final class AccountResolver {
         return it.hasNext() ? it.next() : "";
     }
 
+    // Config-taking forms. Every caller outside the proxy's resolution loop has a SpawnConfig
+    // rather than a tree, and having each build its own view was the single most duplicated
+    // thing in this feature. The tree-taking forms stay for callers that resolve repeatedly
+    // against one snapshot.
+
+    /** @see #effectiveAccount(JsonNode, String, String) */
+    public static String effectiveAccount(SpawnConfig config, String namespace, String selected) {
+        return effectiveAccount(config.tree(), namespace, selected);
+    }
+
+    /** @see #accountNames(JsonNode, String) */
+    public static List<String> accountNames(SpawnConfig config, String namespace) {
+        return accountNames(config.tree(), namespace);
+    }
+
+    /** @see #value(JsonNode, String, String, String) */
+    public static String value(SpawnConfig config, String namespace, String account, String key) {
+        return value(config.tree(), namespace, account, key);
+    }
+
     /** Names of every account configured under a namespace, in file order. */
     public static List<String> accountNames(JsonNode configTree, String namespace) {
         var accounts = accountsNode(configTree, namespace);

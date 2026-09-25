@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.config.EnvEntry;
+import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusException;
@@ -67,10 +68,7 @@ public class GhSetup implements ToolSetup {
      */
     @Override
     public String bakedAccountIdentity(SpawnConfig config, String accountName) {
-        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
-        return dev.incusspawn.config.AccountResolver.effectiveAccount(
-                tree, NAMESPACE, accountName);
+        return AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
     }
 
     @Override
@@ -87,11 +85,12 @@ public class GhSetup implements ToolSetup {
      */
     @Override
     public void rebakeForAccount(Container container, String accountName) {
+        var config = SpawnConfig.load();
         // Resolve before overwriting. Clearing first and then failing -- no network, a revoked
         // token, gh missing -- would leave the instance with no author at all, which is worse
         // than the stale one it had: every commit made before the next successful attempt would
         // be unattributed rather than merely attributed to the previous account.
-        var identity = resolveIdentity(container, accountName, true);
+        var identity = resolveIdentity(container, config, accountName, true);
         gitConfig(container, "user.name", identity.name());
         gitConfig(container, "user.email", identity.email());
     }
@@ -110,28 +109,18 @@ public class GhSetup implements ToolSetup {
     public void install(Container c, java.util.Map<String, String> resolvedParams,
                         java.util.Map<String, String> accountSelection) {
         BuildOutput.stepStart("Installing GitHub CLI...");
-        configureGit(c, accountFrom(accountSelection));
+        // Loaded once and threaded down: every lookup below used to re-read and re-serialize
+        // config.yaml, so a single install parsed it three times over.
+        var config = SpawnConfig.load();
+        configureGit(c, config,
+                AccountResolver.effectiveAccount(config, NAMESPACE, accountSelection.get(NAMESPACE)));
         BuildOutput.stepDone();
     }
 
-    /** The GitHub account this build or instance uses, resolved through the generic layers. */
-    private static String accountFrom(java.util.Map<String, String> accountSelection) {
-        var config = SpawnConfig.load();
-        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(config);
-        return dev.incusspawn.config.AccountResolver.effectiveAccount(
-                tree, NAMESPACE, accountSelection.get(NAMESPACE));
-    }
 
-    private static String githubValue(String accountName, String key) {
-        var tree = new com.fasterxml.jackson.databind.ObjectMapper()
-                .<com.fasterxml.jackson.databind.JsonNode>valueToTree(SpawnConfig.load());
-        return dev.incusspawn.config.AccountResolver.value(tree, NAMESPACE, accountName, key);
-    }
-
-    private void configureGit(Container c, String accountName) {
+    private void configureGit(Container c, SpawnConfig config, String accountName) {
         boolean existingConfig = c.sh("test -f /home/agentuser/.gitconfig").success();
-        configureGitIdentity(c, accountName);
+        configureGitIdentity(c, config, accountName);
         if (!existingConfig) {
             configureGitDefaults(c);
         }
@@ -146,14 +135,14 @@ public class GhSetup implements ToolSetup {
      * that is. Skipped when an identity is already present, which is what makes it cheap to
      * call again at branch time; {@link #clearGitIdentity} is how a re-point forces a refresh.
      */
-    void configureGitIdentity(Container c, String accountName) {
+    void configureGitIdentity(Container c, SpawnConfig config, String accountName) {
         boolean hasName = gitConfigGet(c, "user.name");
         boolean hasEmail = gitConfigGet(c, "user.email");
         if (hasName && hasEmail) {
             return;
         }
 
-        var identity = resolveIdentity(c, accountName, false);
+        var identity = resolveIdentity(c, config, accountName, false);
         if (identity == null) return;
         if (!hasName) gitConfig(c, "user.name", identity.name());
         if (!hasEmail) gitConfig(c, "user.email", identity.email());
@@ -173,10 +162,11 @@ public class GhSetup implements ToolSetup {
      *     produce a template with no identity, and a re-point must not overwrite a good identity
      *     with nothing
      */
-    private GitIdentity resolveIdentity(Container c, String accountName, boolean required) {
+    private GitIdentity resolveIdentity(Container c, SpawnConfig config,
+                                        String accountName, boolean required) {
         var command = "GH_TOKEN=" + PLACEHOLDER_TOKEN
                 + " gh api user --jq '[.login, .name, .email] | @tsv'";
-        var tokenConfigured = !githubValue(accountName, "token").isBlank();
+        var tokenConfigured = !AccountResolver.value(config, NAMESPACE, accountName, "token").isBlank();
         var result = c.sh(command);
         if (tokenConfigured) {
             for (int attempt = 0; attempt < retryDelaysMs.length
@@ -207,7 +197,7 @@ public class GhSetup implements ToolSetup {
         var login = parts[0];
         var name = parts.length >= 2 && !parts[1].isEmpty() ? parts[1] : login;
 
-        var configEmail = githubValue(accountName, "email");
+        var configEmail = AccountResolver.value(config, NAMESPACE, accountName, "email");
         var email = configEmail.isBlank() ? null : configEmail;
         boolean publicEmailHidden = parts.length < 3 || parts[2].isEmpty();
         if (email == null) {
