@@ -65,7 +65,7 @@ public class InstancePrep {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
             System.out.println("Starting " + name + "...");
             InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            incus.start(name);
+            InstanceLifecycle.startInstance(incus, name);
             incus.waitForReady(name);
             if (ipFixed && incus.isVm(name)) {
                 InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
@@ -74,7 +74,7 @@ public class InstancePrep {
             System.out.println("VM agent not responding, restarting " + name + "...");
             incus.forceStop(name);
             InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            incus.start(name);
+            InstanceLifecycle.startInstance(incus, name);
             incus.waitForReady(name);
             if (ipFixed) {
                 InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
@@ -182,7 +182,7 @@ public class InstancePrep {
         // Ensure the container is running so we can push the cert
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             InstanceLifecycle.prepareHostDevicesForStart(incus, container);
-            incus.start(container);
+            InstanceLifecycle.startInstance(incus, container);
             incus.waitForReady(container);
         }
 
