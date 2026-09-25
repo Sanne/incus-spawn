@@ -62,6 +62,15 @@ public class GhSetup implements ToolSetup {
     }
 
     /**
+     * The commit email belongs to an identity as much as the token does, so it moves into the
+     * account with it. It is not a proxy entry -- nothing injects it -- so it has to be named.
+     */
+    @Override
+    public dev.incusspawn.config.AccountShape accountShape() {
+        return dev.incusspawn.config.AccountShape.declared(List.of("token"), List.of("token", "email"));
+    }
+
+    /**
      * The account name itself: {@code user.name} and {@code user.email} are derived from
      * whoever the token belongs to, so any change of account is a change of identity -- unlike
      * Claude, where two accounts of the same auth mode leave the image identical.

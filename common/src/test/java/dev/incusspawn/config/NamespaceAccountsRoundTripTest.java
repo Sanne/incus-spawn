@@ -41,7 +41,7 @@ class NamespaceAccountsRoundTripTest {
         // And still resolve after the round trip.
         var reloaded = YAML.readValue(out, SpawnConfig.class);
         var tree = new ObjectMapper().<com.fasterxml.jackson.databind.JsonNode>valueToTree(reloaded);
-        assertEquals("acme", AccountResolver.effectiveAccount(tree, "github", null));
+        assertEquals("acme", AccountResolver.effectiveAccount(reloaded, "github", null));
         assertEquals("ghp_personal", dev.incusspawn.proxy.ToolProxyResolver
                 .navigateConfigPath(tree, "github.accounts.personal.token"));
     }

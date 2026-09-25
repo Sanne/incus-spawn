@@ -90,41 +90,28 @@ public final class AccountSelection {
      */
     public static void validate(SpawnConfig config, Map<String, String> selection) {
         if (selection == null || selection.isEmpty()) return;
-        var tree = config.tree();
-        for (var entry : selection.entrySet()) {
-            var namespace = entry.getKey();
-            var account = entry.getValue();
-            if (SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)) {
-                // Typed path: also knows about the synthesized pre-accounts account.
-                config.getClaude().accountNamed(account);
-            } else {
-                AccountResolver.effectiveAccount(tree, namespace, account);
-            }
-        }
+        selection.forEach((namespace, account) ->
+                AccountResolver.effectiveAccount(config, namespace, account));
     }
 
-    /** What a namespace offers: every configured account, and which one applies by default. */
+    /** What a namespace offers: every usable account, and which one applies by default. */
     public record AccountListing(List<String> names, String defaultName) {}
 
     /**
-     * Every account configured under a namespace, and the one that applies when nothing
-     * narrower does.
+     * Every usable account under a namespace, and the one that applies when nothing narrower
+     * does.
      *
-     * <p>Kept here rather than in the command so the "claude answers through its typed API,
-     * every other namespace through the tree" rule lives in one place. {@code isx account list}
-     * reporting a different default than the proxy actually serves would be the worst kind of
-     * wrong -- the user would be reading a reassurance that is not true.
+     * <p>Answered by the same {@link AccountResolver} the proxy serves from, for every namespace
+     * alike. {@code isx account list} reporting a different default than the proxy actually
+     * serves would be the worst kind of wrong -- the user would be reading a reassurance that
+     * is not true.
      */
     public static AccountListing listAccounts(SpawnConfig config, String namespace) {
-        if (SpawnConfig.ClaudeConfig.NAMESPACE.equals(namespace)) {
-            var claude = config.getClaude();
-            return new AccountListing(
-                    List.copyOf(claude.effectiveAccounts().keySet()), claude.accountName());
-        }
         var tree = config.tree();
+        var shape = AccountResolver.shapeOf(config, namespace);
         return new AccountListing(
-                AccountResolver.accountNames(tree, namespace),
-                AccountResolver.effectiveAccount(tree, namespace, null));
+                AccountResolver.usableAccountNames(tree, namespace, shape),
+                AccountResolver.effectiveAccount(tree, namespace, shape, null));
     }
 
     /**

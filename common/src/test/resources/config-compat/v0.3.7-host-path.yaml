@@ -1,0 +1,24 @@
+---
+claude:
+  useVertex: false
+  cloudMlRegion: ""
+  vertexProjectId: ""
+  apiKey: ""
+  oauthToken: ""
+  oauthMode: false
+github:
+  token: "ghp_fixture"
+  email: ""
+bob:
+  apiKey: ""
+  licenseConsent: false
+openai:
+  apiKey: ""
+features: []
+searchPaths: []
+host-path: "~/src"
+host-paths:
+- "~/src"
+repo-paths: {}
+incus-bridge-gateway: ""
+auto-clone-repos: ""

@@ -94,7 +94,7 @@ public final class ToolProxyResolver {
                 }
             }
 
-            var allConfigValues = resolveConfiguration(proxyDef, configTree, accountsByNamespace);
+            var allConfigValues = resolveConfiguration(proxyDef, configTree, toolSetups, accountsByNamespace);
 
             for (var authEntry : proxyDef.getAuth()) {
                 if (authEntry.getDomains() == null || authEntry.getDomains().isEmpty()) continue;
@@ -148,7 +148,10 @@ public final class ToolProxyResolver {
             for (var configDef : proxyDef.getConfiguration().values()) {
                 var namespace = proxyDef.namespaceOf(configDef);
                 if (namespace.isBlank()) continue;
-                for (var account : AccountResolver.accountNames(configTree, namespace)) {
+                // Usable accounts only: pinning an incomplete one raises, and one half-configured
+                // account must not stop the proxy starting or reloading for all the others.
+                var shape = AccountResolver.shapeOf(toolSetups, namespace);
+                for (var account : AccountResolver.usableAccountNames(configTree, namespace, shape)) {
                     selections.add(Map.of(namespace, account));
                 }
             }
@@ -195,7 +198,7 @@ public final class ToolProxyResolver {
                 // Map.of() means "no pin", so each entry resolves against its namespace's
                 // default -- a namespace on the accounts layout is not reported as missing
                 // its credential just because the flat field is empty.
-                var value = resolveConfigValue(proxyDef, configDef, configTree, Map.of());
+                var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, Map.of());
                 if (value == null || value.isBlank()) {
                     result.add(new UnresolvedToolProxy(toolName, configKey));
                 }
@@ -267,10 +270,11 @@ public final class ToolProxyResolver {
     private static Map<String, String> resolveConfiguration(
             ToolDef.ProxyDef proxyDef,
             JsonNode configTree,
+            Map<String, ToolSetup> toolSetups,
             Map<String, String> accountsByNamespace) {
         var resolved = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
-            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree, accountsByNamespace);
+            var value = resolveConfigValue(proxyDef, entry.getValue(), configTree, toolSetups, accountsByNamespace);
             if (value != null && !value.isBlank()) {
                 resolved.put(entry.getKey(), value);
             }
@@ -285,11 +289,12 @@ public final class ToolProxyResolver {
      * @see ToolDef.ProxyDef#namespaceOf
      */
     private static String accountFor(ToolDef.ProxyDef proxyDef, ToolDef.ConfigEntry configDef,
-                                     JsonNode configTree, Map<String, String> accountsByNamespace) {
+                                     JsonNode configTree, Map<String, ToolSetup> toolSetups,
+                                     Map<String, String> accountsByNamespace) {
         var namespace = proxyDef.namespaceOf(configDef);
         if (namespace.isBlank()) return "";
-        return AccountResolver.effectiveAccount(
-                configTree, namespace, accountsByNamespace.get(namespace));
+        return AccountResolver.effectiveAccount(configTree, namespace,
+                AccountResolver.shapeOf(toolSetups, namespace), accountsByNamespace.get(namespace));
     }
 
     /**
@@ -306,11 +311,12 @@ public final class ToolProxyResolver {
             ToolDef.ProxyDef proxyDef,
             ToolDef.ConfigEntry configDef,
             JsonNode configTree,
+            Map<String, ToolSetup> toolSetups,
             Map<String, String> accountsByNamespace) {
         if (!configDef.getValue().isBlank()) {
             return configDef.getValue();
         }
-        var accountName = accountFor(proxyDef, configDef, configTree, accountsByNamespace);
+        var accountName = accountFor(proxyDef, configDef, configTree, toolSetups, accountsByNamespace);
         if (!accountName.isBlank()) {
             var accountPath = proxyDef.accountConfigPath(configDef, accountName);
             if (!accountPath.isBlank()) {

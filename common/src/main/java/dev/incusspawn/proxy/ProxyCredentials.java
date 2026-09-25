@@ -30,11 +30,10 @@ public record ProxyCredentials(
     /**
      * Credentials for one instance's account selection.
      *
-     * <p>Claude is resolved through {@link SpawnConfig.ClaudeConfig#accountNamed} rather than
-     * the generic tree walk, because its {@code type: anthropic} auth is handled directly in
-     * {@code MitmProxy} instead of via tool proxies, and because {@code ClaudeConfig} also
-     * synthesizes an account from the pre-accounts flat layout. Every other namespace goes
-     * through {@link ToolProxyResolver#resolve(SpawnConfig, java.util.Map, java.util.Map)}, which needs no per-tool code.
+     * <p>Every namespace, Claude's included, is resolved by the same {@link AccountResolver}
+     * rule, so a pin the CLI accepted is one the proxy can serve. Claude's credential is then
+     * read through its typed account rather than a tool proxy entry, because its
+     * {@code type: anthropic} auth is handled directly in {@code MitmProxy}.
      *
      * @param accountsByNamespace config namespace → account name, as recorded on the instance
      * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException if a named account
@@ -55,20 +54,11 @@ public record ProxyCredentials(
     public static ProxyCredentials forAccounts(SpawnConfig config,
                                                java.util.Map<String, String> accountsByNamespace,
                                                java.util.Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
-        var claude = config.getClaude();
-        // Claude's selection is resolved below by the typed path, so it must not also be
-        // resolved generically: ClaudeConfig synthesizes an account from the pre-accounts flat
-        // layout, which has no `claude.accounts` in the serialized tree at all. The generic
-        // resolver would rightly fail closed on that name, so an instance pinned to the
-        // synthesized `default` on a flat config.yaml would have every request 502 even though
-        // the CLI accepted the pin. One namespace, one owner.
-        var forToolProxies = new java.util.LinkedHashMap<>(accountsByNamespace);
-        forToolProxies.remove(SpawnConfig.ClaudeConfig.NAMESPACE);
-        var resolved = ToolProxyResolver.resolve(config, toolSetups, forToolProxies);
-        // Each ClaudeConfig accessor re-resolves the account, rebuilding the account map every
-        // time; resolve once and read the fields off it. Also makes it explicit that all five
-        // values describe a single account rather than being independently sourced.
-        var account = claude.accountNamed(
+        var resolved = ToolProxyResolver.resolve(config, toolSetups, accountsByNamespace);
+        // Each ClaudeConfig accessor re-resolves the account; resolve once and read the fields
+        // off it. Also makes it explicit that all five values describe a single account rather
+        // than being independently sourced.
+        var account = config.getClaude().accountNamed(
                 accountsByNamespace.get(SpawnConfig.ClaudeConfig.NAMESPACE));
         var vertex = account != null && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX;
         var oauth = account != null && account.effectiveType() == SpawnConfig.ClaudeAccountType.OAUTH;

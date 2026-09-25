@@ -1,0 +1,29 @@
+---
+claude:
+  useVertex: false
+  cloudMlRegion: ""
+  vertexProjectId: ""
+  apiKey: "sk-ant-api03-fixture"
+  oauthToken: ""
+  oauthMode: false
+github:
+  token: "ghp_fixture"
+  email: "me@example.com"
+bob:
+  apiKey: "bob-fixture"
+  licenseConsent: true
+openai:
+  apiKey: "sk-openai-fixture"
+features:
+- "openai"
+searchPaths:
+- "~/my-templates"
+host-path: ""
+host-paths:
+- "~/src"
+repo-paths:
+  quarkus: "~/quarkus"
+incus-bridge-gateway: "10.0.0.1"
+auto-clone-repos: "always"
+testProxyTool:
+  token: "tpt-fixture"
