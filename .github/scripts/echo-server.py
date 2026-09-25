@@ -20,16 +20,22 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # Tokens the proxy injects for an account-scoped test credential.
 ACCOUNT_TOKEN = re.compile(r"^ghp-acct-([a-z0-9][a-z0-9-]*)$")
 
+# Any other bearer token -- notably the real CI token, which is the default
+# account -- answers as this login. A template that installs `gh` resolves its
+# git identity at build time, and that request lands here too: without an
+# identity to give it, the build fails outright.
+DEFAULT_LOGIN = "ci-user"
+
 
 def account_from_auth(header):
-    """The account name a test token names, or None for anything else."""
+    """The login a bearer token should answer as, or None if it is not a bearer."""
     if not header:
         return None
     parts = header.split(None, 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
         return None
     match = ACCOUNT_TOKEN.match(parts[1].strip())
-    return match.group(1) if match else None
+    return match.group(1) if match else DEFAULT_LOGIN
 
 
 class EchoHandler(BaseHTTPRequestHandler):
@@ -46,9 +52,9 @@ class EchoHandler(BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
 
-        # Only impersonate GitHub for a token that names a test account, so every
-        # other request -- including the existing "was a Bearer injected at all"
-        # assertions -- keeps getting the plain header echo.
+        # Impersonate GitHub only on the two identity endpoints, so every other
+        # request -- including the existing "was a Bearer injected at all"
+        # assertions, which use "/" -- keeps getting the plain header echo.
         account = account_from_auth(self.headers.get("Authorization"))
         path = self.path.split("?", 1)[0]
         if account and path == "/user":
