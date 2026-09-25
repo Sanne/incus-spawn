@@ -5,6 +5,7 @@ import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.ProxyService;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -147,6 +148,14 @@ public class AccountCommand extends BaseCommand {
             merged.putAll(requested);
             AccountSelection.stamp(incus, instance, merged, current);
             ProxyService.signalAccountRefresh();
+
+            // The token swaps live, but anything the build *baked* from the old account -- the
+            // git identity -- would still be the old one, so the instance would push with one
+            // account and commit as another. Re-derived here while it is running; a stopped
+            // instance is reconciled by InstancePrep on its next use instead.
+            if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(instance))) {
+                InstanceLifecycle.reconcileAccountIdentities(incus, instance);
+            }
 
             System.out.println(instance + " now uses " + AccountSelection.describe(merged) + ".");
             System.out.println("Takes effect on the instance's next request;"

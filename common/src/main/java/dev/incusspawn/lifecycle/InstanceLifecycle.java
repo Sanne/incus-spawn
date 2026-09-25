@@ -1,12 +1,16 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.CidrUtils;
+import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -18,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -38,6 +43,59 @@ public final class InstanceLifecycle {
             incus.configSet(name, "limits.memory", memory);
         }
         incus.deviceConfigSet(name, "root", "size", disk);
+    }
+
+    /**
+     * Re-derive anything the build baked from a credential account the instance is no longer
+     * pinned to -- today, the git identity after {@code isx branch --account github=other} or
+     * {@code isx account set}.
+     *
+     * <p>Runs after start, because re-deriving means asking the API through the proxy, which is
+     * also what makes it correct: the proxy already knows which account this instance uses, so
+     * the tool needs no argument beyond the account name to stamp back.
+     *
+     * <p>Called from {@code BranchCommand} so a freshly branched instance is right from its
+     * first commit, and again from {@code InstancePrep} so one branched {@code --no-start}, or
+     * re-pointed later, is reconciled on its next use. Both are needed: only the second can
+     * catch a swap on an existing instance, and only the first stops an instance being wrong
+     * for as long as nobody happens to run {@code isx shell}.
+     *
+     * <p>Only namespaces whose tool can re-derive appear here; the ones that cannot were
+     * refused at selection time, so there is nothing to reconcile.
+     */
+    public static void reconcileAccountIdentities(IncusClient incus, String name) {
+        try {
+            var config = SpawnConfig.load();
+            var stale = AccountSelection.staleIdentities(config, incus, name);
+            if (stale.isEmpty()) return;
+
+            // Re-deriving goes out through the proxy, and a just-started instance may not have
+            // an address yet. Only paid for when something is actually stale, and returns as
+            // soon as the address is up -- which for an instance that has been running a while
+            // is the first poll.
+            if (!incus.pollUntilReady(name, 30, "sh", "-c",
+                    "ip -4 -o addr show scope global | grep -q inet")) {
+                throw new IncusException(name + " has no IPv4 address");
+            }
+
+            var container = new Container(incus, name);
+            var setups = AccountSelection.namespaceSetups(config);
+            var updates = new LinkedHashMap<String, String>();
+            stale.forEach((namespace, identity) -> {
+                var setup = setups.get(namespace);
+                if (setup == null) return;
+                BuildOutput.step("Updating " + namespace + " identity for account '"
+                        + identity + "'...");
+                setup.rebakeForAccount(container, identity);
+                updates.put(Metadata.accountIdentityKey(namespace), identity);
+            });
+            if (!updates.isEmpty()) incus.configSetAll(name, updates);
+        } catch (Exception e) {
+            // Best effort: a stale identity is a wrong commit author, not a broken instance,
+            // and the next use tries again because the stamp is only updated on success.
+            System.err.println("Warning: could not update credential identity for " + name
+                    + ": " + e.getMessage());
+        }
     }
 
     public static void configureNetwork(IncusClient incus, String name, NetworkMode mode) {

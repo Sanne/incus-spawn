@@ -10,9 +10,12 @@
 # /user/emails as whichever account the injected token names, which is how two
 # identities are exercised when only one real token exists.
 #
-# Usage: incus exec <instance> -- bash /tmp/test-git-identity.sh <expected-account>
+# Usage: incus exec <instance> -- bash /tmp/test-git-identity.sh <expected-login>
+#
+# The login is what the echo server answers /user as -- the account name for an
+# account-scoped token, and "ci-user" for the real CI token, which is the default.
 
-EXPECTED="${1:?usage: test-git-identity.sh <expected-account>}"
+EXPECTED="${1:?usage: test-git-identity.sh <expected-login>}"
 
 TESTS=0
 PASS=0
@@ -37,14 +40,18 @@ assert_eq() {
 git_identity() { su -l agentuser -c "git config --global --get $1"; }
 
 echo "========================================"
-echo " git identity for account: $EXPECTED"
+echo " git identity for login: $EXPECTED"
 echo "========================================"
 echo ""
+
+# Mirrors Python's str.title() in echo-server.py: every hyphen-separated part is
+# capitalised, so "ci-user" is "Ci-User" and not "Ci-user".
+titled=$(echo "$EXPECTED" | sed -e 's/^./\U&/' -e 's/-./\U&/g')
 
 # The echo server derives both from the account name, so the assertion says
 # exactly what is claimed: this instance commits as the account it is pinned to.
 assert_eq "user.name is the pinned account's" \
-    "$(echo "$EXPECTED" | sed 's/^./\U&/') Bot" git_identity user.name
+    "$titled Bot" git_identity user.name
 assert_eq "user.email is the pinned account's" \
     "$EXPECTED@accounts.test" git_identity user.email
 
