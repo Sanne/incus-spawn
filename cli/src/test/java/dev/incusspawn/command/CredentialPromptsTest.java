@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.AccountResolver;
+import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -180,6 +181,47 @@ class CredentialPromptsTest {
         configure(config, new ScriptedPrompts().line("r").secret("").line("", ""));
 
         assertFalse(Files.exists(configFile()));
+    }
+
+    /**
+     * Replacing, then skipping the secret but answering another prompt, must not replace a
+     * working credential with an account that has none: "replace all" clears every account, so
+     * it may only run once there is a credential to replace them with.
+     */
+    @Test
+    void replacingWithoutANewSecretKeepsTheWorkingCredential() {
+        var config = new SpawnConfig();
+        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
+        config.setConfigByPath("acme.telemetry", "true");
+        configure(config, new ScriptedPrompts().line("r").secret("").line("eu-west", ""));
+
+        assertFalse(Files.exists(configFile()), "nothing usable was entered, so nothing may change");
+    }
+
+    /** Likewise a new account: a name and a region, but no secret, is not an account. */
+    @Test
+    void addingAnAccountWithoutASecretCreatesNothing() {
+        var config = new SpawnConfig();
+        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
+        config.setConfigByPath("acme.telemetry", "true");
+        configure(config, new ScriptedPrompts().line("a", "work").secret("").line("eu-west", ""));
+
+        assertFalse(Files.exists(configFile()));
+    }
+
+    /** Editing an existing account may change its other values while keeping its secret. */
+    @Test
+    void anExistingAccountsOtherValuesCanBeChangedAlone() {
+        var config = new SpawnConfig();
+        NamespaceAccounts.put(config, "acme", "default", "apiKey", "acme-default-secret");
+        NamespaceAccounts.put(config, "acme", "work", "apiKey", "acme-work-secret");
+        NamespaceAccounts.put(config, "acme", "work", "region", "us-east");
+        config.setConfigByPath("acme.telemetry", "true");
+        // 'e' work; decline keeping the secret, then skip it; replace the region; keep telemetry.
+        configure(config, new ScriptedPrompts().line("e", "work", "n").secret("").line("n", "eu-west", ""));
+
+        assertEquals("acme-work-secret", saved("acme.accounts.work.apiKey"));
+        assertEquals("eu-west", saved("acme.accounts.work.region"));
     }
 
     /** YAML tools get named accounts through the same menu as GitHub, keeping the first. */

@@ -2562,6 +2562,10 @@ public class InitCommand extends BaseCommand {
         }
 
         var configTree = config.tree();
+        // An account that already exists keeps its credential through a partial edit ('e');
+        // anything else -- a new account, or a "replace" that clears the rest -- starts empty.
+        var targetKeepsCredential = target != null && !target.replaceOthers()
+                && NamespaceAccounts.names(config, namespace).contains(target.name());
         var accountValues = new LinkedHashMap<String, String>();
         var sharedValues = new LinkedHashMap<String, String>();
         for (var entry : proxyDef.getConfiguration().entrySet()) {
@@ -2626,13 +2630,18 @@ public class InitCommand extends BaseCommand {
             }
         }
 
-        // Nothing collected means nothing written: skipping every prompt must not leave behind
-        // an empty account, nor clear the others for a "replace all" (saveAccount ignores an
-        // empty map).
+        // No credential collected means no account written: skipping the secret must not leave
+        // behind an account without one, nor clear the others for a "replace all" -- which would
+        // swap a working credential for a region and nothing else. Only an existing account,
+        // whose credential stays put, may have its other values edited on their own.
         boolean savedAny = false;
         if (target != null && !accountValues.isEmpty()) {
-            saveAccount(config, namespace, target, accountValues);
-            savedAny = true;
+            if (targetKeepsCredential || carriesCredential(shape, accountValues)) {
+                saveAccount(config, namespace, target, accountValues);
+                savedAny = true;
+            } else {
+                System.out.println("  No credential entered, so no account was changed.");
+            }
         }
         for (var shared : sharedValues.entrySet()) {
             config.setConfigByPath(shared.getKey(), shared.getValue());
@@ -2645,6 +2654,21 @@ public class InitCommand extends BaseCommand {
         } else {
             System.out.println("  Skipped. Configure later with 'isx init'.");
         }
+    }
+
+    /** Whether the values collected for one account include what makes it usable. */
+    static boolean carriesCredential(dev.incusspawn.config.AccountShape shape, Map<String, String> values) {
+        var account = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        values.forEach((key, value) -> {
+            var segments = key.split("\\.");
+            var node = account;
+            for (int i = 0; i < segments.length - 1; i++) {
+                node = node.get(segments[i]) instanceof com.fasterxml.jackson.databind.node.ObjectNode child
+                        ? child : node.putObject(segments[i]);
+            }
+            node.put(segments[segments.length - 1], value);
+        });
+        return shape.hasFlatCredential(account);
     }
 
     private void setupPathList(
