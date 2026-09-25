@@ -2429,32 +2429,42 @@ public class InitCommand extends BaseCommand {
             if (parsed == null) {
                 return null;
             }
-            if (parsed.verified.size() == 1) {
-                return parsed.verified.get(0);
-            }
-
-            System.out.println("  Multiple verified emails found:");
-            for (int i = 0; i < parsed.verified.size(); i++) {
-                var label = parsed.verified.get(i);
-                if (label.endsWith("@users.noreply.github.com")) label += " (private, recommended)";
-                else if (label.equals(parsed.primary)) label += " (primary)";
-                System.out.println("    " + (i + 1) + ". " + label);
-            }
-            System.out.print("  Select email for git commits [1]: ");
-            var choice = readInput(prompts.readLine());
-            if (choice.isEmpty()) {
-                return parsed.verified.get(0);
-            }
-            try {
-                int idx = Integer.parseInt(choice) - 1;
-                if (idx >= 0 && idx < parsed.verified.size()) {
-                    return parsed.verified.get(idx);
-                }
-            } catch (NumberFormatException ignored) {}
-            return parsed.verified.get(0);
+            return chooseEmail(parsed, prompts);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * The address git commits will carry, when the token can see several verified ones.
+     * Enter, EOF and anything out of range take the first entry, which
+     * {@link #parseGitHubEmails} makes the noreply address whenever there is one -- so the
+     * default never publishes a real address that a private one could have covered.
+     */
+    static String chooseEmail(EmailParseResult parsed, Prompts prompts) {
+        if (parsed.verified.size() == 1) {
+            return parsed.verified.get(0);
+        }
+
+        System.out.println("  Multiple verified emails found:");
+        for (int i = 0; i < parsed.verified.size(); i++) {
+            var label = parsed.verified.get(i);
+            if (label.endsWith("@users.noreply.github.com")) label += " (private, recommended)";
+            else if (label.equals(parsed.primary)) label += " (primary)";
+            System.out.println("    " + (i + 1) + ". " + label);
+        }
+        System.out.print("  Select email for git commits [1]: ");
+        var choice = readInput(prompts.readLine());
+        if (choice.isEmpty()) {
+            return parsed.verified.get(0);
+        }
+        try {
+            int idx = Integer.parseInt(choice) - 1;
+            if (idx >= 0 && idx < parsed.verified.size()) {
+                return parsed.verified.get(idx);
+            }
+        } catch (NumberFormatException ignored) {}
+        return parsed.verified.get(0);
     }
 
     static EmailParseResult parseGitHubEmails(String json) {

@@ -1,0 +1,126 @@
+package dev.incusspawn.command;
+
+import dev.incusspawn.Environment;
+import dev.incusspawn.config.SpawnConfig;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * The directory-list prompts behind both "Code Directories" (host paths) and "Template Search
+ * Paths": add, remove by number, and what is saved. Host paths decide which checkouts can be
+ * reference-cloned into containers, so an entry must never be added or dropped by accident.
+ */
+@ExtendWith(IsolatedHome.class)
+class PathListPromptsTest {
+
+    private static Path home() {
+        return Path.of(System.getProperty("user.home"));
+    }
+
+    private static Path configFile() {
+        return Environment.configDir().resolve("config.yaml");
+    }
+
+    private static Path dir(String name) throws Exception {
+        return Files.createDirectories(home().resolve(name));
+    }
+
+    private static void edit(SpawnConfig config, ScriptedPrompts prompts) {
+        new InitCommand().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
+                "  (skipped)", config, prompts);
+        prompts.assertFullyConsumed();
+    }
+
+    private static List<String> savedPaths() {
+        return SpawnConfig.load().getHostPaths();
+    }
+
+    @Test
+    void anAddedDirectoryIsSavedAsAnAbsoluteNormalizedPath() throws Exception {
+        var code = dir("code");
+        edit(new SpawnConfig(), ScriptedPrompts.lines(code + "/./", ""));
+        assertEquals(List.of(code.toString()), savedPaths());
+    }
+
+    @Test
+    void aTildeIsExpandedToTheHostHome() throws Exception {
+        var code = dir("code");
+        edit(new SpawnConfig(), ScriptedPrompts.lines("~/code", ""));
+        assertEquals(List.of(code.toString()), savedPaths());
+    }
+
+    /** A typo should still be recordable -- the directory may be created later -- but it is warned about. */
+    @Test
+    void aMissingDirectoryIsAddedAnyway() {
+        var missing = home().resolve("not-yet");
+        edit(new SpawnConfig(), ScriptedPrompts.lines(missing.toString(), ""));
+        assertEquals(List.of(missing.toString()), savedPaths());
+    }
+
+    @Test
+    void aUrlIsRefused() {
+        edit(new SpawnConfig(), ScriptedPrompts.lines("https://github.com/me/code", ""));
+        assertFalse(Files.exists(configFile()));
+    }
+
+    @Test
+    void aDuplicateIsNotAddedTwice() throws Exception {
+        var code = dir("code");
+        edit(new SpawnConfig(), ScriptedPrompts.lines(code.toString(), "~/code", ""));
+        assertEquals(List.of(code.toString()), savedPaths());
+    }
+
+    @Test
+    void aNumberRemovesThatEntry() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(dir("a").toString(), dir("b").toString()));
+        edit(config, ScriptedPrompts.lines("1", ""));
+        assertEquals(List.of(home().resolve("b").toString()), savedPaths());
+    }
+
+    /** A number that names no entry is not read as a path to add, and removes nothing. */
+    @Test
+    void anOutOfRangeNumberChangesNothing() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(dir("a").toString()));
+        edit(config, ScriptedPrompts.lines("2", "0", ""));
+        assertFalse(Files.exists(configFile()));
+    }
+
+    @Test
+    void finishingWithoutChangesDoesNotRewriteTheFile() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(dir("a").toString()));
+        edit(config, ScriptedPrompts.lines(""));
+        assertFalse(Files.exists(configFile()));
+    }
+
+    /** EOF finishes the list, keeping what was entered before it. */
+    @Test
+    void closedStdinKeepsWhatWasAlreadyEntered() throws Exception {
+        var code = dir("code");
+        var prompts = ScriptedPrompts.lines(code.toString());
+        new InitCommand().setupPathList(SpawnConfig::getHostPaths, SpawnConfig::setHostPaths,
+                "  (skipped)", new SpawnConfig(), prompts);
+        assertEquals(List.of(code.toString()), savedPaths());
+    }
+
+    @Test
+    void searchPathsUseTheSameListAndSaveToTheirOwnField() throws Exception {
+        var templates = dir("templates");
+        var prompts = ScriptedPrompts.lines(templates.toString(), "");
+        new InitCommand().setupPathList(SpawnConfig::getSearchPaths, SpawnConfig::setSearchPaths,
+                "  (skipped)", new SpawnConfig(), prompts);
+        prompts.assertFullyConsumed();
+
+        var saved = SpawnConfig.load();
+        assertEquals(List.of(templates.toString()), saved.getSearchPaths());
+        assertEquals(List.of(), saved.getHostPaths());
+    }
+}
