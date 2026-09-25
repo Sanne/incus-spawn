@@ -432,6 +432,10 @@ public class SpawnConfig {
         public Map<String, Object> getExtras() { return extras; }
     }
 
+    // NON_EMPTY, like ClaudeConfig: once a credential moves into an account the flat fields
+    // are blank, and writing them back as "" makes an older isx read the namespace as
+    // configured-but-empty rather than simply absent.
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class GitHubConfig extends NamespaceConfig {
         private String token = "";

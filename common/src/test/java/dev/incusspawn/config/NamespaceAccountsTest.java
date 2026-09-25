@@ -143,6 +143,27 @@ class NamespaceAccountsTest {
         assertEquals("", value(config, "github.default"));
     }
 
+    /**
+     * The flat fields must not survive as empty strings once their credential has moved: an
+     * older isx reads {@code token: ""} as a namespace configured with nothing, rather than as
+     * one it does not understand, and reports no credentials at all.
+     */
+    @Test
+    void adoptFlatLeavesNoEmptyFlatFieldsBehind() throws Exception {
+        var config = parse("""
+                github:
+                  token: "ghp_flat"
+                  email: "me@example.com"
+                """);
+        NamespaceAccounts.adoptFlat(config, "github", GITHUB_KEYS,
+                NamespaceAccounts.DEFAULT_ACCOUNT_NAME);
+
+        var out = dump(config);
+        assertFalse(out.contains("token: \"\""), out);
+        assertFalse(out.contains("email: \"\""), out);
+        assertEquals("ghp_flat", value(config, "github.accounts.default.token"));
+    }
+
     /** Works the same for a namespace with no Java class at all. */
     @Test
     void anUnknownNamespaceBehavesIdentically() throws Exception {

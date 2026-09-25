@@ -1972,7 +1972,7 @@ public class InitCommand extends BaseCommand {
      */
     private enum GhTokenOutcome { SAVED, NOT_OFFERED, FAILED }
 
-    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console) {
+    private GhTokenOutcome offerGhCliToken(SpawnConfig config, Console console, String account) {
         // 'gh auth status' exits 0 only when gh is installed and logged in; a missing binary or no
         // active login exits non-zero, so this one check gates the whole fallback.
         if (runHostCapturingExit("gh", "auth", "status") != 0) {
@@ -2000,7 +2000,7 @@ public class InitCommand extends BaseCommand {
         if (result.email == null) {
             System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
         }
-        saveGitHubToken(config, token, result.email);
+        saveGitHubToken(config, account, token, result.email);
         return GhTokenOutcome.SAVED;
     }
 
@@ -2015,21 +2015,31 @@ public class InitCommand extends BaseCommand {
     }
 
     /**
-     * Which GitHub account the current {@code isx init} run is writing into: an account name,
-     * or {@code ""} for the flat single-credential layout. Set by the menu just before the
-     * prompts that collect the credential.
+     * Persist a verified GitHub token (and email, if any) and print the matching "saved" line.
+     *
+     * <p>{@code account} is passed rather than parked on the instance: the Claude flow's
+     * equivalent mutable field is how a credential wipe shipped once already (#741), because a
+     * code path that returns early leaves a stale target for a later write to act on. An
+     * argument cannot go stale.
+     *
+     * @param account the account to write into, or {@code ""} for the flat single-credential
+     *     layout a namespace keeps until it has a second account
      */
-    private String githubAccountTarget = "";
-
-    /** Persists a verified GitHub token (and email, if any) and prints the matching "saved" line. */
-    private void saveGitHubToken(SpawnConfig config, String token, String email) {
-        if (githubAccountTarget == null || githubAccountTarget.isEmpty()) {
+    private void saveGitHubToken(SpawnConfig config, String account, String token, String email) {
+        if (account != null && !account.isEmpty()) {
+            // Materialize any flat credential first, so adding a second account keeps the
+            // first rather than displacing it -- and so this only happens once a credential
+            // has actually been collected.
+            NamespaceAccounts.adoptFlat(config, GhSetup.NAMESPACE, GITHUB_KEYS,
+                    NamespaceAccounts.DEFAULT_ACCOUNT_NAME);
+        }
+        if (account == null || account.isEmpty()) {
             NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "token", token);
             if (email != null) NamespaceAccounts.putFlat(config, GhSetup.NAMESPACE, "email", email);
         } else {
-            NamespaceAccounts.put(config, GhSetup.NAMESPACE, githubAccountTarget, "token", token);
+            NamespaceAccounts.put(config, GhSetup.NAMESPACE, account, "token", token);
             if (email != null) {
-                NamespaceAccounts.put(config, GhSetup.NAMESPACE, githubAccountTarget, "email", email);
+                NamespaceAccounts.put(config, GhSetup.NAMESPACE, account, "email", email);
             }
         }
         config.save();
@@ -2122,9 +2132,11 @@ public class InitCommand extends BaseCommand {
                     case "" -> { return null; }
                     case "r" -> { return ""; }
                     case "a" -> {
-                        NamespaceAccounts.adoptFlat(config, namespace, keys,
-                                NamespaceAccounts.DEFAULT_ACCOUNT_NAME);
-                        config.save();
+                        // Deliberately no migration here. Moving the flat credential into
+                        // accounts.default before one is collected leaves an abandoned flow
+                        // having rewritten the file -- and a config an older isx reads as
+                        // having no credentials at all (#740). saveGitHubToken does it, once
+                        // there is something to save.
                         var name = askAccountName(console, java.util.Set.of(
                                 NamespaceAccounts.DEFAULT_ACCOUNT_NAME));
                         if (name.isEmpty()) return null;
@@ -2217,12 +2229,10 @@ public class InitCommand extends BaseCommand {
         // On a re-run, offer account management rather than only replace-or-keep: the same
         // menu every non-Claude credential gets, so adding a second GitHub identity needs no
         // GitHub-specific UX.
+        String account = "";
         if (githubConfigured(config)) {
-            githubAccountTarget = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub",
-                    GITHUB_KEYS, console);
-            if (githubAccountTarget == null) return;
-        } else {
-            githubAccountTarget = "";
+            account = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", GITHUB_KEYS, console);
+            if (account == null) return;
         }
 
         // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
@@ -2234,7 +2244,7 @@ public class InitCommand extends BaseCommand {
             if (token.isBlank()) {
                 // Last resort only: reuse the host's personal 'gh' login. Discouraged — it makes the
                 // agent act as you — so it is offered here (default No), never as the primary path.
-                var outcome = offerGhCliToken(config, console);
+                var outcome = offerGhCliToken(config, console, account);
                 if (outcome == GhTokenOutcome.SAVED) {
                     break;
                 }
@@ -2256,7 +2266,7 @@ public class InitCommand extends BaseCommand {
             }
 
             if (result.email != null) {
-                saveGitHubToken(config, token, result.email);
+                saveGitHubToken(config, account, token, result.email);
                 break;
             }
 
@@ -2268,19 +2278,19 @@ public class InitCommand extends BaseCommand {
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
             var newToken = readSecret(console.readPassword());
             if (newToken.isBlank()) {
-                saveGitHubToken(config, token, null);
+                saveGitHubToken(config, account, token, null);
                 break;
             }
 
             var newResult = verifyGitHubToken(newToken);
             if (newResult == null) {
                 System.out.println("  New token failed verification — keeping the original token.");
-                saveGitHubToken(config, token, null);
+                saveGitHubToken(config, account, token, null);
                 break;
             }
             // Same target as every other save in this flow, so a re-minted PAT lands in the
             // account the user picked rather than back in the flat field.
-            saveGitHubToken(config, newToken, newResult.email);
+            saveGitHubToken(config, account, newToken, newResult.email);
             if (newResult.email == null) {
                 System.out.println("  (still without email)");
             }
