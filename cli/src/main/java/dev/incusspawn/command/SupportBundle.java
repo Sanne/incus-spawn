@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.SecretRedactor;
@@ -93,7 +94,7 @@ final class SupportBundle {
             return new Result(archive, redaction.redactedPaths(),
                     bundle.scrubCount(), bundle.fileCount);
         } finally {
-            deleteRecursively(dir);
+            FileTrees.deleteQuietly(dir);
         }
     }
 
@@ -286,14 +287,6 @@ final class SupportBundle {
         var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         if (process.waitFor() != 0) {
             throw new IOException("tar failed: " + output.strip());
-        }
-    }
-
-    private static void deleteRecursively(Path dir) {
-        try {
-            CleanCommand.deleteDir(dir);
-        } catch (IOException ignored) {
-            // best effort: the temp dir is disposable
         }
     }
 }

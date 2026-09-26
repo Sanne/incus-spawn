@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.Environment;
@@ -206,7 +207,7 @@ public class ResetCommand extends BaseCommand {
                 }
                 BuildOutput.stepStart("Deleting " + info.path() + "...");
                 try {
-                    CleanCommand.deleteDir(info.path());
+                    FileTrees.delete(info.path());
                     BuildOutput.stepDone();
                 } catch (Exception e) {
                     BuildOutput.stepFail(e.getMessage());
