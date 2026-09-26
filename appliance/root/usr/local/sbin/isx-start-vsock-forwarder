@@ -8,9 +8,14 @@
 # host-side vfkit fd it pins) alive forever. The 180s floor sits above the Incus /wait
 # long-poll (up to 120s of legitimate silence) and the client request watchdog (150s);
 # live exec fds are keepalived (~15s) so they are never reaped. See incus-spawn-vm-init.
+#
+# backlog=128: socat's default listen backlog is 5, and a vsock listener whose accept queue
+# is full refuses the connection outright. One isx exec opens about five connections at once
+# (four fd WebSockets plus /wait), so the default refused real client traffic under any
+# overlap. Measured in CI: 3 of 16 and 12 of 32 concurrent connects refused (#774).
 set -eu
 
 PORT="${1:?usage: isx-start-vsock-forwarder <vsock-port>}"
 
-exec socat -b 65536 -T 180 VSOCK-LISTEN:"$PORT",reuseaddr,fork \
+exec socat -b 65536 -T 180 VSOCK-LISTEN:"$PORT",reuseaddr,fork,backlog=128 \
     UNIX-CONNECT:/var/lib/incus/unix.socket
