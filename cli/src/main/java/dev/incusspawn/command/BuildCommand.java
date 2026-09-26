@@ -1169,11 +1169,14 @@ public class BuildCommand extends BaseCommand {
         mountDnfCache(buildName, effectiveVm);
 
         if (effectiveVm) {
-            var installDeps = String.join(" ",
+            // The prebaked VM image ships these tools; dnf would still spend seconds (tens
+            // on a cold cache) loading repo metadata just to find them installed.
+            var installDeps = "{ command -v growpart && command -v resize2fs && command -v xfs_growfs; } "
+                    + ">/dev/null 2>&1 || " + String.join(" ",
                     dnfCommand("install", "-y", "-q", "cloud-utils-growpart", "e2fsprogs", "xfsprogs"));
             runWithSpinner("Expanding", "VM root filesystem", "Failed to expand VM root filesystem",
                     state -> state.set(0, stepFrom(container.sh(
-                            installDeps + " && " +
+                            "{ " + installDeps + "; } && " +
                             "growpart /dev/sda 2 && " +
                             "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi"))));
         }
