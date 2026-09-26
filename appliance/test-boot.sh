@@ -54,7 +54,9 @@ LOGFILE=$(mktemp)
 VSOCK_RESULT=$(mktemp)
 VSOCK_DIR=""
 BACKEND=""
-cleanup() { rm -f "$LOGFILE" "$VSOCK_RESULT"; [ -n "$VSOCK_DIR" ] && rm -rf "$VSOCK_DIR"; }
+# An `if`, not `[ ] && rm`: the trap's last status becomes the script's exit
+# status, and VSOCK_DIR is always empty on the QEMU path.
+cleanup() { rm -f "$LOGFILE" "$VSOCK_RESULT"; if [ -n "$VSOCK_DIR" ]; then rm -rf "$VSOCK_DIR"; fi; }
 trap cleanup EXIT
 
 # Verify the Incus API is reachable over the forwarded vsock socket — the exact
@@ -223,6 +225,7 @@ boot_qemu() {
         -serial stdio \
         -kernel "$BUILD_DIR/vmlinuz" \
         -drive file="$BUILD_DIR/disk.img",format=raw,if=virtio \
+        -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
         -append "root=/dev/vda rootfstype=btrfs rw rootflags=commit=300 console=$console isx.smoke_test=1" \
         > "$LOGFILE" 2>&1 &
     local qemu_pid=$!
