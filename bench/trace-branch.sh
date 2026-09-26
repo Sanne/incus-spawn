@@ -199,8 +199,9 @@ if before_prompt:
     gaps.append(((prompt_ts - before_prompt[-1][0]) * 1000, before_prompt[-1][0], prompt_ts,
                  "(usable prompt)"))
 
-# Operations carry their own created/updated timestamps: the daemon's view of how long each
-# async step (start, exec, file push) took.
+# How long each async step (create, start, exec) took on the daemon, from the operation's own
+# events. The end is the timestamp of the event reporting the final status: Incus does not
+# advance updated_at for task operations, so that field reads as zero-length for a start.
 operations = {}
 for ts, event in events:
     if event.get("type") != "operation":
@@ -208,12 +209,13 @@ for ts, event in events:
     meta = event.get("metadata") or {}
     op = operations.setdefault(meta.get("id", "?"), {"description": meta.get("description", "")})
     try:
-        op["start"] = parse_ts(meta["created_at"])
-        if meta.get("status") in ("Success", "Failure", "Cancelled"):
-            op["end"] = parse_ts(meta["updated_at"])
-            op["status"] = meta["status"]
+        created = parse_ts(meta["created_at"])
     except (KeyError, ValueError):
-        pass
+        created = ts
+    op["start"] = min(op.get("start", ts), created, ts)
+    if meta.get("status") in ("Success", "Failure", "Cancelled"):
+        op["end"] = ts
+        op["status"] = meta["status"]
 finished = [(o["end"] - o["start"], o) for o in operations.values() if "end" in o and "start" in o]
 lines += ["", "Longest operations (daemon-side duration):"]
 for duration, op in sorted(finished, key=lambda f: f[0], reverse=True)[:10]:
