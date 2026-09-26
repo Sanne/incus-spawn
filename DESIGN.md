@@ -845,6 +845,31 @@ instance until it answers) and the shell attach. Time to a usable prompt for `is
 `isx shell` is not measured yet. Neither is the macOS appliance, where every request also
 crosses the vsock tunnel.
 
+### Why nothing is pushed into an instance just before it starts
+
+`bench/trace-branch.sh` showed a full second of every 2.2 s branch spent idle inside Incus's
+start operation, right after it logged "Stopping forkfile". Forkfile is the helper Incus runs
+to serve file pushes to a stopped container. On start, Incus sends it SIGINT and waits for it to
+exit; forkfile exits once no transfer is open, but it re-checks only **once a second**
+(`cmd/incusd/main_forkfile.go`, Incus 6.23). A transfer still counts as open until forkfile has
+finished `syncfs` on the root filesystem, which can outlast the HTTP response to the push. So a
+start issued immediately after a push races that flush, and losing costs exactly one second
+(measured: 1149 ms against 142 ms with a 200 ms pause, same host). isx pushed terminfo, and
+for SSH-capable templates the authorized keys, 1 ms before every branch start.
+
+Both now travel inside the post-start setup script as heredocs (`buildSetupScript`), which
+costs no extra request, and `InstanceLifecycle.prefetchAndStart()` -- shared by `isx branch` and
+the TUI -- pushes nothing between reading the config and starting. Two related savings on the
+same path: `GuiPassthrough.removeGui()` returns after one read when the instance has no GUI
+state (it used to rewrite devices and config and push two empty files on every branch), and
+the setup script polls for the network address every 50 ms rather than every 0.5 s, which was
+~400 ms of idle time per branch.
+
+The static `.network` file is still pushed before start, because it must be in place at boot.
+It goes in well before the start (after resource limits and network configuration), which has
+been enough to finish the flush; if a trace ever shows the one-second gap again, that push is
+the next candidate.
+
 ### Build-time initialization must not capture host paths
 
 Quarkus initializes application classes at image-build time unless they are listed in

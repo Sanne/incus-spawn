@@ -18,7 +18,7 @@ import java.util.Map;
  * deterministic where wall-clock timing on shared CI runners is not. Tests pin the count for a
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
- * <p>Serves the subset of the API those flows use: instance GET/PATCH/state, instance listing,
+ * <p>Serves the subset of the API those flows use: instance GET/PUT/PATCH/state, instance listing,
  * network GET, file push and async-operation waits. Anything else answers 404, so an
  * unexpected request still shows up in {@link #requests()}.
  */
@@ -33,6 +33,12 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
+    }
+
+    /** Add a device to an existing instance, as if it had been configured or copied over. */
+    public FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
+        ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));
+        return this;
     }
 
     /** Add a stopped container with the given config. */
@@ -122,6 +128,13 @@ public final class FakeIncusDaemon implements IncusTransport {
 
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && method.equals("PUT")) {
+            // A full replacement: how Incus removes devices (PATCH cannot).
+            var replacement = JSON.readTree(body);
+            instance.set("config", replacement.path("config").deepCopy());
+            instance.set("devices", replacement.path("devices").deepCopy());
+            return sync(JSON.createObjectNode());
+        }
         if (rest.isEmpty() && method.equals("PATCH")) {
             applyPatch(instance, JSON.readTree(body));
             return sync(JSON.createObjectNode());

@@ -267,19 +267,15 @@ public final class InstanceLifecycle {
     /**
      * Push files that can't be written to a stopped VM (file push requires the
      * incus-agent). Call after {@code incus.start()} + {@code waitForReady()}.
+     * SSH keys and terminfo are not among them: {@link #setupRuntime} writes those.
      */
-    public static void pushDeferredVmFiles(IncusClient incus, String name,
-                                           NetworkMode networkMode, RuntimeConfig prefetched) {
+    public static void pushDeferredVmFiles(IncusClient incus, String name, NetworkMode networkMode) {
         if (networkMode != NetworkMode.AIRGAP) {
             var ip = incus.configGet(name, Metadata.STATIC_IP);
             var gateway = incus.configGet(name, Metadata.STATIC_GATEWAY);
             if (!ip.isEmpty() && !gateway.isEmpty()) {
                 pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
             }
-        }
-        if (prefetched != null) {
-            injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
-            pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
         }
     }
 
@@ -459,6 +455,22 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Read what {@link #setupRuntime} needs while the new instance is still stopped, then
+     * start it. Shared by {@code isx branch} and the TUI's branch action.
+     *
+     * <p>Nothing is pushed into the instance between the two: Incus stops its forkfile file
+     * server on start, and one still finishing a push makes the start wait a full second.
+     * Anything the instance needs goes into the post-start setup script instead.
+     */
+    public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, boolean isVm) {
+        var prefetched = prefetchRuntimeConfig(incus, name);
+        BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
+        startInstance(incus, name);
+        BuildOutput.stepDone();
+        return prefetched;
+    }
+
+    /**
      * Pre-fetch instance metadata that setupRuntime needs, while the container
      * is still stopped. Reading config from a stopped container avoids lock
      * contention with the seccomp_notify handler that activates on start.
@@ -488,25 +500,6 @@ public final class InstanceLifecycle {
             return proc.waitFor() == 0 && !output.isEmpty() ? output : null;
         } catch (Exception e) {
             return null;
-        }
-    }
-
-    /**
-     * Push terminfo source into a stopped container so it can be compiled
-     * during setupRuntime without separate exec calls.
-     */
-    public static void pushTerminfoIfNeeded(IncusClient incus, String name, String terminfo) {
-        if (terminfo == null) return;
-        try {
-            var tmp = Files.createTempFile("isx-terminfo-", ".src");
-            try {
-                Files.writeString(tmp, terminfo + "\n");
-                incus.filePush(tmp.toString(), name, "/tmp/.isx-terminfo.src");
-            } finally {
-                Files.deleteIfExists(tmp);
-            }
-        } catch (IOException | RuntimeException e) {
-            // best-effort — propagateTerminfo in interactiveShell is the fallback
         }
     }
 
@@ -555,7 +548,8 @@ public final class InstanceLifecycle {
         // seccomp_notify lock contention during container startup.
         var buildSourceJson = prefetched != null ? prefetched.buildSourceJson()
                 : incus.configGet(name, Metadata.BUILD_SOURCE);
-        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode);
+        var sshKeys = prefetched != null && prefetched.hasSshKeys() ? sshKeysToInject() : List.<String>of();
+        var setupScript = buildSetupScript(prefetched, buildSourceJson, networkMode, sshKeys);
         BuildOutput.stepStart("Waiting for container...");
         if (!incus.pollUntilReady(name, 30, "sh", "-c", setupScript)) {
             BuildOutput.stepBreak();
@@ -631,25 +625,42 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Build a shell script that performs all post-start setup in one exec:
-     * home ownership, terminfo compilation, and tool readiness polling.
-     * Batching avoids multiple exec round trips that each block due to
-     * seccomp_notify lock contention during container startup.
+     * Build a shell script that performs all post-start setup in one exec: SSH keys, terminfo,
+     * home ownership, network readiness and tool readiness. Batching avoids multiple exec round
+     * trips that each block due to seccomp_notify lock contention during container startup.
+     *
+     * <p>SSH keys and terminfo travel inside the script rather than being pushed into the
+     * stopped instance beforehand. A start stops Incus's forkfile helper (which serves file
+     * pushes to a stopped instance) and, if a push is still finishing, forkfile re-checks only
+     * once a second -- so a push just before the start cost a full second of every branch.
+     *
+     * <p>The script may run more than once ({@code pollUntilReady} retries it), so every step
+     * is idempotent.
      */
     static String buildSetupScript(RuntimeConfig prefetched, String buildSourceJson,
-                                   NetworkMode networkMode) {
+                                   NetworkMode networkMode, List<String> sshKeys) {
         var sb = new StringBuilder();
-        sb.append("chown agentuser:agentuser /home/agentuser");
-        if (prefetched != null && prefetched.terminfo() != null) {
-            sb.append("; tic -x /tmp/.isx-terminfo.src 2>/dev/null; rm -f /tmp/.isx-terminfo.src");
+        if (!sshKeys.isEmpty()) {
+            // Same result as the file push this replaces: agentuser (uid 1000) owns it, 0600.
+            sb.append("install -d -m 700 -o 1000 -g 1000 /home/agentuser/.ssh\n")
+              .append(Container.heredoc("(umask 077 && cat > /home/agentuser/.ssh/authorized_keys)",
+                      String.join("\n", sshKeys)))
+              .append("\nchown 1000:1000 /home/agentuser/.ssh/authorized_keys"
+                      + " && chmod 600 /home/agentuser/.ssh/authorized_keys\n");
         }
+        if (prefetched != null && prefetched.terminfo() != null) {
+            sb.append(Container.heredoc("tic -x - 2>/dev/null", prefetched.terminfo())).append('\n');
+        }
+        sb.append("chown agentuser:agentuser /home/agentuser");
         // The static .network config is pushed into the stopped container before start
         // (see assignStaticIp), so the interface comes up immediately at boot — no DHCP
         // wait. Here we only ensure the service is running and confirm the address is up.
-        // Airgap branches have no NIC, so the wait would always time out — skip it.
+        // Polled every 50 ms: the address usually appears within a few hundred ms of start,
+        // and a coarser interval is paid in full by every branch. Airgap branches have no
+        // NIC, so the wait would always time out — skip it.
         if (networkMode != NetworkMode.AIRGAP) {
             sb.append(" && { systemctl start systemd-networkd 2>/dev/null; ")
-              .append("for i in $(seq 1 30); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.5; done; ")
+              .append("for i in $(seq 1 300); do ip -4 -o addr show eth0 | grep -q 'inet ' && break; sleep 0.05; done; ")
               .append("ip -4 -o addr show eth0 | grep -q 'inet '; }");
         }
         var buildSource = BuildSource.fromJson(buildSourceJson);
@@ -674,6 +685,32 @@ public final class InstanceLifecycle {
             if (!check.success()) return;
         }
 
+        var keys = sshKeysToInject();
+        if (keys.isEmpty()) return;
+
+        try {
+            var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
+            try {
+                Files.writeString(tmpKey, String.join("\n", keys) + "\n");
+                // Push with agentuser ownership (uid=1000) and mode 0600 directly,
+                // avoiding a separate chown+chmod exec round trip
+                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys",
+                        "1000", "1000", "0600");
+            } finally {
+                Files.deleteIfExists(tmpKey);
+            }
+        } catch (IOException e) {
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to inject SSH key: " + e.getMessage());
+            return;
+        }
+    }
+
+    /**
+     * The public keys an SSH-capable instance should accept: the isx-managed key (created on
+     * first use) plus the user's own default key, if any. Host-side only; empty, with a
+     * notice, when there is none.
+     */
+    static List<String> sshKeysToInject() {
         // Ensure managed key infrastructure exists (creates lazily for pre-existing installs)
         try {
             if (!SshKeyManager.exists()) {
@@ -706,24 +743,8 @@ public final class InstanceLifecycle {
 
         if (keys.isEmpty()) {
             BuildOutput.step("SSH is available but no public key found.");
-            return;
         }
-
-        try {
-            var tmpKey = Files.createTempFile("isx-ssh-", ".pub");
-            try {
-                Files.writeString(tmpKey, String.join("\n", keys) + "\n");
-                // Push with agentuser ownership (uid=1000) and mode 0600 directly,
-                // avoiding a separate chown+chmod exec round trip
-                incus.filePush(tmpKey.toString(), name, "/home/agentuser/.ssh/authorized_keys",
-                        "1000", "1000", "0600");
-            } finally {
-                Files.deleteIfExists(tmpKey);
-            }
-        } catch (IOException e) {
-            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to inject SSH key: " + e.getMessage());
-            return;
-        }
+        return keys;
     }
 
     /**

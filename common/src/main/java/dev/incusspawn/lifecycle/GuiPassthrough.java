@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
@@ -88,6 +89,10 @@ public final class GuiPassthrough {
      * Clears devices, environment keys, metadata, and profile.d/tmpfiles.d scripts.
      */
     public static void removeGui(IncusClient incus, String name) {
+        // Every branch without --gui comes through here, and most templates never had GUI:
+        // one read then, instead of a device rewrite, a config write and two file pushes.
+        if (!hasGui(incus.instanceMetadata(name))) return;
+
         incus.devicesRemoveAll(name, java.util.List.of("gpu", "xdg-runtime"));
 
         var configUnsets = new java.util.LinkedHashMap<String, Object>();
@@ -106,6 +111,25 @@ public final class GuiPassthrough {
         } catch (IOException | RuntimeException e) {
             // Best-effort: files may not exist if GUI was never fully configured
         }
+    }
+
+    /**
+     * Whether an instance carries any GUI passthrough state for {@link #removeGui} to clear.
+     * {@link #configureGui} sets {@code environment.WAYLAND_DISPLAY} before it pushes the
+     * profile.d/tmpfiles.d scripts, so those scripts never exist without the config keys.
+     */
+    static boolean hasGui(JsonNode instance) {
+        var devices = instance.path("devices");
+        if (devices.has("gpu") || devices.has("xdg-runtime")) return true;
+        var config = instance.path("config");
+        if (config.has(Metadata.GUI_ENABLED) || config.has("environment.WAYLAND_DISPLAY")
+                || config.has("environment.XDG_RUNTIME_DIR")) {
+            return true;
+        }
+        for (var key : WAYLAND_ENV.keySet()) {
+            if (config.has("environment." + key)) return true;
+        }
+        return false;
     }
 
     /**
