@@ -190,7 +190,7 @@ jobs:
     uses: ./.github/workflows/build-appliance.yml
 
   integration-tests:
-    needs: [unit-tests, build_appliance]
+    needs: [unit-tests, build_appliance, build-native-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -246,27 +246,41 @@ jobs:
 
       - name: Install QEMU
         if: steps.kvm.outputs.available == 'true'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
+          # vsock for the guest: the same transport vfkit gives the appliance on macOS.
+          sudo modprobe vhost_vsock
+          sudo chmod 666 /dev/vhost-vsock
 
-      - name: Boot and test appliance VM
+      # One boot covers both halves: the in-guest smoke test (Incus works inside the VM) and
+      # the host-facing tunnel, reached the way isx reaches it on macOS. host socat stands in
+      # for vfkit, bridging Unix sockets to the guest's vsock ports:
+      #   Unix socket -> socat VSOCK-CONNECT -> in-guest socat forwarder -> Incus socket
+      # This proves everything either side of vfkit, not vfkit itself (#774).
+      - name: Boot appliance VM
         if: steps.kvm.outputs.available == 'true'
         run: |
-          timeout 120 qemu-system-x86_64 \
+          qemu-system-x86_64 \
             -machine pc -enable-kvm -cpu host \
             -m 2G -nographic -no-reboot -nodefaults -serial stdio \
             -kernel appliance/build/vmlinuz \
             -drive file=appliance/build/disk.img,format=raw,if=virtio \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-            -append "root=/dev/vda rw console=ttyS0 mitigations=off isx.smoke_test=1" \
-            > vm-console.log 2>&1 || true
+            -device vhost-vsock-pci,guest-cid=3 \
+            -append "root=/dev/vda rw console=ttyS0 mitigations=off isx.smoke_test=1 isx.vsock_incus=8443 isx.agent_vsock=1025" \
+            < /dev/null > vm-console.log 2>&1 &
+          echo "QEMU_PID=$!" >> "$GITHUB_ENV"
 
-          if grep -q 'ISX READY' vm-console.log; then
-            echo "VM reached ISX READY"
-          else
-            echo "::error::VM did not reach ISX READY"
-            tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
-            exit 1
-          fi
+          deadline=$(( $(date +%s) + 120 ))
+          until grep -q 'ISX READY' vm-console.log; do
+            if [ "$(date +%s)" -ge "$deadline" ] || ! kill -0 $! 2>/dev/null; then
+              echo "::error::VM did not reach ISX READY"
+              tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "VM reached ISX READY"
 
           if grep -q 'SMOKE TEST PASSED' vm-console.log; then
             echo "Incus smoke test passed"
@@ -277,6 +291,55 @@ jobs:
           else
             echo "::warning::Smoke test did not run (incus-spawn-vm-init may have failed)"
           fi
+
+      # Bridge onto the paths isx itself looks for (Environment.vmVsockSocket/vmAgentSocket).
+      # This runner has no native Incus, so the real client can only reach the VM's daemon
+      # through the tunnel. backlog=128 keeps the bridge's own accept queue (socat defaults
+      # to 5) out of the concurrency checks, which are about the guest's listeners.
+      - name: Bridge the tunnel sockets
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          STATE="$HOME/.local/state/incus-spawn"
+          mkdir -p "$STATE"
+          nohup socat UNIX-LISTEN:"$STATE/vm.incus.sock",fork,backlog=128 VSOCK-CONNECT:3:8443 >/dev/null 2>&1 &
+          nohup socat UNIX-LISTEN:"$STATE/vm.agent.sock",fork,backlog=128 VSOCK-CONNECT:3:1025 >/dev/null 2>&1 &
+          for _ in $(seq 1 10); do
+            [ -S "$STATE/vm.incus.sock" ] && [ -S "$STATE/vm.agent.sock" ] && exit 0
+            sleep 0.5
+          done
+          echo "::error::socat bridge sockets did not appear"
+          exit 1
+
+      - name: Test the tunnel (forwarder, agent verbs, backstop, recovery)
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          STATE="$HOME/.local/state/incus-spawn"
+          TUNNEL_BACKSTOP=1 appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock"
+
+      - name: Download CLI native binary
+        if: steps.kvm.outputs.available == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: isx-native-cli
+          path: native-cli/
+
+      # The real client path over the tunnel: IncusApi.tryConnect finds no native socket and
+      # falls through to the vsock socket, exactly as on macOS.
+      - name: isx through the tunnel
+        if: steps.kvm.outputs.available == 'true'
+        run: |
+          install -m 755 native-cli/incus-spawn-*-runner isx
+          ./isx instances
+          # doctor flags this runner's missing config, CA and proxy, which are irrelevant here,
+          # so assert only on what it learned through the tunnel.
+          ./isx doctor > doctor.out 2>&1 || true
+          cat doctor.out
+          grep -q '✓ Incus reachable' doctor.out
+          grep -q '✓ Storage pool cow' doctor.out
+
+      - name: Stop VM
+        if: always() && steps.kvm.outputs.available == 'true'
+        run: kill "$QEMU_PID" 2>/dev/null || true
 
       - name: Upload console log
         if: always() && steps.kvm.outputs.available == 'true'
