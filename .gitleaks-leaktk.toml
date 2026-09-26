@@ -41,6 +41,7 @@ keywords = ["sk-ant-oat01-"]
     '''common/src/test/resources/config-compat/''',
     '''common/src/test/java/dev/incusspawn/proxy/PerInstanceCredentialsTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/command/SupportBundleTest\.java$''',
+    '''cli/src/test/java/dev/incusspawn/command/ClaudeAuthFlowTest\.java$''',
     '''cli/src/test/java/dev/incusspawn/ai/HelpContextTest\.java$''',
   ]
 
