@@ -235,13 +235,38 @@ Prerequisites: a working `isx init`, a running Incus daemon **and proxy**, a bui
 branch from, and `native-image` unless `--skip-build` or `--runtime=jvm`.
 
 Results go to `bench/results/cli/`, separate from the proxy results, and each runtime's
-medians are compared with the most recent earlier result that measured it. Changes of 10% or
-more are flagged: below that, desktop run-to-run noise dominates.
+medians are compared with the most recent earlier result that measured it. A change is flagged
+when it is at least 10% and at least 1 ms: below either, desktop run-to-run noise dominates.
 
 This is for comparing before and after on one machine, not for gating PRs. The deterministic
 check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many Incus round
 trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
 counting requests needs neither timing nor a daemon.
+
+## Where a Branch Spends Its Time (`trace-branch.sh`)
+
+`cli.sh` says how long `isx branch` takes; `trace-branch.sh` says where the time goes. It
+records the Incus daemon's event stream (`incus monitor --format=json`) while one
+`isx branch --shell` runs to a usable prompt, then prints:
+
+- a timeline of every API request, operation, exec'd command and lifecycle event the daemon
+  saw, with the time since the branch started and since the previous event;
+- the longest gaps before the prompt, each marked as inside an operation (Incus or the
+  instance doing the work) or outside any operation (isx itself computing, or waiting
+  between polls);
+- the longest operations, by the daemon's own created/updated timestamps.
+
+```shell
+bench/trace-branch.sh                                 # native build, tpl-minimal
+bench/trace-branch.sh --runtime=jvm --from=tpl-java
+```
+
+It adds nothing to isx: it observes the daemon from outside, so the same release build that
+users run is what gets traced. It needs the `incus` client with access to the same daemon
+(so a Linux host, not the macOS appliance), and uses the build already in `cli/target`. The
+raw events (`*.events.json`) and the timeline (`*.timeline.txt`) are saved under
+`bench/results/trace/`, so a timeline can be re-derived without re-running. The daemon's events
+include everything else happening on it, so run it on a quiet host.
 
 ## File Layout
 
@@ -249,10 +274,13 @@ counting requests needs neither timing nor a daemon.
 bench/
   run.sh                  # Proxy benchmark
   cli.sh                  # CLI latency benchmark, JVM vs native
+  trace-branch.sh         # Daemon-side timeline of one isx branch
+  isxbench.py             # Shared helper: run a command to a usable shell prompt
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
   README.md               # This file
   results/                # JSON result files (git-ignored)
     cli/                  # cli.sh results
+    trace/                # trace-branch.sh events and timelines
 ```
