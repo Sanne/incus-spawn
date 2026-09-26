@@ -1113,8 +1113,8 @@ public class MitmProxy {
     // lookup. The lookup itself starts after compute() returns: one that finishes before its
     // callback is attached runs that callback synchronously, and the callback's write to
     // this map from inside compute() throws "Recursive update".
-    private Future<String> resolveHost(String host) {
-        var claimed = new java.util.concurrent.atomic.AtomicReference<Promise<String>>();
+    Future<String> resolveHost(String host) {
+        var claimed = new AtomicReference<Promise<String>>();
         var entry = dns.compute(host, (h, existing) -> {
             if (existing != null && (existing.isValid() || existing.isResolving()))
                 return existing;
@@ -1124,13 +1124,15 @@ public class MitmProxy {
         });
         var promise = claimed.get();
         if (promise != null) {
-            vertx.<String>executeBlocking(() -> InetAddress.getByName(host).getHostAddress(), false)
+            vertx.<String>executeBlocking(() -> lookupHost(host), false)
                     .onComplete(ar -> {
                         // Update the cache before waking waiters, so none of them re-resolves.
+                        // Only replace our own inflight entry: one written meanwhile (overrideDns)
+                        // is newer than this lookup and must not be overwritten or dropped.
                         if (ar.succeeded()) {
-                            dns.put(host, DnsEntry.resolved(ar.result()));
+                            dns.replace(host, entry, DnsEntry.resolved(ar.result()));
                         } else {
-                            dns.remove(host);
+                            dns.remove(host, entry);
                         }
                         promise.handle(ar);
                     });
@@ -1138,6 +1140,11 @@ public class MitmProxy {
         return entry.isValid()
                 ? Future.succeededFuture(entry.ip())
                 : entry.inflight();
+    }
+
+    /** The blocking lookup behind {@link #resolveHost}; overridable so tests can hold it open. */
+    String lookupHost(String host) throws Exception {
+        return InetAddress.getByName(host).getHostAddress();
     }
 
     private void sendApiRequest(HttpServerRequest clientReq, RequestOptions requestOptions,
