@@ -637,7 +637,7 @@ public class MitmProxy {
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
-                .setMaxPoolSize(8)
+                .setMaxPoolSize(32)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(10_000)
                 .setReadIdleTimeout(30);
@@ -1817,23 +1817,36 @@ public class MitmProxy {
 
     /**
      * Upstream's answer about an artifact's checksum or a sidecar.
-     * {@link #UNREACHABLE}: no connection could be made. {@link #UNUSABLE}: upstream
-     * was reached but gave nothing we can use (a broken transfer, an oversized body,
-     * a redirect we will not follow), so it confirms nothing and nothing is served
-     * from the cache on its strength.
+     * {@link #UNREACHABLE}: no connection could be made, or it broke. {@link #UNUSABLE}:
+     * upstream answered with something we cannot use (an oversized body, a redirect
+     * we will not follow), so it confirms nothing and nothing is served from the
+     * cache on its strength. {@code fromHeader}: the checksum came from a
+     * server-computed header rather than a separately uploaded sidecar.
      */
-    record SidecarAnswer(int status, byte[] body) {
+    record SidecarAnswer(int status, byte[] body, boolean fromHeader) {
         static final SidecarAnswer UNREACHABLE = new SidecarAnswer(-1, null);
         static final SidecarAnswer UNUSABLE = new SidecarAnswer(0, null);
 
-        /** No connection, or upstream failing (5xx): without the cache the client would get an error. */
+        SidecarAnswer(int status, byte[] body) {
+            this(status, body, false);
+        }
+
+        /**
+         * No connection, or upstream failing (5xx) or throttling (429): without the
+         * cache the client would get an error.
+         */
         boolean unreachable() {
-            return this == UNREACHABLE || status >= 500;
+            return this == UNREACHABLE || status >= 500 || status == 429;
         }
 
         /** The status to answer with when nothing can be served. */
         int errorStatus() {
-            return status >= 500 ? status : 502;
+            return status >= 500 || status == 429 ? status : 502;
+        }
+
+        /** Whether this answer may evict a cached artifact on its own. */
+        boolean mayEvict(Revalidation revalidation) {
+            return fromHeader || revalidation.sidecarsAuthoritative();
         }
     }
 
@@ -1954,16 +1967,12 @@ public class MitmProxy {
         ).onSuccess(local -> {
             if (local.cachedSize() >= 0) {
                 revalidateAndServe(clientReq, domain, revalidation, target, ref, local.cachedSize());
-            } else if (local.hostCopy()) {
-                if (inBackoff(domain)) {
-                    // The host's copy cannot be checked, and downloading would only wait out the same failure
-                    sendError(clientReq.response(), 502, "Upstream unreachable");
-                    return;
-                }
+            } else if (local.hostCopy() && !inBackoff(domain)) {
                 // The checksum is needed before deciding whether to download at all
                 probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
                         importOrDownload(clientReq, domain, revalidation, target, ref, answer));
             } else {
+                // No copy to fall back on, so even in a backoff upstream is asked
                 download(clientReq, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
@@ -1991,15 +2000,15 @@ public class MitmProxy {
                 serveCachedFile(clientReq.response(), target.artifact(), null);
                 return;
             }
-            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(
-                    target.artifact(), target.checksum(), answer.status(), answer.body(), true), false
+            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(target.artifact(), target.checksum(),
+                    answer.status(), answer.body(), answer.mayEvict(revalidation)), false
             ).onSuccess(outcome -> {
                 if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
                     System.out.println("Artifact cache hit, revalidated: " + ref +
                             " (" + formatSize(size) + ")");
                     serveConfirmed(clientReq, target.artifact(), revalidation, answer);
                 } else {
-                    // Changed, withdrawn, or not confirmed (e.g. 403/429): let upstream answer
+                    // Changed, withdrawn, or not confirmed (a 403, a disagreeing sidecar): let upstream answer
                     logEviction(outcome, ref, target.checksum(), answer);
                     download(clientReq, domain, revalidation, target, ref);
                 }
@@ -2080,19 +2089,13 @@ public class MitmProxy {
      */
     private void serveSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
                               Sidecar sidecar, Path artifact) {
-        if (!inBackoff(domain)) {
+        if (inBackoff(domain)) {
+            // Answer from the stored copy; without one, upstream may still answer
+            serveStoredSidecarOr(clientReq, artifact, sidecar,
+                    () -> fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact));
+        } else {
             fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact);
-            return;
         }
-        // In the backoff, answer from the stored copy; without one, upstream may still answer
-        vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
-                .onComplete(ar -> {
-                    if (ar.succeeded() && ar.result() != null) {
-                        serveStoredSidecar(clientReq, ar.result());
-                    } else {
-                        fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact);
-                    }
-                });
     }
 
     private void fetchAndServeSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
@@ -2102,14 +2105,8 @@ public class MitmProxy {
 
         fetchSidecar(domain, path).onSuccess(answer -> {
             if (answer.unreachable()) {
-                vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
-                        .onComplete(ar -> {
-                            if (ar.succeeded() && ar.result() != null) {
-                                serveStoredSidecar(clientReq, ar.result());
-                            } else {
-                                sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
-                            }
-                        });
+                serveStoredSidecarOr(clientReq, artifact, sidecar,
+                        () -> sendError(clientResp, answer.errorStatus(), "Upstream unreachable"));
                 return;
             }
             if (answer == SidecarAnswer.UNUSABLE) {
@@ -2134,29 +2131,45 @@ public class MitmProxy {
         });
     }
 
-    private void serveStoredSidecar(HttpServerRequest clientReq, byte[] stored) {
-        System.out.println("Upstream unreachable, serving stored " + clientReq.host() + clientReq.path());
-        sendSidecar(clientReq.response(), 200, stored);
+    private void serveStoredSidecarOr(HttpServerRequest clientReq, Path artifact, Sidecar sidecar,
+                                      Runnable otherwise) {
+        vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
+                .onComplete(ar -> {
+                    if (ar.succeeded() && ar.result() != null) {
+                        System.out.println("Upstream unreachable, serving stored " + clientReq.host() + clientReq.path());
+                        sendSidecar(clientReq.response(), 200, ar.result());
+                    } else {
+                        otherwise.run();
+                    }
+                });
     }
 
     /**
      * A sidecar disagreed with the stored copy on a domain whose artifacts carry a
-     * server-computed checksum: let that checksum decide. If it still confirms the
-     * artifact, a fresh signature is kept (a checksum sidecar that contradicts the
-     * artifact is not stored, since stored checksums describe the artifact beside them).
+     * server-computed checksum: let that checksum decide, and nothing else (a
+     * header-less answer falls back to the very sidecar that disagreed). If it
+     * still confirms the artifact, the stored sidecar follows upstream: a fresh
+     * signature is kept, and one upstream no longer has is dropped. A checksum
+     * sidecar that contradicts the artifact is not stored, since stored checksums
+     * describe the artifact beside them.
      */
     private Future<VerifiedArtifactStore.Outcome> settleWithHeader(String domain, String artifactPath, Path artifact,
                                                                    Revalidation revalidation, Sidecar sidecar,
                                                                    SidecarAnswer sidecarAnswer) {
         return fetchChecksumHeader(domain, artifactPath, revalidation).compose(header -> {
-            if (header.unreachable() || header == SidecarAnswer.UNUSABLE) {
+            if (!header.fromHeader()) {
                 return Future.succeededFuture(VerifiedArtifactStore.Outcome.UNCHANGED);
             }
             return vertx.executeBlocking(() -> {
                 var outcome = VerifiedArtifactStore.reconcile(
                         artifact, revalidation.headerChecksum, header.status(), header.body(), true);
-                if (outcome == VerifiedArtifactStore.Outcome.MATCHED && !sidecar.isChecksum()) {
-                    VerifiedArtifactStore.storeSidecar(artifact, sidecar, sidecarAnswer.body());
+                if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
+                    var status = sidecarAnswer.status();
+                    if (status == 404 || status == 410) {
+                        VerifiedArtifactStore.dropSidecar(artifact, sidecar);
+                    } else if (status == 200 && !sidecar.isChecksum()) {
+                        VerifiedArtifactStore.storeSidecar(artifact, sidecar, sidecarAnswer.body());
+                    }
                 }
                 return outcome;
             }, false);
@@ -2182,23 +2195,23 @@ public class MitmProxy {
      * host). Never fails; see {@link SidecarAnswer} for what comes back instead.
      */
     Future<SidecarAnswer> fetchSidecar(String domain, String path) {
-        return fetchSidecar(domain, 443, path, 0)
+        return retryOnceAfterConnect(() -> fetchSidecar(domain, 443, path, 0))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
     }
 
     /**
      * The artifact's current checksum from a HEAD's checksum header, as if it
-     * were the sidecar's body. A 404/410 or 5xx is returned as is; any other answer
-     * without a usable header falls back to fetching the sidecar.
+     * were the sidecar's body. Only a 200 without the header falls back to fetching
+     * the sidecar; any other status is returned as is.
      */
     Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation) {
-        return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
-                .compose(req -> req.send().compose(resp -> resp.end().map(v -> {
-                    var status = resp.statusCode();
-                    if (status == 404 || status == 410 || status >= 500) return new SidecarAnswer(status, null);
-                    var hex = status == 200 ? revalidation.checksumFrom(resp) : null;
-                    return hex == null ? null : new SidecarAnswer(200, hex.getBytes(StandardCharsets.US_ASCII));
-                })).recover(err -> unusable(domain + path, err)))
+        return retryOnceAfterConnect(() -> requestWithAsyncDns(probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
+                        .compose(req -> afterConnect(req.send().compose(resp -> resp.end().map(v -> {
+                            var status = resp.statusCode();
+                            if (status != 200) return new SidecarAnswer(status, null, true);
+                            var hex = revalidation.checksumFrom(resp);
+                            return hex == null ? null : new SidecarAnswer(200, hex.getBytes(StandardCharsets.US_ASCII), true);
+                        })))))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE))
                 .compose(answer -> answer != null
                         ? Future.succeededFuture(answer)
@@ -2222,16 +2235,35 @@ public class MitmProxy {
         return false;
     }
 
-    private static Future<SidecarAnswer> unusable(String ref, Throwable err) {
-        ProxyLog.warn("Unusable upstream answer for " + ref + ": " + err.getMessage());
-        return Future.succeededFuture(SidecarAnswer.UNUSABLE);
+    /** A connection was made, then the exchange on it failed. */
+    private static final class AfterConnect extends RuntimeException {
+        AfterConnect(Throwable cause) {
+            super(cause.getMessage(), cause, false, false);
+        }
     }
 
-    // The outer future fails only when no connection could be made (fetchSidecar maps
-    // that to UNREACHABLE); anything going wrong once connected is UNUSABLE.
+    private static <T> Future<T> afterConnect(Future<T> exchange) {
+        return exchange.recover(err -> Future.failedFuture(
+                err instanceof AfterConnect ? err : new AfterConnect(err)));
+    }
+
+    /**
+     * A pooled keep-alive connection may have died while idle (the network dropped,
+     * the server closed it); acquiring it succeeds, the exchange on it fails. Try
+     * once more, on a connection the pool now has to check or open. A timeout is
+     * not retried: that would double the wait on a black-holed network.
+     */
+    private static <T> Future<T> retryOnceAfterConnect(java.util.function.Supplier<Future<T>> exchange) {
+        return exchange.get().recover(err -> err instanceof AfterConnect
+                && !(err.getCause() instanceof java.util.concurrent.TimeoutException)
+                ? exchange.get() : Future.failedFuture(err));
+    }
+
+    // Fails when no connection could be made or the exchange broke (fetchSidecar maps
+    // both to UNREACHABLE); an answer we cannot use is UNUSABLE.
     private Future<SidecarAnswer> fetchSidecar(String host, int port, String uri, int depth) {
         return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.GET, host, port, uri))
-                .compose(req -> req.send().compose(resp -> {
+                .compose(req -> afterConnect(req.send().compose(resp -> {
                     var location = resp.getHeader("Location");
                     if (resp.statusCode() >= 300 && resp.statusCode() < 400 && location != null) {
                         var target = redirectTarget(host, port, uri, location);
@@ -2244,15 +2276,27 @@ public class MitmProxy {
                                 target.getPort() > 0 ? target.getPort() : 443, rawPathAndQuery(target), depth + 1));
                     }
                     return readSidecarBody(resp);
-                }).recover(err -> unusable(host + uri, err)));
+                })));
     }
 
-    /** Where an https redirect points, resolved against the raw request URI; null for anything else. */
+    /**
+     * Where a redirect points, resolved against the raw request URI when relative;
+     * null when it cannot be followed. Upstream connections are always TLS, so an
+     * http Location is followed over https, as it always has been.
+     */
     static URI redirectTarget(String host, int port, String rawUri, String location) {
         try {
-            var base = URI.create("https://" + host + (port == 443 ? "" : ":" + port) + rawUri);
-            var target = base.resolve(location);
-            return "https".equalsIgnoreCase(target.getScheme()) && target.getHost() != null ? target : null;
+            var target = URI.create(location);
+            if (!target.isAbsolute()) {
+                target = URI.create("https://" + host + (port == 443 ? "" : ":" + port) + rawUri).resolve(target);
+            }
+            var scheme = target.getScheme();
+            if ("http".equalsIgnoreCase(scheme)) {
+                target = URI.create("https" + target.toString().substring(scheme.length()));
+            } else if (!"https".equalsIgnoreCase(scheme)) {
+                return null;
+            }
+            return target.getHost() != null ? target : null;
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -2268,7 +2312,9 @@ public class MitmProxy {
         resp.handler(chunk -> {
             if (body.length() + chunk.length() > MAX_SIDECAR_BYTES) {
                 resp.handler(null);
-                promise.tryComplete(SidecarAnswer.UNUSABLE);
+                // An oversized sidecar is unusable; an oversized error page is still that error
+                promise.tryComplete(resp.statusCode() == 200
+                        ? SidecarAnswer.UNUSABLE : new SidecarAnswer(resp.statusCode(), null));
                 resp.request().reset();
             } else {
                 body.appendBuffer(chunk);

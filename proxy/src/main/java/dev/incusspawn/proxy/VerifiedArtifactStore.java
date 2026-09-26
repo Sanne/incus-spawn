@@ -1,10 +1,12 @@
 package dev.incusspawn.proxy;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 
@@ -68,16 +70,18 @@ final class VerifiedArtifactStore {
             Files.deleteIfExists(download);
             return false;
         }
+        // On disk before it is named: a power loss must not leave a truncated
+        // artifact beside an intact checksum
+        force(download);
         synchronized (lockFor(artifact)) {
-            if (storeSidecar) {
-                // A concurrent miss may have committed first: its other stored
-                // sidecars describe that copy, not this one
-                deleteSidecarsLocked(artifact);
-                writeAtomically(checksum.storedFile(artifact), expected);
-            }
+            // In this order a crash at any point leaves no sidecar describing other
+            // bytes: sidecars of a previous copy go first, the checksum comes last,
+            // and an artifact without a stored checksum is hashed before one is trusted
+            if (storeSidecar) deleteSidecarsLocked(artifact);
             // Replaced in one step, so a concurrent reader never finds it missing
             Files.move(download, artifact,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            if (storeSidecar) writeAtomically(checksum.storedFile(artifact), expected);
         }
         return true;
     }
@@ -169,6 +173,13 @@ final class VerifiedArtifactStore {
         }
     }
 
+    /** Drop the stored copy of a sidecar upstream no longer publishes. */
+    static void dropSidecar(Path artifact, Sidecar sidecar) throws IOException {
+        synchronized (lockFor(artifact)) {
+            Files.deleteIfExists(sidecar.storedFile(artifact));
+        }
+    }
+
     /**
      * The stored copy of a sidecar, or null unless both it and the artifact it
      * describes are cached. Served only when upstream cannot be reached.
@@ -212,11 +223,18 @@ final class VerifiedArtifactStore {
         }
     }
 
+    private static void force(Path file) throws IOException {
+        try (var channel = FileChannel.open(file, StandardOpenOption.WRITE)) {
+            channel.force(true);
+        }
+    }
+
     private static void writeAtomically(Path target, byte[] content) throws IOException {
         Files.createDirectories(target.getParent());
         var temp = Files.createTempFile(target.getParent(), "sc-", ".tmp");
         try {
             Files.write(temp, content);
+            force(temp);
             Files.move(temp, target,
                     StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally {

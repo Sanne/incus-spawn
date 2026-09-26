@@ -25,6 +25,28 @@ class FileTreesTest {
     }
 
     @Test
+    void anUndeletableEntryDoesNotStopTheRest() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse("root".equals(System.getProperty("user.name")),
+                "root ignores directory permissions");
+        var root = dir.resolve("tree");
+        var locked = root.resolve("locked");
+        Files.createDirectories(locked);
+        Files.writeString(locked.resolve("inside.txt"), "x");
+        Files.writeString(root.resolve("a.txt"), "a");
+        Files.createDirectories(root.resolve("z"));
+        Files.writeString(root.resolve("z/b.txt"), "b");
+        locked.toFile().setWritable(false);
+        try {
+            assertThrows(java.io.IOException.class, () -> FileTrees.delete(root));
+            assertFalse(Files.exists(root.resolve("a.txt")));
+            assertFalse(Files.exists(root.resolve("z")), "everything deletable was deleted");
+            assertTrue(Files.exists(locked.resolve("inside.txt")));
+        } finally {
+            locked.toFile().setWritable(true);
+        }
+    }
+
+    @Test
     void missingTreeIsFine() throws Exception {
         FileTrees.delete(dir.resolve("absent"));
         FileTrees.deleteQuietly(dir.resolve("absent"));

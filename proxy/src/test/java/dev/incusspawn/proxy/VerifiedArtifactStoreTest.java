@@ -155,6 +155,16 @@ class VerifiedArtifactStoreTest {
     }
 
     @Test
+    void dropSidecarRemovesOnlyThatSidecar() throws Exception {
+        var artifact = cached(JAR);
+        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.ASC, "sig".getBytes());
+        VerifiedArtifactStore.dropSidecar(artifact, Sidecar.ASC);
+        assertFalse(Files.exists(Sidecar.ASC.storedFile(artifact)));
+        assertTrue(Files.exists(Sidecar.SHA1.storedFile(artifact)));
+        assertTrue(Files.exists(artifact));
+    }
+
+    @Test
     void storeSidecarNeedsItsArtifact() throws Exception {
         var artifact = cached(JAR);
         VerifiedArtifactStore.storeSidecar(artifact, Sidecar.ASC, "sig".getBytes());
