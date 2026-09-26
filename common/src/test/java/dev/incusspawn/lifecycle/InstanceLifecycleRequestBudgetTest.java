@@ -1,12 +1,15 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins how many Incus API round trips the flows behind {@code isx shell}, {@code isx branch}
@@ -53,24 +56,37 @@ class InstanceLifecycleRequestBudgetTest {
 
     @Test
     void prefetchingRuntimeConfig() {
-        // Four configGet calls, each a full GET of the same instance, plus the bridge lookup.
-        // One instanceMetadata read would do; lower this budget when that lands.
-        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
-        assertBudget(5, daemon, "prefetchRuntimeConfig");
+        // One instance read for every config key, plus the bridge lookup.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.WORKDIR, "/home/agentuser/project",
+                Metadata.SHELL_COMMAND, "zsh",
+                "user.incus-spawn.ssh-setup", "done"));
+        var config = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
+        assertBudget(2, daemon, "prefetchRuntimeConfig");
+
+        assertEquals("/home/agentuser/project", config.workdir());
+        assertEquals("zsh", config.shellCommand());
+        assertEquals("", config.buildSourceJson());
+        assertTrue(config.hasSshKeys());
     }
 
     @Test
-    void staleSubnetScanCostGrowsWithInstanceCount() {
-        // Known N+1: a configGet per listed instance, although the recursion=1 listing already
-        // carries each instance's config. Budget is 2 + N until that is fixed; a fix makes it 2.
+    void prefetchingRuntimeConfigOfAMissingInstanceFails() {
+        var daemon = new FakeIncusDaemon();
+        assertThrows(IncusException.class,
+                () -> InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME));
+    }
+
+    @Test
+    void staleSubnetScanCostDoesNotGrowWithInstanceCount() {
+        // The bridge lookup and one listing, which already carries every instance's config.
         for (int n : new int[] {1, 10}) {
             var daemon = new FakeIncusDaemon();
             for (int i = 0; i < n; i++) {
                 daemon.container("dev-" + i, Map.of(Metadata.STATIC_IP, "10.166.11." + (20 + i)));
             }
             InstanceLifecycle.findStaleSubnetInstances(daemon.client());
-            assertBudget(2 + n, daemon, "findStaleSubnetInstances with " + n + " instance(s)");
+            assertBudget(2, daemon, "findStaleSubnetInstances with " + n + " instance(s)");
         }
     }
 }
