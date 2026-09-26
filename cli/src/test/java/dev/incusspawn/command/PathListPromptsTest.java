@@ -62,7 +62,7 @@ class PathListPromptsTest {
     @Test
     void aUrlIsRefused() {
         edit(new SpawnConfig(), ScriptedPrompts.lines("https://github.com/me/code", ""));
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     @Test
@@ -86,7 +86,7 @@ class PathListPromptsTest {
         var config = new SpawnConfig();
         config.setHostPaths(List.of(dir("a").toString()));
         edit(config, ScriptedPrompts.lines("2", "0", ""));
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     @Test
@@ -94,7 +94,7 @@ class PathListPromptsTest {
         var config = new SpawnConfig();
         config.setHostPaths(List.of(dir("a").toString()));
         edit(config, ScriptedPrompts.lines(""));
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     /** EOF finishes the list, keeping what was entered before it. */

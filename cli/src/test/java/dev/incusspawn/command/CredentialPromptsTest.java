@@ -1,8 +1,6 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
-import dev.incusspawn.config.AccountResolver;
-import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -78,6 +76,39 @@ class CredentialPromptsTest {
         return tool(name, Map.of("token", token));
     }
 
+    /** acme configured by an older isx: one flat credential, as most re-runs start. */
+    private static final String KEY_AND_REGION = """
+            acme:
+              apiKey: "acme-existing-secret"
+              region: "us-east"
+            """;
+
+    /** The same, with the shared telemetry decision already made (so it is only offered for keeping). */
+    private static final String KEY_AND_TELEMETRY = """
+            acme:
+              apiKey: "acme-existing-secret"
+              telemetry: "true"
+            """;
+
+    private static final String KEY_REGION_AND_TELEMETRY = """
+            acme:
+              apiKey: "acme-existing-secret"
+              region: "us-east"
+              telemetry: "true"
+            """;
+
+    private static final String TWO_ACCOUNTS = """
+            acme:
+              accounts:
+                default:
+                  apiKey: "acme-default-secret"
+                work:
+                  apiKey: "acme-work-secret"
+                  region: "us-east"
+              default: "default"
+              telemetry: "true"
+            """;
+
     private static void configure(SpawnConfig config, ScriptedPrompts prompts) {
         new InitCommand().setupGenericToolCredentials("acme", acme(), config, prompts);
         prompts.assertFullyConsumed();
@@ -120,24 +151,16 @@ class CredentialPromptsTest {
 
     /** A configured tool opens on the account menu, whose Enter leaves everything as it is. */
     @Test
-    void enterOnReRunLeavesEverythingAsItIs() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.region", "us-east");
-        configure(config, ScriptedPrompts.lines(""));
-
-        assertFalse(Files.exists(configFile()), "keeping everything must not rewrite the file");
+    void enterOnReRunLeavesEverythingAsItIs() throws Exception {
+        configure(seed(KEY_AND_REGION), ScriptedPrompts.lines(""));
+        assertUnchanged(KEY_AND_REGION);
     }
 
     /** EOF at "keep current?" keeps it: running out of input must never clear a credential. */
     @Test
-    void closedStdinKeepsExistingValues() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        new InitCommand().setupGenericToolCredentials("acme", acme(), config, new ScriptedPrompts());
-
-        assertFalse(Files.exists(configFile()));
-        assertEquals("acme-existing-secret", AccountResolver.navigate(config.tree(), "acme.apiKey"));
+    void closedStdinKeepsExistingValues() throws Exception {
+        new InitCommand().setupGenericToolCredentials("acme", acme(), seed(KEY_AND_REGION), new ScriptedPrompts());
+        assertUnchanged(KEY_AND_REGION);
     }
 
     /**
@@ -145,12 +168,8 @@ class CredentialPromptsTest {
      * keeping, while a shared confirmation still gets "keep current?", which Enter keeps.
      */
     @Test
-    void replacingStartsTheAccountAfreshAndKeepsSharedConfirmations() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.region", "us-east");
-        config.setConfigByPath("acme.telemetry", "true");
-        configure(config, new ScriptedPrompts().line("r").secret("acme-new-secret").line("ap-south", ""));
+    void replacingStartsTheAccountAfreshAndKeepsSharedConfirmations() throws Exception {
+        configure(seed(KEY_REGION_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("acme-new-secret").line("ap-south", ""));
 
         assertEquals("acme-new-secret", saved("acme.accounts.default.apiKey"));
         assertEquals("ap-south", saved("acme.accounts.default.region"));
@@ -161,13 +180,9 @@ class CredentialPromptsTest {
 
     /** Choosing 'r' and then skipping every prompt must not clear what is there. */
     @Test
-    void replacingWithNothingKeepsTheOldSecret() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.telemetry", "true");
-        configure(config, new ScriptedPrompts().line("r").secret("").line("", ""));
-
-        assertFalse(Files.exists(configFile()));
+    void replacingWithNothingKeepsTheOldSecret() throws Exception {
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("").line("", ""));
+        assertUnchanged(KEY_AND_TELEMETRY);
     }
 
     /**
@@ -176,36 +191,23 @@ class CredentialPromptsTest {
      * it may only run once there is a credential to replace them with.
      */
     @Test
-    void replacingWithoutANewSecretKeepsTheWorkingCredential() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.telemetry", "true");
-        configure(config, new ScriptedPrompts().line("r").secret("").line("eu-west", ""));
-
-        assertFalse(Files.exists(configFile()), "nothing usable was entered, so nothing may change");
+    void replacingWithoutANewSecretKeepsTheWorkingCredential() throws Exception {
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("r").secret("").line("eu-west", ""));
+        assertUnchanged(KEY_AND_TELEMETRY);
     }
 
     /** Likewise a new account: a name and a region, but no secret, is not an account. */
     @Test
-    void addingAnAccountWithoutASecretCreatesNothing() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.telemetry", "true");
-        configure(config, new ScriptedPrompts().line("a", "work").secret("").line("eu-west", ""));
-
-        assertFalse(Files.exists(configFile()));
+    void addingAnAccountWithoutASecretCreatesNothing() throws Exception {
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret("").line("eu-west", ""));
+        assertUnchanged(KEY_AND_TELEMETRY);
     }
 
     /** Editing an existing account may change its other values while keeping its secret. */
     @Test
-    void anExistingAccountsOtherValuesCanBeChangedAlone() {
-        var config = new SpawnConfig();
-        NamespaceAccounts.put(config, "acme", "default", "apiKey", "acme-default-secret");
-        NamespaceAccounts.put(config, "acme", "work", "apiKey", "acme-work-secret");
-        NamespaceAccounts.put(config, "acme", "work", "region", "us-east");
-        config.setConfigByPath("acme.telemetry", "true");
+    void anExistingAccountsOtherValuesCanBeChangedAlone() throws Exception {
         // 'e' work; decline keeping the secret, then skip it; replace the region; keep telemetry.
-        configure(config, new ScriptedPrompts().line("e", "work", "n").secret("").line("n", "eu-west", ""));
+        configure(seed(TWO_ACCOUNTS), new ScriptedPrompts().line("e", "work", "n").secret("").line("n", "eu-west", ""));
 
         assertEquals("acme-work-secret", saved("acme.accounts.work.apiKey"));
         assertEquals("eu-west", saved("acme.accounts.work.region"));
@@ -213,11 +215,8 @@ class CredentialPromptsTest {
 
     /** YAML tools get named accounts through the same menu as GitHub, keeping the first. */
     @Test
-    void aSecondAccountCanBeAddedForAYamlTool() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.region", "us-east");
-        configure(config, new ScriptedPrompts().line("a", "work").secret("acme-work-secret").line("", ""));
+    void aSecondAccountCanBeAddedForAYamlTool() throws Exception {
+        configure(seed(KEY_AND_REGION), new ScriptedPrompts().line("a", "work").secret("acme-work-secret").line("", ""));
 
         assertEquals("acme-existing-secret", saved("acme.accounts.default.apiKey"));
         assertEquals("us-east", saved("acme.accounts.default.region"), "the first account keeps its region");
@@ -227,13 +226,9 @@ class CredentialPromptsTest {
     }
 
     @Test
-    void abandoningASecondYamlToolAccountLeavesTheCredentialAlone() {
-        var config = new SpawnConfig();
-        config.setConfigByPath("acme.apiKey", "acme-existing-secret");
-        config.setConfigByPath("acme.telemetry", "true");
-        configure(config, new ScriptedPrompts().line("a", "work").secret("").line("", ""));
-
-        assertFalse(Files.exists(configFile()));
+    void abandoningASecondYamlToolAccountLeavesTheCredentialAlone() throws Exception {
+        configure(seed(KEY_AND_TELEMETRY), new ScriptedPrompts().line("a", "work").secret("").line("", ""));
+        assertUnchanged(KEY_AND_TELEMETRY);
     }
 
     // ── choosing which credentials to configure ──────────────────────────────────

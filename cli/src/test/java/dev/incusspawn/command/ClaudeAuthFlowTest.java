@@ -4,10 +4,8 @@ import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -42,14 +40,46 @@ class ClaudeAuthFlowTest {
               default: client
             """;
 
-    /** Answers verification and environment lookups from tables. */
+    /** Answers verification and environment lookups from tables, built up by chaining. */
     static class FakeInit extends InitCommand {
-        final Map<String, String> env = new HashMap<>();
-        final Set<String> validKeys = new HashSet<>();
-        final Set<String> validOauth = new HashSet<>();
-        final Set<String> validVertex = new HashSet<>();
-        boolean hasClaudeCli;
+        private final Map<String, String> env = new HashMap<>();
+        private final Set<String> validKeys = new HashSet<>();
+        private final Set<String> validOauth = new HashSet<>();
+        private final Set<String> validVertex = new HashSet<>();
+        private boolean hasClaudeCli;
         int setupTokenRuns;
+
+        FakeInit acceptKey(String... keys) {
+            validKeys.addAll(Set.of(keys));
+            return this;
+        }
+
+        FakeInit acceptOauth(String token) {
+            validOauth.add(token);
+            return this;
+        }
+
+        FakeInit acceptVertex(String region, String projectId) {
+            validVertex.add(region + "/" + projectId);
+            return this;
+        }
+
+        FakeInit env(String name, String value) {
+            env.put(name, value);
+            return this;
+        }
+
+        /** Vertex selected through the environment, as Claude Code itself reads it. */
+        FakeInit vertexEnv(String region, String projectId) {
+            return env("CLAUDE_CODE_USE_VERTEX", "1")
+                    .env("CLOUD_ML_REGION", region)
+                    .env("ANTHROPIC_VERTEX_PROJECT_ID", projectId);
+        }
+
+        FakeInit withClaudeCli() {
+            hasClaudeCli = true;
+            return this;
+        }
 
         @Override
         String env(String name) {
@@ -82,8 +112,23 @@ class ClaudeAuthFlowTest {
         }
     }
 
+    /** The saved Claude config, read back from disk. */
+    private static SpawnConfig.ClaudeConfig savedClaude() {
+        return SpawnConfig.load().getClaude();
+    }
+
+    /** The account instances use by default, as saved. */
+    private static SpawnConfig.ClaudeAccount savedAccount() {
+        return savedClaude().account();
+    }
+
     private static Map<String, SpawnConfig.ClaudeAccount> savedAccounts() {
-        return SpawnConfig.load().getClaude().allAccounts();
+        return savedClaude().allAccounts();
+    }
+
+    /** First-time setup: no config yet. */
+    private static void run(FakeInit init, ScriptedPrompts prompts) {
+        run(init, new SpawnConfig(), prompts);
     }
 
     private static void run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {
@@ -95,183 +140,143 @@ class ClaudeAuthFlowTest {
 
     @Test
     void aVerifiedApiKeyIsSaved() {
-        var init = new FakeInit();
-        init.validKeys.add(API_KEY);
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret(API_KEY));
+        run(new FakeInit().acceptKey(API_KEY), new ScriptedPrompts().line("1").secret(API_KEY));
 
-        var account = SpawnConfig.load().getClaude().account();
-        assertEquals(SpawnConfig.ClaudeAccountType.API_KEY, account.effectiveType());
-        assertEquals(API_KEY, account.getApiKey());
+        assertEquals(SpawnConfig.ClaudeAccountType.API_KEY, savedAccount().effectiveType());
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     @Test
     void aVerifiedOauthTokenIsSaved() {
-        var init = new FakeInit();
-        init.validOauth.add(OAUTH_TOKEN);
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN));
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), new ScriptedPrompts().line("2").secret(OAUTH_TOKEN));
 
-        var account = SpawnConfig.load().getClaude().account();
-        assertEquals(SpawnConfig.ClaudeAccountType.OAUTH, account.effectiveType());
-        assertEquals(OAUTH_TOKEN, account.getOauthToken());
+        assertEquals(SpawnConfig.ClaudeAccountType.OAUTH, savedAccount().effectiveType());
+        assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
     @Test
     void theOauthFlowOffersToRunSetupTokenWhenClaudeIsInstalled() {
-        var init = new FakeInit();
-        init.hasClaudeCli = true;
-        init.validOauth.add(OAUTH_TOKEN);
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
+        var init = new FakeInit().withClaudeCli().acceptOauth(OAUTH_TOKEN);
+        run(init, new ScriptedPrompts().line("2", "").secret(OAUTH_TOKEN));
 
         assertEquals(1, init.setupTokenRuns);
-        assertEquals(OAUTH_TOKEN, SpawnConfig.load().getClaude().account().getOauthToken());
+        assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
     @Test
     void aVerifiedVertexConfigurationIsSaved() {
-        var init = new FakeInit();
-        init.validVertex.add("us-east5/my-project");
-        run(init, new SpawnConfig(), ScriptedPrompts.lines("3", "us-east5", "my-project"));
+        run(new FakeInit().acceptVertex("us-east5", "my-project"),
+                ScriptedPrompts.lines("3", "us-east5", "my-project"));
 
-        var account = SpawnConfig.load().getClaude().account();
-        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, account.effectiveType());
-        assertEquals("us-east5", account.getCloudMlRegion());
-        assertEquals("my-project", account.getVertexProjectId());
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, savedAccount().effectiveType());
+        assertEquals("us-east5", savedAccount().getCloudMlRegion());
+        assertEquals("my-project", savedAccount().getVertexProjectId());
     }
 
     /** CI runs {@code isx init </dev/null}: every prompt hits EOF and nothing may be written. */
     @Test
     void closedStdinWritesNothing() {
         new FakeInit().setupClaudeAuth(new SpawnConfig(), new ScriptedPrompts());
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     // ── verification failures ────────────────────────────────────────────────────
 
     @Test
     void aRejectedKeyIsNotSavedWhenTheUserGivesUp() {
-        run(new FakeInit(), new SpawnConfig(),
-                new ScriptedPrompts().line("1").secret("sk-ant-bad").line("n"));
-        assertFalse(Files.exists(configFile()));
+        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-bad").line("n"));
+        assertNothingSaved();
     }
 
     /** EOF at "try again?" must skip rather than loop forever re-asking for the key. */
     @Test
     void eofAtTheRetryQuestionSkips() {
-        new FakeInit().setupClaudeAuth(new SpawnConfig(),
-                new ScriptedPrompts().line("1").secret("sk-ant-bad"));
-        assertFalse(Files.exists(configFile()));
+        new FakeInit().setupClaudeAuth(new SpawnConfig(), new ScriptedPrompts().line("1").secret("sk-ant-bad"));
+        assertNothingSaved();
     }
 
     @Test
     void saveAnywayKeepsAnUnverifiedKey() {
-        run(new FakeInit(), new SpawnConfig(),
-                new ScriptedPrompts().line("1").secret("sk-ant-unverified").line("s"));
-        assertEquals("sk-ant-unverified", SpawnConfig.load().getClaude().account().getApiKey());
+        run(new FakeInit(), new ScriptedPrompts().line("1").secret("sk-ant-unverified").line("s"));
+        assertEquals("sk-ant-unverified", savedAccount().getApiKey());
     }
 
     @Test
     void retryingSavesTheKeyThatVerifies() {
-        var init = new FakeInit();
-        init.validKeys.add(API_KEY);
-        run(init, new SpawnConfig(),
+        run(new FakeInit().acceptKey(API_KEY),
                 new ScriptedPrompts().line("1").secret("sk-ant-bad").line("y").secret(API_KEY));
-        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     // ── credentials found in the environment ─────────────────────────────────────
 
     @Test
     void aVerifiedEnvironmentKeyIsSavedOnEnter() {
-        var init = new FakeInit();
-        init.env.put("ANTHROPIC_API_KEY", API_KEY);
-        init.validKeys.add(API_KEY);
-        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
-
-        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
+        run(new FakeInit().env("ANTHROPIC_API_KEY", API_KEY).acceptKey(API_KEY), ScriptedPrompts.lines(""));
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     @Test
     void decliningTheEnvironmentKeyFallsThroughToManualSetup() {
-        var init = new FakeInit();
-        init.env.put("ANTHROPIC_API_KEY", "sk-ant-from-env");
-        init.validKeys.addAll(List.of("sk-ant-from-env", API_KEY));
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n", "1").secret(API_KEY));
-
-        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
-    }
-
-    private static FakeInit withVertexEnv(String region, String projectId) {
-        var init = new FakeInit();
-        init.env.put("CLAUDE_CODE_USE_VERTEX", "1");
-        init.env.put("CLOUD_ML_REGION", region);
-        init.env.put("ANTHROPIC_VERTEX_PROJECT_ID", projectId);
-        return init;
+        var init = new FakeInit().env("ANTHROPIC_API_KEY", "sk-ant-from-env").acceptKey("sk-ant-from-env", API_KEY);
+        run(init, new ScriptedPrompts().line("n", "1").secret(API_KEY));
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     @Test
     void aVerifiedEnvironmentVertexConfigIsSavedOnEnter() {
-        var init = withVertexEnv("us-east5", "my-project");
-        init.validVertex.add("us-east5/my-project");
-        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+        run(new FakeInit().vertexEnv("us-east5", "my-project").acceptVertex("us-east5", "my-project"),
+                ScriptedPrompts.lines(""));
 
-        var account = SpawnConfig.load().getClaude().account();
-        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, account.effectiveType());
-        assertEquals("us-east5", account.getCloudMlRegion());
-        assertEquals("my-project", account.getVertexProjectId());
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, savedAccount().effectiveType());
+        assertEquals("us-east5", savedAccount().getCloudMlRegion());
+        assertEquals("my-project", savedAccount().getVertexProjectId());
     }
 
     /** Unverified, the environment config is saved only on an explicit yes; Enter means "set up manually". */
     @Test
     void anUnverifiedEnvironmentVertexConfigIsNotSavedOnEnter() {
-        run(withVertexEnv("us-east5", "my-project"), new SpawnConfig(), ScriptedPrompts.lines("", ""));
-        assertFalse(Files.exists(configFile()));
+        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("", ""));
+        assertNothingSaved();
     }
 
     @Test
     void anUnverifiedEnvironmentVertexConfigCanBeSavedAnyway() {
-        run(withVertexEnv("us-east5", "my-project"), new SpawnConfig(), ScriptedPrompts.lines("y"));
-        assertEquals("my-project", SpawnConfig.load().getClaude().account().getVertexProjectId());
+        run(new FakeInit().vertexEnv("us-east5", "my-project"), ScriptedPrompts.lines("y"));
+        assertEquals("my-project", savedAccount().getVertexProjectId());
     }
 
     /** Half a Vertex config cannot be verified, so nothing is offered: straight to manual setup. */
     @Test
     void anIncompleteEnvironmentVertexConfigGoesStraightToManualSetup() {
-        var init = withVertexEnv("us-east5", "");
-        init.validKeys.add(API_KEY);
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("1").secret(API_KEY));
-        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
+        run(new FakeInit().vertexEnv("us-east5", "").acceptKey(API_KEY),
+                new ScriptedPrompts().line("1").secret(API_KEY));
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     /** CLAUDE_CODE_USE_VERTEX wins over a key or token in the same environment, as it does for Claude Code. */
     @Test
     void vertexInTheEnvironmentTakesPrecedenceOverAKey() {
-        var init = withVertexEnv("us-east5", "my-project");
-        init.validVertex.add("us-east5/my-project");
-        init.env.put("ANTHROPIC_API_KEY", API_KEY);
-        init.validKeys.add(API_KEY);
-        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
+        var init = new FakeInit()
+                .vertexEnv("us-east5", "my-project").acceptVertex("us-east5", "my-project")
+                .env("ANTHROPIC_API_KEY", API_KEY).acceptKey(API_KEY);
+        run(init, ScriptedPrompts.lines(""));
 
-        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX,
-                SpawnConfig.load().getClaude().account().effectiveType());
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, savedAccount().effectiveType());
     }
 
     @Test
     void aVerifiedEnvironmentOauthTokenIsSavedOnEnter() {
-        var init = new FakeInit();
-        init.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN);
-        init.validOauth.add(OAUTH_TOKEN);
-        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
-
-        assertEquals(OAUTH_TOKEN, SpawnConfig.load().getClaude().account().getOauthToken());
+        run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN).acceptOauth(OAUTH_TOKEN),
+                ScriptedPrompts.lines(""));
+        assertEquals(OAUTH_TOKEN, savedAccount().getOauthToken());
     }
 
     /** A rejected environment token is not offered for saving at all. */
     @Test
     void aRejectedEnvironmentOauthTokenGoesStraightToManualSetup() {
-        var init = new FakeInit();
-        init.env.put("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN);
-        run(init, new SpawnConfig(), ScriptedPrompts.lines(""));
-        assertFalse(Files.exists(configFile()));
+        run(new FakeInit().env("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_TOKEN), ScriptedPrompts.lines(""));
+        assertNothingSaved();
     }
 
     /**
@@ -280,55 +285,46 @@ class ClaudeAuthFlowTest {
      */
     @Test
     void anEnvironmentKeyReplacesOnlyTheDefaultAccount() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        var init = new FakeInit();
-        init.env.put("ANTHROPIC_API_KEY", API_KEY);
-        init.validKeys.add(API_KEY);
-        run(init, config, ScriptedPrompts.lines(""));
+        run(new FakeInit().env("ANTHROPIC_API_KEY", API_KEY).acceptKey(API_KEY), seed(TWO_ACCOUNTS),
+                ScriptedPrompts.lines(""));
 
         var accounts = savedAccounts();
         assertEquals(Set.of("personal", "client"), accounts.keySet());
         assertEquals(API_KEY, accounts.get("client").getApiKey());
         assertEquals("sk-ant-api03-personal", accounts.get("personal").getApiKey());
-        assertEquals("client", SpawnConfig.load().getClaude().getDefaultAccount());
+        assertEquals("client", savedClaude().getDefaultAccount());
     }
 
     // ── re-runs: the account menu ────────────────────────────────────────────────
 
     @Test
     void enterOnReRunLeavesTheFileUntouched() throws Exception {
-        var config = seed(ONE_LEGACY_KEY);
-        run(new FakeInit(), config, ScriptedPrompts.lines(""));
-        assertEquals(ONE_LEGACY_KEY, Files.readString(configFile()));
+        run(new FakeInit(), seed(ONE_LEGACY_KEY), ScriptedPrompts.lines(""));
+        assertUnchanged(ONE_LEGACY_KEY);
     }
 
     @Test
     void addingAnAccountKeepsTheExistingOneAsDefault() throws Exception {
-        var config = seed(ONE_LEGACY_KEY);
-        var init = new FakeInit();
-        init.validOauth.add(OAUTH_TOKEN);
-        run(init, config, new ScriptedPrompts().line("a", "work", "2").secret(OAUTH_TOKEN));
+        run(new FakeInit().acceptOauth(OAUTH_TOKEN), seed(ONE_LEGACY_KEY),
+                new ScriptedPrompts().line("a", "work", "2").secret(OAUTH_TOKEN));
 
         var accounts = savedAccounts();
         assertEquals("sk-ant-api03-old", accounts.get("default").getApiKey());
         assertEquals(OAUTH_TOKEN, accounts.get("work").getOauthToken());
-        assertEquals("default", SpawnConfig.load().getClaude().accountName());
+        assertEquals("default", savedClaude().accountName());
     }
 
     @Test
     void abandoningANewAccountChangesNothing() throws Exception {
-        var config = seed(ONE_LEGACY_KEY);
-        run(new FakeInit(), config, new ScriptedPrompts().line("a", "work", "1").secret(""));
-        assertEquals(ONE_LEGACY_KEY, Files.readString(configFile()));
+        run(new FakeInit(), seed(ONE_LEGACY_KEY), new ScriptedPrompts().line("a", "work", "1").secret(""));
+        assertUnchanged(ONE_LEGACY_KEY);
     }
 
     @Test
     void anAccountNameAlreadyInUseIsRefused() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        var init = new FakeInit();
-        init.validKeys.add(API_KEY);
         // 'personal' is taken, so the name prompt asks again.
-        run(init, config, new ScriptedPrompts().line("a", "personal", "third", "1").secret(API_KEY));
+        run(new FakeInit().acceptKey(API_KEY), seed(TWO_ACCOUNTS),
+                new ScriptedPrompts().line("a", "personal", "third", "1").secret(API_KEY));
 
         var accounts = savedAccounts();
         assertEquals("sk-ant-api03-personal", accounts.get("personal").getApiKey());
@@ -337,37 +333,31 @@ class ClaudeAuthFlowTest {
 
     @Test
     void replaceAllLeavesASingleAccount() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        var init = new FakeInit();
-        init.validKeys.add(API_KEY);
-        run(init, config, new ScriptedPrompts().line("r", "1").secret(API_KEY));
+        run(new FakeInit().acceptKey(API_KEY), seed(TWO_ACCOUNTS),
+                new ScriptedPrompts().line("r", "1").secret(API_KEY));
 
-        var accounts = savedAccounts();
-        assertEquals(1, accounts.size());
-        assertEquals(API_KEY, SpawnConfig.load().getClaude().account().getApiKey());
+        assertEquals(1, savedAccounts().size());
+        assertEquals(API_KEY, savedAccount().getApiKey());
     }
 
     /** Only the credential collected afterwards writes; choosing 'r' alone must not wipe anything. */
     @Test
     void replaceAllAbandonedChangesNothing() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        run(new FakeInit(), config, ScriptedPrompts.lines("r", ""));
-        assertEquals(TWO_ACCOUNTS, Files.readString(configFile()));
+        run(new FakeInit(), seed(TWO_ACCOUNTS), ScriptedPrompts.lines("r", ""));
+        assertUnchanged(TWO_ACCOUNTS);
     }
 
     @Test
     void changingTheDefaultIsSavedImmediately() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        run(new FakeInit(), config, ScriptedPrompts.lines("d", "personal", ""));
-        assertEquals("personal", SpawnConfig.load().getClaude().getDefaultAccount());
+        run(new FakeInit(), seed(TWO_ACCOUNTS), ScriptedPrompts.lines("d", "personal", ""));
+        assertEquals("personal", savedClaude().getDefaultAccount());
     }
 
     @Test
     void removingTheDefaultAccountRepointsTheDefault() throws Exception {
-        var config = seed(TWO_ACCOUNTS);
-        run(new FakeInit(), config, ScriptedPrompts.lines("x", "client", ""));
+        run(new FakeInit(), seed(TWO_ACCOUNTS), ScriptedPrompts.lines("x", "client", ""));
 
         assertEquals(Set.of("personal"), savedAccounts().keySet());
-        assertEquals("personal", SpawnConfig.load().getClaude().getDefaultAccount());
+        assertEquals("personal", savedClaude().getDefaultAccount());
     }
 }
