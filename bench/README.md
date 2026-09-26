@@ -70,6 +70,16 @@ It needs no extra setup — the harness builds a truststore from your isx CA, po
 before measuring so that every recorded request is a cache hit. Results carry `mbPerSec`
 alongside `meanReqPerSec`, computed from the artifact size actually fetched.
 
+The proxy confirms every cache hit with upstream (a `HEAD` for Maven Central), so the run
+never talks to the real Central: that would send it the whole load and measure Central's
+latency, not the proxy's. `UpstreamStub.java` stands in for it on loopback, serving a
+642 KiB payload with Central's `X-Checksum-SHA1` header; the proxy is pointed at it through
+`ISX_BENCH_UPSTREAM`/`ISX_BENCH_UPSTREAM_CERT` and verifies its self-signed certificate like
+any upstream. The payload sits at a coordinate no repository has
+(`dev/incusspawn/bench/payload`), and the harness removes it from the cache afterwards. Each
+recorded request therefore includes one loopback `HEAD`, so `maven` results from before this
+change are not comparable with later ones. It needs `java` and `keytool` (any JDK).
+
 Results record `loadMode`, and the delta table only ever compares runs of the same mode.
 
 ## Comparing Two Toolchains
