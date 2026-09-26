@@ -160,6 +160,8 @@ if ! command -v podman &>/dev/null; then
     die "podman not found on PATH. Hyperfoil runs inside a Podman container to work around non-contiguous CPU numbering in /proc/stat."
 fi
 
+command -v python3 &>/dev/null || die "python3 not found on PATH; it drives the Hyperfoil REST API and parses results."
+
 # Check isx setup
 ISX_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/incus-spawn"
 if [ ! -f "$ISX_CONFIG_DIR/config.yaml" ]; then
@@ -197,6 +199,8 @@ if [ "$LOAD_MODE" = maven ]; then
     MAVEN_URL="https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH"
     echo "Artifact: $MAVEN_URL (served by a local stub)"
     command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=maven"
+    JAVA_MAJOR=$(java -XshowSettings:properties -version 2>&1 | sed -nE 's/^ *java\.specification\.version = ([0-9]+).*/\1/p')
+    [ "${JAVA_MAJOR:-0}" -ge 21 ] || die "java ${JAVA_MAJOR:-unknown} found; the upstream stub for --load=maven needs JDK 21+"
     command -v keytool &>/dev/null || die "keytool not found; needed for --load=maven"
 fi
 

@@ -60,6 +60,9 @@ class ArtifactCacheProxyTest {
     static int mitmPort;
     static int upstreamPort;
 
+    /** A reply status that closes the connection instead of answering. */
+    static final int DROP = -2;
+
     record Reply(int status, byte[] body, String location, String checksumHeader) {
         Reply(int status, byte[] body, String location) {
             this(status, body, location, null);
@@ -96,6 +99,10 @@ class ArtifactCacheProxyTest {
             var resp = req.response();
             if (reply == null) {
                 resp.setStatusCode(404).end("not found");
+                return;
+            }
+            if (reply.status() == DROP) {
+                req.connection().close();
                 return;
             }
             resp.setStatusCode(reply.status());
@@ -234,6 +241,11 @@ class ArtifactCacheProxyTest {
             Thread.sleep(25);
         }
         fail("Expected " + file + " to hold " + content);
+    }
+
+    static void assertStaysPresent(Path file, String content) throws Exception {
+        Thread.sleep(300);
+        assertEquals(content, Files.readString(file), file + " should have stayed cached");
     }
 
     static void assertStaysAbsent(Path file) throws Exception {
@@ -436,7 +448,7 @@ class ArtifactCacheProxyTest {
         awaitFile(cached(PORTAL, PLUGIN_JAR), "p1");
 
         // Upstream is reachable but its answer cannot be used: not a reason to serve unconfirmed
-        routes.put(PORTAL + " " + PLUGIN_JAR + ".sha1", new Reply(302, null, "http://" + PORTAL + "/x.sha1"));
+        routes.put(PORTAL + " " + PLUGIN_JAR + ".sha1", new Reply(302, null, "ftp://" + PORTAL + "/x.sha1"));
         routes.put(PORTAL + " " + PLUGIN_JAR, new Reply(200, "p2".getBytes(), null));
         hits.clear();
         assertEquals("p2", get(PORTAL, PLUGIN_JAR).text());
@@ -476,6 +488,86 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void backoffStillDownloadsWhatIsOnlyInM2() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        offline();
+        get(CENTRAL, JAR + ".sha1");
+        online(CENTRAL);
+
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        publishJar(CENTRAL, other, "o1");
+        var m2 = Environment.m2Repository().resolve("org/example/other/1.0/other-1.0.jar");
+        Files.createDirectories(m2.getParent());
+        Files.writeString(m2, "o1");
+        assertEquals("o1", get(CENTRAL, other).text(), "a ~/.m2 copy is no fallback, so upstream is asked");
+    }
+
+    @Test
+    void droppedConnectionServesTheCachedCopy() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+
+        var jar = routes.get(CENTRAL + " " + JAR);
+        routes.put(CENTRAL + " " + JAR, new Reply(DROP, null, null));
+        hits.clear();
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertEquals(2, headsOn(CENTRAL, JAR), "retried once before treating it as an outage");
+        routes.put(CENTRAL + " " + JAR, jar);
+    }
+
+    @Test
+    void throttledProbeServesTheCachedCopy() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+
+        routes.put(CENTRAL + " " + JAR, new Reply(429, null, null));
+        hits.clear();
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertEquals(1, headsOn(CENTRAL, JAR));
+        assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"), "a 429 is not answered by asking again");
+        assertEquals(0, hitsOn(CENTRAL, JAR));
+    }
+
+    @Test
+    void headerlessHeadNeverLetsTheSidecarEvictOnCentral() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+
+        // An edge that omits the header, beside an old artifact's wrong .sha1 file
+        routes.put(CENTRAL + " " + JAR, new Reply(200, "v1".getBytes(), null));
+        routes.put(CENTRAL + " " + JAR + ".sha1", new Reply(200, hex("SHA-1", "wrong".getBytes()).getBytes(), null));
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertStaysPresent(cached(CENTRAL, JAR), "v1");
+    }
+
+    @Test
+    void withdrawnSignatureIsDroppedNotReplacedByTheErrorPage() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        routes.put(CENTRAL + " " + JAR + ".asc", new Reply(200, "sig".getBytes(), null));
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        get(CENTRAL, JAR + ".asc");
+        var storedAsc = Sidecar.ASC.storedFile(cached(CENTRAL, JAR));
+        assertTrue(Files.exists(storedAsc));
+
+        routes.remove(CENTRAL + " " + JAR + ".asc");
+        assertEquals(404, get(CENTRAL, JAR + ".asc").status());
+        assertTrue(Files.exists(cached(CENTRAL, JAR)), "the HEAD still confirms the artifact");
+        assertFalse(Files.exists(storedAsc), "offline, nothing upstream no longer has is served");
+    }
+
+    @Test
+    void largeErrorPageIsStillThatError() throws Exception {
+        routes.put(CENTRAL + " " + JAR + ".asc", new Reply(404, new byte[200 * 1024], null));
+        assertEquals(404, get(CENTRAL, JAR + ".asc").status());
+    }
+
+    @Test
     void malformedBenchUpstreamIsRefused() {
         assertTrue(ProxyMain.applyBenchUpstream(proxy, "", ""), "unset means no override");
         assertFalse(ProxyMain.applyBenchUpstream(proxy, "repo1.maven.org", ""));
@@ -489,8 +581,12 @@ class ArtifactCacheProxyTest {
                 MitmProxy.redirectTarget("h.example", 443, "/a%20b/x", "x.sha1?q=1").toString());
         assertEquals("https://other.example/y", MitmProxy.redirectTarget("h.example", 443, "/a", "https://other.example/y").toString());
         assertEquals("https://h.example:8443/p/z", MitmProxy.redirectTarget("h.example", 8443, "/p/q", "z").toString());
-        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "http://h.example/a"), "never downgrade to http");
+        assertEquals("https://h.example/a", MitmProxy.redirectTarget("h.example", 443, "/a", "http://h.example/a").toString(),
+                "upstream connections are TLS, so http is followed over https");
+        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "ftp://h.example/a"));
         assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "ht tp://bad"));
+        assertEquals("https://cdn.example/b", MitmProxy.redirectTarget("h.example", 443, "/a|b{c}", "https://cdn.example/b").toString(),
+                "an absolute Location does not depend on parsing the request URI");
     }
 
     @Test
