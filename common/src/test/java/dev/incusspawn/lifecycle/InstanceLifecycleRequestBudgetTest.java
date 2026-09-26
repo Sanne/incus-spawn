@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,6 +76,44 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon();
         assertThrows(IncusException.class,
                 () -> InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME));
+    }
+
+    @Test
+    void branchStartPushesNothingIntoTheStoppedInstance() {
+        // Incus stops its forkfile file server on start, and one still finishing a push makes
+        // the start wait a full second. The config read, the bridge lookup, then the start.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.prefetchAndStart(daemon.client(), NAME, false);
+        assertBudget(4, daemon, "prefetchAndStart");
+
+        var requests = daemon.requests();
+        assertTrue(requests.stream().noneMatch(r -> r.contains("/files")),
+                () -> "nothing may be pushed between prefetch and start: " + requests);
+        assertEquals("PUT /1.0/instances/" + NAME + "/state", requests.get(requests.size() - 2));
+    }
+
+    @Test
+    void removingGuiFromAnInstanceWithoutGuiOnlyReadsIt() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        GuiPassthrough.removeGui(daemon.client(), NAME);
+        assertBudget(1, daemon, "removeGui without GUI state");
+    }
+
+    @Test
+    void removingGuiStillClearsInheritedGuiState() {
+        var daemon = new FakeIncusDaemon()
+                .container(NAME, Map.of("environment.WAYLAND_DISPLAY", "/mnt/host-xdg/wayland-0",
+                        "environment.GDK_BACKEND", "wayland"))
+                .device(NAME, "gpu", Map.of("type", "gpu"));
+        var incus = daemon.client();
+        GuiPassthrough.removeGui(incus, NAME);
+
+        // Read, device removal (read + full write), config write, two script pushes.
+        assertBudget(6, daemon, "removeGui with GUI state");
+        var after = incus.instanceMetadata(NAME);
+        assertFalse(after.path("devices").has("gpu"));
+        assertFalse(after.path("config").has("environment.WAYLAND_DISPLAY"));
+        assertFalse(after.path("config").has("environment.GDK_BACKEND"));
     }
 
     @Test

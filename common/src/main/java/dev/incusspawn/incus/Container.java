@@ -121,11 +121,19 @@ public class Container {
 
     /** Write content to a file inside the container. */
     public void writeFile(String path, String content) {
-        var body = content.strip();
-        var marker = heredocMarker(body);
-        sh("mkdir -p \"$(dirname " + shellQuote(path) + ")\" && cat > " + shellQuote(path)
-                + " << '" + marker + "'\n" + body + "\n" + marker)
+        sh(heredoc("mkdir -p \"$(dirname " + shellQuote(path) + ")\" && cat > " + shellQuote(path),
+                content.strip()))
                 .assertSuccess("Failed to write file in container: " + path);
+    }
+
+    /**
+     * {@code command} fed {@code content} verbatim on stdin, as a quoted heredoc. The result
+     * ends with the delimiter line and no newline, so a caller continuing the script starts
+     * the next command on a new line.
+     */
+    public static String heredoc(String command, String content) {
+        var marker = heredocMarker(content);
+        return command + " << '" + marker + "'\n" + content + "\n" + marker;
     }
 
     /**

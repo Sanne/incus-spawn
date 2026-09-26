@@ -5262,20 +5262,13 @@ public class ListCommand extends BaseCommand {
             KvmPassthrough.removeKvm(incus, name);
         }
 
-        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
         boolean isVm = incus.isVm(name);
-        if (!isVm) {
-            InstanceLifecycle.injectSshKeyIfAvailable(incus, name, prefetched.hasSshKeys());
-            InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
-        }
-        BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
-        incus.start(name);
-        BuildOutput.stepDone();
+        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
         if (isVm) {
             BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name);
             BuildOutput.stepDone();
-            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
+            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
         var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;

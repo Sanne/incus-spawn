@@ -188,27 +188,14 @@ public class BranchCommand extends BaseCommand {
 
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
-        var prefetched = InstanceLifecycle.prefetchRuntimeConfig(incus, name);
         boolean isVm = incus.isVm(name);
-
-        // Push SSH keys and terminfo into stopped containers (direct filesystem
-        // access). VMs require the incus-agent, so these are deferred to after start.
-        if (!isVm) {
-            if (prefetched.hasSshKeys()) {
-                InstanceLifecycle.injectSshKeyIfAvailable(incus, name, true);
-            }
-            InstanceLifecycle.pushTerminfoIfNeeded(incus, name, prefetched.terminfo());
-        }
-
-        BuildOutput.stepStart((isVm ? "Starting VM..." : "Starting container..."));
-        InstanceLifecycle.startInstance(incus, name);
-        BuildOutput.stepDone();
+        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
 
         if (isVm) {
             BuildOutput.stepStart("Waiting for VM agent...");
             incus.waitForReady(name);
             BuildOutput.stepDone();
-            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode, prefetched);
+            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
         InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);

@@ -81,4 +81,15 @@ class ContainerTest {
         assertTrue(script.contains("<< 'INCUS_EOF'\n"));
         assertEquals("the marker is INCUS_EOF here", bodyOf(script));
     }
+
+    @Test
+    void heredocDeliversContentVerbatimToARealShell() throws Exception {
+        // The post-start setup script feeds SSH keys and terminfo through this, so check what a
+        // shell actually receives rather than the text alone.
+        var content = "plain\nINCUS_EOF\n$HOME `id` \\E[m 'quoted' \"double\"\n\tindented";
+        var process = new ProcessBuilder("sh", "-c", Container.heredoc("cat", content)).start();
+        var output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor());
+        assertEquals(content + "\n", output);
+    }
 }
