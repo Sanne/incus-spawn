@@ -439,7 +439,8 @@ class InitCommandTest {
         assertNull(InitCommand.entryNumber("#"));
         assertNull(InitCommand.entryNumber("~/code"));
         assertNull(InitCommand.entryNumber("2a"));
-        assertNull(InitCommand.entryNumber("99999999999"));
+        // Too large to parse is still a number -- out of range, never a path to add.
+        assertEquals(Integer.MAX_VALUE, InitCommand.entryNumber("99999999999"));
     }
 
     // --- OAuth token shape check ---
