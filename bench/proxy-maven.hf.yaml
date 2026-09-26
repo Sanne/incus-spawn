@@ -11,7 +11,7 @@ phases:
       scenario:
       - fetch:
         - httpRequest:
-            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+            GET: /maven2/dev/incusspawn/bench/payload/1.0/payload-1.0.jar
 - c008:
     always:
       users: 8
@@ -20,7 +20,7 @@ phases:
       scenario:
       - fetch:
         - httpRequest:
-            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+            GET: /maven2/dev/incusspawn/bench/payload/1.0/payload-1.0.jar
 - c032:
     always:
       users: 32
@@ -29,7 +29,7 @@ phases:
       scenario:
       - fetch:
         - httpRequest:
-            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+            GET: /maven2/dev/incusspawn/bench/payload/1.0/payload-1.0.jar
 - c064:
     always:
       users: 64
@@ -38,4 +38,4 @@ phases:
       scenario:
       - fetch:
         - httpRequest:
-            GET: /maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar
+            GET: /maven2/dev/incusspawn/bench/payload/1.0/payload-1.0.jar

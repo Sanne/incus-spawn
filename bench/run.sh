@@ -81,6 +81,10 @@ cleanup() {
     echo ""
     echo "Cleaning up..."
     [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null && wait "$PROXY_PID" 2>/dev/null || true
+    [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null && wait "$STUB_PID" 2>/dev/null || true
+    [ -n "${STUB_DIR:-}" ] && rm -rf "$STUB_DIR" || true
+    # The stub's payload was cached under a coordinate that exists nowhere else; drop it
+    [ -n "${BENCH_CACHE_DIR:-}" ] && rm -rf "$BENCH_CACHE_DIR" || true
     podman stop "$HYPERFOIL_CONTAINER" 2>/dev/null && podman rm "$HYPERFOIL_CONTAINER" 2>/dev/null || true
     [ -n "${TRUSTSTORE_DIR:-}" ] && rm -rf "$TRUSTSTORE_DIR" || true
 }
@@ -191,7 +195,9 @@ if [ "$LOAD_MODE" = maven ]; then
     MAVEN_PATH=$(awk '/GET:/ { print $2; exit }' "$BENCHMARK_YAML")
     [ -n "$MAVEN_HOST" ] && [ -n "$MAVEN_PATH" ] || die "Could not parse host/GET path from $BENCHMARK_YAML"
     MAVEN_URL="https://$MAVEN_HOST:$MAVEN_PORT$MAVEN_PATH"
-    echo "Artifact: $MAVEN_URL"
+    echo "Artifact: $MAVEN_URL (served by a local stub)"
+    command -v java &>/dev/null || die "java not found; needed to run the upstream stub for --load=maven"
+    command -v keytool &>/dev/null || die "keytool not found; needed for --load=maven"
 fi
 
 # Resolve gateway IP from Incus bridge
@@ -273,9 +279,42 @@ echo "CLI startup:  ${CLI_STARTUP_US} us (median of 20)"
 
 # ── 4. Start proxy and measure startup time ─────────────────────────────────
 
+PROXY_ENV=()
+if [ "$LOAD_MODE" = maven ]; then
+    # The proxy confirms every cache hit with upstream (a HEAD for Maven Central), so
+    # pointed at the real repository this run would send its whole load there and
+    # measure that repository's latency. A local stub stands in for it instead: the
+    # proxy still makes its HEAD, over TLS it verifies, to a peer that answers at once.
+    # The payload lives at a coordinate no real repository has, so the cached copy
+    # can never stand in for a real artifact; cleanup() removes it anyway.
+    STUB_DIR="$(mktemp -d)"
+    keytool -genkeypair -alias stub -keyalg EC -groupname secp256r1 \
+        -dname "CN=$MAVEN_HOST" -ext "SAN=dns:$MAVEN_HOST" -validity 2 \
+        -keystore "$STUB_DIR/stub.p12" -storetype PKCS12 -storepass changeit &>/dev/null \
+        || die "Failed to create the stub's certificate"
+    keytool -exportcert -rfc -alias stub -keystore "$STUB_DIR/stub.p12" -storepass changeit \
+        -file "$STUB_DIR/stub.pem" &>/dev/null || die "Failed to export the stub's certificate"
+    # 642 KiB, the size of the commons-lang3 jar earlier runs fetched from Central
+    head -c 657408 /dev/urandom > "$STUB_DIR/payload.jar"
+    STUB_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    java "$SCRIPT_DIR/UpstreamStub.java" "$STUB_PORT" "$STUB_DIR/stub.p12" changeit \
+        "$MAVEN_PATH" "$STUB_DIR/payload.jar" > "$STUB_DIR/stub.log" 2>&1 &
+    STUB_PID=$!
+    for _ in $(seq 1 60); do
+        grep -q '^ready' "$STUB_DIR/stub.log" 2>/dev/null && break
+        kill -0 "$STUB_PID" 2>/dev/null || die "Upstream stub failed to start: $(cat "$STUB_DIR/stub.log")"
+        sleep 0.5
+    done
+    grep -q '^ready' "$STUB_DIR/stub.log" || die "Upstream stub did not start within 30s"
+    echo "Stub:        $MAVEN_HOST -> 127.0.0.1:$STUB_PORT"
+    BENCH_CACHE_DIR="$HOME/.cache/incus-spawn/maven-verified/$MAVEN_HOST$(dirname "$MAVEN_PATH")"
+    PROXY_ENV=(ISX_BENCH_UPSTREAM="$MAVEN_HOST=127.0.0.1:$STUB_PORT"
+               ISX_BENCH_UPSTREAM_CERT="$STUB_DIR/stub.pem")
+fi
+
 echo "Starting proxy..."
 PROXY_START=$(epoch_ms)
-"$PROXY_RUNNER" --gateway-ip "$GATEWAY_IP" &>/dev/null &
+env ${PROXY_ENV[@]+"${PROXY_ENV[@]}"} "$PROXY_RUNNER" --gateway-ip "$GATEWAY_IP" &>/dev/null &
 PROXY_PID=$!
 
 HEALTH_URL="http://$GATEWAY_IP:18080/health"
@@ -338,7 +377,6 @@ HF_RUN_ARGS=(-d --name "$HYPERFOIL_CONTAINER" --network=host)
 # the internet and (b) trust in the leaf cert the proxy mints, which is signed by
 # our own CA. Without the truststore every request fails the handshake.
 if [ "$LOAD_MODE" = maven ]; then
-    command -v keytool &>/dev/null || die "keytool not found; needed to build a truststore for --load=maven"
     TRUSTSTORE_DIR="$(mktemp -d)"
     TRUSTSTORE="$TRUSTSTORE_DIR/isx-truststore.p12"
     keytool -importcert -noprompt -trustcacerts -alias isx-ca \
