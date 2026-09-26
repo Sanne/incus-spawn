@@ -39,6 +39,14 @@ public class IncusClient {
     private volatile boolean apiInitialized;
     private volatile IncusApi api;
 
+    public IncusClient() {}
+
+    /** Talk to {@code api} instead of discovering the local daemon; lets tests count requests. */
+    IncusClient(IncusApi api) {
+        this.api = api;
+        this.apiInitialized = true;
+    }
+
     private IncusApi api() {
         if (!apiInitialized) {
             synchronized (this) {
