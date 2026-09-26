@@ -50,10 +50,21 @@ class GitHubAuthFlowTest {
             return this;
         }
 
+        /** The agent's dedicated PAT, which verifies with an email. */
+        FakeInit acceptAgentPat() {
+            return accept(AGENT_PAT, "agent-bot", "bot@example.com");
+        }
+
+        /** An authenticated host 'gh' whose token may or may not verify. */
         FakeInit ghLogin(String token) {
             ghLoggedIn = true;
             ghToken = token;
             return this;
+        }
+
+        /** The operator's own 'gh' login, whose token verifies as them. */
+        FakeInit personalGhLogin() {
+            return ghLogin(PERSONAL_GH_TOKEN).accept(PERSONAL_GH_TOKEN, "operator", "me@example.com");
         }
 
         @Override
@@ -80,6 +91,19 @@ class GitHubAuthFlowTest {
         }
     }
 
+    /** The answer to "open the token page in your browser?" that most scripts start with. */
+    private static final String NO_BROWSER = "n";
+
+    /** A script that declines the browser, and so goes straight to the PAT prompt. */
+    private static ScriptedPrompts declineBrowser() {
+        return new ScriptedPrompts().line(NO_BROWSER);
+    }
+
+    /** First-time setup: no config yet. */
+    private static void run(FakeInit init, ScriptedPrompts prompts) {
+        run(init, new SpawnConfig(), prompts);
+    }
+
     private static void run(FakeInit init, SpawnConfig config, ScriptedPrompts prompts) {
         init.setupGitHubAuth(config, prompts);
         prompts.assertFullyConsumed();
@@ -89,8 +113,8 @@ class GitHubAuthFlowTest {
 
     @Test
     void aVerifiedPatIsSavedWithItsEmail() {
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret(AGENT_PAT));
+        var init = new FakeInit().acceptAgentPat();
+        run(init, declineBrowser().secret(AGENT_PAT));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
         assertEquals("bot@example.com", saved("github.accounts.default.email"));
@@ -103,9 +127,8 @@ class GitHubAuthFlowTest {
      */
     @Test
     void anEnteredTokenIsAcknowledgedWithoutBeingShown() {
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        var out = captureStdout(() -> run(init, new SpawnConfig(),
-                new ScriptedPrompts().line("n").secret("  " + AGENT_PAT + " ")));
+        var init = new FakeInit().acceptAgentPat();
+        var out = captureStdout(() -> run(init, declineBrowser().secret("  " + AGENT_PAT + " ")));
 
         assertTrue(out.contains("Received 27 characters (github_pat_...0000)"), out);
         assertFalse(out.contains(AGENT_PAT), "the token was printed:\n" + out);
@@ -113,8 +136,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void aSkippedTokenIsNotAcknowledged() {
-        var out = captureStdout(() -> run(new FakeInit(), new SpawnConfig(),
-                new ScriptedPrompts().line("n").secret("")));
+        var out = captureStdout(() -> run(new FakeInit(), declineBrowser().secret("")));
         assertFalse(out.contains("Received"), out);
     }
 
@@ -133,10 +155,10 @@ class GitHubAuthFlowTest {
     @Test
     void theTokenPageOpensByDefault() {
         var init = new FakeInit();
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("").secret(""));
+        run(init, new ScriptedPrompts().line("").secret(""));
 
         assertEquals(List.of("https://github.com/settings/personal-access-tokens/new"), init.opened);
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     /** CI runs {@code isx init </dev/null}: every prompt hits EOF and nothing may be written. */
@@ -145,24 +167,22 @@ class GitHubAuthFlowTest {
         var init = new FakeInit().ghLogin(PERSONAL_GH_TOKEN);
         init.setupGitHubAuth(new SpawnConfig(), new ScriptedPrompts());
 
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
         assertEquals(0, init.ghTokenReads, "EOF must never count as agreeing to reuse the personal login");
     }
 
     @Test
     void rejectedTokenAndDeclinedRetryWritesNothing() {
         var init = new FakeInit();
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret("ghp_bad").line("n"));
+        run(init, declineBrowser().secret("ghp_bad").line("n"));
 
         assertEquals(List.of("ghp_bad"), init.verified);
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     @Test
     void retryingAfterARejectedTokenSavesTheNextOne() {
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        run(init, new SpawnConfig(),
-                new ScriptedPrompts().line("n").secret("ghp_bad").line("").secret(AGENT_PAT));
+        run(new FakeInit().acceptAgentPat(), declineBrowser().secret("ghp_bad").line("").secret(AGENT_PAT));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
     }
@@ -175,38 +195,32 @@ class GitHubAuthFlowTest {
      */
     @Test
     void skippingThePatDoesNotReuseThePersonalLoginByDefault() {
-        var init = new FakeInit().ghLogin(PERSONAL_GH_TOKEN)
-                .accept(PERSONAL_GH_TOKEN, "operator", "me@example.com");
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret("").line(""));
+        var init = new FakeInit().personalGhLogin();
+        run(init, declineBrowser().secret("").line(""));
 
         assertEquals(0, init.ghTokenReads, "the personal token must not even be read without a yes");
-        assertFalse(Files.exists(configFile()));
+        assertNothingSaved();
     }
 
     @Test
     void thePersonalLoginIsReusedOnlyWhenExplicitlyAccepted() {
-        var init = new FakeInit().ghLogin(PERSONAL_GH_TOKEN)
-                .accept(PERSONAL_GH_TOKEN, "operator", "me@example.com");
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret("").line("y"));
+        run(new FakeInit().personalGhLogin(), declineBrowser().secret("").line("y"));
 
         assertEquals(PERSONAL_GH_TOKEN, saved("github.accounts.default.token"));
     }
 
     @Test
     void withoutAGhLoginTheReuseQuestionIsNeverAsked() {
-        var init = new FakeInit();
         // assertFullyConsumed fails if the flow asks anything after the skipped PAT.
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret(""));
-        assertFalse(Files.exists(configFile()));
+        run(new FakeInit(), declineBrowser().secret(""));
+        assertNothingSaved();
     }
 
     /** The fallback promises to "continue with manual setup" when it fails, so it must. */
     @Test
     void aPersonalTokenThatFailsVerificationFallsBackToThePatPrompt() {
-        var init = new FakeInit().ghLogin(PERSONAL_GH_TOKEN)
-                .accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        run(init, new SpawnConfig(),
-                new ScriptedPrompts().line("n").secret("").line("y").secret(AGENT_PAT));
+        run(new FakeInit().ghLogin(PERSONAL_GH_TOKEN).acceptAgentPat(),
+                declineBrowser().secret("").line("y").secret(AGENT_PAT));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
     }
@@ -215,8 +229,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void aTokenWithoutEmailIsSavedWithoutOneRatherThanAnEmptyString() throws Exception {
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", null);
-        run(init, new SpawnConfig(), new ScriptedPrompts().line("n").secret(AGENT_PAT).secret(""));
+        run(new FakeInit().accept(AGENT_PAT, "agent-bot", null), declineBrowser().secret(AGENT_PAT).secret(""));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
         assertFalse(Files.readString(configFile()).contains("email"),
@@ -225,9 +238,7 @@ class GitHubAuthFlowTest {
 
     @Test
     void aRejectedReplacementKeepsTheOriginalToken() {
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", null);
-        run(init, new SpawnConfig(),
-                new ScriptedPrompts().line("n").secret(AGENT_PAT).secret("ghp_bad"));
+        run(new FakeInit().accept(AGENT_PAT, "agent-bot", null), declineBrowser().secret(AGENT_PAT).secret("ghp_bad"));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
     }
@@ -236,18 +247,16 @@ class GitHubAuthFlowTest {
 
     @Test
     void enterOnReRunLeavesTheFileUntouched() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        run(new FakeInit(), config, ScriptedPrompts.lines(""));
+        run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL), ScriptedPrompts.lines(""));
 
-        assertEquals(ONE_FLAT_CREDENTIAL, Files.readString(configFile()));
+        assertUnchanged(ONE_FLAT_CREDENTIAL);
     }
 
     /** Replacing a flat credential moves it into the accounts layout, leaving nothing flat behind. */
     @Test
     void replacingTheSingleCredentialLeavesItTheOnlyAccount() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        run(init, config, new ScriptedPrompts().line("r", "n").secret(AGENT_PAT));
+        run(new FakeInit().acceptAgentPat(), seed(ONE_FLAT_CREDENTIAL),
+                new ScriptedPrompts().line("r", NO_BROWSER).secret(AGENT_PAT));
 
         assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
         assertEquals("bot@example.com", saved("github.accounts.default.email"));
@@ -258,9 +267,8 @@ class GitHubAuthFlowTest {
 
     @Test
     void addingASecondAccountKeepsTheFirst() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        var init = new FakeInit().accept(AGENT_PAT, "agent-bot", "bot@example.com");
-        run(init, config, new ScriptedPrompts().line("a", "work", "n").secret(AGENT_PAT));
+        run(new FakeInit().acceptAgentPat(), seed(ONE_FLAT_CREDENTIAL),
+                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(AGENT_PAT));
 
         assertEquals("ghp_flat", saved("github.accounts.default.token"));
         assertEquals("me@example.com", saved("github.accounts.default.email"));
@@ -277,30 +285,27 @@ class GitHubAuthFlowTest {
      */
     @Test
     void abandoningASecondAccountAtThePatPromptChangesNothing() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        run(new FakeInit(), config, new ScriptedPrompts().line("a", "work", "n").secret(""));
+        run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL), new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(""));
 
-        assertEquals(ONE_FLAT_CREDENTIAL, Files.readString(configFile()));
+        assertUnchanged(ONE_FLAT_CREDENTIAL);
     }
 
     @Test
     void abandoningASecondAccountAfterARejectedTokenChangesNothing() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        run(new FakeInit(), config,
-                new ScriptedPrompts().line("a", "work", "n").secret("ghp_bad").line("n"));
+        run(new FakeInit(), seed(ONE_FLAT_CREDENTIAL),
+                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret("ghp_bad").line("n"));
 
-        assertEquals(ONE_FLAT_CREDENTIAL, Files.readString(configFile()));
+        assertUnchanged(ONE_FLAT_CREDENTIAL);
     }
 
     /** A re-minted PAT belongs to the account the user picked, not back in the flat field. */
     @Test
     void aReMintedTokenLandsInTheChosenAccount() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
         var init = new FakeInit()
                 .accept(AGENT_PAT, "agent-bot", null)
                 .accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
-        run(init, config, new ScriptedPrompts().line("a", "work", "n")
-                .secret(AGENT_PAT).secret("github_pat_with_email_000"));
+        run(init, seed(ONE_FLAT_CREDENTIAL),
+                new ScriptedPrompts().line("a", "work", NO_BROWSER).secret(AGENT_PAT).secret("github_pat_with_email_000"));
 
         assertEquals("github_pat_with_email_000", saved("github.accounts.work.token"));
         assertEquals("bot@example.com", saved("github.accounts.work.email"));
@@ -309,10 +314,8 @@ class GitHubAuthFlowTest {
 
     @Test
     void thePersonalLoginReusedForANamedAccountLandsInThatAccount() throws Exception {
-        var config = seed(ONE_FLAT_CREDENTIAL);
-        var init = new FakeInit().ghLogin(PERSONAL_GH_TOKEN)
-                .accept(PERSONAL_GH_TOKEN, "operator", "me@example.com");
-        run(init, config, new ScriptedPrompts().line("a", "mine", "n").secret("").line("y"));
+        run(new FakeInit().personalGhLogin(), seed(ONE_FLAT_CREDENTIAL),
+                new ScriptedPrompts().line("a", "mine", NO_BROWSER).secret("").line("y"));
 
         assertEquals(PERSONAL_GH_TOKEN, saved("github.accounts.mine.token"));
         assertEquals("ghp_flat", saved("github.accounts.default.token"));

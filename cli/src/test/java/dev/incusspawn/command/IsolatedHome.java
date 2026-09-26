@@ -38,6 +38,18 @@ final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
         return AccountResolver.navigate(SpawnConfig.load().tree(), path);
     }
 
+    /** No config file was written at all. */
+    static void assertNothingSaved() {
+        org.junit.jupiter.api.Assertions.assertFalse(Files.exists(configFile()),
+                "nothing should have been saved, but config.yaml was written");
+    }
+
+    /** The config file is byte-for-byte what {@link #seed} wrote: not even reformatted. */
+    static void assertUnchanged(String seeded) throws IOException {
+        org.junit.jupiter.api.Assertions.assertEquals(seeded, Files.readString(configFile()),
+                "config.yaml should not have been rewritten");
+    }
+
     private static final ExtensionContext.Namespace NS = ExtensionContext.Namespace.create(IsolatedHome.class);
 
     @Override
