@@ -891,8 +891,8 @@ The proxy and build system cache artifacts on the host, shared across all templa
 Proxy caches (from container traffic):
 
 - **Container image layers** — OCI blobs from Docker Hub, GHCR, and Quay, keyed by SHA256 content digest
-- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal
-- **Gradle distributions** — verified against the upstream `.sha256` sidecar
+- **Maven and Gradle artifacts** — release JARs, POMs, and plugins from Maven Central and the Gradle plugin portal, verified against the upstream checksum. Every cache hit is first confirmed with upstream (a `HEAD` on Maven Central, the checksum file elsewhere), so an artifact that was republished or withdrawn is never served from cache. When the repository is unreachable, cached artifacts are served unconfirmed so builds keep working offline
+- **Gradle distributions** — verified against the upstream `.sha256` sidecar, and confirmed against it on every hit
 
 Build-time caches:
 
