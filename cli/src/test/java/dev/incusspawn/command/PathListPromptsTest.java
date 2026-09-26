@@ -51,12 +51,19 @@ class PathListPromptsTest {
         assertEquals(List.of(code.toString()), savedPaths());
     }
 
-    /** A typo should still be recordable -- the directory may be created later -- but it is warned about. */
+    /** A directory that does not exist yet can still be recorded -- it may be created later -- once confirmed. */
     @Test
-    void aMissingDirectoryIsAddedAnyway() {
+    void aMissingDirectoryIsAddedWhenConfirmed() {
         var missing = home().resolve("not-yet");
-        edit(new SpawnConfig(), ScriptedPrompts.lines(missing.toString(), ""));
+        edit(new SpawnConfig(), ScriptedPrompts.lines(missing.toString(), "y", ""));
         assertEquals(List.of(missing.toString()), savedPaths());
+    }
+
+    /** More often a missing directory is a typo, so it takes a yes to add one. */
+    @Test
+    void aMissingDirectoryIsNotAddedByDefault() {
+        edit(new SpawnConfig(), ScriptedPrompts.lines(home().resolve("not-yet").toString(), "", ""));
+        assertNothingSaved();
     }
 
     @Test
@@ -78,6 +85,24 @@ class PathListPromptsTest {
         config.setHostPaths(List.of(dir("a").toString(), dir("b").toString()));
         edit(config, ScriptedPrompts.lines("1", ""));
         assertEquals(List.of(home().resolve("b").toString()), savedPaths());
+    }
+
+    /** The list prints numbered entries, so "#2" is read as entry 2 rather than a directory named "#2" (#777). */
+    @Test
+    void aHashPrefixedNumberRemovesThatEntry() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(dir("a").toString(), dir("b").toString()));
+        edit(config, ScriptedPrompts.lines("#2", ""));
+        assertEquals(List.of(home().resolve("a").toString()), savedPaths());
+    }
+
+    /** "#" alone, or "#" before anything but a number, is a botched removal and never a path to add. */
+    @Test
+    void otherHashInputIsNotAddedAsADirectory() throws Exception {
+        var config = new SpawnConfig();
+        config.setHostPaths(List.of(dir("a").toString()));
+        edit(config, ScriptedPrompts.lines("#", "#a", ""));
+        assertNothingSaved();
     }
 
     /** A number that names no entry is not read as a path to add, and removes nothing. */

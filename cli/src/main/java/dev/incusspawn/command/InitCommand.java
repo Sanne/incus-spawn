@@ -2536,6 +2536,15 @@ public class InitCommand extends BaseCommand {
         printNumberedPaths(paths);
     }
 
+    /**
+     * The entry number an input refers to, or null if it is not one. Accepts "2" and, because
+     * the list reads like numbered entries, "#2" too.
+     */
+    static Integer entryNumber(String input) {
+        var m = java.util.regex.Pattern.compile("#?\\s*(\\d{1,9})").matcher(input);
+        return m.matches() ? Integer.parseInt(m.group(1)) : null;
+    }
+
     private void printNumberedPaths(java.util.List<String> paths) {
         for (int i = 0; i < paths.size(); i++) {
             System.out.println("    " + (i + 1) + ". " + paths.get(i));
@@ -2683,9 +2692,9 @@ public class InitCommand extends BaseCommand {
         var paths = new java.util.ArrayList<>(existing);
         while (true) {
             var hasEntries = !paths.isEmpty();
-            System.out.print("  Add a local directory"
-                    + (hasEntries ? " or # to remove" : "")
-                    + " (or press Enter to " + (hasEntries ? "finish" : "skip") + "): ");
+            System.out.print(hasEntries
+                    ? "  Add a local directory, type an entry's number to remove it, or press Enter to finish: "
+                    : "  Add a local directory (or press Enter to skip): ");
             var input = readInput(prompts.readLine());
             if (input.isEmpty()) break;
 
@@ -2694,21 +2703,29 @@ public class InitCommand extends BaseCommand {
                 continue;
             }
 
-            if (input.matches("\\d+")) {
-                int index = Integer.parseInt(input) - 1;
+            var entryNumber = entryNumber(input);
+            if (entryNumber != null) {
+                int index = entryNumber - 1;
                 if (index >= 0 && index < paths.size()) {
                     System.out.println("  Removed: " + paths.remove(index));
                     printNumberedPaths(paths);
+                } else if (paths.isEmpty()) {
+                    System.out.println("  There are no entries to remove.");
                 } else {
-                    System.out.println("  No entry #" + input + ".");
+                    System.out.println("  No entry " + entryNumber + " — type a number from 1 to " + paths.size() + ".");
                 }
+                continue;
+            }
+            if (input.startsWith("#")) {
+                System.out.println("  To remove an entry, type just its number (e.g. 1).");
                 continue;
             }
 
             var expanded = HostResourceSetup.expandHostTilde(input);
             var path = java.nio.file.Path.of(expanded);
-            if (!java.nio.file.Files.isDirectory(path)) {
-                System.out.println("  Warning: '" + input + "' is not an existing directory. Adding anyway.");
+            if (!java.nio.file.Files.isDirectory(path)
+                    && !askConfirmation(prompts, "  '" + input + "' is not an existing directory. Add it anyway?", false)) {
+                continue;
             }
             var resolved = path.toAbsolutePath().normalize().toString();
             if (paths.contains(resolved)) {
