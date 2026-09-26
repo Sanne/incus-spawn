@@ -127,6 +127,11 @@ public class BranchCommand extends BaseCommand {
             }
         }
 
+        // Only now: the health check above may have restarted the proxy. The lookup runs while
+        // the copy and configuration below talk to Incus; the signal is sent once the account
+        // selection is stamped.
+        var proxyPid = ProxyService.findProxyPidAsync();
+
         BuildOutput.branchHeader(name, resolvedSource);
 
         var copyPlan = incus.planCopy(resolvedSource);
@@ -155,7 +160,7 @@ public class BranchCommand extends BaseCommand {
         InstanceLifecycle.configureNetwork(incus, name, networkMode);
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
-        applyAccountSelection(accountSelection);
+        applyAccountSelection(accountSelection, proxyPid);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
         // Configure GUI before start so environment.* keys are visible to init
@@ -257,7 +262,8 @@ public class BranchCommand extends BaseCommand {
         return selection;
     }
 
-    private void applyAccountSelection(Map<String, String> selection) {
+    private void applyAccountSelection(Map<String, String> selection,
+                                       java.util.concurrent.CompletableFuture<Long> proxyPid) {
         if (!selection.isEmpty()) {
             AccountSelection.stamp(incus, name, selection);
             BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
@@ -267,7 +273,7 @@ public class BranchCommand extends BaseCommand {
         // would still map that address to the old instance and hand its account to this one.
         // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
         // so the first request from inside already sees the right answer.
-        ProxyService.signalAccountRefresh();
+        ProxyService.signalAccountRefresh(proxyPid);
     }
 
     private String resolveSource() {

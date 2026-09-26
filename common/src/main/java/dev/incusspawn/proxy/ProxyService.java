@@ -14,6 +14,8 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public final class ProxyService {
 
@@ -532,7 +534,34 @@ public final class ProxyService {
      * state, and taking the lock would serialise every branch behind it.
      */
     public static void signalAccountRefresh() {
-        var pid = findProxyPid();
+        signalAccountRefresh(findProxyPid());
+    }
+
+    /**
+     * As {@link #signalAccountRefresh()}, with the PID from a {@link #findProxyPidAsync()} lookup
+     * started earlier. Finding the PID runs {@code fuser}, which scans the open files of every
+     * process on the host -- 45-90 ms measured on a desktop -- while the signal itself is instant.
+     */
+    public static void signalAccountRefresh(CompletableFuture<Long> pidLookup) {
+        long pid;
+        try {
+            pid = pidLookup.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            pid = findProxyPid();
+        }
+        signalAccountRefresh(pid);
+    }
+
+    /**
+     * Start looking up the proxy's PID in the background, for a later
+     * {@link #signalAccountRefresh(CompletableFuture)}. Start it only once the
+     * proxy is known to be healthy: a health check may restart it, and the PID with it.
+     */
+    public static CompletableFuture<Long> findProxyPidAsync() {
+        return CompletableFuture.supplyAsync(ProxyService::findProxyPid);
+    }
+
+    private static void signalAccountRefresh(long pid) {
         if (pid != -1) runQuiet("kill", "-USR1", String.valueOf(pid));
     }
 
