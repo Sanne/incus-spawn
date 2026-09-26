@@ -191,14 +191,57 @@ Result files are git-ignored.
 
 **Hyperfoil CpuWatchdog warnings:** The benchmark may report CPU usage warnings (e.g. "CPU 4 was used for 98%"). These are informational — Hyperfoil flags host CPUs exceeding 80% utilization during the test. They don't affect results but indicate the machine was under load, which may increase latency variance.
 
+## CLI Latency (`cli.sh`)
+
+`run.sh` benchmarks the proxy. `cli.sh` benchmarks the other binary: how long `isx` commands
+take against a live Incus daemon, as a JVM and as a native image.
+
+```shell
+bench/cli.sh                          # build both, benchmark both
+bench/cli.sh --skip-build             # reuse cli/target builds
+bench/cli.sh --runtime=native --label=before-my-change
+```
+
+It branches a throwaway instance (`isx-bench-<pid>`, from `--from`, default `tpl-minimal`)
+with `--no-start` and destroys it on exit, including on failure. No existing instance or
+template is started, stopped or modified. Each operation gets two warmups and `--runs` timed
+runs (default 20), reported as median, p90 and min:
+
+| Operation | Command | What it covers |
+|---|---|---|
+| `startup` | `isx --help` | Process start alone; no daemon |
+| `instances` | `isx instances` | Connecting to Incus plus one listing |
+| `accountShow` | `isx account show <instance>` | A typical read-only instance query |
+| `prepareRunning` | `isx run <instance> --action=<unknown>` | Everything `isx shell` does before attaching a terminal: instance checks, proxy health, IP/CA/resolv.conf repair |
+
+`isx shell` itself needs a terminal, so `prepareRunning` stands in for it: an unknown action
+makes `isx run` do the same preparation and then exit 1 with "action ... not found". The
+harness checks for exactly that message, so a run that fails for any other reason (proxy
+down, say) aborts instead of being timed. Branch, cold start and destroy are timed once each
+and recorded under `lifecycle` as indicative single samples; Incus dominates them.
+
+Prerequisites: a working `isx init`, a running Incus daemon **and proxy**, a built template to
+branch from, and `native-image` unless `--skip-build` or `--runtime=jvm`.
+
+Results go to `bench/results/cli/`, separate from the proxy results, and each runtime's
+medians are compared with the most recent earlier result that measured it. Changes of 10% or
+more are flagged: below that, desktop run-to-run noise dominates.
+
+This is for comparing before and after on one machine, not for gating PRs. The deterministic
+check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many Incus round
+trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
+counting requests needs neither timing nor a daemon.
+
 ## File Layout
 
 ```
 bench/
-  run.sh                  # Main benchmark script
+  run.sh                  # Proxy benchmark
+  cli.sh                  # CLI latency benchmark, JVM vs native
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
   README.md               # This file
   results/                # JSON result files (git-ignored)
+    cli/                  # cli.sh results
 ```
