@@ -178,9 +178,9 @@ class KeepAliveConnectionTest {
     void corruptResponseMarksConnectionDead() throws IOException {
         corruptResponse = true;
         var conn = KeepAliveConnection.open(sock.toString());
-        assertThrows(RuntimeException.class,
+        assertThrows(IOException.class,
                 () -> conn.execute("GET", "/1.0", null, Map.of(), new byte[0], 5),
-                "a parse error must propagate");
+                "a parse error must surface as an I/O failure, which callers handle");
         assertEquals(KeepAliveConnection.State.DEAD, conn.state(),
                 "a connection that failed to parse a response must be marked DEAD, not reused");
     }

@@ -47,6 +47,12 @@ final class LossyIncusServer implements AutoCloseable {
         DROP_AFTER_RESPONSE,
         /** Announce a body, send part of it, then drop the connection. */
         TRUNCATE_BODY,
+        /** Cut the response off partway through its headers. */
+        TRUNCATE_HEADERS,
+        /** Start a chunked body, then drop the connection before its last chunk. */
+        TRUNCATE_CHUNKED,
+        /** Read the request (plain or upgrade), then close without a single byte of response. */
+        CLOSE_BEFORE_RESPONSE,
         /** Refuse WebSocket upgrades with 403. */
         REJECT_UPGRADE
     }
@@ -184,6 +190,20 @@ final class LossyIncusServer implements AutoCloseable {
                 out.flush();
                 return false;
             }
+            case TRUNCATE_HEADERS -> {
+                out.write("HTTP/1.1 200 OK\r\nContent-Ty".getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                return false;
+            }
+            case TRUNCATE_CHUNKED -> {
+                out.write(("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        + "b\r\n{\"partial\":\r\n").getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                return false;
+            }
+            case CLOSE_BEFORE_RESPONSE -> {
+                return false;
+            }
             default -> { }
         }
         var body = req.path().equals("/1.0")
@@ -266,6 +286,10 @@ final class LossyIncusServer implements AutoCloseable {
 
     private void serveWebSocket(SocketChannel conn, InputStream in, OutputStream out, Request req)
             throws IOException {
+        if (fault == Fault.CLOSE_BEFORE_RESPONSE) {
+            conn.close();
+            return;
+        }
         if (fault == Fault.REJECT_UPGRADE) {
             out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
             out.flush();

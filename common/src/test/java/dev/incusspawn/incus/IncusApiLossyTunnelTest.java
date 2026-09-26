@@ -117,6 +117,17 @@ class IncusApiLossyTunnelTest {
 
     @Test
     @Timeout(10)
+    void execFailsLoudlyWhenAnFdHandshakeIsCutOff() {
+        // The tunnel hangs up on the fd WebSocket before answering the upgrade. This used to
+        // "connect" a dead socket, so that stream's output came back empty with no error.
+        server.fault = LossyIncusServer.Fault.CLOSE_BEFORE_RESPONSE;
+        server.stdout = "must not vanish silently";
+        var e = assertThrows(IncusException.class, () -> exec(api()));
+        assertTrue(e.getMessage().contains("exec WebSocket"), e.getMessage());
+    }
+
+    @Test
+    @Timeout(10)
     void tryConnectFindsAResponsiveSocket() {
         assertNotNull(IncusApi.tryConnect(List.of("/nonexistent/incus.sock", server.socketPath())));
     }
