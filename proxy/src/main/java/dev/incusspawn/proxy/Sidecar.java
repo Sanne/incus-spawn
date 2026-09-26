@@ -56,16 +56,20 @@ enum Sidecar {
     }
 
     /**
-     * The checksum a sidecar body states, as lowercase hex, or null if it is not a
-     * well-formed checksum of this algorithm. Repositories publish both the bare hex
-     * and the {@code sha1sum}-style {@code "<hex>  <filename>"} form.
+     * The checksum a sidecar body states, as lowercase hex, or null if no
+     * well-formed checksum of this algorithm is found. Repositories publish the bare
+     * hex, the {@code sha1sum} form {@code "<hex>  <filename>"} (hex first) and the
+     * BSD/OpenSSL forms {@code "SHA1(<filename>)= <hex>"} and
+     * {@code "MD5 (<filename>) = <hex>"} (hex last), all of which Maven accepts.
      */
     String hex(byte[] body) {
         if (!isChecksum() || body == null) return null;
-        var text = new String(body, java.nio.charset.StandardCharsets.US_ASCII).trim();
-        if (text.isEmpty()) return null;
-        var hex = text.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
-        return hexPattern.matcher(hex).matches() ? hex : null;
+        var tokens = new String(body, java.nio.charset.StandardCharsets.US_ASCII).trim().split("\\s+");
+        for (var token : new String[] {tokens[0], tokens[tokens.length - 1]}) {
+            var hex = token.toLowerCase(Locale.ROOT);
+            if (hexPattern.matcher(hex).matches()) return hex;
+        }
+        return null;
     }
 
     /**

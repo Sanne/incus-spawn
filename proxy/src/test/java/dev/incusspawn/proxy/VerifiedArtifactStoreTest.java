@@ -36,7 +36,7 @@ class VerifiedArtifactStoreTest {
     Path cached(byte[] content) throws Exception {
         var download = Files.createTempFile(dir, "dl-", ".tmp");
         Files.write(download, content);
-        assertTrue(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(content)));
+        assertTrue(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(content), true));
         return artifact();
     }
 
@@ -63,6 +63,8 @@ class VerifiedArtifactStoreTest {
         var h = hex("SHA-1", JAR);
         assertEquals(h, Sidecar.SHA1.hex((h + "\n").getBytes()));
         assertEquals(h, Sidecar.SHA1.hex((h.toUpperCase() + "  a-1.0.jar\n").getBytes()));
+        assertEquals(h, Sidecar.SHA1.hex(("SHA1(a-1.0.jar)= " + h + "\n").getBytes()), "OpenSSL form");
+        assertEquals(hex("MD5", JAR), Sidecar.MD5.hex(("MD5 (a-1.0.jar) = " + hex("MD5", JAR)).getBytes()), "BSD form");
         assertNull(Sidecar.SHA1.hex("not-a-checksum".getBytes()));
         assertNull(Sidecar.SHA1.hex(hex("MD5", JAR).getBytes()), "wrong length for the algorithm");
         assertNull(Sidecar.SHA1.hex(new byte[0]));
@@ -94,7 +96,7 @@ class VerifiedArtifactStoreTest {
     void commitRejectsMismatchingDownload() throws Exception {
         var download = Files.createTempFile(dir, "dl-", ".tmp");
         Files.write(download, OTHER);
-        assertFalse(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(JAR)));
+        assertFalse(VerifiedArtifactStore.verifyAndCommit(download, prepareParent(), Sidecar.SHA1, sha1Of(JAR), true));
         assertFalse(Files.exists(artifact()));
         assertFalse(Files.exists(Sidecar.SHA1.storedFile(artifact())));
         assertFalse(Files.exists(download));
@@ -103,7 +105,7 @@ class VerifiedArtifactStoreTest {
     @Test
     void commitOverAnotherCopyDropsSidecarsDescribingIt() throws Exception {
         var artifact = cached(OTHER);
-        VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes());
+        VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), true);
         assertTrue(Files.exists(Sidecar.MD5.storedFile(artifact)));
 
         cached(JAR);
@@ -117,15 +119,15 @@ class VerifiedArtifactStoreTest {
     void matchingSidecarConfirms() throws Exception {
         var artifact = cached(JAR);
         var body = (hex("SHA-1", JAR) + "  a-1.0.jar").getBytes();
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, body));
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, body, true));
         assertTrue(Files.exists(artifact));
     }
 
     @Test
     void changedSidecarEvictsArtifactAndAllSidecars() throws Exception {
         var artifact = cached(JAR);
-        VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig".getBytes());
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER)));
+        VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig".getBytes(), true);
+        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), true));
         assertFalse(Files.exists(artifact));
         for (var s : Sidecar.values()) {
             assertFalse(Files.exists(s.storedFile(artifact)), s.name());
@@ -133,40 +135,64 @@ class VerifiedArtifactStoreTest {
     }
 
     @Test
-    void unparseableChecksumEvicts() throws Exception {
+    void unparseableChecksumSaysNothing() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, "<html>".getBytes()));
+        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, "<html>".getBytes(), true));
+        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, "garbage".getBytes(), true));
+        assertTrue(Files.exists(artifact), "a checksum we cannot read is no evidence the artifact changed");
+        assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)));
+    }
+
+    @Test
+    void contradictionWithoutPermissionToEvictIsReported() throws Exception {
+        var artifact = cached(JAR);
+        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(OTHER), false));
+        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 404, null, false));
+        assertEquals(Outcome.DISAGREES, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, hex("MD5", OTHER).getBytes(), false));
+        assertTrue(Files.exists(artifact));
+        assertArrayEquals(sha1Of(JAR), Files.readAllBytes(Sidecar.SHA1.storedFile(artifact)));
+        assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)), "a contradicting checksum is never stored");
+    }
+
+    @Test
+    void storeSidecarNeedsItsArtifact() throws Exception {
+        var artifact = cached(JAR);
+        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.ASC, "sig".getBytes());
+        assertArrayEquals("sig".getBytes(), Files.readAllBytes(Sidecar.ASC.storedFile(artifact)));
+        Files.delete(artifact);
+        VerifiedArtifactStore.storeSidecar(artifact, Sidecar.MD5, "x".getBytes());
+        assertFalse(Files.exists(Sidecar.MD5.storedFile(artifact)));
     }
 
     @Test
     void newChecksumTypeIsCheckedAgainstTheArtifactOnce() throws Exception {
         var artifact = cached(JAR);
         var md5 = hex("MD5", JAR).getBytes();
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, md5));
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.MD5, 200, md5, true));
         assertArrayEquals(md5, Files.readAllBytes(Sidecar.MD5.storedFile(artifact)));
 
         assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(
-                cached(JAR), Sidecar.SHA256, 200, hex("SHA-256", OTHER).getBytes()));
+                cached(JAR), Sidecar.SHA256, 200, hex("SHA-256", OTHER).getBytes(), true));
     }
 
     @Test
     void signatureIsStoredThenCompared() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes()));
-        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes()));
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-2".getBytes()));
+        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-1".getBytes(), true));
+        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(artifact, Sidecar.ASC, 200, "sig-2".getBytes(), true));
     }
 
     @Test
     void withdrawnSidecarWeHadEvicts() throws Exception {
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 404, null));
-        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 410, null));
+        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 404, null, true));
+        assertEquals(Outcome.EVICTED, VerifiedArtifactStore.reconcile(cached(JAR), Sidecar.SHA1, 410, null, true));
     }
 
     @Test
     void missingSidecarWeNeverHadSaysNothing() throws Exception {
         var artifact = cached(JAR);
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA512, 404, null));
+        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA512, 404, null, true));
         assertTrue(Files.exists(artifact));
     }
 
@@ -174,14 +200,14 @@ class VerifiedArtifactStoreTest {
     void otherStatusesSayNothing() throws Exception {
         var artifact = cached(JAR);
         for (int status : new int[] {401, 403, 429}) {
-            assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, status, null));
+            assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, status, null, true));
         }
         assertTrue(Files.exists(artifact));
     }
 
     @Test
     void nothingToReconcileWithoutAnArtifact() throws Exception {
-        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR)));
+        assertEquals(Outcome.UNCHANGED, VerifiedArtifactStore.reconcile(artifact(), Sidecar.SHA1, 200, sha1Of(JAR), true));
         assertFalse(Files.exists(Sidecar.SHA1.storedFile(artifact())));
     }
 
@@ -223,15 +249,5 @@ class VerifiedArtifactStoreTest {
         try (var leftovers = Files.list(artifact().getParent())) {
             assertEquals(0, leftovers.count(), "no temp files left behind");
         }
-    }
-
-    @Test
-    void deleteTreeRemovesEverything() throws Exception {
-        var root = dir.resolve("legacy");
-        Files.createDirectories(root.resolve("a/b"));
-        Files.write(root.resolve("a/b/c.jar"), JAR);
-        VerifiedArtifactStore.deleteTree(root);
-        assertFalse(Files.exists(root));
-        VerifiedArtifactStore.deleteTree(root);
     }
 }
