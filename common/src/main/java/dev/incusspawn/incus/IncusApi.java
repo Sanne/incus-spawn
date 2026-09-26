@@ -121,25 +121,41 @@ class IncusApi {
         // Check vsock socket (macOS)
         var vsockSocket = Environment.vmVsockSocket();
         if (Files.exists(vsockSocket)) {
-            try (var ch = SocketChannel.open(StandardProtocolFamily.UNIX)) {
-                ch.connect(UnixDomainSocketAddress.of(vsockSocket));
-                return "vsock socket at " + vsockSocket + " is accessible — please retry.";
-            } catch (ConnectException e) {
-                return "vsock socket at " + vsockSocket
-                        + " is not accepting connections — the tunnel is not set up."
-                        + "\nThe VM may still be booting. Wait a few seconds and retry,"
-                        + " or run 'isx vm restart'.";
-            } catch (IOException e) {
-                return "vsock socket exists at " + vsockSocket
-                        + " but connection failed: " + e.getMessage()
-                        + "\nThe VM may still be booting. Wait a few seconds and retry.";
-            }
+            return diagnoseVsock(vsockSocket);
         }
         return """
                 Incus not reachable. No Unix socket found and no vsock socket found.
 
                 First-time setup: run 'isx init'
                 """;
+    }
+
+    /**
+     * Probe the vsock socket with a real request, never a bare connect.
+     *
+     * <p>incusd's local listener peeks 8 bytes inside {@code Accept()} with no deadline
+     * ({@code StarttlsListener}), so a connection that sends nothing stalls every <em>new</em>
+     * API connection until it speaks or closes. Through vfkit a close is not reliably
+     * propagated, so a connect-and-close probe can leave the forwarder holding exactly such a
+     * connection, wedging the whole API until the forwarder's {@code socat -T} reaps it (#774).
+     */
+    static String diagnoseVsock(Path vsockSocket) {
+        var probe = new UnixSocketTransport(vsockSocket.toString(), PROBE_TIMEOUT_SECONDS);
+        try {
+            probe.request("GET", "/1.0", "application/json", Map.of(), new byte[0],
+                    PROBE_TIMEOUT_SECONDS);
+            return "vsock socket at " + vsockSocket + " is accessible — please retry.";
+        } catch (ConnectException e) {
+            return "vsock socket at " + vsockSocket
+                    + " is not accepting connections — the tunnel is not set up."
+                    + "\nThe VM may still be booting. Wait a few seconds and retry,"
+                    + " or run 'isx vm restart'.";
+        } catch (IOException e) {
+            return "vsock socket exists at " + vsockSocket
+                    + " but the Incus API did not answer: " + e.getMessage()
+                    + "\nThe VM may still be booting. Wait a few seconds and retry,"
+                    + " or run 'isx doctor' if it persists.";
+        }
     }
 
     record ApiResponse(int statusCode, JsonNode body) {
