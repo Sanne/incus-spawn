@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
@@ -83,29 +84,6 @@ public class CleanCommand extends BaseCommand {
         return count[0];
     }
 
-    static void deleteDir(Path dir) throws IOException {
-        if (!Files.isDirectory(dir)) return;
-        Files.walkFileTree(dir, new SimpleFileVisitor<>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
-                Files.delete(d);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                System.err.println("Warning: could not delete " + file);
-                return FileVisitResult.CONTINUE;
-            }
-        });
-    }
-
     static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
@@ -161,7 +139,7 @@ public class CleanCommand extends BaseCommand {
         if (!confirm("Proceed?", skipConfirmation)) return CommandResult.SUCCESS;
 
         for (var info : infos) {
-            deleteDir(info.path);
+            FileTrees.delete(info.path);
         }
         System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
         return CommandResult.SUCCESS;
@@ -279,7 +257,7 @@ public class CleanCommand extends BaseCommand {
             if (!confirm("Delete configuration?", skipConfirmation)) return CommandResult.SUCCESS;
 
             for (var info : infos) {
-                deleteDir(info.path);
+                FileTrees.delete(info.path);
             }
             System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
             return CommandResult.SUCCESS;
@@ -337,7 +315,7 @@ public class CleanCommand extends BaseCommand {
             if (!confirm("Delete all listed directories?", skipConfirmation)) return CommandResult.SUCCESS;
 
             for (var info : infos) {
-                deleteDir(info.path);
+                FileTrees.delete(info.path);
             }
             System.out.println("Freed " + formatSize(total) + " from " + totalFiles + " files.");
             cleanDnfCacheVolume(dryRun);

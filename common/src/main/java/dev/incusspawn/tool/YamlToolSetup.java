@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
@@ -222,7 +223,7 @@ public class YamlToolSetup implements ToolSetup {
         } finally {
             try { container.removeDiskDevice(deviceName); } catch (Exception ignored) {}
             try { container.exec("rm", "-rf", mountPath); } catch (Exception ignored) {}
-            deleteRecursive(stagingDir);
+            FileTrees.deleteQuietly(stagingDir);
         }
     }
 
@@ -281,7 +282,7 @@ public class YamlToolSetup implements ToolSetup {
         } finally {
             try { container.removeDiskDevice(deviceName); } catch (Exception ignored) {}
             try { container.exec("rm", "-rf", mountPath); } catch (Exception ignored) {}
-            deleteRecursive(extractDir);
+            FileTrees.deleteQuietly(extractDir);
         }
     }
 
@@ -303,7 +304,7 @@ public class YamlToolSetup implements ToolSetup {
                 container.exec("ln", "-sf", linkEntry.getKey(), linkEntry.getValue());
             }
         } finally {
-            deleteRecursive(extractDir);
+            FileTrees.deleteQuietly(extractDir);
         }
     }
 
@@ -359,12 +360,5 @@ public class YamlToolSetup implements ToolSetup {
             Thread.currentThread().interrupt();
             throw new IOException(label + " interrupted", e);
         }
-    }
-
-    private static void deleteRecursive(Path dir) {
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(java.util.Comparator.reverseOrder())
-                    .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
-        } catch (IOException ignored) {}
     }
 }
