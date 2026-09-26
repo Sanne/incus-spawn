@@ -54,98 +54,11 @@ LOGFILE=$(mktemp)
 VSOCK_RESULT=$(mktemp)
 VSOCK_DIR=""
 BACKEND=""
+TUNNEL_RC=0
 # An `if`, not `[ ] && rm`: the trap's last status becomes the script's exit
 # status, and VSOCK_DIR is always empty on the QEMU path.
 cleanup() { rm -f "$LOGFILE" "$VSOCK_RESULT"; if [ -n "$VSOCK_DIR" ]; then rm -rf "$VSOCK_DIR"; fi; }
 trap cleanup EXIT
-
-# Verify the Incus API is reachable over the forwarded vsock socket — the exact
-# path isx uses on macOS: host Unix socket -> vfkit vsock -> in-guest socat
-# forwarder -> /var/lib/incus/unix.socket. Also confirm the daemon reports the
-# expected storage pool and bridge through that socket. Polls until incusd
-# answers (it comes up during boot) or a short deadline elapses. Markers go to
-# VSOCK_RESULT, NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE
-# concurrently, and interleaved appends from this shell were being lost.
-probe_vsock() {
-    local sock="$1" deadline body=""
-    deadline=$(( $(date +%s) + 30 ))
-    while [ "$(date +%s)" -lt "$deadline" ]; do
-        if [ -S "$sock" ]; then
-            body=$(curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0 2>/dev/null) || body=""
-            echo "$body" | grep -q '"metadata"' && break
-        fi
-        sleep 1
-    done
-    if echo "$body" | grep -q '"metadata"'; then
-        echo "ISX VSOCK API OK" >> "$VSOCK_RESULT"
-    else
-        echo "ISX VSOCK API FAIL: no Incus response over forwarded socket" >> "$VSOCK_RESULT"
-        return
-    fi
-    curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/storage-pools 2>/dev/null \
-        | grep -q 'storage-pools/cow' && echo "ISX VSOCK STORAGE OK" >> "$VSOCK_RESULT"
-    curl -s --max-time 5 --unix-socket "$sock" http://localhost/1.0/networks 2>/dev/null \
-        | grep -q 'incusbr0' && echo "ISX VSOCK BRIDGE OK" >> "$VSOCK_RESULT"
-}
-
-# Verify the in-guest control agent answers over its dedicated vsock port (the channel
-# isx doctor uses for introspection/recovery), and that its no-reboot forwarder recovery
-# works: ping -> ok, record socat-count, then forwarder-restart and confirm the Incus API
-# is reachable again over the relaunched forwarder and the agent itself survived.
-# $1 = agent socket, $2 = incus vsock socket (to re-probe after recovery).
-probe_agent() {
-    local sock="$1" incus_sock="$2" deadline resp=""
-    deadline=$(( $(date +%s) + 30 ))
-    while [ "$(date +%s)" -lt "$deadline" ]; do
-        if [ -S "$sock" ]; then
-            resp=$(printf 'ping\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || resp=""
-            [ "$resp" = "ok" ] && break
-        fi
-        sleep 1
-    done
-    if [ "$resp" != "ok" ]; then
-        echo "ISX AGENT FAIL: no response from control agent" >> "$VSOCK_RESULT"
-        return
-    fi
-    echo "ISX AGENT OK" >> "$VSOCK_RESULT"
-    local count
-    count=$(printf 'socat-count\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n') || count=""
-    echo "ISX AGENT SOCAT COUNT: $count" >> "$VSOCK_RESULT"
-
-    # Disk-accounting health verb: must resolve the cow pool's btrfs filesystem and answer with
-    # key=value lines. A fresh pool has quotas off (Incus enables them lazily), so "available=0"
-    # is a valid answer too — what's tested is the lookup and the reply shape, not the flag.
-    local qstatus
-    qstatus=$(printf 'btrfs-status cow\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r') || qstatus=""
-    if echo "$qstatus" | grep -Eq '^(enabled|available)=[01]$'; then
-        echo "ISX AGENT BTRFS STATUS OK: $(echo "$qstatus" | tr '\n' ' ')" >> "$VSOCK_RESULT"
-    else
-        echo "ISX AGENT BTRFS STATUS FAIL: '$qstatus'" >> "$VSOCK_RESULT"
-    fi
-
-    # No-reboot recovery: restart the forwarder, then confirm the Incus API answers again
-    # over the relaunched forwarder, and that the agent listener is still up afterwards.
-    local recover
-    recover=$(printf 'forwarder-restart\n' | nc -U -w 8 "$sock" 2>/dev/null | tr -d '\r\n') || recover=""
-    if [ "$recover" = "restarted" ]; then
-        local rdeadline body=""
-        rdeadline=$(( $(date +%s) + 20 ))
-        while [ "$(date +%s)" -lt "$rdeadline" ]; do
-            body=$(curl -s --max-time 5 --unix-socket "$incus_sock" http://localhost/1.0 2>/dev/null) || body=""
-            echo "$body" | grep -q '"metadata"' && break
-            sleep 1
-        done
-        if echo "$body" | grep -q '"metadata"'; then
-            echo "ISX AGENT RECOVER OK" >> "$VSOCK_RESULT"
-        else
-            echo "ISX AGENT RECOVER FAIL: Incus not reachable after forwarder-restart" >> "$VSOCK_RESULT"
-        fi
-        [ "$(printf 'ping\n' | nc -U -w 5 "$sock" 2>/dev/null | tr -d '\r\n')" = "ok" ] \
-            && echo "ISX AGENT SURVIVED RECOVER OK" >> "$VSOCK_RESULT"
-    else
-        echo "ISX AGENT RECOVER FAIL: forwarder-restart not confirmed" >> "$VSOCK_RESULT"
-    fi
-}
 
 boot_vfkit() {
     BACKEND="vfkit"
@@ -187,10 +100,12 @@ boot_vfkit() {
         sleep 0.1
         elapsed=$((elapsed + 1))
     done
-    # Probe the forwarded socket regardless of ISX READY (the daemon is up well
-    # before readiness; the probe polls on its own).
-    probe_vsock "$vsock_sock"
-    probe_agent "$agent_sock" "$vsock_sock"
+    # Probe the forwarded sockets regardless of ISX READY (the daemon is up well
+    # before readiness; the probes poll on their own). Results go to VSOCK_RESULT,
+    # NOT the serial LOGFILE: vfkit streams the boot log into LOGFILE concurrently,
+    # and interleaved appends from this shell were being lost.
+    "$(dirname "$0")/test-tunnel.sh" "$vsock_sock" "$agent_sock" > "$VSOCK_RESULT" 2>&1 \
+        || TUNNEL_RC=$?
     kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -f "$dummy_initrd"
 }
@@ -274,18 +189,6 @@ check() {
     fi
 }
 
-# Assert a marker written by probe_vsock (kept in a separate file from the
-# concurrently-written serial log).
-check_result() {
-    if grep -q "$1" "$VSOCK_RESULT"; then
-        echo "  PASS: $2"
-        PASS=$((PASS + 1))
-    else
-        echo "  FAIL: $2"
-        FAIL=$((FAIL + 1))
-    fi
-}
-
 # Assert a pattern is ABSENT (regression / failure markers must not appear).
 check_absent() {
     if grep -q "$1" "$LOGFILE"; then
@@ -313,18 +216,12 @@ check "ISX READY"                              "appliance reached ISX READY"
 # in-guest smoke test, which CI runs the same way.
 if [ "$BACKEND" = "vfkit" ]; then
     echo
-    echo "-- vsock Incus socket forwarding (isx.vsock_incus=8443) --"
+    echo "-- vsock tunnel (isx.vsock_incus=8443, isx.agent_vsock=1025) --"
     check "vsock forwarder on port 8443"       "in-guest vsock forwarder started"
-    check_result "ISX VSOCK API OK"            "Incus API reachable over forwarded host socket"
-    check_result "ISX VSOCK STORAGE OK"        "cow storage pool visible via API"
-    check_result "ISX VSOCK BRIDGE OK"         "incusbr0 bridge visible via API"
-    echo
-    echo "-- Control agent (isx.agent_vsock=1025) --"
     check "control agent on vsock port 1025"   "in-guest control agent started"
-    check_result "ISX AGENT OK"                "control agent answered ping over vsock"
-    check_result "ISX AGENT BTRFS STATUS OK"   "btrfs-status resolved the cow pool's qgroup status"
-    check_result "ISX AGENT RECOVER OK"        "no-reboot forwarder recovery restored the tunnel"
-    check_result "ISX AGENT SURVIVED RECOVER OK" "control agent still up after forwarder recovery"
+    echo
+    sed 's/^/  /' "$VSOCK_RESULT"
+    [ "$TUNNEL_RC" -eq 0 ] || FAIL=$((FAIL + 1))
 else
     echo
     echo "-- Smoke test (isx.smoke_test=1) --"

@@ -31,10 +31,13 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 # This script tests the macOS isx path, where isx boots the appliance VM and
 # talks to it over a vsock Unix socket. On Linux, isx connects to a *natively
-# installed* Incus over /run/incus/unix.socket and the QEMU boot path exposes no
-# vsock socket — so `isx instances` here would hit the host's native daemon, not
-# the VM, giving a misleading "success." Test the appliance image standalone
-# instead: ./appliance/test-boot.sh (boot checks) or ./appliance/vm.sh shell.
+# installed* Incus over /run/incus/unix.socket and its QEMU boot path wires no
+# vsock (Linux users run native Incus) — so `isx instances` here would hit the
+# host's native daemon, not the VM, giving a misleading "success." Test the
+# appliance image standalone instead: ./appliance/test-boot.sh (boot checks) or
+# ./appliance/vm.sh shell. CI covers the client path to the appliance on Linux
+# by bridging a QEMU vsock device itself (integration-tests in
+# .github/workflows/test-integration.yml).
 if [ "$(uname -s)" != "Darwin" ]; then
     die "test-with-isx.sh is macOS-only. On Linux use ./appliance/test-boot.sh or ./appliance/vm.sh."
 fi
