@@ -833,12 +833,17 @@ What it shows:
   a single request well under a millisecond. The request budgets are still worth having --
   round trips run in sequence and cost far more over the macOS vsock tunnel -- but on Linux
   a few extra requests do not show up as user-visible latency.
-- **Nothing here needs optimizing.** The slowest step, shell preparation, is ~50 ms, below
-  the ~100 ms at which a delay becomes noticeable. The point of the benchmark is to keep it
-  that way.
+- **The host-side preparation is not where users wait.** It takes ~50 ms, below the ~100 ms
+  at which a delay becomes noticeable.
 
-Not yet measured: the macOS appliance, where every request crosses the vsock tunnel. That is
-the one configuration where the shell preparation could plausibly reach a noticeable delay.
+These figures stop short of what users actually wait through, and both commands feel slow in
+practice. The `prepareRunning` figure ends before the terminal attaches: it leaves out the
+terminfo push, the exec session, and the login shell (or tmux, zmx or the default action)
+starting inside the instance. The branch figure is `--no-start`, so it leaves out the start,
+runtime setup, CA and `resolv.conf` repair, the account-identity reconcile (which polls the
+instance until it answers) and the shell attach. Time to a usable prompt for `isx branch` and
+`isx shell` is not measured yet. Neither is the macOS appliance, where every request also
+crosses the vsock tunnel.
 
 ### Build-time initialization must not capture host paths
 
