@@ -1109,23 +1109,32 @@ public class MitmProxy {
     }
 
     // JVM resolver is blocking (Quarkus use-async-dns=false); resolve on a worker thread.
-    // Single map with compute() for atomic state transitions — no window between
-    // removing an inflight entry and inserting the cached result.
+    // compute() only claims the host with an inflight entry, so concurrent callers share one
+    // lookup. The lookup itself starts after compute() returns: one that finishes before its
+    // callback is attached runs that callback synchronously, and the callback's write to
+    // this map from inside compute() throws "Recursive update".
     private Future<String> resolveHost(String host) {
+        var claimed = new java.util.concurrent.atomic.AtomicReference<Promise<String>>();
         var entry = dns.compute(host, (h, existing) -> {
             if (existing != null && (existing.isValid() || existing.isResolving()))
                 return existing;
-            var future = vertx.<String>executeBlocking(() ->
-                    InetAddress.getByName(h).getHostAddress(), false
-            ).andThen(ar -> {
-                if (ar.succeeded()) {
-                    dns.put(h, DnsEntry.resolved(ar.result()));
-                } else {
-                    dns.remove(h);
-                }
-            });
-            return DnsEntry.resolving(future);
+            var promise = Promise.<String>promise();
+            claimed.set(promise);
+            return DnsEntry.resolving(promise.future());
         });
+        var promise = claimed.get();
+        if (promise != null) {
+            vertx.<String>executeBlocking(() -> InetAddress.getByName(host).getHostAddress(), false)
+                    .onComplete(ar -> {
+                        // Update the cache before waking waiters, so none of them re-resolves.
+                        if (ar.succeeded()) {
+                            dns.put(host, DnsEntry.resolved(ar.result()));
+                        } else {
+                            dns.remove(host);
+                        }
+                        promise.handle(ar);
+                    });
+        }
         return entry.isValid()
                 ? Future.succeededFuture(entry.ip())
                 : entry.inflight();
