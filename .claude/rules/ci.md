@@ -15,17 +15,18 @@ paths:
 - **`uber-jar-smoke`**: builds `-Prelease` and runs both uber-jars on a JVM -- what JBang users get. Nothing else in CI executes them, which is how the JBang channel broke unnoticed (issue #701); it also asserts that `proxy start` without an `isx-proxy` sibling exits 78 with install instructions rather than looping
 - **`build-native-cli`**: builds the CLI native image, uploads artifact
 - **`build-native-proxy`**: builds the proxy native image, uploads artifact
-- **`integration-tests`**: boots the appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
+- **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix; each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 
-**No CI job boots the appliance on aarch64 or under vfkit.** This is worth stating precisely, because the runner list makes it look otherwise:
+**No CI job boots the appliance under vfkit.** Both arches boot under QEMU; this is worth stating precisely, because the runner list makes it look like more:
 
 | where | what it does with the appliance |
 |---|---|
-| `test-integration.yml` → `integration-tests` (`ubuntu-latest`) | boots it under `qemu-system-x86` with vsock -- **x86_64 only** |
+| `test-integration.yml` → `integration-tests (x86_64)` (`ubuntu-latest`) | boots it under `qemu-system-x86_64` with KVM and vsock; full tunnel checks, backstop, native `isx` |
+| `test-integration.yml` → `integration-tests (aarch64)` (`ubuntu-24.04-arm`) | boots it under `qemu-system-aarch64` with **TCG** (the arm64 runners expose no `/dev/kvm`) and vsock; smoke test and tunnel checks, but not the backstop (a fixed 3-minute wait that is arch-independent) or native `isx` (CI builds no arm64 CLI). vhost-vsock works under TCG, and the appliance reaches `ISX READY` in about 20s |
 | `build-appliance.yml` → `build_x86_64`, `build_aarch64` (`ubuntu-24.04-arm`) | builds, checks size and embedded version, caches, uploads. Never boots it |
 | `release.yml` native matrix (`macos-14`, `macos-15-intel`) | builds the native CLI/proxy and smoke-tests the *binaries* -- `--version`, `--help`, completions, `templates list`. Never starts a VM, and runs on `v*` tags only |
 
@@ -35,7 +36,7 @@ Each job runs on its own freshly-provisioned runner, so jobs never inherit each 
 
 Findings this surfaced, each fixed or documented where it lives: the forwarder's socat listen backlog (default 5) refused concurrent connects (3/16, 12/32), and one exec opens about five; incusd's local listener stalls every new connection behind one that has sent nothing (see `incus.md`); incusd closes idle keep-alive connections after 30s.
 
-The host half is covered in `unit-tests`: the Java compensations for vfkit's behaviour (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way the tunnel does -- see `incus.md`. Still uncovered: vfkit, aarch64 boots (developer-run `appliance/test-boot.sh` only; #774 Tier 3), and so anything touching the kernel config, the console, or the boot path needs a manual boot on both arches before it ships. A green CI is not evidence that vfkit behaves.
+The host half is covered in `unit-tests`: the Java compensations for vfkit's behaviour (exec completion via `/wait`, the adaptive drain, per-fd keepalive pings, the watchdogs, stale-connection recycling, the fast `tryConnect` probe) run against `LossyIncusServer`, a fake daemon on a Unix socket that misbehaves the way the tunnel does -- see `incus.md`. Still uncovered: vfkit itself, and boots under vfkit's hvc0 console and devices. So anything touching the kernel config, the console, or the boot path still needs a boot on a Mac before it ships (#791). A green CI is not evidence that vfkit behaves.
 
 The appliance cache key hashes `appliance/**` except `appliance/test-*.sh` and `appliance/*.md`, which are host-side and never enter the image, so editing a test script does not force an appliance rebuild. Anything `build.sh` copies into the image (`root/`, `config.sh`, the kernel) must stay inside the hash.
 

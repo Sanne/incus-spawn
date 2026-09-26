@@ -189,9 +189,33 @@ jobs:
   build_appliance:
     uses: ./.github/workflows/build-appliance.yml
 
+  # One job per appliance arch. aarch64 is what Apple Silicon Macs run, and has its own kernel
+  # config and console. GitHub's arm64 runners expose no /dev/kvm, so that leg runs under TCG
+  # emulation; the appliance still reaches ISX READY in seconds. The backstop check (a fixed
+  # three-minute wait, arch-independent) and the native isx step (CI builds no arm64 CLI) run
+  # on x86_64 only.
   integration-tests:
     needs: [unit-tests, build_appliance, build-native-cli]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            qemu: qemu-system-x86_64
+            qemu_pkg: qemu-system-x86
+            machine: pc
+            console: ttyS0
+            full: true
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            qemu: qemu-system-aarch64
+            qemu_pkg: qemu-system-arm
+            machine: virt
+            console: ttyAMA0
+            full: false
+    name: integration-tests (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -202,14 +226,14 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: appliance/build/
-          key: ${{ needs.build_appliance.outputs.cache_key_x86_64 }}
+          key: ${{ matrix.arch == 'aarch64' && needs.build_appliance.outputs.cache_key_aarch64 || needs.build_appliance.outputs.cache_key_x86_64 }}
           fail-on-cache-miss: false
 
       - name: Download appliance artifact (fallback)
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v6
         with:
-          name: appliance-x86_64
+          name: appliance-${{ matrix.arch }}
           path: appliance/build/
 
       - name: Create disk image from rootfs tarball
@@ -226,28 +250,26 @@ jobs:
           sudo losetup -d "$LOOP"
           ls -lh appliance/build/
 
-      - name: Enable KVM
+      # KVM when the runner has it (x86_64); TCG emulation otherwise (the arm64 runners).
+      - name: Choose acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Check KVM availability
-        id: kvm
-        run: |
+          sudo udevadm trigger --name-match=kvm || true
           if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "ACCEL=-enable-kvm -cpu host" >> "$GITHUB_ENV"
+            echo "BOOT_DEADLINE=120" >> "$GITHUB_ENV"
             echo "KVM is available"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::KVM not available — skipping VM-based tests"
+            echo "ACCEL=-cpu max" >> "$GITHUB_ENV"
+            echo "BOOT_DEADLINE=600" >> "$GITHUB_ENV"
+            echo "No KVM: booting under TCG emulation"
           fi
 
       - name: Install QEMU
-        if: steps.kvm.outputs.available == 'true'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
+          sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.qemu_pkg }} socat
           # vsock for the guest: the same transport vfkit gives the appliance on macOS.
           sudo modprobe vhost_vsock
           sudo chmod 666 /dev/vhost-vsock
@@ -258,29 +280,28 @@ jobs:
       #   Unix socket -> socat VSOCK-CONNECT -> in-guest socat forwarder -> Incus socket
       # This proves everything either side of vfkit, not vfkit itself (#774).
       - name: Boot appliance VM
-        if: steps.kvm.outputs.available == 'true'
         run: |
-          qemu-system-x86_64 \
-            -machine pc -enable-kvm -cpu host \
-            -m 2G -nographic -no-reboot -nodefaults -serial stdio \
+          ${{ matrix.qemu }} \
+            -machine ${{ matrix.machine }} $ACCEL \
+            -m 2G -smp 2 -nographic -no-reboot -nodefaults -serial stdio \
             -kernel appliance/build/vmlinuz \
             -drive file=appliance/build/disk.img,format=raw,if=virtio \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
             -device vhost-vsock-pci,guest-cid=3 \
-            -append "root=/dev/vda rw console=ttyS0 mitigations=off isx.smoke_test=1 isx.vsock_incus=8443 isx.agent_vsock=1025" \
+            -append "root=/dev/vda rw console=${{ matrix.console }} mitigations=off isx.smoke_test=1 isx.vsock_incus=8443 isx.agent_vsock=1025" \
             < /dev/null > vm-console.log 2>&1 &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
 
-          deadline=$(( $(date +%s) + 120 ))
+          start=$(date +%s)
           until grep -q 'ISX READY' vm-console.log; do
-            if [ "$(date +%s)" -ge "$deadline" ] || ! kill -0 $! 2>/dev/null; then
+            if [ $(( $(date +%s) - start )) -ge "$BOOT_DEADLINE" ] || ! kill -0 $! 2>/dev/null; then
               echo "::error::VM did not reach ISX READY"
               tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
               exit 1
             fi
             sleep 1
           done
-          echo "VM reached ISX READY"
+          echo "VM reached ISX READY after $(( $(date +%s) - start ))s"
 
           if grep -q 'SMOKE TEST PASSED' vm-console.log; then
             echo "Incus smoke test passed"
@@ -289,7 +310,8 @@ jobs:
             grep 'SMOKE TEST' vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
             exit 1
           else
-            echo "::warning::Smoke test did not run (incus-spawn-vm-init may have failed)"
+            echo "::error::Smoke test did not run (incus-spawn-vm-init may have failed)"
+            exit 1
           fi
 
       # Bridge onto the paths isx itself looks for (Environment.vmVsockSocket/vmAgentSocket).
@@ -297,7 +319,6 @@ jobs:
       # through the tunnel. backlog=128 keeps the bridge's own accept queue (socat defaults
       # to 5) out of the concurrency checks, which are about the guest's listeners.
       - name: Bridge the tunnel sockets
-        if: steps.kvm.outputs.available == 'true'
         run: |
           STATE="$HOME/.local/state/incus-spawn"
           mkdir -p "$STATE"
@@ -311,13 +332,13 @@ jobs:
           exit 1
 
       - name: Test the tunnel (forwarder, agent verbs, backstop, recovery)
-        if: steps.kvm.outputs.available == 'true'
         run: |
           STATE="$HOME/.local/state/incus-spawn"
-          TUNNEL_BACKSTOP=1 appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock"
+          TUNNEL_BACKSTOP=${{ matrix.full && '1' || '0' }} \
+            appliance/test-tunnel.sh "$STATE/vm.incus.sock" "$STATE/vm.agent.sock"
 
       - name: Download CLI native binary
-        if: steps.kvm.outputs.available == 'true'
+        if: matrix.full
         uses: actions/download-artifact@v6
         with:
           name: isx-native-cli
@@ -326,7 +347,7 @@ jobs:
       # The real client path over the tunnel: IncusApi.tryConnect finds no native socket and
       # falls through to the vsock socket, exactly as on macOS.
       - name: isx through the tunnel
-        if: steps.kvm.outputs.available == 'true'
+        if: matrix.full
         run: |
           install -m 755 native-cli/incus-spawn-*-runner isx
           ./isx instances
@@ -338,14 +359,14 @@ jobs:
           grep -q '✓ Storage pool cow' doctor.out
 
       - name: Stop VM
-        if: always() && steps.kvm.outputs.available == 'true'
+        if: always()
         run: kill "$QEMU_PID" 2>/dev/null || true
 
       - name: Upload console log
-        if: always() && steps.kvm.outputs.available == 'true'
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: vm-console-log
+          name: vm-console-log-${{ matrix.arch }}
           path: vm-console.log
           retention-days: 7
 
