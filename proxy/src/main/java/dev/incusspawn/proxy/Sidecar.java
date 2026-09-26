@@ -1,12 +1,14 @@
 package dev.incusspawn.proxy;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -22,6 +24,9 @@ enum Sidecar {
     ASC(".asc", null, 0);
 
     private static final int BUFFER_SIZE = 64 * 1024;
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    /** Every type, without {@code values()} copying the array per call. */
+    static final List<Sidecar> ALL = List.of(values());
 
     final String extension;
     private final String algorithm;
@@ -35,7 +40,7 @@ enum Sidecar {
 
     /** The sidecar type a request path names, or null for anything else (an artifact). */
     static Sidecar of(String path) {
-        for (var s : values()) {
+        for (var s : ALL) {
             if (path.endsWith(s.extension)) return s;
         }
         return null;
@@ -64,7 +69,7 @@ enum Sidecar {
      */
     String hex(byte[] body) {
         if (!isChecksum() || body == null) return null;
-        var tokens = new String(body, java.nio.charset.StandardCharsets.US_ASCII).trim().split("\\s+");
+        var tokens = WHITESPACE.split(new String(body, StandardCharsets.US_ASCII).trim());
         for (var token : new String[] {tokens[0], tokens[tokens.length - 1]}) {
             var hex = token.toLowerCase(Locale.ROOT);
             if (hexPattern.matcher(hex).matches()) return hex;

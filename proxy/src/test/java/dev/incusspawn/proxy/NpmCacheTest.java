@@ -174,31 +174,34 @@ class NpmCacheTest {
         assertNull(MitmProxy.parseNpmTarballPath("express/-/e.tgz"));
     }
 
-    // --- digest verification ---
+    // --- digest verification (OCI blobs, npm tarballs) ---
 
-    @Test
-    void verifyDigestSha256(@TempDir Path tmp) throws Exception {
-        var file = tmp.resolve("test.bin");
-        Files.writeString(file, "hello");
-        assertTrue(MitmProxy.verifyDigest(file,
-                "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"));
-        assertFalse(MitmProxy.verifyDigest(file, "sha256:0000000000000000000000000000000000000000000000000000000000000000"));
+    /** Whether a download of "hello" is committed under the given digest, as fetchCacheAndServe would. */
+    static boolean commits(Path tmp, String digest) throws Exception {
+        var download = tmp.resolve("download");
+        Files.writeString(download, "hello");
+        var verification = MitmProxy.Verification.ofDigest(digest);
+        var expected = verification.expected().apply(null).result();
+        return expected != null && VerifiedArtifactStore.verifyAndCommit(
+                download, tmp.resolve("blob"), verification.checksum(), expected, false);
     }
 
     @Test
-    void verifyDigestSha1(@TempDir Path tmp) throws Exception {
-        var file = tmp.resolve("test.bin");
-        Files.writeString(file, "hello");
-        assertTrue(MitmProxy.verifyDigest(file,
-                "sha1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"));
-        assertFalse(MitmProxy.verifyDigest(file, "sha1:0000000000000000000000000000000000000000"));
+    void digestSha256(@TempDir Path tmp) throws Exception {
+        assertTrue(commits(tmp, "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"));
+        assertFalse(commits(tmp, "sha256:0000000000000000000000000000000000000000000000000000000000000000"));
     }
 
     @Test
-    void verifyDigestRejectsUnknownAlgorithm(@TempDir Path tmp) throws Exception {
-        var file = tmp.resolve("test.bin");
-        Files.writeString(file, "hello");
-        assertFalse(MitmProxy.verifyDigest(file, "md5:abcd"));
+    void digestSha1(@TempDir Path tmp) throws Exception {
+        assertTrue(commits(tmp, "sha1:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"));
+        assertFalse(commits(tmp, "sha1:0000000000000000000000000000000000000000"));
+    }
+
+    @Test
+    void digestWithUnknownAlgorithmIsNeverCommitted(@TempDir Path tmp) throws Exception {
+        assertFalse(commits(tmp, "md5:5d41402abc4b2a76b9719d911017c592"));
+        assertFalse(Files.exists(tmp.resolve("blob")));
     }
 
     // --- readFileOrNull ---

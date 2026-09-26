@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
+import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
 import dev.incusspawn.incus.IncusClient;
 
@@ -35,7 +36,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
-import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -47,6 +47,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
@@ -65,8 +67,6 @@ import java.util.zip.GZIPInputStream;
  * zero-copy file serving.
  */
 public class MitmProxy {
-
-    private static final int BUFFER_SIZE = 64 * 1024;
 
     private static final Set<String> ANTHROPIC_DOMAINS = ProxyConfig.ANTHROPIC_DOMAINS;
     private static final Set<String> REGISTRY_DOMAINS = ProxyConfig.REGISTRY_DOMAINS;
@@ -808,9 +808,9 @@ public class MitmProxy {
             if (REGISTRY_DOMAINS.contains(domain)) {
                 handleRegistryRequest(clientReq, domain);
             } else if (MAVEN_DOMAINS.contains(domain)) {
-                handleMavenRequest(clientReq, domain);
+                handleArtifactRequest(clientReq, domain, path -> mavenTarget(domain, path));
             } else if (GRADLE_DOMAINS.contains(domain)) {
-                handleGradleRequest(clientReq, domain);
+                handleArtifactRequest(clientReq, domain, MitmProxy::gradleTarget);
             } else if (NPM_DOMAINS.contains(domain)) {
                 handleNpmRequest(clientReq, domain);
             } else if (isInterceptedDomain(domain)) {
@@ -1121,15 +1121,28 @@ public class MitmProxy {
     }
 
     private Future<HttpClientRequest> requestWithAsyncDns(HttpClient client, RequestOptions options) {
-        var override = upstreamOverrides.get(options.getHost());
+        var host = options.getHost();
+        var override = upstreamOverrides.get(host);
+        Future<HttpClientRequest> connected;
         if (override != null) {
             // Host header and SNI still name the real host; only the connection moves
             options.setServer(override);
-            return client.request(options);
+            connected = client.request(options);
+        } else {
+            connected = resolveHost(host).compose(ip -> {
+                options.setServer(SocketAddress.inetSocketAddress(options.getPort(), ip));
+                return client.request(options);
+            });
         }
-        return resolveHost(options.getHost()).compose(ip -> {
-            options.setServer(SocketAddress.inetSocketAddress(options.getPort(), ip));
-            return client.request(options);
+        if (Revalidation.forDomain(host) == null) return connected;
+        // Every connection to a caching domain, whatever its purpose, keeps its backoff current
+        return connected.andThen(ar -> {
+            if (ar.succeeded()) {
+                unreachableSince.remove(host);
+            } else if (unreachableSince.put(host, System.nanoTime()) == null) {
+                ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
+                        "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
+            }
         });
     }
 
@@ -1339,8 +1352,6 @@ public class MitmProxy {
 
             sendWithBody(clientReq, upReq).onSuccess(upResp -> {
                 var statusCode = upResp.statusCode();
-                // An answer proves the domain reachable again
-                unreachableSince.remove(domain);
 
                 if (statusCode == 200) {
                     teeStreamToCache(clientReq.response(), upResp, cacheFile, ref, verification);
@@ -1390,10 +1401,9 @@ public class MitmProxy {
             return;
         }
 
-        URI redirectUri;
-        try {
-            redirectUri = new URI(location);
-        } catch (Exception e) {
+        var from = upResp.request();
+        var redirectUri = redirectTarget(from.getHost(), from.getPort(), from.getURI(), location);
+        if (redirectUri == null) {
             System.err.println("Invalid redirect Location for " + ref + ": " + location);
             sendError(clientReq.response(), 502, "Invalid redirect Location");
             return;
@@ -1401,10 +1411,7 @@ public class MitmProxy {
 
         var redirectHost = redirectUri.getHost();
         var redirectPort = redirectUri.getPort() > 0 ? redirectUri.getPort() : 443;
-        var redirectPath = redirectUri.getRawPath();
-        if (redirectUri.getRawQuery() != null) {
-            redirectPath += "?" + redirectUri.getRawQuery();
-        }
+        var redirectPath = rawPathAndQuery(redirectUri);
 
         var redirectOptions = new RequestOptions()
                 .setMethod(HttpMethod.GET)
@@ -1451,16 +1458,7 @@ public class MitmProxy {
         if (clHeader != null) {
             clientResp.putHeader("Content-Length", clHeader);
         }
-        if (verification.contentDigest() != null) {
-            clientResp.putHeader("Docker-Content-Digest", verification.contentDigest());
-        }
-        if (verification.storeSidecar()) {
-            // Pass on the checksums upstream sent with these bytes (Maven smart checksums)
-            for (var header : new String[] {"X-Checksum-SHA1", "X-Checksum-MD5"}) {
-                var value = upResp.getHeader(header);
-                if (value != null) clientResp.putHeader(header, value);
-            }
-        }
+        verification.responseHeaders().accept(clientResp, upResp);
         if (clHeader == null) {
             clientResp.setChunked(true);
         }
@@ -1471,7 +1469,7 @@ public class MitmProxy {
         vertx.executeBlocking(() -> {
             Files.createDirectories(cacheFile.getParent());
             return Files.createTempFile(cacheFile.getParent(), "dl-", ".tmp");
-        }).onSuccess(tempFile -> {
+        }, false).onSuccess(tempFile -> {
             vertx.fileSystem().open(tempFile.toString(),
                     new io.vertx.core.file.OpenOptions().setCreate(true).setWrite(true)
             ).onSuccess(asyncFile -> {
@@ -1499,7 +1497,7 @@ public class MitmProxy {
                             finalizeCacheFile(tempFile, cacheFile, ref, isGzip,
                                     verification, ar.succeeded() ? ar.result() : null);
                             return null;
-                        }));
+                        }, false));
                     });
                 });
 
@@ -1830,7 +1828,12 @@ public class MitmProxy {
 
         /** No connection, or upstream failing (5xx): without the cache the client would get an error. */
         boolean unreachable() {
-            return status == -1 || status >= 500;
+            return this == UNREACHABLE || status >= 500;
+        }
+
+        /** The status to answer with when nothing can be served. */
+        int errorStatus() {
+            return status >= 500 ? status : 502;
         }
     }
 
@@ -1838,12 +1841,12 @@ public class MitmProxy {
      * What a download must match before it is committed to the cache: a checksum in
      * {@code checksum}'s algorithm, found once the response is in hand. With
      * {@code storeSidecar} the checksum is committed beside the artifact as that
-     * sidecar (Maven/Gradle). {@code contentDigest}, when set, is echoed to the
-     * client as {@code Docker-Content-Digest}.
+     * sidecar. {@code responseHeaders} adds what this kind of cache tells the client.
      */
     record Verification(Sidecar checksum,
-                        java.util.function.Function<HttpClientResponse, Future<byte[]>> expected,
-                        boolean storeSidecar, String contentDigest) {
+                        Function<HttpClientResponse, Future<byte[]>> expected,
+                        boolean storeSidecar,
+                        BiConsumer<HttpServerResponse, HttpClientResponse> responseHeaders) {
 
         /** A content digest known up front, {@code sha256:<hex>} or {@code sha1:<hex>} (OCI blobs, npm tarballs). */
         static Verification ofDigest(String digest) {
@@ -1851,7 +1854,19 @@ public class MitmProxy {
             // An algorithm we cannot check is never cached
             byte[] expected = checksum == null ? null : digestHex(digest).getBytes(StandardCharsets.US_ASCII);
             return new Verification(checksum == null ? Sidecar.SHA256 : checksum,
-                    resp -> Future.succeededFuture(expected), false, digest);
+                    resp -> Future.succeededFuture(expected), false,
+                    (clientResp, upResp) -> clientResp.putHeader("Docker-Content-Digest", digest));
+        }
+
+        /** A Maven/Gradle artifact, committed with the checksum it was verified against. */
+        static Verification ofArtifact(Sidecar checksum, Function<HttpClientResponse, Future<byte[]>> expected) {
+            return new Verification(checksum, expected, true, (clientResp, upResp) -> {
+                // Pass on the checksums upstream sent with these bytes (Maven smart checksums)
+                for (var header : new String[] {"X-Checksum-SHA1", "X-Checksum-MD5"}) {
+                    var value = upResp.getHeader(header);
+                    if (value != null) clientResp.putHeader(header, value);
+                }
+            });
         }
 
         /** The checksum type a {@code sha256:}/{@code sha1:} digest names, or null for any other. */
@@ -1864,71 +1879,45 @@ public class MitmProxy {
             };
         }
 
-        private static String digestHex(String digest) {
+        static String digestHex(String digest) {
             return digest.substring(digest.indexOf(':') + 1);
         }
     }
 
+    /** Where a request's artifact is cached, the checksum describing it, and any copy in the host's ~/.m2. */
+    record ArtifactTarget(Path artifact, Sidecar checksum, Path hostCopy) {}
+
     private static final int MAX_SIDECAR_BYTES = 64 * 1024;
     static final long UNREACHABLE_BACKOFF_SECONDS = 30;
 
-    // Per domain, when a connection to it last failed. While recent, a request that
-    // has a cached copy to fall back on uses it at once instead of each waiting out a
-    // connect timeout. Any answer from the domain ends it.
+    // Per caching domain, when a connection to it last failed (requestWithAsyncDns
+    // keeps this). While recent, a request with a cached copy to fall back on uses it
+    // at once instead of each waiting out a connect timeout.
     private final Map<String, Long> unreachableSince = new ConcurrentHashMap<>();
 
     /**
-     * Handle a request to a Maven-layout repository. GET requests for artifacts
-     * and their sidecars on a domain vetted for caching (see {@link Revalidation}
-     * for why only those) go through the verified cache; metadata, SNAPSHOTs
-     * ({@link #isMavenCacheable}) and everything else are relayed. So is a request
-     * with a query string: the cache is keyed by path, and a query may select
-     * something else.
+     * Handle a GET for an artifact or one of its sidecars on a domain vetted for
+     * caching (see {@link Revalidation} for why only those): {@code targetOf} maps
+     * the artifact's path to where it is cached, or null for a path that must not
+     * be. Everything else is relayed, including a request with a query string: the
+     * cache is keyed by path, and a query may select something else.
      */
-    private void handleMavenRequest(HttpServerRequest clientReq, String domain) {
-        var path = clientReq.path();
-        var revalidation = Revalidation.forDomain(domain);
-
-        if (clientReq.method() == HttpMethod.GET && path != null && clientReq.query() == null
-                && revalidation != null && isMavenCacheable(path)) {
-            var sidecar = Sidecar.of(path);
-            var artifactPath = sidecar == null ? path : sidecar.artifactPath(path);
-            var artifact = mavenCacheFile(domain, artifactPath);
-            // A sidecar of a sidecar (foo.jar.asc.sha1) has no artifact to cache
-            if (artifact != null && Sidecar.of(artifactPath) == null) {
-                if (sidecar != null) {
-                    serveSidecar(clientReq, domain, revalidation, sidecar, artifact);
-                } else {
-                    serveArtifact(clientReq, domain, revalidation, Sidecar.SHA1, artifact,
-                            resolveM2Path(domain, path));
-                }
-                return;
-            }
-        }
-
-        relayRequest(clientReq, domain);
-    }
-
-    /**
-     * Handle a request to services.gradle.org. Distribution archives
-     * (/distributions/gradle-X.Y.Z-bin.zip, -all.zip) and their sidecars go through
-     * the verified cache, checked against the {@code .sha256} Gradle publishes.
-     * All other paths are relayed since they may be mutable.
-     */
-    private void handleGradleRequest(HttpServerRequest clientReq, String domain) {
+    private void handleArtifactRequest(HttpServerRequest clientReq, String domain,
+                                       Function<String, ArtifactTarget> targetOf) {
         var path = clientReq.path();
         var revalidation = Revalidation.forDomain(domain);
 
         if (clientReq.method() == HttpMethod.GET && path != null && clientReq.query() == null
                 && revalidation != null) {
             var sidecar = Sidecar.of(path);
-            var matcher = GRADLE_DIST_PATTERN.matcher(sidecar == null ? path : sidecar.artifactPath(path));
-            if (matcher.matches()) {
-                var artifact = gradleCacheDir().resolve(matcher.group(1));
+            var artifactPath = sidecar == null ? path : sidecar.artifactPath(path);
+            // A sidecar of a sidecar (foo.jar.asc.sha1) has no artifact to cache
+            var target = Sidecar.of(artifactPath) == null ? targetOf.apply(artifactPath) : null;
+            if (target != null && revalidation.fits(target.checksum())) {
                 if (sidecar != null) {
-                    serveSidecar(clientReq, domain, revalidation, sidecar, artifact);
+                    serveSidecar(clientReq, domain, revalidation, sidecar, target.artifact());
                 } else {
-                    serveArtifact(clientReq, domain, revalidation, Sidecar.SHA256, artifact, null);
+                    serveArtifact(clientReq, domain, revalidation, target);
                 }
                 return;
             }
@@ -1937,31 +1926,45 @@ public class MitmProxy {
         relayRequest(clientReq, domain);
     }
 
+    /** A Maven-layout repository: metadata and SNAPSHOTs are not cached ({@link #isMavenCacheable}). */
+    private static ArtifactTarget mavenTarget(String domain, String path) {
+        if (!isMavenCacheable(path)) return null;
+        var artifact = mavenCacheFile(domain, path);
+        return artifact == null ? null : new ArtifactTarget(artifact, Sidecar.SHA1, resolveM2Path(domain, path));
+    }
+
+    /** services.gradle.org: only distribution archives, checked against the {@code .sha256} Gradle publishes. */
+    private static ArtifactTarget gradleTarget(String path) {
+        var matcher = GRADLE_DIST_PATTERN.matcher(path);
+        return matcher.matches()
+                ? new ArtifactTarget(gradleCacheDir().resolve(matcher.group(1)), Sidecar.SHA256, null)
+                : null;
+    }
+
     private record LocalCopies(long cachedSize, boolean hostCopy) {}
 
-    /**
-     * Serve an artifact from the verified cache once upstream confirms it, or
-     * download it, verify it and store it.
-     *
-     * @param checksum the sidecar type that describes the artifact
-     * @param hostCopy where the host's own repository may already hold it, or null
-     */
+    /** Serve an artifact from the verified cache once upstream confirms it, or download, verify and store it. */
     private void serveArtifact(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                               Sidecar checksum, Path artifact, Path hostCopy) {
+                               ArtifactTarget target) {
         var ref = domain + clientReq.path();
 
         vertx.executeBlocking(() -> new LocalCopies(
-                Files.isRegularFile(artifact) ? Files.size(artifact) : -1L,
-                hostCopy != null && Files.isRegularFile(hostCopy))
+                Files.isRegularFile(target.artifact()) ? Files.size(target.artifact()) : -1L,
+                target.hostCopy() != null && Files.isRegularFile(target.hostCopy())), false
         ).onSuccess(local -> {
             if (local.cachedSize() >= 0) {
-                revalidateAndServe(clientReq, domain, revalidation, checksum, artifact, ref, local.cachedSize());
+                revalidateAndServe(clientReq, domain, revalidation, target, ref, local.cachedSize());
             } else if (local.hostCopy()) {
+                if (inBackoff(domain)) {
+                    // The host's copy cannot be checked, and downloading would only wait out the same failure
+                    sendError(clientReq.response(), 502, "Upstream unreachable");
+                    return;
+                }
                 // The checksum is needed before deciding whether to download at all
-                probe(domain, clientReq.path(), revalidation, checksum, true).onSuccess(answer ->
-                        importOrDownload(clientReq, domain, revalidation, checksum, artifact, hostCopy, ref, answer));
+                probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
+                        importOrDownload(clientReq, domain, revalidation, target, ref, answer));
             } else {
-                download(clientReq, domain, revalidation, checksum, artifact, ref);
+                download(clientReq, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             System.err.println("Artifact cache check error for " + ref + ": " + err.getMessage());
@@ -1970,33 +1973,35 @@ public class MitmProxy {
     }
 
     /** Ask upstream for the artifact's current checksum, the way the domain allows. */
-    private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation,
-                                        Sidecar checksum, boolean useBackoff) {
-        return revalidation == Revalidation.HEAD_CHECKSUM
-                ? fetchChecksumHeader(domain, path, useBackoff)
-                : fetchSidecar(domain, path + checksum.extension, useBackoff);
+    private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation, Sidecar checksum) {
+        return revalidation.header != null
+                ? fetchChecksumHeader(domain, path, revalidation)
+                : fetchSidecar(domain, path + checksum.extension);
     }
 
     private void revalidateAndServe(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                    Sidecar checksum, Path artifact, String ref, long size) {
-        probe(domain, clientReq.path(), revalidation, checksum, true).onSuccess(answer -> {
+                                    ArtifactTarget target, String ref, long size) {
+        var probed = inBackoff(domain)
+                ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
+                : probe(domain, clientReq.path(), revalidation, target.checksum());
+        probed.onSuccess(answer -> {
             if (answer.unreachable()) {
                 System.out.println("Artifact cache hit, upstream unreachable so not revalidated: " +
                         ref + " (" + formatSize(size) + ")");
-                serveCachedFile(clientReq.response(), artifact, null);
+                serveCachedFile(clientReq.response(), target.artifact(), null);
                 return;
             }
             vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(
-                    artifact, checksum, answer.status(), answer.body(), true)
+                    target.artifact(), target.checksum(), answer.status(), answer.body(), true), false
             ).onSuccess(outcome -> {
                 if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
                     System.out.println("Artifact cache hit, revalidated: " + ref +
                             " (" + formatSize(size) + ")");
-                    serveConfirmed(clientReq, artifact, revalidation, answer);
+                    serveConfirmed(clientReq, target.artifact(), revalidation, answer);
                 } else {
                     // Changed, withdrawn, or not confirmed (e.g. 403/429): let upstream answer
-                    logEviction(outcome, ref, checksum, answer);
-                    download(clientReq, domain, revalidation, checksum, artifact, ref);
+                    logEviction(outcome, ref, target.checksum(), answer);
+                    download(clientReq, domain, revalidation, target, ref);
                 }
             }).onFailure(err -> {
                 System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
@@ -2006,128 +2011,132 @@ public class MitmProxy {
     }
 
     /**
-     * Serve a copy upstream has just confirmed. Where upstream itself sends
-     * {@code X-Checksum-SHA1}, the fresh value is passed on, so the client checks
-     * these bytes against upstream (and Maven skips its own {@code .sha1} request).
+     * Serve a copy upstream has just confirmed. Where upstream itself sends a
+     * checksum header, the fresh value is passed on, so the client checks these
+     * bytes against upstream (and Maven skips its own {@code .sha1} request).
      * Never send one made up from the store: that would turn the client's check
      * against upstream into a check against our own cache.
      */
     private void serveConfirmed(HttpServerRequest clientReq, Path artifact,
                                 Revalidation revalidation, SidecarAnswer answer) {
-        if (revalidation == Revalidation.HEAD_CHECKSUM) {
-            var hex = Sidecar.SHA1.hex(answer.body());
-            if (hex != null) clientReq.response().putHeader(CHECKSUM_HEADER, hex);
+        if (revalidation.header != null) {
+            var hex = revalidation.headerChecksum.hex(answer.body());
+            if (hex != null) clientReq.response().putHeader(revalidation.header, hex);
         }
         serveCachedFile(clientReq.response(), artifact, null);
     }
 
     private void importOrDownload(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                  Sidecar checksum, Path artifact, Path hostCopy, String ref,
-                                  SidecarAnswer answer) {
-        if (answer.status() == SidecarAnswer.UNREACHABLE.status()) {
+                                  ArtifactTarget target, String ref, SidecarAnswer answer) {
+        if (answer == SidecarAnswer.UNREACHABLE) {
             // Downloading would only wait out the same failed connection
             sendError(clientReq.response(), 502, "Upstream unreachable");
             return;
         }
+        var checksum = target.checksum();
         if (answer.status() != 200 || checksum.hex(answer.body()) == null) {
-            download(clientReq, domain, revalidation, checksum, artifact, ref);
+            download(clientReq, domain, revalidation, target, ref);
             return;
         }
-        vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(hostCopy, artifact, checksum, answer.body())
+        vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(
+                target.hostCopy(), target.artifact(), checksum, answer.body()), false
         ).onSuccess(imported -> {
             if (imported) {
                 System.out.println("Maven .m2 hit: " + ref + " (" + checksum.extension + " verified)");
-                serveConfirmed(clientReq, artifact, revalidation, answer);
+                serveConfirmed(clientReq, target.artifact(), revalidation, answer);
             } else {
                 System.out.println("Maven .m2 copy differs from upstream: " + ref);
-                download(clientReq, domain, revalidation, checksum, artifact, ref);
+                download(clientReq, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             System.err.println("Maven .m2 import error for " + ref + ": " + err.getMessage());
-            download(clientReq, domain, revalidation, checksum, artifact, ref);
+            download(clientReq, domain, revalidation, target, ref);
         });
     }
 
     /**
      * Download the artifact, streaming it to the client, and commit it only if it
-     * matches upstream's checksum: the download's own {@code X-Checksum-SHA1} where
-     * the domain sends one, else the sidecar fetched once the download is done.
+     * matches upstream's checksum: the download's own checksum header where the
+     * domain sends one, else the sidecar fetched once the download is done.
      * Without either it is served but not cached.
      */
     private void download(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                          Sidecar checksum, Path artifact, String ref) {
-        var path = clientReq.path();
-        fetchCacheAndServe(clientReq, domain, artifact, ref, new Verification(checksum, upResp -> {
-            if (revalidation == Revalidation.HEAD_CHECKSUM) {
-                var hex = checksumHeader(upResp);
-                if (hex != null) return Future.succeededFuture(hex.getBytes(StandardCharsets.US_ASCII));
-            }
-            // The download just reached upstream, so a backoff must not cost us its checksum
-            return fetchSidecar(domain, path + checksum.extension, false)
-                    .map(answer -> answer.status() == 200 ? answer.body() : null);
-        }, true, null));
-    }
-
-    static final String CHECKSUM_HEADER = "X-Checksum-SHA1";
-
-    private static String checksumHeader(HttpClientResponse resp) {
-        var value = resp.getHeader(CHECKSUM_HEADER);
-        return value == null ? null : Sidecar.SHA1.hex(value.getBytes(StandardCharsets.US_ASCII));
+                          ArtifactTarget target, String ref) {
+        var sidecarPath = clientReq.path() + target.checksum().extension;
+        fetchCacheAndServe(clientReq, domain, target.artifact(), ref,
+                Verification.ofArtifact(target.checksum(), upResp -> {
+                    var hex = revalidation.checksumFrom(upResp);
+                    if (hex != null) return Future.succeededFuture(hex.getBytes(StandardCharsets.US_ASCII));
+                    return fetchSidecar(domain, sidecarPath).map(answer -> answer.status() == 200 ? answer.body() : null);
+                }));
     }
 
     /**
      * Serve a sidecar as upstream has it now, and use it to check the cached
      * artifact (see {@link VerifiedArtifactStore#reconcile}). The stored copy is
-     * served only when upstream cannot be reached.
-     * <p>
-     * On a {@link Revalidation#HEAD_CHECKSUM} domain the sidecar is a separate file
-     * that can disagree with the server-computed header (a malformed or wrong
-     * {@code .sha1} on an old artifact), so it never evicts on its own: a
-     * disagreement is settled by a HEAD, which is what hits are confirmed with anyway.
+     * served only when upstream cannot be reached. Where a server-computed header
+     * outranks sidecars ({@link Revalidation#sidecarsAuthoritative}), a
+     * disagreement is settled by that header instead of evicting.
      */
     private void serveSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
                               Sidecar sidecar, Path artifact) {
+        if (!inBackoff(domain)) {
+            fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact);
+            return;
+        }
+        // In the backoff, answer from the stored copy; without one, upstream may still answer
+        vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
+                .onComplete(ar -> {
+                    if (ar.succeeded() && ar.result() != null) {
+                        serveStoredSidecar(clientReq, ar.result());
+                    } else {
+                        fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact);
+                    }
+                });
+    }
+
+    private void fetchAndServeSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+                                      Sidecar sidecar, Path artifact) {
         var path = clientReq.path();
-        var ref = domain + path;
-        var artifactPath = sidecar.artifactPath(path);
-        var artifactRef = domain + artifactPath;
         var clientResp = clientReq.response();
 
-        vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar)).onComplete(storedAr -> {
-            var stored = storedAr.succeeded() ? storedAr.result() : null;
-            // Without a stored copy to fall back on, a backoff would only turn a
-            // request upstream might answer into an error
-            fetchSidecar(domain, path, stored != null).onSuccess(answer -> {
-                if (answer.unreachable()) {
-                    if (stored != null) {
-                        System.out.println("Upstream unreachable, serving stored " + ref);
-                        sendSidecar(clientResp, 200, stored);
-                    } else {
-                        sendError(clientResp, answer.status() > 0 ? answer.status() : 502, "Upstream unreachable");
-                    }
-                    return;
+        fetchSidecar(domain, path).onSuccess(answer -> {
+            if (answer.unreachable()) {
+                vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
+                        .onComplete(ar -> {
+                            if (ar.succeeded() && ar.result() != null) {
+                                serveStoredSidecar(clientReq, ar.result());
+                            } else {
+                                sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
+                            }
+                        });
+                return;
+            }
+            if (answer == SidecarAnswer.UNUSABLE) {
+                sendError(clientResp, 502, "Unusable upstream answer");
+                return;
+            }
+            var artifactPath = sidecar.artifactPath(path);
+            // Reconcile before answering, so the client's next request sees any eviction
+            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(artifact, sidecar,
+                    answer.status(), answer.body(), revalidation.sidecarsAuthoritative()), false
+            ).compose(outcome -> outcome == VerifiedArtifactStore.Outcome.DISAGREES
+                    ? settleWithHeader(domain, artifactPath, artifact, revalidation, sidecar, answer)
+                    : Future.succeededFuture(outcome)
+            ).onComplete(ar -> {
+                if (ar.failed()) {
+                    System.err.println("Sidecar check error for " + domain + path + ": " + ar.cause().getMessage());
+                } else {
+                    logEviction(ar.result(), domain + artifactPath, sidecar, answer);
                 }
-                if (answer == SidecarAnswer.UNUSABLE) {
-                    sendError(clientResp, 502, "Unusable upstream answer");
-                    return;
-                }
-                var mayEvict = revalidation != Revalidation.HEAD_CHECKSUM;
-                // Reconcile before answering, so the client's next request sees any eviction
-                vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(
-                        artifact, sidecar, answer.status(), answer.body(), mayEvict)
-                ).compose(outcome -> outcome == VerifiedArtifactStore.Outcome.DISAGREES
-                        ? settleWithHeader(domain, artifactPath, artifact, sidecar, answer)
-                        : Future.succeededFuture(outcome)
-                ).onComplete(ar -> {
-                    if (ar.failed()) {
-                        System.err.println("Sidecar check error for " + ref + ": " + ar.cause().getMessage());
-                    } else {
-                        logEviction(ar.result(), artifactRef, sidecar, answer);
-                    }
-                    sendSidecar(clientResp, answer.status(), answer.body());
-                });
+                sendSidecar(clientResp, answer.status(), answer.body());
             });
         });
+    }
+
+    private void serveStoredSidecar(HttpServerRequest clientReq, byte[] stored) {
+        System.out.println("Upstream unreachable, serving stored " + clientReq.host() + clientReq.path());
+        sendSidecar(clientReq.response(), 200, stored);
     }
 
     /**
@@ -2136,21 +2145,21 @@ public class MitmProxy {
      * artifact, a fresh signature is kept (a checksum sidecar that contradicts the
      * artifact is not stored, since stored checksums describe the artifact beside them).
      */
-    private Future<VerifiedArtifactStore.Outcome> settleWithHeader(String domain, String artifactPath,
-                                                                   Path artifact, Sidecar sidecar,
+    private Future<VerifiedArtifactStore.Outcome> settleWithHeader(String domain, String artifactPath, Path artifact,
+                                                                   Revalidation revalidation, Sidecar sidecar,
                                                                    SidecarAnswer sidecarAnswer) {
-        return fetchChecksumHeader(domain, artifactPath, false).compose(header -> {
+        return fetchChecksumHeader(domain, artifactPath, revalidation).compose(header -> {
             if (header.unreachable() || header == SidecarAnswer.UNUSABLE) {
                 return Future.succeededFuture(VerifiedArtifactStore.Outcome.UNCHANGED);
             }
             return vertx.executeBlocking(() -> {
                 var outcome = VerifiedArtifactStore.reconcile(
-                        artifact, Sidecar.SHA1, header.status(), header.body(), true);
+                        artifact, revalidation.headerChecksum, header.status(), header.body(), true);
                 if (outcome == VerifiedArtifactStore.Outcome.MATCHED && !sidecar.isChecksum()) {
                     VerifiedArtifactStore.storeSidecar(artifact, sidecar, sidecarAnswer.body());
                 }
                 return outcome;
-            });
+            }, false);
         });
     }
 
@@ -2171,59 +2180,38 @@ public class MitmProxy {
     /**
      * Fetch a sidecar from upstream, following redirects (Gradle's go to another
      * host). Never fails; see {@link SidecarAnswer} for what comes back instead.
-     *
-     * @param useBackoff answer {@link SidecarAnswer#UNREACHABLE} at once while the
-     *                   domain is in its backoff; only for callers with a cached
-     *                   copy to fall back on
      */
-    Future<SidecarAnswer> fetchSidecar(String domain, String path, boolean useBackoff) {
-        return withBackoff(domain, useBackoff, () -> fetchSidecar(domain, 443, path, 0));
+    Future<SidecarAnswer> fetchSidecar(String domain, String path) {
+        return fetchSidecar(domain, 443, path, 0)
+                .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
     }
 
     /**
-     * The artifact's current SHA-1 from a HEAD's {@code X-Checksum-SHA1}, as if it
-     * were the {@code .sha1} sidecar's body. A 404/410 or 5xx is returned as is;
-     * any other answer without a usable header falls back to fetching the sidecar.
+     * The artifact's current checksum from a HEAD's checksum header, as if it
+     * were the sidecar's body. A 404/410 or 5xx is returned as is; any other answer
+     * without a usable header falls back to fetching the sidecar.
      */
-    Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, boolean useBackoff) {
-        return withBackoff(domain, useBackoff, () -> headChecksum(domain, path)).compose(answer -> answer != null
-                ? Future.succeededFuture(answer)
-                : fetchSidecar(domain, path + Sidecar.SHA1.extension, false));
-    }
-
-    private Future<SidecarAnswer> headChecksum(String domain, String path) {
-        var options = new RequestOptions()
-                .setMethod(HttpMethod.HEAD)
-                .setHost(domain)
-                .setPort(443)
-                .setURI(path)
-                .setIdleTimeout(30_000);
-        // Only a failure to connect fails the future (and starts a backoff)
-        return requestWithAsyncDns(probeClient, options).compose(req -> req.send()
-                .compose(resp -> resp.end().map(v -> {
+    Future<SidecarAnswer> fetchChecksumHeader(String domain, String path, Revalidation revalidation) {
+        return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.HEAD, domain, 443, path))
+                .compose(req -> req.send().compose(resp -> resp.end().map(v -> {
                     var status = resp.statusCode();
                     if (status == 404 || status == 410 || status >= 500) return new SidecarAnswer(status, null);
-                    var hex = status == 200 ? checksumHeader(resp) : null;
+                    var hex = status == 200 ? revalidation.checksumFrom(resp) : null;
                     return hex == null ? null : new SidecarAnswer(200, hex.getBytes(StandardCharsets.US_ASCII));
-                }))
-                .recover(err -> unusable(domain + path, err)));
+                })).recover(err -> unusable(domain + path, err)))
+                .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE))
+                .compose(answer -> answer != null
+                        ? Future.succeededFuture(answer)
+                        : fetchSidecar(domain, path + revalidation.headerChecksum.extension));
     }
 
-    private Future<SidecarAnswer> withBackoff(String domain, boolean useBackoff,
-                                              java.util.function.Supplier<Future<SidecarAnswer>> fetch) {
-        if (useBackoff && inBackoff(domain)) {
-            return Future.succeededFuture(SidecarAnswer.UNREACHABLE);
-        }
-        return fetch.get().map(answer -> {
-            unreachableSince.remove(domain);
-            return answer;
-        }).recover(err -> {
-            if (unreachableSince.put(domain, System.nanoTime()) == null) {
-                ProxyLog.warn("Cannot reach " + domain + " (" + err.getMessage() +
-                        "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
-            }
-            return Future.succeededFuture(SidecarAnswer.UNREACHABLE);
-        });
+    private static RequestOptions probeOptions(HttpMethod method, String host, int port, String uri) {
+        return new RequestOptions()
+                .setMethod(method)
+                .setHost(host)
+                .setPort(port)
+                .setURI(uri)
+                .setIdleTimeout(30_000);
     }
 
     private boolean inBackoff(String domain) {
@@ -2239,30 +2227,24 @@ public class MitmProxy {
         return Future.succeededFuture(SidecarAnswer.UNUSABLE);
     }
 
+    // The outer future fails only when no connection could be made (fetchSidecar maps
+    // that to UNREACHABLE); anything going wrong once connected is UNUSABLE.
     private Future<SidecarAnswer> fetchSidecar(String host, int port, String uri, int depth) {
-        var options = new RequestOptions()
-                .setMethod(HttpMethod.GET)
-                .setHost(host)
-                .setPort(port)
-                .setURI(uri)
-                .setIdleTimeout(30_000);
-        // Only a failure to connect fails the future (and starts a backoff)
-        return requestWithAsyncDns(probeClient, options).compose(req -> req.send().compose(resp -> {
-            var status = resp.statusCode();
-            var location = resp.getHeader("Location");
-            if (status >= 300 && status < 400 && location != null) {
-                var target = redirectTarget(host, port, uri, location);
-                if (depth >= MAX_REDIRECTS || target == null) {
-                    ProxyLog.warn("Not following sidecar redirect to " + location + " for " + host + uri);
-                    resp.request().reset();
-                    return Future.succeededFuture(SidecarAnswer.UNUSABLE);
-                }
-                var nextUri = target.getRawPath() + (target.getRawQuery() != null ? "?" + target.getRawQuery() : "");
-                return resp.end().compose(v -> fetchSidecar(target.getHost(),
-                        target.getPort() > 0 ? target.getPort() : 443, nextUri, depth + 1));
-            }
-            return readSidecarBody(resp);
-        }).recover(err -> unusable(host + uri, err)));
+        return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.GET, host, port, uri))
+                .compose(req -> req.send().compose(resp -> {
+                    var location = resp.getHeader("Location");
+                    if (resp.statusCode() >= 300 && resp.statusCode() < 400 && location != null) {
+                        var target = redirectTarget(host, port, uri, location);
+                        if (depth >= MAX_REDIRECTS || target == null) {
+                            ProxyLog.warn("Not following sidecar redirect to " + location + " for " + host + uri);
+                            resp.request().reset();
+                            return Future.succeededFuture(SidecarAnswer.UNUSABLE);
+                        }
+                        return resp.end().compose(v -> fetchSidecar(target.getHost(),
+                                target.getPort() > 0 ? target.getPort() : 443, rawPathAndQuery(target), depth + 1));
+                    }
+                    return readSidecarBody(resp);
+                }).recover(err -> unusable(host + uri, err)));
     }
 
     /** Where an https redirect points, resolved against the raw request URI; null for anything else. */
@@ -2274,6 +2256,10 @@ public class MitmProxy {
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    private static String rawPathAndQuery(URI uri) {
+        return uri.getRawPath() + (uri.getRawQuery() != null ? "?" + uri.getRawQuery() : "");
     }
 
     private static Future<SidecarAnswer> readSidecarBody(HttpClientResponse resp) {
@@ -2298,7 +2284,7 @@ public class MitmProxy {
             for (var dir : Environment.unverifiedLegacyCacheDirs()) {
                 if (Files.isDirectory(dir)) {
                     System.out.println("Deleting cache stored without verification: " + dir);
-                    dev.incusspawn.FileTrees.delete(dir);
+                    FileTrees.delete(dir);
                 }
             }
             return null;
@@ -2709,13 +2695,6 @@ public class MitmProxy {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    // --- Digest verification ---
-
-    static boolean verifyDigest(Path file, String expectedDigest) throws Exception {
-        var checksum = Verification.digestAlgorithm(expectedDigest);
-        return checksum != null && checksum.hashOf(file).equals(Verification.digestHex(expectedDigest));
     }
 
     private static String formatSize(long bytes) {

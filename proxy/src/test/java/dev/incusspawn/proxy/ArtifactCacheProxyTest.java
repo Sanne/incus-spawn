@@ -22,7 +22,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -107,8 +106,8 @@ class ArtifactCacheProxyTest {
         upstreamPort = upstream.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
                 .get(5, TimeUnit.SECONDS).actualPort();
 
-        mitmPort = freePort();
-        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, freePort(), "127.0.0.1",
+        mitmPort = WebSocketProxyTest.findFreePort();
+        proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, WebSocketProxyTest.findFreePort(), "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
         var ready = new CountDownLatch(1);
@@ -240,12 +239,6 @@ class ArtifactCacheProxyTest {
     static void assertStaysAbsent(Path file) throws Exception {
         Thread.sleep(300);
         assertFalse(Files.exists(file), file + " should not have been cached");
-    }
-
-    static int freePort() throws Exception {
-        try (var s = new ServerSocket(0)) {
-            return s.getLocalPort();
-        }
     }
 
     // --- tests ---

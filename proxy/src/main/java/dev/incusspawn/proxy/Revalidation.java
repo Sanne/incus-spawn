@@ -1,5 +1,8 @@
 package dev.incusspawn.proxy;
 
+import io.vertx.core.http.HttpClientResponse;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -39,13 +42,13 @@ enum Revalidation {
      * Maven Resolver's smart checksums skip their own {@code .sha1} request.
      * A response without the header falls back to fetching the {@code .sha1}.
      */
-    HEAD_CHECKSUM,
+    HEAD_CHECKSUM(Sidecar.SHA1, "X-Checksum-SHA1"),
 
     /**
      * No checksum headers (Gradle Plugin Portal, Gradle distributions): a hit
      * fetches the checksum sidecar, and a miss fetches it once downloaded.
      */
-    SIDECAR;
+    SIDECAR(null, null);
 
     private static final Map<String, Revalidation> BY_DOMAIN = Map.of(
             "repo.maven.apache.org", HEAD_CHECKSUM,
@@ -53,8 +56,39 @@ enum Revalidation {
             "plugins.gradle.org", SIDECAR,
             "services.gradle.org", SIDECAR);
 
+    /** The checksum the repository sends as a header with each artifact, or null. */
+    final Sidecar headerChecksum;
+    /** That header's name, or null. */
+    final String header;
+
+    Revalidation(Sidecar headerChecksum, String header) {
+        this.headerChecksum = headerChecksum;
+        this.header = header;
+    }
+
     /** How to confirm a cached artifact from this domain, or null when it must not be cached. */
     static Revalidation forDomain(String domain) {
         return BY_DOMAIN.get(domain);
+    }
+
+    /** Whether artifacts described by {@code checksum} can be confirmed this way. */
+    boolean fits(Sidecar checksum) {
+        return headerChecksum == null || headerChecksum == checksum;
+    }
+
+    /**
+     * Whether a sidecar may evict an artifact on its own. Not where a
+     * server-computed header outranks it: a separately uploaded {@code .sha1} can
+     * be wrong where the header is right (old Central artifacts).
+     */
+    boolean sidecarsAuthoritative() {
+        return header == null;
+    }
+
+    /** The checksum this repository sent with a response, as lowercase hex, or null. */
+    String checksumFrom(HttpClientResponse resp) {
+        if (header == null) return null;
+        var value = resp.getHeader(header);
+        return value == null ? null : headerChecksum.hex(value.getBytes(StandardCharsets.US_ASCII));
     }
 }

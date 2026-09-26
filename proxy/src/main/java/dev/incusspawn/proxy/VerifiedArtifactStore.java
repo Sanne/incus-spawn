@@ -195,7 +195,7 @@ final class VerifiedArtifactStore {
     }
 
     private static void deleteSidecarsLocked(Path artifact) throws IOException {
-        for (var s : Sidecar.values()) {
+        for (var s : Sidecar.ALL) {
             Files.deleteIfExists(s.storedFile(artifact));
         }
     }
