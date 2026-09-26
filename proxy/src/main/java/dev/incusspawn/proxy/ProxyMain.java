@@ -18,6 +18,8 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @QuarkusMain
 public class ProxyMain implements QuarkusApplication {
@@ -274,7 +276,7 @@ public class ProxyMain implements QuarkusApplication {
 
     static boolean applyBenchUpstream(MitmProxy proxy, String spec, String cert) {
         if (spec.isEmpty()) return true;
-        var entries = new ArrayList<java.util.regex.Matcher>();
+        var entries = new ArrayList<Matcher>();
         for (var entry : spec.split(",")) {
             var m = BENCH_UPSTREAM_ENTRY.matcher(entry.strip());
             if (!m.matches()) {
@@ -295,6 +297,6 @@ public class ProxyMain implements QuarkusApplication {
         return true;
     }
 
-    private static final java.util.regex.Pattern BENCH_UPSTREAM_ENTRY =
-            java.util.regex.Pattern.compile("([^=\\s]+)=([^:\\s]+):(\\d{1,5})");
+    private static final Pattern BENCH_UPSTREAM_ENTRY =
+            Pattern.compile("([^=\\s]+)=([^:\\s]+):(\\d{1,5})");
 }
