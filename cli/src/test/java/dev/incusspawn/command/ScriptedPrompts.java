@@ -11,12 +11,21 @@ import java.util.Deque;
  * through an echoing {@code readLine()} would put the credential on screen, and nothing else
  * would notice. Once the script runs out every read answers {@code null}, as a closed stdin
  * does, so a flow can be driven to its end the way {@code isx init </dev/null} drives it in CI.
+ *
+ * <p>Failure messages name an answer by its position in the script and never print a secret's
+ * value: catching a secret read through the wrong prompt must not itself put it in a CI log.
  */
 final class ScriptedPrompts implements Prompts {
 
-    private record Answer(String value, boolean secret) {}
+    private record Answer(int position, String value, boolean secret) {
+        @Override
+        public String toString() {
+            return secret ? "secret #" + position : "line #" + position + " '" + value + "'";
+        }
+    }
 
     private final Deque<Answer> answers = new ArrayDeque<>();
+    private int scripted = 1;
     private int readsPastEnd;
 
     /** Plain lines only; the common case for menus. */
@@ -25,12 +34,12 @@ final class ScriptedPrompts implements Prompts {
     }
 
     ScriptedPrompts line(String... values) {
-        for (var value : values) answers.add(new Answer(value, false));
+        for (var value : values) answers.add(new Answer(scripted++, value, false));
         return this;
     }
 
     ScriptedPrompts secret(String value) {
-        answers.add(new Answer(value, true));
+        answers.add(new Answer(scripted++, value, true));
         return this;
     }
 
@@ -53,8 +62,8 @@ final class ScriptedPrompts implements Prompts {
         }
         if (answer.secret() != secret) {
             throw new AssertionError(secret
-                    ? "a secret prompt read '" + answer.value() + "', which the script expects to be an ordinary line"
-                    : "an echoing prompt read '" + answer.value() + "', which the script expects to be entered as a secret");
+                    ? "a secret prompt read " + answer + ", which the script expects to be an ordinary line"
+                    : "an echoing prompt read " + answer + ", which the script expects to be entered as a secret");
         }
         return answer.value();
     }
