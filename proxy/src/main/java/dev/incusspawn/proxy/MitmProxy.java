@@ -2832,10 +2832,32 @@ public class MitmProxy {
                 + ",\"configDrifted\":" + configDrifted
                 + ",\"dnsConfigured\":" + dnsConfigured
                 + (err != null ? ",\"authError\":\"" + escapeJson(err) + "\"" : "")
+                // Lets the CLI signal this process (SIGUSR1: re-read the instance list)
+                // without fuser scanning every process on the host to find it.
+                + (isHostCaller(req.remoteAddress() == null ? null : req.remoteAddress().hostAddress(),
+                        req.localAddress() == null ? null : req.localAddress().hostAddress())
+                        ? ",\"pid\":" + ProcessHandle.current().pid() : "")
                 + "}";
         req.response()
                 .putHeader("Content-Type", "application/json")
                 .end(body);
+    }
+
+    /**
+     * Whether a health request comes from the host rather than a container. Containers reach
+     * this endpoint too (it listens on the bridge address), so host-only details such as the
+     * PID are withheld from them. The host reaches it over loopback (macOS) or from the bridge
+     * address itself; a container's source address is its own, which
+     * {@code security.ipv4_filtering} stops it from spoofing.
+     */
+    static boolean isHostCaller(String remote, String local) {
+        if (remote == null || remote.isEmpty()) return false;
+        if (remote.equals(local)) return true;
+        try {
+            return java.net.InetAddress.getByName(remote).isLoopbackAddress();
+        } catch (java.net.UnknownHostException e) {
+            return false;
+        }
     }
 
     private boolean hasConfigChangedSinceLoad() {

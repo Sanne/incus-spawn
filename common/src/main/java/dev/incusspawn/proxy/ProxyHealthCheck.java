@@ -18,8 +18,18 @@ public final class ProxyHealthCheck {
         STALE_DNS
     }
 
+    /**
+     * What {@code /health} reports. {@code pid} is -1 when absent: older proxies don't send it,
+     * and a proxy only sends it to callers on the host.
+     */
     public record ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
-                            boolean configDrifted, boolean dnsConfigured, String authError) {
+                            boolean configDrifted, boolean dnsConfigured, String authError,
+                            long pid) {
+        public ProxyInfo(String version, String gitSha, String runtime, String caFingerprint,
+                         boolean configDrifted, boolean dnsConfigured, String authError) {
+            this(version, gitSha, runtime, caFingerprint, configDrifted, dnsConfigured, authError, -1);
+        }
+
         public boolean isLegacy() { return version == null || version.isEmpty(); }
         public boolean hasAuthError() { return authError != null && !authError.isEmpty(); }
         public String authRemediationHint() {
@@ -32,6 +42,18 @@ public final class ProxyHealthCheck {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private ProxyHealthCheck() {}
+
+    /**
+     * The running proxy's PID as it reports it in {@code /health}, or -1 if it doesn't (an
+     * older proxy) or can't be reached. One local HTTP request, where finding the PID by its
+     * listening port means {@code fuser} scanning every process on the host.
+     */
+    public static long reportedProxyPid() {
+        var addr = resolveHealthAddress();
+        if (addr == null) return -1;
+        var info = fetchProxyInfo(addr, 500);
+        return info == null ? -1 : info.pid();
+    }
 
     /** The IP to query for health checks: localhost on macOS, bridge gateway on Linux. */
     public static String healthAddress(IncusClient incus) {
@@ -175,7 +197,8 @@ public final class ProxyHealthCheck {
                     textOrEmpty(node, "caFingerprint"),
                     configDrifted,
                     dnsConfigured,
-                    textOrEmpty(node, "authError"));
+                    textOrEmpty(node, "authError"),
+                    node.path("pid").canConvertToLong() ? node.path("pid").asLong() : -1);
         } catch (Exception e) {
             return new ProxyInfo("", "", "", "", false, true, "");
         }

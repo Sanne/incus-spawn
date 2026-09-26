@@ -532,7 +532,11 @@ public final class ProxyService {
      * state, and taking the lock would serialise every branch behind it.
      */
     public static void signalAccountRefresh() {
-        var pid = findProxyPid();
+        // Asked at signalling time rather than remembered from an earlier health check, so a
+        // proxy restarted in between is never signalled by a stale PID. fuser is the fallback
+        // for proxies that predate reporting it: 45-90 ms scanning every process on a desktop.
+        var pid = ProxyHealthCheck.reportedProxyPid();
+        if (pid == -1) pid = findProxyPid();
         if (pid != -1) runQuiet("kill", "-USR1", String.valueOf(pid));
     }
 

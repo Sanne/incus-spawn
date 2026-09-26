@@ -206,4 +206,17 @@ class ProxyHealthCheckTest {
                 "{\"status\":\"ok\",\"version\":\"0.2.5\",\"dnsConfigured\":1}");
         assertFalse(info3.dnsConfigured());
     }
+
+    @Test
+    void parsesTheReportedPid() {
+        var info = ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\",\"version\":\"1.0\",\"pid\":4242}");
+        assertEquals(4242, info.pid());
+    }
+
+    @Test
+    void aProxyThatReportsNoPidReadsAsUnknown() {
+        // Older proxies, and any response a container gets, have no pid.
+        assertEquals(-1, ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\",\"version\":\"1.0\"}").pid());
+        assertEquals(-1, ProxyHealthCheck.parseProxyInfo("not json").pid());
+    }
 }
