@@ -74,6 +74,28 @@ public class CertStore {
         return memory.computeIfAbsent(domain, this::loadOrMint);
     }
 
+    /** Whether a cert for {@code name} is on disk, usable or not. */
+    public boolean isStored(String name) {
+        return Files.exists(certPath(name));
+    }
+
+    /**
+     * The names of every cert on disk, wildcards as {@code *.<domain>}. Lets a caller bound
+     * what accumulates here across proxy runs, since nothing is ever deleted.
+     */
+    public java.util.Set<String> storedNames() {
+        if (!Files.isDirectory(dir)) return java.util.Set.of();
+        try (var files = Files.list(dir)) {
+            return files.map(f -> f.getFileName().toString())
+                    .filter(n -> n.endsWith(".crt"))
+                    .map(n -> n.substring(0, n.length() - ".crt".length()))
+                    .map(n -> n.startsWith("_wildcard.") ? "*." + n.substring("_wildcard.".length()) : n)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        } catch (java.io.IOException e) {
+            return java.util.Set.of();
+        }
+    }
+
     private static final java.util.regex.Pattern LABEL =
             java.util.regex.Pattern.compile("[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?");
 

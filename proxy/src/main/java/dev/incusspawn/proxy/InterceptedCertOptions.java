@@ -38,11 +38,21 @@ import java.util.function.Function;
 final class InterceptedCertOptions implements KeyCertOptions {
 
     /**
-     * Upper bound on leaves minted on demand per proxy run. Each costs an RSA key
-     * generation and a file pair on the host, and a container picks the names; ordinary
-     * traffic stays in the dozens.
+     * Upper bound on on-demand leaves stored on the host, counted from disk so it holds
+     * across reloads and restarts: {@link CertStore} never deletes a cert, and a container
+     * picks the names. Each costs an RSA key generation and a file pair; ordinary traffic
+     * needs a few dozen. A name already on disk is always served.
      */
     static final int MAX_ON_DEMAND_CERTS = 512;
+
+    /**
+     * Upper bound on distinct SNI names answered per server configuration. Vert.x caches an
+     * SSL context for every name the mapper answers and never evicts one, so without this a
+     * container could grow the proxy's heap one {@code rN.githubusercontent.com} at a time,
+     * all served by a single pre-minted wildcard. A reload starts a fresh Vert.x cache, and
+     * with it a fresh count.
+     */
+    static final int MAX_SERVED_NAMES = 4096;
 
     private static final char[] PASSWORD = "changeit".toCharArray();
 
@@ -51,14 +61,24 @@ final class InterceptedCertOptions implements KeyCertOptions {
     private final Set<String> domains;
     private final KeyManagerFactory defaultFactory;
     private final ConcurrentHashMap<String, KeyManagerFactory> factories = new ConcurrentHashMap<>();
-    private final AtomicInteger onDemand = new AtomicInteger();
+    private final Set<String> served = ConcurrentHashMap.newKeySet();
+    private final AtomicInteger onDemandStored;
+    private final int maxOnDemandCerts;
+    private final int maxServedNames;
 
     /**
      * Pre-mints the certs for every intercepted domain and its one-level wildcard, so the
      * common names are ready (and persisted) before the first handshake.
      */
     InterceptedCertOptions(CertificateAuthority ca, Set<String> interceptedDomains) throws Exception {
+        this(ca, interceptedDomains, MAX_ON_DEMAND_CERTS, MAX_SERVED_NAMES);
+    }
+
+    InterceptedCertOptions(CertificateAuthority ca, Set<String> interceptedDomains,
+                           int maxOnDemandCerts, int maxServedNames) throws Exception {
         this.ca = ca;
+        this.maxOnDemandCerts = maxOnDemandCerts;
+        this.maxServedNames = maxServedNames;
         this.store = new CertStore(ca);
         this.domains = interceptedDomains.stream()
                 .map(d -> d.toLowerCase(Locale.ROOT))
@@ -76,6 +96,9 @@ final class InterceptedCertOptions implements KeyCertOptions {
                 .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
                 .toList();
         names.parallelStream().forEach(store::get);
+        this.onDemandStored = new AtomicInteger((int) store.storedNames().stream()
+                .filter(n -> !isPreMinted(n))
+                .count());
         this.defaultFactory = factoryFor(emptyKeyStore());
     }
 
@@ -107,19 +130,36 @@ final class InterceptedCertOptions implements KeyCertOptions {
                     + "': not under any intercepted domain");
             return null;
         }
+        var name = serverName.toLowerCase(Locale.ROOT);
+        // Racing callers can overshoot by a few; the bound only has to be finite.
+        if (!served.contains(name)) {
+            if (served.size() >= maxServedNames) {
+                ProxyLog.warn("Refusing TLS handshake for '" + serverName + "': already serving "
+                        + maxServedNames + " distinct names; reload the proxy to reset");
+                return null;
+            }
+            served.add(name);
+        }
         // A null from mint() is not stored, so a name refused at the cap stays refused.
         return factories.computeIfAbsent(certName, this::mint);
     }
 
-    private KeyManagerFactory mint(String certName) {
-        var preMinted = domains.contains(certName)
+    private boolean isPreMinted(String certName) {
+        return domains.contains(certName)
                 || (certName.startsWith("*.") && domains.contains(certName.substring(2)));
-        if (!preMinted && onDemand.incrementAndGet() > MAX_ON_DEMAND_CERTS) {
-            ProxyLog.warn("Refusing TLS handshake for '" + certName + "': "
-                    + MAX_ON_DEMAND_CERTS + " certificates already minted on demand since the proxy started");
-            return null;
+    }
+
+    private KeyManagerFactory mint(String certName) {
+        if (!isPreMinted(certName) && !store.isStored(certName)) {
+            if (onDemandStored.incrementAndGet() > maxOnDemandCerts) {
+                onDemandStored.decrementAndGet();
+                ProxyLog.warn("Refusing TLS handshake for '" + certName + "': " + maxOnDemandCerts
+                        + " on-demand certificates already stored; delete unneeded _wildcard.* files"
+                        + " under ~/.config/incus-spawn/certs/ to make room");
+                return null;
+            }
+            ProxyLog.info("Minting certificate for " + certName);
         }
-        if (!preMinted) ProxyLog.info("Minting certificate for " + certName);
         try {
             var keyStore = emptyKeyStore();
             addEntry(keyStore, certName, store.get(certName));
