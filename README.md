@@ -886,7 +886,7 @@ actions:
 
 ## Caching
 
-The proxy and build system cache artifacts on the host, shared across all templates and branches. Only immutable, content-addressed artifacts are cached — mutable data (Maven SNAPSHOTs, repository metadata, version listings) always passes through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
+The proxy and build system cache artifacts on the host, shared across all templates and branches. Only content that can be checked is cached, and only from public repositories — repository metadata, Maven SNAPSHOTs and version listings always pass through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
 
 Proxy caches (from container traffic):
 
@@ -899,7 +899,7 @@ Build-time caches:
 - **DNF packages** — host-side cache mounted during builds so child images reuse parent downloads
 - **Tool downloads** — cached on the host by SHA256; rebuilds reuse unchanged artifacts
 
-All caches live under `~/.cache/incus-spawn/`. There is no automatic eviction — every entry is content-addressed or version-pinned, so it is either correct forever or superseded by a newer version with its own entry.
+All caches live under `~/.cache/incus-spawn/`. Nothing is evicted for age or size. Content-addressed entries (image layers, tool downloads) are correct forever. A Maven or Gradle artifact is evicted as soon as upstream reports a different checksum or withdraws it.
 
 ## Roadmap
 

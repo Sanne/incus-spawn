@@ -2,6 +2,7 @@ package dev.incusspawn.proxy;
 
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.Environment;
+import dev.incusspawn.FileTrees;
 
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -110,7 +111,6 @@ class ArtifactCacheProxyTest {
         proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, freePort(), "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
-        proxy.upstreamPort = upstreamPort;
         var ready = new CountDownLatch(1);
         var thread = new Thread(() -> {
             try {
@@ -142,24 +142,32 @@ class ArtifactCacheProxyTest {
         routes.clear();
         hits.clear();
         online();
-        VerifiedArtifactStore.deleteTree(Environment.mavenCacheDir());
-        VerifiedArtifactStore.deleteTree(Environment.gradleCacheDir());
-        VerifiedArtifactStore.deleteTree(Environment.m2Repository());
+        for (var dir : new Path[] {Environment.mavenCacheDir(), Environment.gradleCacheDir(),
+                Environment.m2Repository()}) {
+            // user.home is JVM-global: never let a stray value point this at a real ~/.m2
+            assertTrue(dir.startsWith(tempHome), dir + " is outside the test home");
+            FileTrees.delete(dir);
+        }
     }
 
     // --- helpers ---
 
+    /** Every repository host goes to the mock, through the same hook the benchmark uses. */
     static void online() {
         proxy.clearUnreachable();
         for (var host : new String[] {CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS}) {
-            proxy.overrideDns(host, "127.0.0.1");
+            online(host);
         }
+    }
+
+    static void online(String host) {
+        assertTrue(ProxyMain.applyBenchUpstream(proxy, host + "=127.0.0.1:" + upstreamPort, ""));
     }
 
     /** Nothing listens on 127.0.0.2's port, so every connection is refused. */
     static void offline() {
         for (var host : new String[] {CENTRAL, PORTAL, GRADLE, GRADLE_DOWNLOADS}) {
-            proxy.overrideDns(host, "127.0.0.2");
+            proxy.overrideUpstream(host, "127.0.0.2", upstreamPort);
         }
     }
 
@@ -391,24 +399,105 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
-    void unreachableDomainIsNotRetriedDuringBackoff() throws Exception {
+    void backoffAnswersFromStoredCopiesWithoutRetrying() throws Exception {
         publishJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR);
         awaitFile(cached(CENTRAL, JAR), "v1");
 
         offline();
         get(CENTRAL, JAR + ".sha1");
-        proxy.overrideDns(CENTRAL, "127.0.0.1");
+        online(CENTRAL);
         hits.clear();
         publishJar(CENTRAL, JAR, "v2");
 
         assertEquals(hex("SHA-1", "v1".getBytes()), get(CENTRAL, JAR + ".sha1").text(),
                 "within the backoff the stored copy answers");
+        assertEquals("v1", get(CENTRAL, JAR).text());
         assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"));
+        assertEquals(0, headsOn(CENTRAL, JAR));
+    }
 
-        proxy.clearUnreachable();
-        assertEquals(hex("SHA-1", "v2".getBytes()), get(CENTRAL, JAR + ".sha1").text());
-        assertFalse(Files.exists(cached(CENTRAL, JAR)));
+    @Test
+    void backoffNeverTurnsAnAnswerableRequestIntoAnError() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        offline();
+        get(CENTRAL, JAR + ".sha1");
+        online(CENTRAL);
+
+        // Nothing stored to fall back on, so upstream is asked despite the backoff
+        var other = "/maven2/org/example/other/1.0/other-1.0.jar";
+        publishJar(CENTRAL, other, "o1");
+        assertEquals(hex("SHA-1", "o1".getBytes()), get(CENTRAL, other + ".sha1").text());
+
+        // ...and that answer ended the backoff: the cached jar is confirmed again
+        publishJar(CENTRAL, JAR, "v2");
+        assertEquals("v2", get(CENTRAL, JAR).text());
+    }
+
+    @Test
+    void unusableAnswerConfirmsNothing() throws Exception {
+        publishJar(PORTAL, PLUGIN_JAR, "p1");
+        get(PORTAL, PLUGIN_JAR);
+        awaitFile(cached(PORTAL, PLUGIN_JAR), "p1");
+
+        // Upstream is reachable but its answer cannot be used: not a reason to serve unconfirmed
+        routes.put(PORTAL + " " + PLUGIN_JAR + ".sha1", new Reply(302, null, "http://" + PORTAL + "/x.sha1"));
+        routes.put(PORTAL + " " + PLUGIN_JAR, new Reply(200, "p2".getBytes(), null));
+        hits.clear();
+        assertEquals("p2", get(PORTAL, PLUGIN_JAR).text());
+        assertEquals(1, hitsOn(PORTAL, PLUGIN_JAR), "upstream answered, not the cache");
+
+        // ...and it is not mistaken for an outage either
+        routes.put(PORTAL + " " + PLUGIN_JAR + ".sha1", new Reply(200, hex("SHA-1", "p2".getBytes()).getBytes(), null));
+        assertEquals(hex("SHA-1", "p2".getBytes()), get(PORTAL, PLUGIN_JAR + ".sha1").text());
+    }
+
+    @Test
+    void centralSidecarThatContradictsTheHeaderDoesNotEvict() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        routes.put(CENTRAL + " " + JAR + ".asc", new Reply(200, "sig-1".getBytes(), null));
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        get(CENTRAL, JAR + ".asc");
+
+        // An old artifact whose .sha1 file is wrong, while the server-computed header is right
+        var wrong = hex("SHA-1", "something else".getBytes());
+        routes.put(CENTRAL + " " + JAR + ".sha1", new Reply(200, wrong.getBytes(), null));
+        assertEquals(wrong, get(CENTRAL, JAR + ".sha1").text(), "the client still sees upstream's file");
+        assertTrue(Files.exists(cached(CENTRAL, JAR)), "the HEAD confirmed the artifact");
+
+        // A re-signed artifact: the header still confirms it, so the new signature is kept
+        routes.put(CENTRAL + " " + JAR + ".asc", new Reply(200, "sig-2".getBytes(), null));
+        get(CENTRAL, JAR + ".asc");
+        assertTrue(Files.exists(cached(CENTRAL, JAR)));
+        assertEquals("sig-2", Files.readString(Sidecar.ASC.storedFile(cached(CENTRAL, JAR))));
+    }
+
+    @Test
+    void requestWithQueryIsRelayedUncached() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        assertEquals("v1", get(CENTRAL, JAR + "?x=1").text());
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void malformedBenchUpstreamIsRefused() {
+        assertTrue(ProxyMain.applyBenchUpstream(proxy, "", ""), "unset means no override");
+        assertFalse(ProxyMain.applyBenchUpstream(proxy, "repo1.maven.org", ""));
+        assertFalse(ProxyMain.applyBenchUpstream(proxy, "repo1.maven.org=127.0.0.1", ""));
+        assertFalse(ProxyMain.applyBenchUpstream(proxy, "repo1.maven.org=127.0.0.1:1,oops", ""));
+    }
+
+    @Test
+    void redirectTargetsKeepTheRawUri() {
+        assertEquals("https://h.example/a%20b/x.sha1?q=1",
+                MitmProxy.redirectTarget("h.example", 443, "/a%20b/x", "x.sha1?q=1").toString());
+        assertEquals("https://other.example/y", MitmProxy.redirectTarget("h.example", 443, "/a", "https://other.example/y").toString());
+        assertEquals("https://h.example:8443/p/z", MitmProxy.redirectTarget("h.example", 8443, "/p/q", "z").toString());
+        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "http://h.example/a"), "never downgrade to http");
+        assertNull(MitmProxy.redirectTarget("h.example", 443, "/a", "ht tp://bad"));
     }
 
     @Test
@@ -453,7 +542,7 @@ class ArtifactCacheProxyTest {
     void gradleDistributionIsVerifiedThroughRedirectedChecksum() throws Exception {
         var zip = "gradle-zip".getBytes();
         routes.put(GRADLE + " " + DIST, new Reply(200, zip, null));
-        var downloads = "https://" + GRADLE_DOWNLOADS + ":" + upstreamPort + DIST + ".sha256";
+        var downloads = "https://" + GRADLE_DOWNLOADS + DIST + ".sha256";
         routes.put(GRADLE + " " + DIST + ".sha256", new Reply(301, null, downloads));
         routes.put(GRADLE_DOWNLOADS + " " + DIST + ".sha256", new Reply(200, hex("SHA-256", zip).getBytes(), null));
 

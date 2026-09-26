@@ -17,6 +17,7 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 
 @QuarkusMain
 public class ProxyMain implements QuarkusApplication {
@@ -136,6 +137,7 @@ public class ProxyMain implements QuarkusApplication {
         var vertx = Arc.container().instance(Vertx.class).get();
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, creds);
         proxy.setIncusClient(incus);
+        if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {
             try {
@@ -257,4 +259,42 @@ public class ProxyMain implements QuarkusApplication {
             file.close();
         }
     }
+
+    /**
+     * bench/run.sh --load=maven points a repository host at a local stub, so a
+     * benchmark measures the cache path without sending its load to the real
+     * repository. {@code ISX_BENCH_UPSTREAM} is {@code host=ip:port[,...]};
+     * {@code ISX_BENCH_UPSTREAM_CERT} is the stub's certificate (PEM) to trust.
+     * Nothing else sets these.
+     */
+    static boolean applyBenchUpstream(MitmProxy proxy) {
+        return applyBenchUpstream(proxy, Environment.strippedEnv("ISX_BENCH_UPSTREAM"),
+                Environment.strippedEnv("ISX_BENCH_UPSTREAM_CERT"));
+    }
+
+    static boolean applyBenchUpstream(MitmProxy proxy, String spec, String cert) {
+        if (spec.isEmpty()) return true;
+        var entries = new ArrayList<java.util.regex.Matcher>();
+        for (var entry : spec.split(",")) {
+            var m = BENCH_UPSTREAM_ENTRY.matcher(entry.strip());
+            if (!m.matches()) {
+                System.err.println("Error: ISX_BENCH_UPSTREAM entry '" + entry + "' is not host=ip:port");
+                return false;
+            }
+            entries.add(m);
+        }
+        for (var m : entries) {
+            proxy.overrideUpstream(m.group(1), m.group(2), Integer.parseInt(m.group(3)));
+            System.out.println("  BENCHMARK:     upstream " + m.group(1) + " -> " + m.group(2) + ":" + m.group(3));
+        }
+        if (!cert.isEmpty()) {
+            proxy.trustUpstreamCertificate(cert);
+            System.out.println("  BENCHMARK:     trusting upstream certificate " + cert);
+        }
+        ProxyLog.warn("Benchmark upstream override active (ISX_BENCH_UPSTREAM=" + spec + ")");
+        return true;
+    }
+
+    private static final java.util.regex.Pattern BENCH_UPSTREAM_ENTRY =
+            java.util.regex.Pattern.compile("([^=\\s]+)=([^:\\s]+):(\\d{1,5})");
 }
