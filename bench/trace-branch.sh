@@ -33,9 +33,9 @@ while [ $# -gt 0 ]; do
         --help|-h)
             echo "Usage: bench/trace-branch.sh [--runtime=native|jvm] [--from=TEMPLATE]"
             echo ""
-            echo "Runs one 'isx branch --shell' to a usable prompt while recording the Incus"
-            echo "daemon's events, then prints a timeline, the longest gaps and the longest"
-            echo "operations. The instance is destroyed afterwards. Run it on a quiet host:"
+            echo "Runs one 'isx branch --shell' to a usable prompt, then 'isx destroy' on the"
+            echo "running instance, while recording the Incus daemon's events. Prints a timeline,"
+            echo "the longest gaps and the longest operations for each. Run it on a quiet host:"
             echo "the daemon's events include anything else happening on it."
             echo ""
             echo "Options:"
@@ -115,10 +115,19 @@ with open(raw_path, "wb") as raw:
         monitor.terminate()
         sys.exit(f"\nError: {e}\nRaw events so far: {raw_path}")
     t_end = time.time()
+    time.sleep(0.5)  # let the branch's last events arrive before the destroy starts
+    # The destroy of the (running) instance, timed to the moment `isx destroy` exits: time
+    # isx spends on the host after Incus has finished shows up as a trailing gap.
+    d0 = time.time()
+    destroyed = subprocess.run(isx + ["destroy", instance, "--skip-confirmation"],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    d_end = time.time()
     time.sleep(0.5)  # events are delivered asynchronously; catch the last ones
     monitor.terminate()
     monitor.wait()
-print(f"Prompt after {prompt_ms:.0f} ms. Raw events: {raw_path}")
+if destroyed.returncode != 0:
+    print(f"Warning: isx destroy exited {destroyed.returncode}:\n{destroyed.stdout}{destroyed.stderr}")
+print(f"Prompt after {prompt_ms:.0f} ms, destroy took {(d_end - d0) * 1000:.0f} ms. Raw events: {raw_path}")
 
 # ── Parse ───────────────────────────────────────────────────────────────────
 
@@ -169,80 +178,92 @@ for event in load_events(raw_path):
         ts = parse_ts(event["timestamp"])
     except (KeyError, ValueError):
         continue
-    if t0 - 0.05 <= ts <= t_end + 0.5:
-        events.append((ts, event))
+    events.append((ts, event))
 events.sort(key=lambda e: e[0])
 
 # ── Report ──────────────────────────────────────────────────────────────────
 
-prompt_ts = t0 + prompt_ms / 1000
-lines = [f"isx branch {instance} --from {source} --shell ({env['RUNTIME']}, {env['GIT_SHA']}): "
-         f"prompt after {prompt_ms:.0f} ms, {len(events)} events", "",
-         f"{'t (ms)':>8} {'+Δ (ms)':>8}  {'type':<9} event"]
-previous_ts, printed_prompt = t0, False
-gaps = []
-for ts, event in events:
-    if not printed_prompt and ts > prompt_ts:
-        lines.append(f"{prompt_ms:>8.0f} {'':>8}  {'--':<9} ===== usable prompt =====")
-        printed_prompt = True
-    delta = (ts - previous_ts) * 1000
-    text = describe(event)
-    lines.append(f"{(ts - t0) * 1000:>8.0f} {delta:>8.0f}  {event.get('type', '?'):<9} {text}")
-    if ts <= prompt_ts:
-        gaps.append((delta, previous_ts, ts, text))
-    previous_ts = ts
-if not printed_prompt:
-    lines.append(f"{prompt_ms:>8.0f} {'':>8}  {'--':<9} ===== usable prompt =====")
-# The quiet stretch between the last event and the prompt is a gap too.
-before_prompt = [e for e in events if e[0] <= prompt_ts]
-if before_prompt:
-    gaps.append(((prompt_ts - before_prompt[-1][0]) * 1000, before_prompt[-1][0], prompt_ts,
-                 "(usable prompt)"))
-
-# How long each async step (create, start, exec) took on the daemon, from the operation's own
-# events. The end is the timestamp of the event reporting the final status: Incus does not
-# advance updated_at for task operations, so that field reads as zero-length for a start.
-operations = {}
-for ts, event in events:
-    if event.get("type") != "operation":
-        continue
-    meta = event.get("metadata") or {}
-    op = operations.setdefault(meta.get("id", "?"), {"description": meta.get("description", "")})
-    try:
-        created = parse_ts(meta["created_at"])
-    except (KeyError, ValueError):
-        created = ts
-    op["start"] = min(op.get("start", ts), created, ts)
-    if meta.get("status") in ("Success", "Failure", "Cancelled"):
-        op["end"] = ts
-        op["status"] = meta["status"]
-finished = [(o["end"] - o["start"], o) for o in operations.values() if "end" in o and "start" in o]
-lines += ["", "Longest operations (daemon-side duration):"]
-for duration, op in sorted(finished, key=lambda f: f[0], reverse=True)[:10]:
-    lines.append(f"  {duration * 1000:>7.0f} ms  from {(op['start'] - t0) * 1000:>6.0f} ms  "
-                 f"{op['description']} ({op['status']})")
-if not finished:
-    lines.append("  (no completed operations recorded)")
-
-# A quiet stretch inside a running operation is Incus or the instance doing the work; one
-# outside every operation is isx itself computing, or waiting between polls.
 # An operation's updated_at is stamped just before the event that carries it, hence the slack.
 SLACK_S = 0.005
-def covering(start, end):
-    for op in operations.values():
-        if (op.get("start", float("inf")) - SLACK_S <= start
-                and op.get("end", float("inf")) + SLACK_S >= end):
-            return op["description"]
-    return None
 
-lines += ["", "Longest gaps before the prompt (no daemon event in between):"]
-for delta, start, end, text in sorted(gaps, key=lambda g: g[0], reverse=True)[:10]:
-    if delta < 1:
-        break
-    inside = covering(start, end)
-    where = f"inside '{inside}'" if inside else "outside any operation"
-    lines.append(f"  {delta:>7.0f} ms  {(start - t0) * 1000:>6.0f}-{(end - t0) * 1000:<6.0f} ms  "
-                 f"{where:<34} next: {text}")
+def timeline(title, t0, t_end, mark_ts, mark_label, window):
+    """Timeline, longest operations and longest gaps for the events in one command's window;
+    gaps count up to mark_ts (the usable prompt, or the command exiting)."""
+    lines = [title, "", f"{'t (ms)':>8} {'+Δ (ms)':>8}  {'type':<9} event"]
+    mark_ms = (mark_ts - t0) * 1000
+    previous_ts, printed_mark, gaps = t0, False, []
+    for ts, event in window:
+        if not printed_mark and ts > mark_ts:
+            lines.append(f"{mark_ms:>8.0f} {'':>8}  {'--':<9} ===== {mark_label} =====")
+            printed_mark = True
+        delta = (ts - previous_ts) * 1000
+        text = describe(event)
+        lines.append(f"{(ts - t0) * 1000:>8.0f} {delta:>8.0f}  {event.get('type', '?'):<9} {text}")
+        if ts <= mark_ts:
+            gaps.append((delta, previous_ts, ts, text))
+        previous_ts = ts
+    if not printed_mark:
+        lines.append(f"{mark_ms:>8.0f} {'':>8}  {'--':<9} ===== {mark_label} =====")
+    # The quiet stretch between the last event and the mark is a gap too.
+    before_mark = [e for e in window if e[0] <= mark_ts]
+    last_ts = before_mark[-1][0] if before_mark else t0
+    gaps.append(((mark_ts - last_ts) * 1000, last_ts, mark_ts, f"({mark_label})"))
+
+    # How long each async step (create, start, exec, delete) took on the daemon, from the
+    # operation's own events. The end is the timestamp of the event reporting the final
+    # status: Incus does not advance updated_at for task operations.
+    operations = {}
+    for ts, event in window:
+        if event.get("type") != "operation":
+            continue
+        meta = event.get("metadata") or {}
+        op = operations.setdefault(meta.get("id", "?"), {"description": meta.get("description", "")})
+        try:
+            created = parse_ts(meta["created_at"])
+        except (KeyError, ValueError):
+            created = ts
+        op["start"] = min(op.get("start", ts), created, ts)
+        if meta.get("status") in ("Success", "Failure", "Cancelled"):
+            op["end"] = ts
+            op["status"] = meta["status"]
+    finished = [(o["end"] - o["start"], o) for o in operations.values() if "end" in o and "start" in o]
+    lines += ["", "Longest operations (daemon-side duration):"]
+    for duration, op in sorted(finished, key=lambda f: f[0], reverse=True)[:10]:
+        lines.append(f"  {duration * 1000:>7.0f} ms  from {(op['start'] - t0) * 1000:>6.0f} ms  "
+                     f"{op['description']} ({op['status']})")
+    if not finished:
+        lines.append("  (no completed operations recorded)")
+
+    # A quiet stretch inside a running operation is Incus or the instance doing the work; one
+    # outside every operation is isx itself computing, or waiting between polls.
+    def covering(start, end):
+        for op in operations.values():
+            if (op.get("start", float("inf")) - SLACK_S <= start
+                    and op.get("end", float("inf")) + SLACK_S >= end):
+                return op["description"]
+        return None
+
+    lines += ["", f"Longest gaps before '{mark_label}' (no daemon event in between):"]
+    for delta, start, end, text in sorted(gaps, key=lambda g: g[0], reverse=True)[:10]:
+        if delta < 1:
+            break
+        inside = covering(start, end)
+        where = f"inside '{inside}'" if inside else "outside any operation"
+        lines.append(f"  {delta:>7.0f} ms  {(start - t0) * 1000:>6.0f}-{(end - t0) * 1000:<6.0f} ms  "
+                     f"{where:<34} next: {text}")
+    return lines
+
+def within(start, end):
+    return [e for e in events if start - 0.05 <= e[0] <= end + 0.5]
+
+label = f"({env['RUNTIME']}, {env['GIT_SHA']})"
+lines = timeline(f"isx branch {instance} --from {source} --shell {label}: prompt after "
+                 f"{prompt_ms:.0f} ms", t0, t_end, t0 + prompt_ms / 1000, "usable prompt",
+                 within(t0, t_end))
+destroy_ms = (d_end - d0) * 1000
+lines += ["", "=" * 78, ""]
+lines += timeline(f"isx destroy {instance} (running) {label}: {destroy_ms:.0f} ms",
+                  d0, d_end, d_end, "isx destroy exited", within(d0, d_end))
 
 report = "\n".join(lines) + "\n"
 with open(timeline_path, "w") as f:

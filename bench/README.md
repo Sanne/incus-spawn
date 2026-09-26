@@ -247,7 +247,9 @@ counting requests needs neither timing nor a daemon.
 
 `cli.sh` says how long `isx branch` takes; `trace-branch.sh` says where the time goes. It
 records the Incus daemon's event stream (`incus monitor --format=json`) while one
-`isx branch --shell` runs to a usable prompt, then prints:
+`isx branch --shell` runs to a usable prompt and `isx destroy` then removes the running
+instance, and prints for each (the destroy's window runs until `isx destroy` exits, so
+host-side work after Incus has finished shows as a trailing gap):
 
 - a timeline of every API request, operation, exec'd command and lifecycle event the daemon
   saw, with the time since the branch started and since the previous event;
