@@ -430,6 +430,18 @@ class InitCommandTest {
         assertEquals("", InitCommand.readInput(null));
     }
 
+    @Test
+    void entryNumberAcceptsBareAndHashPrefixedNumbers() {
+        // The list prints "1. /path", so "#2" is a natural way to name an entry (#777).
+        assertEquals(2, InitCommand.entryNumber("2"));
+        assertEquals(2, InitCommand.entryNumber("#2"));
+        assertEquals(12, InitCommand.entryNumber("# 12"));
+        assertNull(InitCommand.entryNumber("#"));
+        assertNull(InitCommand.entryNumber("~/code"));
+        assertNull(InitCommand.entryNumber("2a"));
+        assertNull(InitCommand.entryNumber("99999999999"));
+    }
+
     // --- OAuth token shape check ---
 
     private static String oauthToken(int length) {
