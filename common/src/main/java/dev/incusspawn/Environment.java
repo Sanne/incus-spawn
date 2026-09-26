@@ -102,12 +102,20 @@ public final class Environment {
         return home().resolve(".cache/incus-spawn/registry");
     }
 
+    // "-verified": entries in the earlier maven/ and gradle/ roots were stored without
+    // checking them against upstream checksums, so they are never read (see #555).
     public static Path mavenCacheDir() {
-        return home().resolve(".cache/incus-spawn/maven");
+        return home().resolve(".cache/incus-spawn/maven-verified");
     }
 
     public static Path gradleCacheDir() {
-        return home().resolve(".cache/incus-spawn/gradle");
+        return home().resolve(".cache/incus-spawn/gradle-verified");
+    }
+
+    /** Cache roots written before verification existed; the proxy deletes them on start. */
+    public static List<Path> unverifiedLegacyCacheDirs() {
+        return List.of(home().resolve(".cache/incus-spawn/maven"),
+                home().resolve(".cache/incus-spawn/gradle"));
     }
 
     public static Path npmCacheDir() {
