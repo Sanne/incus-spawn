@@ -2538,11 +2538,17 @@ public class InitCommand extends BaseCommand {
 
     /**
      * The entry number an input refers to, or null if it is not one. Accepts "2" and, because
-     * the list reads like numbered entries, "#2" too.
+     * the list reads like numbered entries, "#2" too. Digits too many to parse still name an
+     * entry -- one that cannot exist -- so they are never mistaken for a directory to add.
      */
     static Integer entryNumber(String input) {
-        var m = java.util.regex.Pattern.compile("#?\\s*(\\d{1,9})").matcher(input);
-        return m.matches() ? Integer.parseInt(m.group(1)) : null;
+        var m = java.util.regex.Pattern.compile("#?\\s*(\\d+)").matcher(input);
+        if (!m.matches()) return null;
+        try {
+            return Integer.parseInt(m.group(1));
+        } catch (NumberFormatException tooLarge) {
+            return Integer.MAX_VALUE;
+        }
     }
 
     private void printNumberedPaths(java.util.List<String> paths) {
@@ -2712,7 +2718,7 @@ public class InitCommand extends BaseCommand {
                 } else if (paths.isEmpty()) {
                     System.out.println("  There are no entries to remove.");
                 } else {
-                    System.out.println("  No entry " + entryNumber + " — type a number from 1 to " + paths.size() + ".");
+                    System.out.println("  No such entry — type a number from 1 to " + paths.size() + ".");
                 }
                 continue;
             }

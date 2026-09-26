@@ -110,7 +110,7 @@ class PathListPromptsTest {
     void anOutOfRangeNumberChangesNothing() throws Exception {
         var config = new SpawnConfig();
         config.setHostPaths(List.of(dir("a").toString()));
-        edit(config, ScriptedPrompts.lines("2", "0", ""));
+        edit(config, ScriptedPrompts.lines("2", "0", "99999999999", "#99999999999", ""));
         assertNothingSaved();
     }
 
