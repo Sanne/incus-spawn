@@ -193,6 +193,10 @@ class InstanceEventWatcherTest {
         }, c -> {}, () -> {}, () -> {}, 50, 60_000).start();
         var stream = streams.poll(5, TimeUnit.SECONDS);
         watcher.close();
+        // The opener hands us the stream before the watcher stores it as current. If close()
+        // lands in that gap, the watcher thread closes the stream itself, just after.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!stream.closed && System.nanoTime() < deadline) Thread.sleep(5);
         assertTrue(stream.closed);
         Thread.sleep(300);
         assertTrue(streams.isEmpty(), "must not reconnect after close");
