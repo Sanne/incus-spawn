@@ -811,7 +811,7 @@ build faster than v3 to the same wrong number and hides the differences between 
 ### CLI latency baseline: native vs JVM
 
 Measured with `bench/cli.sh` at 7d3389b on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44,
-kernel 7.2.6, Incus 6.23 over the local Unix socket, with the native CLI built by GraalVM
+kernel 7.2.6, Incus 6.23 over the local Unix socket on a btrfs pool, with the native CLI built by GraalVM
 25.4. Medians of 20 runs after 2 warmups:
 
 | Operation | Native | JVM | JVM / native |
