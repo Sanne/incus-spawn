@@ -2141,8 +2141,13 @@ public class BuildCommand extends BaseCommand {
 
     private void cleanCaches(String container) {
         BuildOutput.stepStart("Cleaning up caches...");
+        // If the shared cache volume is somehow still mounted, dnf clean / rm -rf would
+        // wipe it for every later build, not just this image: clean only /tmp then.
         incus.shellExec(container, "sh", "-c",
-                "dnf clean all; rm -rf /var/cache/libdnf5 /tmp/* /var/tmp/*; true");
+                "if mountpoint -q " + DNF_CACHE_PATH + "; then "
+                        + "echo 'Warning: DNF cache volume still mounted, not cleaning it' >&2; "
+                        + "else dnf clean all; rm -rf " + DNF_CACHE_PATH + "; fi; "
+                        + "rm -rf /tmp/* /var/tmp/*; true");
         BuildOutput.stepDone();
     }
 
@@ -2458,8 +2463,9 @@ public class BuildCommand extends BaseCommand {
      */
     static final String DNF_CACHE_VOLUME = "dnf-cache";
 
+    private static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
+
     private void mountDnfCache(String container, boolean isVm) {
-        if (isVm) return;
         try {
             var pool = incus.findCowPool();
             if (pool == null) return;
@@ -2467,13 +2473,26 @@ public class BuildCommand extends BaseCommand {
             incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
                     "pool=" + pool,
                     "source=" + DNF_CACHE_VOLUME,
-                    "path=/var/cache/libdnf5");
+                    "path=" + DNF_CACHE_PATH);
         } catch (Exception e) {
             System.err.println("Warning: could not mount DNF cache (builds will be slower): " + e.getMessage());
+            return;
+        }
+        // VMs get the volume over virtiofs, mounted asynchronously by incus-agent. Without
+        // this wait the first dnf run would fill the image's own cache dir instead.
+        if (isVm && !incus.pollUntilReady(container, 15, "mountpoint", "-q", DNF_CACHE_PATH)) {
+            System.err.println("Warning: DNF cache volume did not mount in time (builds will be slower).");
+            try { unmountDnfCache(container); } catch (Exception ignored) {}
         }
     }
 
     private void unmountDnfCache(String container) {
+        // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
+        // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
+        if (incus.isVm(container)) {
+            incus.shellExec(container, "sh", "-c",
+                    "mountpoint -q " + DNF_CACHE_PATH + " && umount " + DNF_CACHE_PATH + "; true");
+        }
         // Safe even if mountDnfCache was skipped: deviceRemove is a read-modify-write
         // that filters the device map — a missing device is a no-op, not an error.
         incus.deviceRemove(container, DNF_CACHE_DEVICE);
