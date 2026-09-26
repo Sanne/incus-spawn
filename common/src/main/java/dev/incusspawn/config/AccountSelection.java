@@ -1,5 +1,6 @@
 package dev.incusspawn.config;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ToolSetup;
@@ -228,11 +229,34 @@ public final class AccountSelection {
     /** As {@link #stamp(IncusClient, String, Map)}, reusing a selection the caller just read. */
     public static void stamp(IncusClient incus, String instance, Map<String, String> selection,
                              Map<String, String> current) {
-        var updates = new LinkedHashMap<String, Object>();
+        var updates = new LinkedHashMap<String, Object>(stampUpdates(selection, current));
+        if (!updates.isEmpty()) incus.configUpdate(instance, updates);
+    }
+
+    /**
+     * The config changes {@link #stamp} makes, for a caller folding them into a larger write:
+     * a {@code null} value removes the key.
+     */
+    public static Map<String, String> stampUpdates(Map<String, String> selection,
+                                                   Map<String, String> current) {
+        var updates = new LinkedHashMap<String, String>();
         current.keySet().forEach(ns -> updates.put(Metadata.accountKey(ns), null));
         selection.forEach((namespace, account) ->
                 updates.put(Metadata.accountKey(namespace), account));
-        if (!updates.isEmpty()) incus.configUpdate(instance, updates);
+        return updates;
+    }
+
+    /** The selection recorded in an instance's {@code config}, as {@link #read} returns it. */
+    public static Map<String, String> fromConfig(JsonNode config) {
+        var selection = new LinkedHashMap<String, String>();
+        config.properties().forEach(entry -> {
+            if (!entry.getKey().startsWith(Metadata.ACCOUNT_PREFIX)) return;
+            var value = entry.getValue().isNull() ? "" : entry.getValue().asText("");
+            if (!value.isBlank()) {
+                selection.put(entry.getKey().substring(Metadata.ACCOUNT_PREFIX.length()), value.strip());
+            }
+        });
+        return selection;
     }
 
     /**

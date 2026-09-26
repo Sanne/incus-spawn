@@ -13,6 +13,7 @@ import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -38,15 +39,98 @@ public final class InstanceLifecycle {
 
     private InstanceLifecycle() {}
 
-    public static void applyResourceLimits(IncusClient incus, String name,
-                                          String cpu, String memory, String disk) {
-        if (cpu != null && !cpu.isEmpty()) {
-            incus.configSetAll(name, Map.of("limits.cpu", cpu, "limits.memory", memory));
-        } else {
-            incus.configUnset(name, "limits.cpu");
-            incus.configSet(name, "limits.memory", memory);
+    /**
+     * What {@link #configureBranch} sets on a fresh copy before it starts.
+     *
+     * @param cpu      {@code limits.cpu}; null or empty leaves the CPU count unlimited
+     * @param parent   the instance or template the branch was copied from
+     * @param accounts credential account pins to stamp, which clear any the copy carried that
+     *                 they do not name; empty leaves the copied pins as they are
+     * @param kvm      whether KVM passthrough is configured next; if not, KVM devices and
+     *                 metadata inherited from the source are dropped
+     */
+    public record BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
+                                 String parent, Map<String, String> accounts, boolean kvm) {}
+
+    /**
+     * Configure a freshly copied branch before its first start, in one write to Incus.
+     *
+     * <p>Resource limits, the network mode, the static IP and its spoofing protection, the
+     * branch metadata, the account pins and the removal of inherited KVM passthrough used to be
+     * nine writes. Each costs Incus a rewrite of the instance's backup file, which is what made
+     * them add up to ~110 ms of the time before start (#804). They are collected into one
+     * {@link InstanceUpdate} against a single read of the instance instead: one PATCH, or one PUT
+     * when an inherited KVM device has to go.
+     *
+     * <p>Airgap mode still detaches the NIC separately first; it is rare, and the detach has
+     * to override a profile device before it can remove it.
+     */
+    public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
+        var mode = settings.networkMode();
+        if (mode == NetworkMode.AIRGAP) {
+            BuildOutput.stepStart("Enabling network airgap...");
+            incus.networkDetach(name, "incusbr0");
+            BuildOutput.stepDone();
         }
-        incus.deviceConfigSet(name, "root", "size", disk);
+
+        var instance = incus.instanceMetadata(name);
+        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        var update = new InstanceUpdate();
+
+        var cpu = settings.cpu();
+        update.config("limits.cpu", cpu != null && !cpu.isEmpty() ? cpu : null);
+        update.config("limits.memory", settings.memory());
+        update.device("root", "size", settings.disk());
+
+        String ip = null;
+        String gateway = null;
+        String nicDevice = null;
+        if (mode != NetworkMode.AIRGAP) {
+            gateway = ProxyConfig.resolveGatewayIp(incus);
+            if (mode == NetworkMode.PROXY_ONLY) {
+                BuildOutput.step("Configuring proxy-only network.");
+                update.config(Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
+                update.config(Metadata.PROXY_GATEWAY, gateway);
+            }
+            // A static IP, so no DHCP lease is ever acquired: leases expire across host
+            // sleep/wake. See pushStaticNetworkConfig for the guest side.
+            ip = StaticIpAllocator.allocate(incus);
+            nicDevice = IncusClient.nicDeviceName(instance, "incusbr0");
+            if (nicDevice == null) {
+                throw new IncusException("No NIC device for incusbr0 found on " + name);
+            }
+            BuildOutput.step("Assigning static IP " + ip + ".");
+            update.device(nicDevice, "ipv4.address", ip);
+            update.device(nicDevice, "security.ipv4_filtering", "true");
+            update.config(Metadata.STATIC_IP, ip);
+            update.config(Metadata.STATIC_GATEWAY, gateway);
+        }
+
+        update.config(Metadata.TYPE, Metadata.TYPE_CLONE);
+        update.config(Metadata.PARENT, settings.parent());
+        update.config(Metadata.CREATED, Metadata.today());
+        if (!settings.accounts().isEmpty()) {
+            update.config(AccountSelection.stampUpdates(settings.accounts(),
+                    AccountSelection.fromConfig(instance.path("config"))));
+        }
+        if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
+
+        try {
+            incus.update(name, instance, update);
+        } catch (IncusException e) {
+            if (nicDevice == null) throw e;
+            // Failing to pin the address is fatal, failing to enable filtering only warns (see
+            // applyIpFiltering), and one write cannot say which of them Incus refused. Incus
+            // rolls a refused write back whole, so retry without filtering: if that goes
+            // through, filtering was the problem; if not, the error is the real one.
+            incus.update(name, instance,
+                    update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
+            warnIpFilteringUnavailable(name, e.getMessage());
+        }
+
+        if (ip != null && !"virtual-machine".equals(instance.path("type").asText(""))) {
+            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        }
     }
 
     /**
@@ -102,55 +186,6 @@ public final class InstanceLifecycle {
         }
     }
 
-    public static void configureNetwork(IncusClient incus, String name, NetworkMode mode) {
-        switch (mode) {
-            case FULL -> {}
-            case PROXY_ONLY -> {
-                BuildOutput.stepStart("Configuring proxy-only network...");
-                var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-                incus.configSet(name, Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
-                incus.configSet(name, Metadata.PROXY_GATEWAY, gatewayIp);
-                BuildOutput.stepDone();
-            }
-            case AIRGAP -> {
-                BuildOutput.stepStart("Enabling network airgap...");
-                incus.networkDetach(name, "incusbr0");
-                BuildOutput.stepDone();
-            }
-        }
-    }
-
-    /**
-     * Allocate a static IP for a new branch and configure it on the Incus NIC device.
-     * The systemd-networkd {@code .network} file is pushed into the still-stopped
-     * container here so the interface comes up statically at boot — no DHCP lease is
-     * ever acquired, which is the whole point: leases expire across host sleep/wake.
-     * Skipped for AIRGAP mode (no NIC).
-     *
-     * @return the allocated IP, or null if skipped
-     */
-    public static String assignStaticIp(IncusClient incus, String name, NetworkMode mode) {
-        if (mode == NetworkMode.AIRGAP) return null;
-
-        var ip = StaticIpAllocator.allocate(incus);
-        var gateway = ProxyConfig.resolveGatewayIp(incus);
-        var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
-
-        BuildOutput.step("Assigning static IP " + ip + ".");
-        // Deliberately two calls, not one batched PATCH: failing to pin the address is fatal,
-        // failing to enable filtering only warns, and one call cannot report both.
-        incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
-        applyIpFiltering(incus, name, nicDevice);
-        incus.configSetAll(name, Map.of(
-                Metadata.STATIC_IP, ip,
-                Metadata.STATIC_GATEWAY, gateway));
-
-        if (!incus.isVm(name)) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-        }
-        return ip;
-    }
-
     /**
      * Pin the instance to the address it was allocated, so it cannot answer for another.
      *
@@ -161,7 +196,7 @@ public final class InstanceLifecycle {
      * like isolation while providing none.
      *
      * <p>Incus enforces this with nftables/ebtables rules and requires the pinned
-     * {@code ipv4.address} set just above. A host whose kernel or firewall backend cannot do
+     * {@code ipv4.address} set with it. A host whose kernel or firewall backend cannot do
      * it warns rather than failing the branch: the instance still works, it is only the
      * separation between instances that is not enforced.
      */
@@ -169,12 +204,15 @@ public final class InstanceLifecycle {
         try {
             incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
         } catch (RuntimeException e) {
-            System.err.println(BuildOutput.STEP_INDENT
-                    + "Warning: could not enable IP spoofing protection on " + name + ": "
-                    + e.getMessage());
-            System.err.println(BuildOutput.STEP_INDENT
-                    + "Instances on this host can impersonate each other's credential accounts.");
+            warnIpFilteringUnavailable(name, e.getMessage());
         }
+    }
+
+    private static void warnIpFilteringUnavailable(String name, String reason) {
+        System.err.println(BuildOutput.STEP_INDENT
+                + "Warning: could not enable IP spoofing protection on " + name + ": " + reason);
+        System.err.println(BuildOutput.STEP_INDENT
+                + "Instances on this host can impersonate each other's credential accounts.");
     }
 
     /**
@@ -655,7 +693,7 @@ public final class InstanceLifecycle {
         // the script succeeded, which is what pollUntilReady retries on.
         sb.append("chown agentuser:agentuser /home/agentuser || true");
         // The static .network config is pushed into the stopped container before start
-        // (see assignStaticIp), so the interface comes up immediately at boot — no DHCP
+        // (see configureBranch), so the interface comes up immediately at boot — no DHCP
         // wait. Here we only ensure the service is running and confirm the address is up.
         // Polled every 50 ms: the address usually appears within a few hundred ms of start,
         // and a coarser interval is paid in full by every branch. Airgap branches have no

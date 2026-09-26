@@ -166,20 +166,15 @@ public class BranchCommand extends BaseCommand {
 
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
-        InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
-        InstanceLifecycle.configureNetwork(incus, name, networkMode);
-        InstanceLifecycle.assignStaticIp(incus, name, networkMode);
-        InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
-        applyAccountSelection(accountSelection);
+        var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
+        InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
+                cpu, memory, disk, networkMode, resolvedSource, accountSelection, enableKvm));
+        announceAccountSelection(accountSelection);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
-        var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
-        if (enableKvm) {
-            if (!KvmPassthrough.configureKvm(incus, name)) {
-                System.err.println("Continuing without KVM — VMs inside this branch will not work.");
-            }
-        } else {
-            KvmPassthrough.removeKvm(incus, name);
+        // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
+        if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
+            System.err.println("Continuing without KVM — VMs inside this branch will not work.");
         }
 
         if (noStart) {
@@ -258,9 +253,9 @@ public class BranchCommand extends BaseCommand {
         return selection;
     }
 
-    private void applyAccountSelection(Map<String, String> selection) {
+    /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */
+    private void announceAccountSelection(Map<String, String> selection) {
         if (!selection.isEmpty()) {
-            AccountSelection.stamp(incus, name, selection);
             BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
         }
         // Signalled even when this branch pins nothing. Static IPs are handed out lowest-free,

@@ -1,6 +1,8 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
 
@@ -9,6 +11,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 public final class KvmPassthrough {
+
+    private static final List<String> DEVICES = List.of("kvm", "vhost-vsock");
 
     private KvmPassthrough() {}
 
@@ -26,7 +30,7 @@ public final class KvmPassthrough {
         }
 
         BuildOutput.step("Enabling KVM passthrough.");
-        incus.devicesRemoveAll(name, List.of("kvm", "vhost-vsock"));
+        incus.devicesRemoveAll(name, DEVICES);
         incus.deviceAdd(name, "kvm", "unix-char",
                 "source=/dev/kvm",
                 "path=/dev/kvm");
@@ -39,8 +43,15 @@ public final class KvmPassthrough {
         return true;
     }
 
-    public static void removeKvm(IncusClient incus, String name) {
-        incus.devicesRemoveAll(name, List.of("kvm", "vhost-vsock"));
-        incus.configUnset(name, Metadata.KVM_ENABLED);
+    /**
+     * Add to {@code update} the removal of KVM passthrough an instance inherited, given its
+     * current state. Contributes nothing when there is none, so an instance without KVM devices
+     * costs no device rewrite.
+     */
+    public static void removeKvm(JsonNode instance, InstanceUpdate update) {
+        for (var device : DEVICES) {
+            if (instance.path("devices").has(device)) update.removeDevice(device);
+        }
+        if (instance.path("config").has(Metadata.KVM_ENABLED)) update.unset(Metadata.KVM_ENABLED);
     }
 }

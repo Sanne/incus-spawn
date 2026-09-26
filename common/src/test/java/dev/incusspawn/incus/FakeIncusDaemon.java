@@ -29,6 +29,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, ObjectNode> instances = new LinkedHashMap<>();
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
+    private final List<String> refusedWrites = new ArrayList<>();
     private int nextOperation = 1;
 
     public FakeIncusDaemon() {
@@ -54,12 +55,32 @@ public final class FakeIncusDaemon implements IncusTransport {
         node.put("architecture", "x86_64");
         node.set("config", JSON.valueToTree(config));
         node.putObject("devices");
-        var nic = node.putObject("expanded_devices").putObject("eth0");
+        // As the default profile provides them.
+        var expanded = node.putObject("expanded_devices");
+        var nic = expanded.putObject("eth0");
         nic.put("type", "nic");
         nic.put("network", "incusbr0");
         nic.put("name", "eth0");
+        var root = expanded.putObject("root");
+        root.put("type", "disk");
+        root.put("path", "/");
+        root.put("pool", "default");
         instances.put(name, node);
         return this;
+    }
+
+    /**
+     * Refuse any instance PUT or PATCH whose body contains {@code needle}, as Incus refuses a
+     * setting it cannot apply: a 400 and no change.
+     */
+    public FakeIncusDaemon refuseWritesContaining(String needle) {
+        refusedWrites.add(needle);
+        return this;
+    }
+
+    /** The instance as a GET would return it. */
+    public JsonNode instance(String name) {
+        return instances.get(name).deepCopy();
     }
 
     public FakeIncusDaemon network(String name, Map<String, String> config) {
@@ -128,11 +149,18 @@ public final class FakeIncusDaemon implements IncusTransport {
 
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && (method.equals("PUT") || method.equals("PATCH")) && body != null) {
+            var text = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+            if (refusedWrites.stream().anyMatch(text::contains)) return badRequest();
+        }
         if (rest.isEmpty() && method.equals("PUT")) {
             // A full replacement: how Incus removes devices (PATCH cannot).
             var replacement = JSON.readTree(body);
             instance.set("config", replacement.path("config").deepCopy());
+            var expanded = (ObjectNode) instance.get("expanded_devices");
+            instance.path("devices").properties().forEach(e -> expanded.remove(e.getKey()));
             instance.set("devices", replacement.path("devices").deepCopy());
+            replacement.path("devices").properties().forEach(e -> expanded.set(e.getKey(), e.getValue()));
             return sync(JSON.createObjectNode());
         }
         if (rest.isEmpty() && method.equals("PATCH")) {
@@ -188,6 +216,14 @@ public final class FakeIncusDaemon implements IncusTransport {
         body.put("status_code", 100);
         body.put("operation", "/1.0/operations/op-" + nextOperation++);
         return new RawResponse(202, bytes(body));
+    }
+
+    private static RawResponse badRequest() {
+        var body = JSON.createObjectNode();
+        body.put("type", "error");
+        body.put("error", "Invalid devices: refused by FakeIncusDaemon");
+        body.put("error_code", 400);
+        return new RawResponse(400, bytes(body));
     }
 
     private static RawResponse notFound() {

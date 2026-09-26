@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import dev.incusspawn.Environment;
 
@@ -271,42 +272,69 @@ class IncusApi {
      * read-modify-write: GET the current config, drop the device, PUT the full config back.
      */
     ApiResponse removeDevice(String instanceName, String deviceName) {
-        var getResp = get("/1.0/instances/" + instanceName);
-        if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
-
-        var metadata = getResp.body().path("metadata");
-
-        var devicesNode = JSON.createObjectNode();
-        metadata.path("devices").fields().forEachRemaining(e -> {
-            if (!e.getKey().equals(deviceName)) devicesNode.set(e.getKey(), e.getValue());
-        });
-
-        var putBody = JSON.createObjectNode();
-        putBody.put("architecture", metadata.path("architecture").asText());
-        putBody.set("config", metadata.path("config").deepCopy());
-        putBody.put("description", metadata.path("description").asText(""));
-        putBody.set("devices", devicesNode);
-        putBody.put("ephemeral", metadata.path("ephemeral").asBoolean(false));
-        var profiles = putBody.putArray("profiles");
-        metadata.path("profiles").forEach(p -> profiles.add(p.asText()));
-        putBody.put("stateful", metadata.path("stateful").asBoolean(false));
-
-        return requestAndWait("PUT", "/1.0/instances/" + instanceName, putBody);
+        return removeDevices(instanceName, List.of(deviceName));
     }
 
     ApiResponse removeDevices(String instanceName, java.util.Collection<String> deviceNames) {
         var getResp = get("/1.0/instances/" + instanceName);
         if (!getResp.isSuccess()) throw new IncusException("Failed to get instance " + instanceName);
+        var update = new InstanceUpdate();
+        deviceNames.forEach(update::removeDevice);
+        return update(instanceName, getResp.body().path("metadata"), update);
+    }
 
-        var metadata = getResp.body().path("metadata");
-        var devicesNode = JSON.createObjectNode();
-        metadata.path("devices").fields().forEachRemaining(e -> {
-            if (!deviceNames.contains(e.getKey())) devicesNode.set(e.getKey(), e.getValue());
+    /**
+     * Apply an {@link InstanceUpdate} to an instance as one write, given its current state
+     * ({@code metadata} of {@code GET /1.0/instances/<name>}).
+     *
+     * <p>A PATCH when nothing is removed. Removing a device the instance declares needs a PUT
+     * of the whole instance, since PATCH cannot remove devices -- the config and device
+     * changes then ride along in that same PUT. A removal of a device the instance does not
+     * declare is dropped rather than forcing the PUT.
+     *
+     * <p>A changed device is sent complete: its current config (expanded, so a profile device
+     * is overridden rather than replaced by a fragment Incus rejects as "Missing device type")
+     * with the new properties merged in.
+     */
+    ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update) {
+        var instanceDevices = metadata.path("devices");
+        var changedDevices = new LinkedHashMap<String, ObjectNode>();
+        update.deviceProperties().forEach((deviceName, props) -> {
+            var current = metadata.path("expanded_devices").path(deviceName);
+            if (current.isMissingNode()) current = instanceDevices.path(deviceName);
+            var merged = JSON.createObjectNode();
+            current.properties().forEach(e -> merged.set(e.getKey(), e.getValue()));
+            props.forEach(merged::put);
+            changedDevices.put(deviceName, merged);
         });
+        var removing = update.removedDevices().stream().anyMatch(instanceDevices::has);
+
+        if (!removing) {
+            var body = JSON.createObjectNode();
+            if (!update.config().isEmpty()) {
+                var config = body.putObject("config");
+                update.config().forEach(config::put);
+            }
+            if (!changedDevices.isEmpty()) body.putObject("devices").setAll(changedDevices);
+            if (body.isEmpty()) return new ApiResponse(200, JSON.createObjectNode());
+            return requestAndWait("PATCH", "/1.0/instances/" + instanceName, body);
+        }
+
+        var config = JSON.createObjectNode();
+        metadata.path("config").properties().forEach(e -> config.set(e.getKey(), e.getValue()));
+        for (var e : update.config().entrySet()) {
+            if (e.getValue() == null) config.remove(e.getKey());
+            else config.put(e.getKey(), e.getValue());
+        }
+        var devicesNode = JSON.createObjectNode();
+        instanceDevices.properties().forEach(e -> {
+            if (!update.removedDevices().contains(e.getKey())) devicesNode.set(e.getKey(), e.getValue());
+        });
+        devicesNode.setAll(changedDevices);
 
         var putBody = JSON.createObjectNode();
         putBody.put("architecture", metadata.path("architecture").asText());
-        putBody.set("config", metadata.path("config").deepCopy());
+        putBody.set("config", config);
         putBody.put("description", metadata.path("description").asText(""));
         putBody.set("devices", devicesNode);
         putBody.put("ephemeral", metadata.path("ephemeral").asBoolean(false));

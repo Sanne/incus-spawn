@@ -5249,18 +5249,12 @@ public class ListCommand extends BaseCommand {
         }
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
-        InstanceLifecycle.applyResourceLimits(incus, name, cpu, memory, disk);
-        InstanceLifecycle.configureNetwork(incus, name, networkMode);
-        InstanceLifecycle.assignStaticIp(incus, name, networkMode);
-        InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, source);
+        InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
+                cpu, memory, disk, networkMode, source, java.util.Map.of(), kvm));
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
-        if (kvm) {
-            if (!KvmPassthrough.configureKvm(incus, name)) {
-                System.err.println("Continuing without KVM — VMs inside this branch will not work.");
-            }
-        } else {
-            KvmPassthrough.removeKvm(incus, name);
+        if (kvm && !KvmPassthrough.configureKvm(incus, name)) {
+            System.err.println("Continuing without KVM — VMs inside this branch will not work.");
         }
 
         boolean isVm = incus.isVm(name);

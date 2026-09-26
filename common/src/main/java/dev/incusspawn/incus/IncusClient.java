@@ -1199,8 +1199,13 @@ public class IncusClient {
     public String findNicDeviceName(String instance, String networkName) {
         var resp = http().get("/1.0/instances/" + instance);
         if (!resp.isSuccess()) return null;
-        var expandedDevices = resp.body().path("metadata").path("expanded_devices");
-        for (var it = expandedDevices.fields(); it.hasNext(); ) {
+        return nicDeviceName(resp.body().path("metadata"), networkName);
+    }
+
+    /** As {@link #findNicDeviceName}, from an instance representation already read. */
+    public static String nicDeviceName(JsonNode instanceMetadata, String networkName) {
+        var expandedDevices = instanceMetadata.path("expanded_devices");
+        for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
             var entry = it.next();
             var dev = entry.getValue();
             if ("nic".equals(dev.path("type").asText()) &&
@@ -1613,6 +1618,16 @@ public class IncusClient {
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to set device config on " + container);
         }
+    }
+
+    /**
+     * Apply collected config and device changes as one write, against the instance state the
+     * caller already read with {@link #instanceMetadata} -- see {@link InstanceUpdate}.
+     */
+    public void update(String name, JsonNode instanceMetadata, InstanceUpdate update) {
+        if (update.isEmpty()) return;
+        var resp = http().update(name, instanceMetadata, update);
+        if (!resp.isSuccess()) throw failedOp(resp, "Failed to update " + name);
     }
 
     /** The NIC device attached to a network, with its expanded config. */

@@ -561,7 +561,7 @@ The typed classes follow. `BobConfig.hasAuth()` and `OpenaiConfig.hasAuth()` use
 
 The credential namespaces that *do* have a Java class (`GitHubConfig`, `BobConfig`, `OpenaiConfig`) extend `SpawnConfig.NamespaceConfig`, which preserves keys the class does not declare. Without that an `accounts:` block would deserialize to nothing and then be **deleted** by the next save — the same credential-destroying shape as the `putAccount` bug found in review. Namespaces with no Java class at all were already safe: they land in `SpawnConfig.extras`.
 
-**How the proxy tells callers apart.** One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address. Every branch is given a static IP (`InstanceLifecycle.assignStaticIp`, recorded as `user.incus-spawn.static-ip`) and the iptables REDIRECT that sends `:443` to the proxy preserves the source address, so one `/1.0/instances?recursion=1` call maps every address to an instance and its pinned accounts at once. `InstanceRegistry` holds that snapshot; `lookup()` never blocks, and refreshes run through `executeBlocking` following the single-flight pattern already used for DNS and Vertex tokens. `isx branch` and `isx account set` signal the proxy (SIGHUP) so a change lands immediately rather than at the next poll. `RequestContext` carries domain, caller, credentials and routing down the request path in place of the bare domain, and per-selection credentials are cached keyed by the selection itself and cleared on every config reload.
+**How the proxy tells callers apart.** One shared proxy on `DEFAULT_MITM_PORT` still serves every instance, but it now identifies the caller by source address. Every branch is given a static IP (`InstanceLifecycle.configureBranch`, recorded as `user.incus-spawn.static-ip`) and the iptables REDIRECT that sends `:443` to the proxy preserves the source address, so one `/1.0/instances?recursion=1` call maps every address to an instance and its pinned accounts at once. `InstanceRegistry` holds that snapshot; `lookup()` never blocks, and refreshes run through `executeBlocking` following the single-flight pattern already used for DNS and Vertex tokens. `isx branch` and `isx account set` signal the proxy (SIGHUP) so a change lands immediately rather than at the next poll. `RequestContext` carries domain, caller, credentials and routing down the request path in place of the bare domain, and per-selection credentials are cached keyed by the selection itself and cleared on every config reload.
 
 An address that is *not* a known instance — a template build container, host-side traffic — gets the configured defaults rather than an error, because the proxy serves those too. An instance that pins nothing gets the same.
 
@@ -890,6 +890,36 @@ before the start: GUI setup runs first, right after the copy, and the `.network`
 the resource limits and network configuration, with the account stamp, host integration and
 the runtime prefetch still between it and the start. That has been enough to finish the flush;
 if a trace ever shows the one-second gap again, the `.network` push is the next candidate.
+
+### Why a branch is configured in one write
+
+Between the copy and the start, a branch used to change the instance's settings in nine
+separate writes: resource limits and the root disk size, the proxy-only keys, the NIC address,
+IP spoofing protection, the static IP metadata, type/parent/created, the account pins, and the
+removal of inherited KVM passthrough (a full PUT even when there was nothing to remove). Each
+step did its own read-modify-write, and each write costs Incus ~11-13 ms on btrfs, mostly
+rewriting the instance's backup file (`UpdateInstanceBackupFile`) -- ~110 ms of the ~250 ms
+before start, and more on macOS, where every request also crosses the vsock tunnel (#804).
+
+`InstanceLifecycle.configureBranch()`, shared by `isx branch` and the TUI, reads the instance
+once and collects every change into an `InstanceUpdate` (config sets and unsets, device
+properties, device removals), which `IncusClient.update()` sends as **one PATCH**. PATCH cannot
+remove a device, so when the copy inherited KVM devices the write is **one PUT** of the whole
+instance carrying all the other changes as well; a removal of a device the instance does not
+declare is dropped rather than forcing that PUT (which also makes `devicesRemoveAll` of absent
+devices a read only). Devices are sent complete -- their expanded config with the new properties
+merged in -- so a profile device such as `root` or `eth0` is overridden, not replaced by a
+fragment Incus rejects. `InstanceLifecycleRequestBudgetTest` pins the one write.
+
+One write cannot say which of its settings Incus refused, and the old separate writes existed
+partly to keep two apart: failing to pin the address is fatal, failing to enable
+`security.ipv4_filtering` only warns. Incus rolls a refused write back whole, so on failure the
+write is retried once without filtering: success means filtering was the problem (and is
+reported as before), failure surfaces the real error. The retry only happens on the failure path.
+
+Airgap mode still detaches the NIC separately before the combined write; it is rare, and the
+detach has to override a profile device before it can remove it. Enabling GUI or KVM
+passthrough and host resources still add their own devices afterwards.
 
 ### Build-time initialization must not capture host paths
 
