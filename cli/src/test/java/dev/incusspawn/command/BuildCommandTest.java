@@ -2554,4 +2554,111 @@ class BuildCommandTest {
         assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, false));
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("echo primed"));
     }
+
+    // --- Shared DNF cache volume: VM mount, teardown, and the cleanup guard ---
+
+    private static BuildCommand dnfCacheCommand(IncusClient incus) {
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        when(incus.findCowPool()).thenReturn("cow");
+        return cmd;
+    }
+
+    @Test
+    void mountDnfCacheDoesNotPollForContainers() {
+        var incus = mock(IncusClient.class);
+        dnfCacheCommand(incus).mountDnfCache("b", false);
+
+        verify(incus).deviceAdd(eq("b"), eq("dnf-cache"), eq("disk"),
+                eq("pool=cow"), eq("source=" + BuildCommand.DNF_CACHE_VOLUME),
+                eq("path=" + BuildCommand.DNF_CACHE_PATH));
+        verify(incus, never()).pollUntilReady(anyString(), anyInt(), any(String[].class));
+        verify(incus, never()).deviceRemove(anyString(), anyString());
+    }
+
+    @Test
+    void mountDnfCacheWaitsForVmMountAndKeepsDevice() {
+        var incus = mock(IncusClient.class);
+        when(incus.pollUntilReady(eq("b"), anyInt(), any(String[].class))).thenReturn(true);
+        dnfCacheCommand(incus).mountDnfCache("b", true);
+
+        verify(incus).deviceAdd(eq("b"), eq("dnf-cache"), eq("disk"), any(String[].class));
+        verify(incus).pollUntilReady("b", 15, "mountpoint", "-q", BuildCommand.DNF_CACHE_PATH);
+        verify(incus, never()).deviceRemove(anyString(), anyString());
+    }
+
+    @Test
+    void mountDnfCacheRemovesDeviceWhenVmMountNeverAppears() {
+        // Leaving the device attached would let the async agent mount it mid-build, over a
+        // cache dir dnf has already started filling; the build must continue uncached.
+        var incus = mock(IncusClient.class);
+        when(incus.pollUntilReady(eq("b"), anyInt(), any(String[].class))).thenReturn(false);
+        when(incus.isVm("b")).thenReturn(true);
+        when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
+
+        assertDoesNotThrow(() -> dnfCacheCommand(incus).mountDnfCache("b", true));
+        verify(incus).deviceRemove("b", "dnf-cache");
+    }
+
+    @Test
+    void unmountDnfCacheUnmountsInVmGuestBeforeRemovingDevice() {
+        var incus = mock(IncusClient.class);
+        when(incus.isVm("b")).thenReturn(true);
+        when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
+        dnfCacheCommand(incus).unmountDnfCache("b");
+
+        var captor = ArgumentCaptor.forClass(String.class);
+        var order = inOrder(incus);
+        order.verify(incus).shellExec(eq("b"), eq("sh"), eq("-c"), captor.capture());
+        order.verify(incus).deviceRemove("b", "dnf-cache");
+        assertTrue(captor.getValue().contains("umount " + BuildCommand.DNF_CACHE_PATH),
+                captor.getValue());
+    }
+
+    @Test
+    void unmountDnfCacheSkipsGuestUnmountForContainers() {
+        var incus = mock(IncusClient.class);
+        when(incus.isVm("b")).thenReturn(false);
+        dnfCacheCommand(incus).unmountDnfCache("b");
+
+        verify(incus, never()).shellExec(anyString(), any(String[].class));
+        verify(incus).deviceRemove("b", "dnf-cache");
+    }
+
+    @Test
+    void cleanCachesNeverCleansThroughALiveCacheMount(@TempDir Path tempDir) throws Exception {
+        // Run the real script against a stand-in cache dir, with `mountpoint` and `dnf`
+        // stubbed on PATH, so the guard is checked by behaviour rather than by string shape.
+        var incus = mock(IncusClient.class);
+        var cmd = dnfCacheCommand(incus);
+        cmd.cleanCaches("b");
+        var captor = ArgumentCaptor.forClass(String.class);
+        verify(incus).shellExec(eq("b"), eq("sh"), eq("-c"), captor.capture());
+        var script = captor.getValue()
+                .replace(BuildCommand.DNF_CACHE_PATH, tempDir.resolve("cache").toString())
+                .replace("rm -rf /tmp/* /var/tmp/*", "true");
+
+        for (boolean mounted : new boolean[] {true, false}) {
+            var cache = Files.createDirectories(tempDir.resolve("cache"));
+            Files.writeString(cache.resolve("repomd.xml"), "x");
+            var bin = Files.createDirectories(tempDir.resolve("bin"));
+            var dnfLog = tempDir.resolve("dnf.log");
+            Files.deleteIfExists(dnfLog);
+            writeStub(bin.resolve("mountpoint"), "exit " + (mounted ? 0 : 1));
+            writeStub(bin.resolve("dnf"), "echo \"$@\" >> " + dnfLog);
+
+            var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
+            pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+            assertEquals(0, pb.start().waitFor());
+
+            assertEquals(mounted, Files.exists(cache.resolve("repomd.xml")),
+                    "mounted=" + mounted);
+            assertEquals(!mounted, Files.exists(dnfLog), "dnf clean ran, mounted=" + mounted);
+        }
+    }
+
+    private static void writeStub(Path path, String body) throws Exception {
+        Files.writeString(path, "#!/bin/sh\n" + body + "\n");
+        path.toFile().setExecutable(true);
+    }
 }

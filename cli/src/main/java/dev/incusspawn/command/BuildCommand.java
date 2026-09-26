@@ -2142,7 +2142,7 @@ public class BuildCommand extends BaseCommand {
         return StepProgress.failed(lastNonEmptyLine(combined), combined);
     }
 
-    private void cleanCaches(String container) {
+    void cleanCaches(String container) {
         BuildOutput.stepStart("Cleaning up caches...");
         // If the shared cache volume is somehow still mounted, dnf clean / rm -rf would
         // wipe it for every later build, not just this image: clean only /tmp then.
@@ -2466,9 +2466,9 @@ public class BuildCommand extends BaseCommand {
      */
     static final String DNF_CACHE_VOLUME = "dnf-cache";
 
-    private static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
+    static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
 
-    private void mountDnfCache(String container, boolean isVm) {
+    void mountDnfCache(String container, boolean isVm) {
         try {
             var pool = incus.findCowPool();
             if (pool == null) return;
@@ -2489,7 +2489,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private void unmountDnfCache(String container) {
+    void unmountDnfCache(String container) {
         // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
         // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
         if (incus.isVm(container)) {
