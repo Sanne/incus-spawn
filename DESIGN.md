@@ -808,6 +808,38 @@ Reproduce with `bench/run.sh --load=maven`. Use that harness rather than a shell
 `curl`: process-spawn overhead caps such a loop around 550 req/s, which silently pins every
 build faster than v3 to the same wrong number and hides the differences between them.
 
+### CLI latency baseline: native vs JVM
+
+Measured with `bench/cli.sh` at 7d3389b on an AMD Ryzen 9 9950X3D2 (16 cores), Fedora 44,
+kernel 7.2.6, Incus 6.23 over the local Unix socket, with the native CLI built by GraalVM
+25.4. Medians of 20 runs after 2 warmups:
+
+| Operation | Native | JVM | JVM / native |
+|---|---|---|---|
+| `isx --help` (process start only) | 2.8 ms | 195 ms | 70x |
+| `isx instances` (connect + one listing) | 6.4 ms | 268 ms | 42x |
+| `isx account show` (two instance reads) | 4.5 ms | 258 ms | 57x |
+| preparation before `isx shell` attaches | 53 ms | 773 ms | 15x |
+
+Single samples, indicative only: branch 350 ms, first start 223 ms, destroy of a running
+instance 846 ms.
+
+What it shows:
+
+- **Native is what makes the CLI feel instant.** The JVM costs roughly 200 ms at startup and
+  another ~580 ms running the shell preparation, all of it cold code that a short-lived
+  process never gets to warm up. Native does the same preparation in ~50 ms.
+- **Incus round trips are cheap locally**: `instances` costs ~3.6 ms above bare startup, and
+  a single request well under a millisecond. The request budgets are still worth having --
+  round trips run in sequence and cost far more over the macOS vsock tunnel -- but on Linux
+  a few extra requests do not show up as user-visible latency.
+- **Nothing here needs optimizing.** The slowest step, shell preparation, is ~50 ms, below
+  the ~100 ms at which a delay becomes noticeable. The point of the benchmark is to keep it
+  that way.
+
+Not yet measured: the macOS appliance, where every request crosses the vsock tunnel. That is
+the one configuration where the shell preparation could plausibly reach a noticeable delay.
+
 ### Build-time initialization must not capture host paths
 
 Quarkus initializes application classes at image-build time unless they are listed in
@@ -892,7 +924,7 @@ evidence; `.claude/rules/native-image.md` records what fixing it involves.
 - `InstanceLifecycleRequestBudgetTest` — exact Incus round-trip counts for the start/shell/branch flows (see "Request budgets" below)
 - `HelpChatModalTest` — the TUI's AI Help dialog, rendered headlessly and compared against golden text snapshots (see below), plus its key handling
 
-**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at a few milliseconds over the Unix socket and far more over the macOS vsock tunnel. Wall-clock benchmarks cannot gate PRs on shared CI runners, but a round-trip count is deterministic. `FakeIncusDaemon` (test scope, `common/src/test/.../incus/`) is an in-memory `IncusTransport` behind a real `IncusClient` (via its package-private `IncusClient(IncusApi)` constructor) that records every request; budget tests pin the exact count for a flow. Exact rather than at-most, so they ratchet: an improvement fails the test until the budget is lowered in the same change. The failure lists every request made, which is usually enough to spot the duplicate. A flow on the start/shell/branch path gets a budget; a known waste is pinned at its current count with a comment saying what the fixed count will be. Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.sh` times real `isx` commands, JVM against native, on a throwaway instance.
+**Request budgets**: CLI latency regressions almost always arrive as extra Incus round trips -- a `configGet` per key, a GET per listed instance -- and each one is paid in sequence before the user gets a prompt, at well under a millisecond over a local Unix socket but far more over the macOS vsock tunnel (see "CLI latency baseline"). Wall-clock benchmarks cannot gate PRs on shared CI runners, but a round-trip count is deterministic. `FakeIncusDaemon` (test scope, `common/src/test/.../incus/`) is an in-memory `IncusTransport` behind a real `IncusClient` (via its package-private `IncusClient(IncusApi)` constructor) that records every request; budget tests pin the exact count for a flow. Exact rather than at-most, so they ratchet: an improvement fails the test until the budget is lowered in the same change. The failure lists every request made, which is usually enough to spot the duplicate. A flow on the start/shell/branch path gets a budget; a known waste is pinned at its current count with a comment saying what the fixed count will be. Wall-clock measurement belongs in `bench/`, not in the shipped CLI: `bench/cli.sh` times real `isx` commands, JVM against native, on a throwaway instance.
 
 **TUI snapshot tests**: TUI screens are only reviewable if they can be rendered without a terminal or an Incus daemon. `TuiSnapshot` (test scope, `cli/src/test/.../tui/`) renders into an in-memory Tamboui `Buffer` via `Frame.forTesting` and compares the plain text against golden files in `cli/src/test/resources/tui-snapshots/`. Every run also writes the actual rendering to `cli/target/tui-snapshots/` as `.txt` and `.ansi` (colours; view with `less -R`), which is how a reviewer -- human or agent -- sees a UI change; a missing golden fails rather than being created silently. Accept a changed rendering with `-Dtui.snapshots.update=true` and review the golden diff. This requires the screen to be decoupled from `ListCommand`: a modal gets its own class holding its state, key handling and rendering, with side effects (the AI call, the executor) injected -- `HelpChatModal` is the first. Snapshot at several terminal sizes (80×24 is the floor), since truncation and wrapping bugs only show at some widths.
 
