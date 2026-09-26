@@ -188,7 +188,7 @@ class UnixSocketTransport implements IncusTransport {
             } catch (ClosedChannelException e) {
                 throw timeoutException(path, requestTimeout);
             } finally {
-                watchdog.interrupt();
+                watchdog.cancel();
                 if (opened) connectionClosed(permit);
             }
         }
@@ -214,7 +214,7 @@ class UnixSocketTransport implements IncusTransport {
             } catch (ClosedChannelException e) {
                 throw timeoutException(path, timeoutSeconds);
             } finally {
-                watchdog.interrupt();
+                watchdog.cancel();
                 if (opened) connectionClosed(permit);
             }
         }
@@ -224,14 +224,25 @@ class UnixSocketTransport implements IncusTransport {
     public WsConnection openWebSocket(String wsPath) throws IOException {
         var addr = UnixDomainSocketAddress.of(socketPath);
         var channel = SocketChannel.open(StandardProtocolFamily.UNIX);
+        // Bound the connect + handshake like any request: a wedged tunnel accepts and then says
+        // nothing. Only the setup is bounded -- the open socket's reads are not (see UnixWsConnection).
+        var watchdog = startWatchdog(channel, timeoutSeconds);
+        // The fd secret is a credential for this operation: keep it out of error messages.
+        var loggablePath = wsPath.replaceFirst("\\?.*", "");
         try {
             channel.connect(addr);
             var out = Channels.newOutputStream(channel);
             var in  = Channels.newInputStream(channel);
             wsHandshake(out, in, wsPath);
+            if (!watchdog.cancel()) throw timeoutException(loggablePath, timeoutSeconds);
             boolean permit = connectionOpened();
             return new UnixWsConnection(channel, out, in, permit);
-        } catch (IOException e) {
+        } catch (ClosedChannelException e) {
+            watchdog.cancel();
+            try { channel.close(); } catch (IOException ignored) {}
+            throw timeoutException(loggablePath, timeoutSeconds);
+        } catch (IOException | RuntimeException e) {
+            watchdog.cancel();
             try { channel.close(); } catch (IOException ignored) {}
             throw e;
         }
@@ -282,38 +293,13 @@ class UnixSocketTransport implements IncusTransport {
         out.flush();
     }
 
-    private RawResponse readResponse(InputStream in) throws IOException {
-        var statusLine = readLine(in);
-        var parts = statusLine.split(" ", 3);
-        if (parts.length < 2) throw new IOException("Invalid HTTP status line: " + statusLine);
-        int statusCode = Integer.parseInt(parts[1]);
-
-        int contentLength = -1;
-        boolean chunked = false;
-        String line;
-        while (!(line = readLine(in)).isEmpty()) {
-            var lower = line.toLowerCase();
-            if (lower.startsWith("content-length:")) {
-                contentLength = Integer.parseInt(lower.substring(15).trim());
-            } else if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) {
-                chunked = true;
-            }
-        }
-
-        byte[] bodyBytes;
-        if (chunked) {
-            bodyBytes = readChunkedBody(in);
-        } else if (contentLength >= 0) {
-            bodyBytes = in.readNBytes(contentLength);
-        } else {
-            bodyBytes = in.readAllBytes();
-        }
-
-        return new RawResponse(statusCode, bodyBytes);
+    private static RawResponse readResponse(InputStream in) throws IOException {
+        var resp = HttpResponseReader.read(in);
+        return new RawResponse(resp.statusCode(), resp.body());
     }
 
-    /** Send HTTP Upgrade request and consume the 101 response headers. */
-    private void wsHandshake(OutputStream out, InputStream in, String wsPath) throws IOException {
+    /** Send HTTP Upgrade request and require a 101 response. */
+    private static void wsHandshake(OutputStream out, InputStream in, String wsPath) throws IOException {
         var keyBytes = new byte[16];
         ThreadLocalRandom.current().nextBytes(keyBytes);
         var key = Base64.getEncoder().encodeToString(keyBytes);
@@ -325,41 +311,17 @@ class UnixSocketTransport implements IncusTransport {
                   "Sec-WebSocket-Version: 13\r\n\r\n";
         out.write(req.getBytes(StandardCharsets.US_ASCII));
         out.flush();
-        // Consume headers until blank line
-        String line;
-        while (!(line = readLine(in)).isEmpty()) {
-            if (line.startsWith("HTTP/") && !line.contains("101")) {
-                throw new IOException("WebSocket upgrade failed: " + line);
-            }
+        HttpResponseReader.Head head;
+        try {
+            head = HttpResponseReader.readHead(in);
+        } catch (java.io.EOFException e) {
+            // Without this, a peer that hung up mid-handshake yielded a "connected" socket that
+            // read as closed at once -- an exec fd whose output silently came back empty.
+            throw new IOException("WebSocket handshake failed: " + e.getMessage(), e);
         }
-    }
-
-    // Package-private for testing
-    String readLine(InputStream in) throws IOException {
-        var sb = new StringBuilder();
-        int c;
-        while ((c = in.read()) != -1) {
-            if (c == '\n') break;
-            if (c == '\r') continue;
-            sb.append((char) c);
+        if (head.statusCode() != 101) {
+            throw new IOException("WebSocket upgrade failed: HTTP " + head.statusCode());
         }
-        return sb.toString();
-    }
-
-    // Package-private for testing
-    byte[] readChunkedBody(InputStream in) throws IOException {
-        var out = new ByteArrayOutputStream();
-        while (true) {
-            var sizeLine = readLine(in).trim();
-            if (sizeLine.isEmpty()) continue;
-            int semi = sizeLine.indexOf(';');
-            if (semi >= 0) sizeLine = sizeLine.substring(0, semi).trim();
-            int chunkSize = Integer.parseInt(sizeLine, 16);
-            if (chunkSize == 0) break;
-            out.write(in.readNBytes(chunkSize));
-            readLine(in);
-        }
-        return out.toByteArray();
     }
 
     /** One data frame as received: payload plus the FIN bit that ends a fragmented message. */
@@ -382,21 +344,27 @@ class UnixSocketTransport implements IncusTransport {
     static WsFrame wsReadFrame(InputStream in, ControlFrames control) throws IOException {
         while (true) {
             int b0 = in.read();
-            if (b0 == -1) return null;
+            if (b0 == -1) return null; // EOF between frames: the stream ended
             boolean fin = (b0 & 0x80) != 0;
             int opcode = b0 & 0x0F;
 
-            int b1 = in.read();
-            if (b1 == -1) return null;
+            // From here on EOF means the frame was cut off: an error, never a shorter frame.
+            int b1 = frameByte(in);
             long payloadLen = b1 & 0x7F;
             if (payloadLen == 126) {
-                payloadLen = ((in.read() & 0xFFL) << 8) | (in.read() & 0xFFL);
+                payloadLen = ((long) frameByte(in) << 8) | frameByte(in);
             } else if (payloadLen == 127) {
                 payloadLen = 0;
-                for (int i = 0; i < 8; i++) payloadLen = (payloadLen << 8) | (in.read() & 0xFFL);
+                for (int i = 0; i < 8; i++) payloadLen = (payloadLen << 8) | frameByte(in);
+            }
+            if (payloadLen < 0 || payloadLen > MAX_FRAME_BYTES) {
+                throw new IOException("WebSocket frame length out of range: " + payloadLen);
             }
 
             var payload = in.readNBytes((int) payloadLen);
+            if (payload.length < payloadLen) {
+                throw new java.io.EOFException("WebSocket frame cut off (" + payload.length + "/" + payloadLen + " bytes)");
+            }
 
             if (opcode == WS_CLOSE) return null;
             if (opcode == WS_PING) {
@@ -412,6 +380,16 @@ class UnixSocketTransport implements IncusTransport {
             }
             // Unknown opcode — skip frame
         }
+    }
+
+    // Far above anything Incus sends (exec output and event frames are kilobytes), so only a
+    // corrupt length -- read from a stream that went wrong -- can exceed it.
+    private static final long MAX_FRAME_BYTES = 64L * 1024 * 1024;
+
+    private static int frameByte(InputStream in) throws IOException {
+        int b = in.read();
+        if (b == -1) throw new java.io.EOFException("WebSocket frame cut off in its header");
+        return b;
     }
 
     /** Read frames until one carries FIN, concatenating a fragmented message. Null on close/EOF. */
@@ -460,13 +438,40 @@ class UnixSocketTransport implements IncusTransport {
         out.flush();
     }
 
-    private static Thread startWatchdog(SocketChannel channel, int timeoutSeconds) {
-        return Thread.ofVirtual().start(() -> {
-            try {
-                Thread.sleep(timeoutSeconds * 1000L);
-                channel.close();
-            } catch (InterruptedException | IOException ignored) {}
-        });
+    private static Watchdog startWatchdog(SocketChannel channel, int timeoutSeconds) {
+        return new Watchdog(channel, timeoutSeconds);
+    }
+
+    /**
+     * Closes a channel if it is still in use at the deadline. {@link #cancel} settles the race
+     * with the deadline: it returns false if the channel was (or is being) closed, so a caller
+     * about to hand the channel on -- a WebSocket that outlives this call -- never hands on a
+     * closed one.
+     */
+    private static final class Watchdog {
+        private final Thread thread;
+        private boolean cancelled;
+        private boolean fired;
+
+        Watchdog(SocketChannel channel, int timeoutSeconds) {
+            thread = Thread.ofVirtual().start(() -> {
+                try {
+                    Thread.sleep(timeoutSeconds * 1000L);
+                    synchronized (this) {
+                        if (cancelled) return;
+                        fired = true;
+                    }
+                    channel.close();
+                } catch (InterruptedException | IOException ignored) {}
+            });
+        }
+
+        /** @return true if cancelled before the deadline fired. */
+        synchronized boolean cancel() {
+            cancelled = true;
+            thread.interrupt();
+            return !fired;
+        }
     }
 
     private static IOException timeoutException(String path, int timeout) {

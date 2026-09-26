@@ -157,4 +157,41 @@ class WebSocketFramingTest {
         var payload = new byte[] {(byte) (reply[6] ^ reply[2]), (byte) (reply[7] ^ reply[3])};
         assertEquals("hb", text(payload));
     }
+
+    @Test
+    void frameCutShortInItsPayloadIsAnError() {
+        var wire = new ByteArrayOutputStream();
+        wire.write(0x80 | TEXT);
+        wire.write(100);
+        wire.writeBytes("only this much".getBytes(StandardCharsets.UTF_8));
+        assertThrows(java.io.EOFException.class,
+                () -> UnixSocketTransport.wsReadFrame(new ByteArrayInputStream(wire.toByteArray()), p -> {}),
+                "a truncated frame must not be delivered as if it were complete");
+    }
+
+    @Test
+    void frameCutShortInItsExtendedLengthIsAnError() {
+        // EOF read as 0xFF used to assemble a length of -1, and readNBytes(-1) threw an
+        // IllegalArgumentException that the exec reader threads don't catch.
+        var wire = new byte[] {(byte) (0x80 | TEXT), 127, 0, 0};
+        assertThrows(java.io.EOFException.class,
+                () -> UnixSocketTransport.wsReadFrame(new ByteArrayInputStream(wire), p -> {}));
+    }
+
+    @Test
+    void frameCutShortAfterItsFirstByteIsAnError() {
+        var wire = new byte[] {(byte) (0x80 | TEXT)};
+        assertThrows(java.io.EOFException.class,
+                () -> UnixSocketTransport.wsReadFrame(new ByteArrayInputStream(wire), p -> {}));
+    }
+
+    @Test
+    void absurdFrameLengthIsRejected() {
+        var wire = new ByteArrayOutputStream();
+        wire.write(0x80 | TEXT);
+        wire.write(127);
+        wire.writeBytes(new byte[] {0x7F, -1, -1, -1, -1, -1, -1, -1});
+        assertThrows(java.io.IOException.class,
+                () -> UnixSocketTransport.wsReadFrame(new ByteArrayInputStream(wire.toByteArray()), p -> {}));
+    }
 }

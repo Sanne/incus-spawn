@@ -1,6 +1,5 @@
 package dev.incusspawn.incus;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -15,8 +14,8 @@ import java.util.Map;
  * A persistent HTTP/1.1 keep-alive connection to the Incus Unix socket, reused across short
  * request-path calls (GET/POST) so tight poll loops don't reconnect each iteration.
  *
- * Responses are read with strict Content-Length/chunked framing — never read-to-EOF — so the
- * connection stays usable afterwards. State lets the pool distinguish a reusable IDLE
+ * Responses are read by {@link HttpResponseReader} with strict Content-Length/chunked framing —
+ * never read-to-EOF — so the connection stays usable afterwards. State lets the pool distinguish a reusable IDLE
  * connection from a DEAD one to discard.
  *
  * Not thread-safe: a connection is held by one caller at a time (checked out from the pool).
@@ -146,91 +145,17 @@ final class KeepAliveConnection {
     }
 
     private IncusTransport.RawResponse readResponse() throws IOException {
-        String statusLine;
+        HttpResponseReader.Response resp;
         try {
-            statusLine = readLine();
-        } catch (java.net.SocketException e) {
-            // A RST before any response byte is semantically the same as EOF —
-            // the request provably did not execute, so the caller may retry.
-            throw new StaleConnectionException("connection reset before status line: " + e.getMessage());
+            resp = HttpResponseReader.read(in);
+        } catch (HttpResponseReader.NoResponseException e) {
+            // Closed or reset before any response byte: the request provably did not execute,
+            // so the caller may retry. EOF anywhere later is NOT retry-safe and propagates.
+            throw new StaleConnectionException(e.getMessage());
         }
-        if (statusLine == null) {
-            throw new StaleConnectionException("connection closed before status line");
-        }
-        var parts = statusLine.split(" ", 3);
-        if (parts.length < 2) throw new IOException("Invalid HTTP status line: " + statusLine);
-        int statusCode = Integer.parseInt(parts[1]);
-
-        int contentLength = -1;
-        boolean chunked = false;
-        String line;
-        while (!(line = requireLine()).isEmpty()) {
-            var lower = line.toLowerCase();
-            if (lower.startsWith("content-length:")) {
-                contentLength = Integer.parseInt(lower.substring(15).trim());
-            } else if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) {
-                chunked = true;
-            } else if (lower.startsWith("connection:") && lower.contains("close")) {
-                serverWantsClose = true;
-            }
-        }
-
-        byte[] body;
-        if (chunked) {
-            body = readChunkedBody();
-        } else if (contentLength >= 0) {
-            body = in.readNBytes(contentLength);
-            if (body.length < contentLength) {
-                // Truncated mid-body: the request may have executed, so this is NOT retry-safe.
-                throw new IOException("truncated response body (" + body.length + "/" + contentLength + ")");
-            }
-        } else {
-            // No length framing — the server frames this response by closing the connection.
-            // Read to EOF and mark the connection unusable afterwards (it can't be reused).
-            body = in.readAllBytes();
-            serverWantsClose = true;
-        }
-        return new IncusTransport.RawResponse(statusCode, body);
-    }
-
-    /** Read a header/status line; returns null only on EOF at the very first byte. */
-    private String readLine() throws IOException {
-        var sb = new StringBuilder();
-        int c = in.read();
-        if (c == -1) return null;
-        while (c != -1 && c != '\n') {
-            if (c != '\r') sb.append((char) c);
-            c = in.read();
-        }
-        return sb.toString();
-    }
-
-    private String requireLine() throws IOException {
-        var line = readLine();
-        if (line == null) throw new IOException("unexpected EOF in response headers");
-        return line;
-    }
-
-    private byte[] readChunkedBody() throws IOException {
-        var buf = new ByteArrayOutputStream();
-        while (true) {
-            var sizeLine = requireLine().trim();
-            if (sizeLine.isEmpty()) continue;
-            int semi = sizeLine.indexOf(';');
-            if (semi >= 0) sizeLine = sizeLine.substring(0, semi).trim();
-            int chunkSize = Integer.parseInt(sizeLine, 16);
-            if (chunkSize == 0) {
-                // Consume the trailer section (possibly empty) up to the terminating blank
-                // line, so the connection is positioned at the next response for reuse.
-                while (!requireLine().isEmpty()) { /* skip trailers */ }
-                break;
-            }
-            var chunk = in.readNBytes(chunkSize);
-            if (chunk.length < chunkSize) throw new IOException("truncated chunk");
-            buf.write(chunk);
-            requireLine(); // trailing CRLF
-        }
-        return buf.toByteArray();
+        // Connection: close, or a body framed by close -- either way this socket is done.
+        if (!resp.reusable()) serverWantsClose = true;
+        return new IncusTransport.RawResponse(resp.statusCode(), resp.body());
     }
 
     void close() {

@@ -3,8 +3,6 @@ package dev.incusspawn.incus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,63 +10,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class IncusApiTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    // readLine and readChunkedBody live on UnixSocketTransport (package-private, testable directly).
-    private final UnixSocketTransport transport = new UnixSocketTransport("/nonexistent");
-
-    // --- readLine ---
-
-    @Test
-    void readLineHandlesCrLf() throws Exception {
-        var in = stream("hello\r\nworld\r\n");
-        assertEquals("hello", transport.readLine(in));
-        assertEquals("world", transport.readLine(in));
-        assertEquals("", transport.readLine(in));
-    }
-
-    @Test
-    void readLineHandlesBareNewline() throws Exception {
-        var in = stream("hello\nworld\n");
-        assertEquals("hello", transport.readLine(in));
-        assertEquals("world", transport.readLine(in));
-    }
-
-    @Test
-    void readLineReturnsEmptyStringForBlankLine() throws Exception {
-        var in = stream("\r\n");
-        assertEquals("", transport.readLine(in));
-    }
-
-    // --- readChunkedBody ---
-
-    @Test
-    void readChunkedBodyDecodesSimpleChunk() throws Exception {
-        // "5\r\nHello\r\n0\r\n\r\n"
-        var in = stream("5\r\nHello\r\n0\r\n\r\n");
-        var result = transport.readChunkedBody(in);
-        assertArrayEquals("Hello".getBytes(StandardCharsets.UTF_8), result);
-    }
-
-    @Test
-    void readChunkedBodyDecodesMultipleChunks() throws Exception {
-        var in = stream("5\r\nHello\r\n6\r\n World\r\n0\r\n\r\n");
-        var result = transport.readChunkedBody(in);
-        assertArrayEquals("Hello World".getBytes(StandardCharsets.UTF_8), result);
-    }
-
-    @Test
-    void readChunkedBodyHandlesChunkExtensions() throws Exception {
-        var in = stream("5;ext=ignored\r\nHello\r\n0\r\n\r\n");
-        var result = transport.readChunkedBody(in);
-        assertArrayEquals("Hello".getBytes(StandardCharsets.UTF_8), result);
-    }
-
-    @Test
-    void readChunkedBodyHandlesEmptyBody() throws Exception {
-        var in = stream("0\r\n\r\n");
-        var result = transport.readChunkedBody(in);
-        assertEquals(0, result.length);
-    }
-
     // --- tryConnect does not blow up on absent socket ---
 
     @Test
@@ -624,7 +565,4 @@ class IncusApiTest {
         assertEquals("virtual-machine", json.path("type").asText());
     }
 
-    private static ByteArrayInputStream stream(String s) {
-        return new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8));
-    }
 }
