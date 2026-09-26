@@ -45,6 +45,19 @@ class CertStoreTest {
     }
 
     @Test
+    void acceptsOnlyHostnamesBecauseNamesBecomeFileNames() {
+        // SNI names reach this store (#783), so anything that could steer the path is refused.
+        var store = new CertStore(CertificateAuthority.loadOrCreate());
+        for (var bad : java.util.List.of("../../evil.com", "a/b.com", "..", "com", "*.", "a..b.com",
+                "-a.com", "a.com/..", "**.a.com", "A.COM")) {
+            assertThrows(IllegalArgumentException.class, () -> store.get(bad), bad);
+        }
+        assertNotNull(store.get("*.actions.githubusercontent.com"));
+        assertTrue(Files.exists(SpawnConfig.configDir().resolve("certs")
+                .resolve("_wildcard.actions.githubusercontent.com.crt")));
+    }
+
+    @Test
     void reuseKeepsSameCertAndNotBefore() {
         var ca = CertificateAuthority.loadOrCreate();
 

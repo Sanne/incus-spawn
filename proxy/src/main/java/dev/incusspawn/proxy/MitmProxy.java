@@ -25,10 +25,8 @@ import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
-import io.vertx.core.net.JksOptions;
 import io.vertx.core.net.SocketAddress;
 
-import java.io.ByteArrayOutputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.io.IOException;
@@ -36,7 +34,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
-import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -510,34 +507,14 @@ public class MitmProxy {
     // --- Lifecycle ---
 
     /**
-     * Build a JKS keystore buffer containing per-domain leaf certs signed by the
-     * current CA. Reuses persisted certs when they are still valid; re-mints against
-     * the new CA on rotation. Also updates {@link #caFingerprint}.
+     * The MITM server's certificates for the current intercepted domains, signed by the
+     * current CA. Reuses persisted certs when they are still valid; re-mints against the
+     * new CA on rotation. Also updates {@link #caFingerprint}.
      */
-    private Buffer buildKeyStoreBuffer() throws Exception {
+    private InterceptedCertOptions buildKeyCertOptions() throws Exception {
         var ca = CertificateAuthority.loadOrCreate();
         caFingerprint = ca.caFingerprint();
-
-        var allDomains = toolRouting.allInterceptedDomains().stream()
-                .sorted()
-                .flatMap(d -> java.util.stream.Stream.of(d, "*." + d))
-                .toList();
-        var certStore = new CertStore(ca);
-        var certs = allDomains.parallelStream()
-                .map(domain -> java.util.Map.entry(domain, certStore.get(domain)))
-                .toList();
-        var keyStore = KeyStore.getInstance("JKS");
-        keyStore.load(null, null);
-        for (var entry : certs) {
-            keyStore.setKeyEntry(
-                    entry.getKey(),
-                    entry.getValue().key(),
-                    "changeit".toCharArray(),
-                    new X509Certificate[]{entry.getValue().cert(), ca.caCert()});
-        }
-        var baos = new ByteArrayOutputStream();
-        keyStore.store(baos, "changeit".toCharArray());
-        return Buffer.buffer(baos.toByteArray());
+        return new InterceptedCertOptions(ca, toolRouting.allInterceptedDomains());
     }
 
     /**
@@ -565,10 +542,10 @@ public class MitmProxy {
             // Account pinning is instance state, not config state, but a reload is the one
             // moment isx reliably signals -- so take the opportunity to re-read it too.
             refreshInstanceRegistry();
-            var jksBuffer = buildKeyStoreBuffer();
+            var keyCertOptions = buildKeyCertOptions();
             if (mitmServer != null) {
                 var sslOptions = new io.vertx.core.net.SSLOptions()
-                        .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"));
+                        .setKeyCertOptions(keyCertOptions);
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
@@ -598,14 +575,13 @@ public class MitmProxy {
     public void start(Runnable onReady) throws Exception {
         stopLatch = new CountDownLatch(1);
 
-        // Build JKS keystore with per-domain certs (alias = domain name for SNI).
-        // Also generate wildcard certs (*.domain) so subdomains resolved via
-        // dnsmasq address= overrides get a valid cert (e.g. cdn01.quay.io).
-        // Reuses persisted leaf certs across restarts so their notBefore stays
+        // Per-domain certs chosen by SNI, with wildcards (*.domain) pre-minted so
+        // subdomains resolved via dnsmasq address= overrides get a valid cert (e.g.
+        // cdn01.quay.io); deeper names get a leaf minted on demand (#783). Reuses persisted leaf certs across restarts so their notBefore stays
         // stable (minted while clocks were in sync); only mint on miss/expiry/CA
         // rotation. See CertStore for why per-start re-minting broke validation
         // on hosts whose container clock lags (e.g. macOS VM after resume).
-        var jksBuffer = buildKeyStoreBuffer();
+        var keyCertOptions = buildKeyCertOptions();
 
         // MITM TLS server with SNI
         var serverOptions = new HttpServerOptions()
@@ -613,7 +589,7 @@ public class MitmProxy {
                 .setPort(mitmPort)
                 .setSsl(true)
                 .setSni(true)
-                .setKeyCertOptions(new JksOptions().setValue(jksBuffer).setPassword("changeit"))
+                .setKeyCertOptions(keyCertOptions)
                 .setIdleTimeout(120)
                 .setIdleTimeoutUnit(TimeUnit.SECONDS)
                 .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
@@ -772,6 +748,12 @@ public class MitmProxy {
                 // when a WebSocket operation hits a closed connection.
                 if (m.contains("connection was closed")
                         || m.contains("connection or outbound has closed")) {
+                    return true;
+                }
+                // InterceptedCertOptions refusing a handshake (off-domain or missing SNI):
+                // it has already logged the name and why.
+                if (cause instanceof javax.net.ssl.SSLHandshakeException
+                        && m.contains("no available authentication scheme")) {
                     return true;
                 }
             }
