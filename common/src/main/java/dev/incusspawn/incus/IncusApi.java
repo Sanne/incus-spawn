@@ -35,9 +35,16 @@ class IncusApi {
     private static final int WAIT_TIMEOUT_SECONDS = 120;
 
     private final IncusTransport transport;
+    private final long pingIntervalMs;
 
     IncusApi(IncusTransport transport) {
+        this(transport, WS_PING_INTERVAL_MS);
+    }
+
+    /** Test seam: a shorter keepalive interval, so exec ping coverage runs in milliseconds. */
+    IncusApi(IncusTransport transport, long pingIntervalMs) {
         this.transport = transport;
+        this.pingIntervalMs = pingIntervalMs;
     }
 
     // Short enough that a stalled vsock fails fast (a healthy connect is sub-millisecond),
@@ -55,6 +62,11 @@ class IncusApi {
         if (Files.exists(vsockSocket)) {
             socketCandidates.add(vsockSocket.toString());
         }
+        return tryConnect(socketCandidates);
+    }
+
+    // Package-private for testing: probe an explicit candidate list.
+    static IncusApi tryConnect(List<String> socketCandidates) {
         for (var candidate : socketCandidates) {
             if (!Files.exists(Path.of(candidate))) continue;
             try {
@@ -633,7 +645,7 @@ class IncusApi {
                 var keepalive = Thread.ofVirtual().start(() -> {
                     try {
                         while (!Thread.currentThread().isInterrupted()) {
-                            Thread.sleep(WS_PING_INTERVAL_MS);
+                            Thread.sleep(pingIntervalMs);
                             controlWs.sendPing();
                         }
                     } catch (IOException | InterruptedException ignored) {}
@@ -659,7 +671,7 @@ class IncusApi {
                 var keepaliveThread = Thread.ofVirtual().start(() -> {
                     try {
                         while (!Thread.currentThread().isInterrupted()) {
-                            Thread.sleep(WS_PING_INTERVAL_MS);
+                            Thread.sleep(pingIntervalMs);
                             ws.sendPing();
                         }
                     } catch (IOException | InterruptedException ignored) {}
@@ -897,7 +909,7 @@ class IncusApi {
         return Thread.ofVirtual().start(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted()) {
-                    Thread.sleep(WS_PING_INTERVAL_MS);
+                    Thread.sleep(pingIntervalMs);
                     ws.sendPing();
                 }
             } catch (IOException | InterruptedException ignored) {}
@@ -973,7 +985,7 @@ class IncusApi {
             var keepalive = Thread.ofVirtual().start(() -> {
                 try {
                     while (!Thread.currentThread().isInterrupted()) {
-                        Thread.sleep(WS_PING_INTERVAL_MS);
+                        Thread.sleep(pingIntervalMs);
                         ws.sendPing();
                     }
                 } catch (IOException | InterruptedException ignored) {}

@@ -35,6 +35,7 @@ class KeepAliveConnectionTest {
     private final AtomicInteger requestsHandled = new AtomicInteger();
     private volatile int closeAfterRequests = Integer.MAX_VALUE;
     private volatile boolean corruptResponse = false;
+    private volatile boolean stallResponses = false;
 
     @BeforeEach
     void start() throws IOException {
@@ -82,6 +83,11 @@ class KeepAliveConnectionTest {
                 if (cl > 0) in.readNBytes(cl);
                 handled++;
                 requestsHandled.incrementAndGet();
+                if (stallResponses) {
+                    // Read the request, never answer: a vsock tunnel that stalled mid-exchange.
+                    in.transferTo(OutputStream.nullOutputStream());
+                    return;
+                }
                 String resp;
                 if (corruptResponse) {
                     // Non-numeric Content-Length → NumberFormatException while parsing.
@@ -148,6 +154,23 @@ class KeepAliveConnectionTest {
                 () -> conn.execute("GET", "/1.0", null, Map.of(), new byte[0], 5),
                 "a server-closed connection must surface as stale, not a generic error");
         assertEquals(KeepAliveConnection.State.DEAD, conn.state());
+    }
+
+    @Test
+    @Timeout(10)
+    void watchdogClosesAStalledChannelOnDeadline() throws IOException {
+        stallResponses = true;
+        var conn = KeepAliveConnection.open(sock.toString());
+        long start = System.nanoTime();
+        var e = assertThrows(IOException.class,
+                () -> conn.execute("GET", "/1.0", null, Map.of(), new byte[0], 1));
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertFalse(e instanceof KeepAliveConnection.StaleConnectionException,
+                "the request reached the server, so a timeout must not be retried as stale");
+        assertTrue(e.getMessage().contains("timed out"), e.getMessage());
+        assertTrue(elapsedMs < 5000, "the watchdog must fire at its deadline (1s): " + elapsedMs + "ms");
+        assertEquals(KeepAliveConnection.State.DEAD, conn.state());
+        conn.close();
     }
 
     @Test

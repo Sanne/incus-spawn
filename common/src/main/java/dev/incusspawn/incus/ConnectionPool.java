@@ -30,6 +30,16 @@ final class ConnectionPool {
     static ConnectionPool global() { return INSTANCE; }
 
     private final Map<String, Deque<KeepAliveConnection>> idle = new HashMap<>();
+    private final long idleTtlNanos;
+
+    ConnectionPool() {
+        this(IDLE_TTL_NANOS);
+    }
+
+    /** Test seam: a short TTL, so expiry is exercised without waiting out the real one. */
+    ConnectionPool(long idleTtlNanos) {
+        this.idleTtlNanos = idleTtlNanos;
+    }
 
     /** A warm, non-expired connection for the path, or null if none is cached. */
     synchronized KeepAliveConnection borrow(String socketPath) {
@@ -38,7 +48,7 @@ final class ConnectionPool {
         long now = System.nanoTime();
         while (!q.isEmpty()) {
             var c = q.pollFirst();
-            if (c.healthy() && (now - c.idleSinceNanos()) < IDLE_TTL_NANOS) {
+            if (c.healthy() && (now - c.idleSinceNanos()) < idleTtlNanos) {
                 return c; // optimistic — server-closed-while-idle is caught at execute()
             }
             c.close(); // dead or expired
@@ -64,10 +74,10 @@ final class ConnectionPool {
         q.addLast(c);
     }
 
-    private static void pruneExpired(Deque<KeepAliveConnection> q) {
+    private void pruneExpired(Deque<KeepAliveConnection> q) {
         long now = System.nanoTime();
         q.removeIf(k -> {
-            boolean expired = !k.healthy() || (now - k.idleSinceNanos()) >= IDLE_TTL_NANOS;
+            boolean expired = !k.healthy() || (now - k.idleSinceNanos()) >= idleTtlNanos;
             if (expired) k.close();
             return expired;
         });
