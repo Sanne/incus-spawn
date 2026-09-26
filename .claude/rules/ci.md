@@ -85,3 +85,5 @@ bench/run.sh --label "before-my-change"   # Tag results for comparison
 ```
 
 Requires Oracle GraalVM with `native-image`, a running Incus daemon, and a working `isx init` setup. Results are saved as JSON to `bench/results/` and automatically compared with the previous run. Use this before and after changes to the proxy, Vert.x configuration, or native image settings to catch regressions.
+
+`bench/cli.sh` times `isx` commands against live Incus, JVM and native (`--runtime=both|jvm|native`), on a throwaway instance it branches and destroys itself. It also covers the preparation `isx shell` does before attaching a terminal, via `isx run <instance> --action=<unknown>`. Results go to `bench/results/cli/` so `run.sh` never compares against them. It is developer-run and too noisy for CI; the PR-time guard for CLI latency is the request-count budget in `InstanceLifecycleRequestBudgetTest` (see `incus.md`).

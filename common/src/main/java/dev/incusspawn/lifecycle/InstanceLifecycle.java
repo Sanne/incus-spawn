@@ -1,5 +1,7 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
@@ -31,6 +33,8 @@ import java.util.Map;
  * Eliminates duplication between BranchCommand and ListCommand.
  */
 public final class InstanceLifecycle {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private InstanceLifecycle() {}
 
@@ -383,11 +387,18 @@ public final class InstanceLifecycle {
         if (bridgeAddr.isEmpty()) return List.of();
         var bridgeCidr = CidrUtils.parseCidr(bridgeAddr);
 
+        // The listing already carries each instance's config: one request, not one per instance.
+        JsonNode instances;
+        try {
+            instances = JSON.readTree(incus.listJsonConfig());
+        } catch (IOException e) {
+            throw new IncusException("Failed to parse instance list: " + e.getMessage());
+        }
         var stale = new ArrayList<String>();
-        for (var instance : incus.list()) {
-            var name = instance.get("name");
-            if (name == null || name.isEmpty()) continue;
-            var storedIp = incus.configGet(name, Metadata.STATIC_IP);
+        for (var instance : instances) {
+            var name = instance.path("name").asText("");
+            if (name.isEmpty()) continue;
+            var storedIp = instance.path("config").path(Metadata.STATIC_IP).asText("");
             if (storedIp.isEmpty()) continue;
             if (!CidrUtils.isInSubnet(storedIp, bridgeCidr)) {
                 stale.add(name);
@@ -453,11 +464,13 @@ public final class InstanceLifecycle {
      * contention with the seccomp_notify handler that activates on start.
      */
     public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
-        var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
-        var hasSshKeys = !incus.configGet(name, "user.incus-spawn.ssh-setup").isEmpty()
+        // One read for all four keys: configGet is a full instance GET per key.
+        var config = incus.configByPrefix(name, "");
+        var buildSourceJson = config.getOrDefault(Metadata.BUILD_SOURCE, "");
+        var hasSshKeys = !config.getOrDefault("user.incus-spawn.ssh-setup", "").isEmpty()
                 || hasSshdTool(buildSourceJson);
-        var workdir = incus.configGet(name, Metadata.WORKDIR);
-        var shellCommand = incus.configGet(name, Metadata.SHELL_COMMAND);
+        var workdir = config.getOrDefault(Metadata.WORKDIR, "");
+        var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,

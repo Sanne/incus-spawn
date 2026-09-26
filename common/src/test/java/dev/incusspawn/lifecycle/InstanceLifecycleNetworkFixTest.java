@@ -91,13 +91,11 @@ class InstanceLifecycleNetworkFixTest {
     void findStaleSubnetInstances_detectsStaleIps() {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
-        when(incus.list()).thenReturn(List.of(
-                Map.of("name", "good", "status", "Stopped", "type", "container"),
-                Map.of("name", "stale", "status", "Stopped", "type", "container"),
-                Map.of("name", "airgap", "status", "Stopped", "type", "container")));
-        when(incus.configGet("good", Metadata.STATIC_IP)).thenReturn("172.21.0.5");
-        when(incus.configGet("stale", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
-        when(incus.configGet("airgap", Metadata.STATIC_IP)).thenReturn("");
+        when(incus.listJsonConfig()).thenReturn("""
+                [{"name": "good", "config": {"%1$s": "172.21.0.5"}},
+                 {"name": "stale", "config": {"%1$s": "172.20.0.5"}},
+                 {"name": "airgap", "config": {}}]
+                """.formatted(Metadata.STATIC_IP));
 
         var stale = InstanceLifecycle.findStaleSubnetInstances(incus);
         assertEquals(List.of("stale"), stale);
