@@ -9,6 +9,9 @@ set -euo pipefail
 #
 # Usage:  ./build-kernel.sh [output-dir] [arch]
 #
+# A non-host [arch] is cross-compiled with <arch>-linux-gnu- unless
+# CROSS_COMPILE is set.
+#
 # Requirements: build-essential flex bison bc libelf-dev libssl-dev
 
 KERNEL_VERSION="7.2.8"
@@ -28,6 +31,16 @@ case "$BUILD_ARCH" in
     aarch64) KARCH="arm64";  TARGET="Image";   IMAGE="arch/arm64/boot/Image" ;;
     *) echo "ERROR: unsupported architecture: $BUILD_ARCH" >&2; exit 1 ;;
 esac
+
+# Building the other arch needs a cross toolchain (Fedora: gcc-<arch>-linux-gnu
+# and binutils-<arch>-linux-gnu). An explicit CROSS_COMPILE still wins.
+if [ "$BUILD_ARCH" != "$(uname -m)" ] && [ -z "${CROSS_COMPILE:-}" ]; then
+    export CROSS_COMPILE="${BUILD_ARCH}-linux-gnu-"
+    command -v "${CROSS_COMPILE}gcc" >/dev/null 2>&1 || {
+        echo "ERROR: cross-compiling for $BUILD_ARCH needs ${CROSS_COMPILE}gcc (dnf install gcc-${BUILD_ARCH}-linux-gnu binutils-${BUILD_ARCH}-linux-gnu)" >&2
+        exit 1
+    }
+fi
 
 for f in "$BASE_FRAGMENT" "$ARCH_FRAGMENT"; do
     [ -f "$f" ] || { echo "ERROR: config fragment not found: $f" >&2; exit 1; }

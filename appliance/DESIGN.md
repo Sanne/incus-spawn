@@ -412,6 +412,8 @@ done
 '
 ```
 
+A full build checks the same thing for either arch from one host: `kernel/build-kernel.sh <out-dir> <arch>` cross-compiles when `<arch>` is not the host's, picking `<arch>-linux-gnu-` as `CROSS_COMPILE` unless one is set (Fedora packages `gcc-<arch>-linux-gnu` and `binutils-<arch>-linux-gnu`).
+
 x86_64 should print nothing and aarch64 only `CPU_MITIGATIONS` (which this loop does not check, since it only looks at `=y` lines -- `build-kernel.sh` checks both directions). Anything else is drift between a fragment and the kernel version.
 
 ### Enabling auto-login (`enable-console.sh`)
