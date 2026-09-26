@@ -31,9 +31,9 @@ public class CopilotSetup implements ToolSetup {
         token.setSecret(true);
 
         var bearerAuth = new ToolDef.AuthDef();
-        // These have two labels ahead of githubcopilot.com, so a single-label *.githubcopilot.com
-        // wildcard cert can't match them under RFC 6125 SNI rules even though the proxy's own
-        // suffix-based routing would; list each exact per-tier host so it gets its own leaf cert.
+        // These have two labels ahead of githubcopilot.com, which a single-label *.githubcopilot.com
+        // wildcard cert can't match under RFC 6125. The proxy mints a cert for any depth on
+        // demand (#783); listing each per-tier host exactly has its cert ready at start.
         bearerAuth.setDomains(List.of("*.githubcopilot.com",
                 "api.individual.githubcopilot.com", "api.business.githubcopilot.com",
                 "api.enterprise.githubcopilot.com"));

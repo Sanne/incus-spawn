@@ -65,7 +65,30 @@ public class CertStore {
      * Safe to call concurrently for distinct domains.
      */
     public CertEntry get(String domain) {
+        // Names can come from a container's SNI and become file names below: accept only a
+        // hostname, optionally as a one-label wildcard, so nothing can steer the path.
+        var host = domain.startsWith("*.") ? domain.substring(2) : domain;
+        if (!isHostname(host)) {
+            throw new IllegalArgumentException("Not a hostname: " + domain);
+        }
         return memory.computeIfAbsent(domain, this::loadOrMint);
+    }
+
+    private static final java.util.regex.Pattern LABEL =
+            java.util.regex.Pattern.compile("[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?");
+
+    /**
+     * Whether {@code name} is a lower-case DNS hostname of at least two labels: LDH labels
+     * (plus {@code _}, which real hosts use) of at most 63 characters, 253 in all.
+     */
+    static boolean isHostname(String name) {
+        if (name == null || name.isEmpty() || name.length() > 253) return false;
+        var labels = name.split("\\.", -1);
+        if (labels.length < 2) return false;
+        for (var label : labels) {
+            if (!LABEL.matcher(label).matches()) return false;
+        }
+        return true;
     }
 
     private CertEntry loadOrMint(String domain) {
