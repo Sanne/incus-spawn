@@ -6,6 +6,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.io.IOException;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -141,5 +146,44 @@ class IncusApiLossyTunnelTest {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMs < 6000,
                 "the probe must use its short timeout (3s), not the 30s request watchdog: " + elapsedMs + "ms");
+    }
+
+    // incusd stalls every new connection behind one that has sent nothing (its local listener
+    // peeks 8 bytes inside Accept(), with no deadline), and vfkit may never deliver the close
+    // that would release it. So the vsock diagnosis must speak, not merely connect.
+    @Test
+    @Timeout(10)
+    void vsockDiagnosisSendsARequestRatherThanABareConnect() {
+        var msg = IncusApi.diagnoseVsock(Path.of(server.socketPath()));
+        assertTrue(msg.contains("is accessible"), msg);
+        assertEquals(1, server.requestCount("GET /1.0"),
+                "a connection that never sends a request can wedge incusd behind the tunnel");
+    }
+
+    @Test
+    @Timeout(15)
+    void vsockDiagnosisIsBoundedAgainstASocketThatNeverAnswers() {
+        server.fault = LossyIncusServer.Fault.SILENT_ON_ACCEPT;
+        long start = System.nanoTime();
+        var msg = IncusApi.diagnoseVsock(Path.of(server.socketPath()));
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(msg.contains("did not answer"), msg);
+        assertTrue(elapsedMs < 6000, "the diagnosis must use the probe timeout: " + elapsedMs + "ms");
+    }
+
+    @Test
+    @Timeout(10)
+    void vsockDiagnosisReportsASocketNobodyListensOn() throws IOException {
+        var dir = Files.createTempDirectory("vsock");
+        var sock = dir.resolve("v.sock");
+        try (var listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            listener.bind(UnixDomainSocketAddress.of(sock)); // leaves the file behind once closed
+        }
+        try {
+            assertTrue(IncusApi.diagnoseVsock(sock).contains("not accepting connections"));
+        } finally {
+            Files.deleteIfExists(sock);
+            Files.deleteIfExists(dir);
+        }
     }
 }
