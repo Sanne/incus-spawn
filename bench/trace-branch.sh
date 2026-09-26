@@ -165,7 +165,11 @@ def describe(event):
         context = meta.get("context") or {}
         if "url" in context:
             return f"{context.get('method', '')} {context['url']}"
-        return f"{meta.get('message', '')} {compact(context)}".strip()
+        # Some messages carry a whole pretty-printed response body (the VM agent's /1.0 dump);
+        # its first line says what it is.
+        message = (meta.get("message") or "").strip().splitlines() or [""]
+        suffix = " [...]" if len(message) > 1 else ""
+        return f"{message[0]}{suffix} {compact(context)}".strip()
     if kind == "operation":
         return f"op {meta.get('id', '')[:8]} {meta.get('description', '')}: {meta.get('status', '')}"
     if kind == "lifecycle":
