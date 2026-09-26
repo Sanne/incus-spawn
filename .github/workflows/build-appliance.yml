@@ -34,7 +34,7 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=appliance-x86_64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md') }}" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
@@ -120,7 +120,7 @@ jobs:
 
       - name: Compute cache key
         id: cache_key
-        run: echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=appliance-aarch64-${INPUT_VERSION:-dev}-${{ hashFiles('appliance/**', '!appliance/test-*.sh', '!appliance/*.md') }}" >> "$GITHUB_OUTPUT"
         env:
           INPUT_VERSION: ${{ inputs.version }}
 
