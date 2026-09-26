@@ -26,6 +26,7 @@ SKIP_BUILD=false
 LABEL=""
 RUNTIME="both"
 RUNS=20
+BRANCH_RUNS=3
 FROM="tpl-minimal"
 
 while [ $# -gt 0 ]; do
@@ -37,10 +38,12 @@ while [ $# -gt 0 ]; do
         --runtime) shift; RUNTIME="${1:-}" ;;
         --runs=*) RUNS="${1#--runs=}" ;;
         --runs) shift; RUNS="${1:-}" ;;
+        --branch-runs=*) BRANCH_RUNS="${1#--branch-runs=}" ;;
+        --branch-runs) shift; BRANCH_RUNS="${1:-}" ;;
         --from=*) FROM="${1#--from=}" ;;
         --from) shift; FROM="${1:-}" ;;
         --help|-h)
-            echo "Usage: bench/cli.sh [--skip-build] [--label=NAME] [--runtime=both|jvm|native] [--runs=N] [--from=TEMPLATE]"
+            echo "Usage: bench/cli.sh [--skip-build] [--label=NAME] [--runtime=both|jvm|native] [--runs=N] [--branch-runs=N] [--from=TEMPLATE]"
             echo ""
             echo "Measures isx CLI latency against the local Incus daemon, JVM and/or native."
             echo "Creates a throwaway instance from TEMPLATE and destroys it on exit; no"
@@ -51,6 +54,7 @@ while [ $# -gt 0 ]; do
             echo "  --label=NAME     Tag results with a label (e.g. 'baseline')"
             echo "  --runtime=MODE   both (default), jvm or native"
             echo "  --runs=N         Timed runs per operation (default 20, after 2 warmups)"
+            echo "  --branch-runs=N  Full branches timed per runtime (default 3; each creates an instance)"
             echo "  --from=TEMPLATE  Template to branch the throwaway instance from (default tpl-minimal)"
             exit 0
             ;;
@@ -66,6 +70,7 @@ case "$RUNTIME" in
     *) die "Unknown --runtime '$RUNTIME' (expected: both, jvm, native)" ;;
 esac
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || die "--runs must be a positive integer"
+[[ "$BRANCH_RUNS" =~ ^[1-9][0-9]*$ ]] || die "--branch-runs must be a positive integer"
 command -v python3 &>/dev/null || die "python3 not found on PATH"
 
 ISX_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/incus-spawn"
@@ -123,32 +128,34 @@ echo ""
 # shellcheck disable=SC2086
 $ISX instances >/dev/null 2>&1 || die "isx cannot reach Incus ('isx instances' failed). Is the daemon running?"
 INSTANCE="isx-bench-$$"
-# Destroy the throwaway instance if a failure left it behind; a completed run times its own
-# destroy, so by then it is already gone.
+# Destroy whatever throwaway instances a failure left behind: $INSTANCE and the per-sample
+# $INSTANCE-<runtime>-<n> branches. A completed run destroys its own, so by then none are left.
 cleanup() {
+    local leftover
     # shellcheck disable=SC2086
-    if $ISX instances 2>/dev/null | grep -qx "$INSTANCE"; then
+    for leftover in $($ISX instances 2>/dev/null | grep -E "^$INSTANCE(-|\$)"); do
         echo ""
-        echo "Destroying $INSTANCE..."
+        echo "Destroying $leftover..."
         # shellcheck disable=SC2086
-        $ISX destroy "$INSTANCE" --skip-confirmation >/dev/null 2>&1 || \
-            echo "Warning: could not destroy $INSTANCE; remove it with: isx destroy $INSTANCE" >&2
-    fi
+        $ISX destroy "$leftover" --skip-confirmation >/dev/null 2>&1 || \
+            echo "Warning: could not destroy $leftover; remove it with: isx destroy $leftover" >&2
+    done
 }
 trap cleanup EXIT
 
 # The timing, statistics, result file and comparison all live in Python, so each sample is
 # measured around the child process alone instead of around a `date` fork per timestamp.
-export PROJECT_DIR RESULTS_DIR LABEL RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX
+export PROJECT_DIR RESULTS_DIR LABEL RUNS BRANCH_RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX
 export RUNTIME_SPECS
 RUNTIME_SPECS="$(printf '%s\n' "${RUNTIMES[@]}")"
 
 python3 - <<'PY'
-import json, os, shlex, statistics, subprocess, sys, time
+import fcntl, json, os, re, select, shlex, signal, statistics, struct, subprocess, sys, termios, time
 from datetime import datetime, timezone
 
 env = os.environ
 runs = int(env["RUNS"])
+branch_runs = int(env["BRANCH_RUNS"])
 instance, source = env["INSTANCE"], env["FROM"]
 lifecycle_cmd = shlex.split(env["ISX"])
 runtimes = [line.split("=", 1) for line in env["RUNTIME_SPECS"].splitlines() if line]
@@ -169,6 +176,67 @@ def run(cmd, expect_exit=0, marker=None):
                  + (f" without '{marker}'" if marker else "") + ":\n" + output.strip())
     return elapsed_ms
 
+# Time to a usable prompt, which is what a user actually waits for. The command runs on a
+# pseudo-terminal (isx reads /dev/tty and puts it in raw mode, so it needs a controlling one),
+# and this line is typed at once. It sits in the terminal's input queue until the shell inside
+# the instance reads it, so the marker prints exactly when the shell is ready. The typed text
+# is echoed back as "$((6*7))", and only a shell that ran it prints 42 -- so the echo of the
+# input cannot be mistaken for the output.
+PROMPT_INPUT = b"echo ISXBENCH_$((6*7))_READY; exit\r"
+PROMPT_MARKER = b"ISXBENCH_42_READY"
+# Terminal escapes (CSI, OSC, two-byte), stripped only to make a failure's output readable.
+ANSI = re.compile(rb"\x1b(\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[@-Z\\-_])")
+
+def run_to_prompt(cmd, timeout_s):
+    master, slave = os.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    child_env = dict(os.environ, TERM="xterm-256color")
+    # Inside tmux, isx renames the window and the instance may attach tmux itself; neither
+    # belongs in a measurement, and the user's own tmux must not be touched.
+    child_env.pop("TMUX", None)
+    start = time.perf_counter_ns()
+    proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave, env=child_env,
+                            start_new_session=True,
+                            preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+    os.close(slave)
+    os.write(master, PROMPT_INPUT)
+    output, elapsed_ms = b"", None
+    deadline = time.monotonic() + timeout_s
+    try:
+        while elapsed_ms is None and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if not ready:
+                if proc.poll() is not None:
+                    break
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:  # EIO: the child closed the terminal
+                break
+            output += chunk
+            if PROMPT_MARKER in output:
+                elapsed_ms = (time.perf_counter_ns() - start) / 1e6
+        if elapsed_ms is not None:
+            # The typed `exit` ends the shell; keep draining so isx can restore the terminal.
+            end = time.monotonic() + 30
+            while proc.poll() is None and time.monotonic() < end:
+                if select.select([master], [], [], 0.1)[0]:
+                    try:
+                        os.read(master, 65536)
+                    except OSError:
+                        break
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        os.close(master)
+    if elapsed_ms is None:
+        tail = ANSI.sub(b"", output).decode("utf-8", "replace").strip()[-2000:]
+        why = (f"no shell prompt within {timeout_s}s" if proc.returncode == -signal.SIGKILL
+               else f"exited {proc.returncode} without a shell prompt")
+        sys.exit(f"\nError: {' '.join(cmd)}: {why}. Last output:\n{tail}")
+    return elapsed_ms
+
 # (name, args, expected exit, output marker)
 OPERATIONS = [
     ("startup", ["--help"], 0, None),
@@ -182,6 +250,10 @@ def stats(samples):
     p90 = ordered[min(len(ordered) - 1, int(round(0.9 * (len(ordered) - 1))))]
     return {"medianMs": round(statistics.median(ordered), 1), "p90Ms": round(p90, 1),
             "minMs": round(ordered[0], 1), "runs": len(ordered)}
+
+def report(op, s):
+    print(f"  {op:<16} {s['medianMs']:>8.1f} ms median  {s['p90Ms']:>8.1f} p90  "
+          f"{s['minMs']:>8.1f} min  ({s['runs']} runs)")
 
 print(f"Branching {instance} from {source}...")
 lifecycle = {}
@@ -200,7 +272,25 @@ for name, cmd in runtimes:
             run(base + args, code, marker)
         s = stats([run(base + args, code, marker) for _ in range(runs)])
         results[name][op] = s
-        print(f"  {op:<16} {s['medianMs']:>8.1f} ms median  {s['p90Ms']:>8.1f} p90  {s['minMs']:>8.1f} min")
+        report(op, s)
+
+    # The instance is running by now, so this is the everyday `isx shell` into it.
+    run_to_prompt(base + ["shell", instance], 120)
+    s = stats([run_to_prompt(base + ["shell", instance], 120) for _ in range(runs)])
+    results[name]["shellToPrompt"] = s
+    report("shellToPrompt", s)
+
+    # A full branch: copy, start, runtime setup, CA/resolv.conf repair, identity reconcile
+    # and the shell attach. --shell keeps a template's default action (which may never print
+    # the marker) out of it. Each sample creates an instance, so there are fewer of them.
+    samples = []
+    for i in range(branch_runs):
+        branch = f"{instance}-{name}-{i}"
+        samples.append(run_to_prompt(base + ["branch", branch, "--from", source, "--shell"], 300))
+        run(lifecycle_cmd + ["destroy", branch, "--skip-confirmation"])
+    s = stats(samples)
+    results[name]["branchToPrompt"] = s
+    report("branchToPrompt", s)
 
 print("\nDestroying (timed)...")
 lifecycle["destroyMs"] = round(run(lifecycle_cmd + ["destroy", instance, "--skip-confirmation"]), 1)
@@ -227,7 +317,7 @@ for key, value in lifecycle.items():
     print(f"  {key:<16} {value:>8.1f} ms")
 if "native" in results and "jvm" in results:
     print("\n=== JVM / native (median) ===")
-    for op, *_ in OPERATIONS:
+    for op in results["native"]:
         n, j = results["native"][op]["medianMs"], results["jvm"][op]["medianMs"]
         print(f"  {op:<16} {j / n:>6.1f}x" if n else f"  {op:<16}    n/a")
 print(f"\nResults saved to: {path}")
@@ -248,7 +338,7 @@ for name in results:
         continue
     _, prev, entry = max(candidates, key=lambda p: p[0])
     print(f"\n=== {name}: comparison with {prev.get('label') or prev.get('gitSha')} ({entry}) ===")
-    for op, *_ in OPERATIONS:
+    for op in results[name]:
         curr_ms = results[name][op]["medianMs"]
         prev_ms = prev["runtimes"][name].get(op, {}).get("medianMs")
         if not prev_ms:

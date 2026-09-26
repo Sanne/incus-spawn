@@ -213,8 +213,19 @@ runs (default 20), reported as median, p90 and min:
 | `instances` | `isx instances` | Connecting to Incus plus one listing |
 | `accountShow` | `isx account show <instance>` | A typical read-only instance query |
 | `prepareRunning` | `isx run <instance> --action=<unknown>` | Everything `isx shell` does before attaching a terminal: instance checks, proxy health, IP/CA/resolv.conf repair |
+| `shellToPrompt` | `isx shell <instance>` | What a user waits for: from launch until the shell inside the running instance runs a command |
+| `branchToPrompt` | `isx branch <new> --from <template> --shell` | A full branch to a usable prompt: copy, start, runtime setup, CA/resolv.conf repair, identity reconcile, attach. `--branch-runs` samples (default 3), each destroyed afterwards |
 
-`isx shell` itself needs a terminal, so `prepareRunning` stands in for it: an unknown action
+The two `ToPrompt` operations run on a pseudo-terminal and type
+`echo ISXBENCH_$((6*7))_READY; exit` straight away. The line waits in the terminal's input
+queue until the shell inside the instance reads it, so `ISXBENCH_42_READY` appears exactly
+when the prompt is usable. The terminal's echo of the typed line shows `$((6*7))`, never 42,
+so it cannot be mistaken for the shell's output. `--shell` keeps a template's default action
+out of `branchToPrompt`; if the instance attaches tmux or zmx by itself, that time is
+included, as it is for a user. `TMUX` is removed from the environment so the benchmark never
+renames your own tmux window.
+
+`prepareRunning` isolates the host-side part of `isx shell`: an unknown action
 makes `isx run` do the same preparation and then exit 1 with "action ... not found". The
 harness checks for exactly that message, so a run that fails for any other reason (proxy
 down, say) aborts instead of being timed. Branch, cold start and destroy are timed once each
