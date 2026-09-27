@@ -7,14 +7,16 @@
 # compare before and after a change, or JVM against native, on one machine.
 #
 # Requires: working isx setup (isx init), running Incus daemon and proxy, a built template
-#           to branch from (tpl-minimal by default), python3; GraalVM native-image unless
-#           --skip-build or --runtime=jvm.
+#           to branch from (tpl-minimal by default), python3, curl; GraalVM native-image unless
+#           --skip-build or --runtime=jvm. The running proxy must be the build the CLI
+#           under test comes from (./install.sh --native from this commit), unless --allow-drift.
 #
 # Usage:
 #   bench/cli.sh                          # build JVM + native CLIs, benchmark both
 #   bench/cli.sh --skip-build             # reuse binaries in cli/target
 #   bench/cli.sh --runtime=native         # only one runtime
 #   bench/cli.sh --label "before-refactor"
+#   bench/cli.sh --allow-drift            # time a CLI against a proxy from another build
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,6 +30,7 @@ RUNTIME="both"
 RUNS=20
 BRANCH_RUNS=3
 FROM="tpl-minimal"
+ALLOW_DRIFT=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -42,8 +45,9 @@ while [ $# -gt 0 ]; do
         --branch-runs) shift; BRANCH_RUNS="${1:-}" ;;
         --from=*) FROM="${1#--from=}" ;;
         --from) shift; FROM="${1:-}" ;;
+        --allow-drift) ALLOW_DRIFT=true ;;
         --help|-h)
-            echo "Usage: bench/cli.sh [--skip-build] [--label=NAME] [--runtime=both|jvm|native] [--runs=N] [--branch-runs=N] [--from=TEMPLATE]"
+            echo "Usage: bench/cli.sh [--skip-build] [--label=NAME] [--runtime=both|jvm|native] [--runs=N] [--branch-runs=N] [--from=TEMPLATE] [--allow-drift]"
             echo ""
             echo "Measures isx CLI latency against the local Incus daemon, JVM and/or native."
             echo "Creates a throwaway instance from TEMPLATE and destroys it on exit; no"
@@ -56,6 +60,8 @@ while [ $# -gt 0 ]; do
             echo "  --runs=N         Timed runs per operation (default 20, after 2 warmups)"
             echo "  --branch-runs=N  Full branches timed per runtime (default 3; each creates an instance)"
             echo "  --from=TEMPLATE  Template to branch the throwaway instance from (default tpl-minimal)"
+            echo "  --allow-drift    Run even though the running proxy is a different build from the CLI"
+            echo "                   (every command then warns about drift, and the first restarts the proxy)"
             exit 0
             ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -72,6 +78,7 @@ esac
 [[ "$RUNS" =~ ^[1-9][0-9]*$ ]] || die "--runs must be a positive integer"
 [[ "$BRANCH_RUNS" =~ ^[1-9][0-9]*$ ]] || die "--branch-runs must be a positive integer"
 command -v python3 &>/dev/null || die "python3 not found on PATH"
+command -v curl &>/dev/null || die "curl not found on PATH"
 
 ISX_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/incus-spawn"
 [ -f "$ISX_CONFIG_DIR/config.yaml" ] || die "isx not initialized ($ISX_CONFIG_DIR/config.yaml missing). Run 'isx init' first."
@@ -114,6 +121,33 @@ if wants jvm; then
     echo "  jvm:    java -jar $JVM_JAR ($(java -version 2>&1 | head -1))"
 fi
 
+# A CLI built from a different commit than the running proxy sees version drift: the first
+# drifted command restarts the proxy (~2.5 s, inside a timed sample) and every later one warns
+# and reads the restart record. Neither is what a clean install does, so refuse up front, as
+# run.sh refuses a proxy it would not be measuring.
+GATEWAY_IP=$(incus network get incusbr0 ipv4.address 2>/dev/null | cut -d/ -f1) || true
+[ -n "$GATEWAY_IP" ] || die "Could not determine the Incus bridge gateway IP. Is Incus running?"
+PROXY_HEALTH=$(curl -sf --max-time 2 "http://$GATEWAY_IP:18080/health") || \
+    die "No proxy answering on $GATEWAY_IP:18080. Start it first: isx proxy start"
+# "<version> (<gitSha>)", the form `isx --version` prints, so the two compare as strings.
+PROXY_BUILD=$(python3 -c 'import json, sys; h = json.load(sys.stdin); print(h.get("version", ""), "(" + h.get("gitSha", "") + ")")' \
+    <<<"$PROXY_HEALTH") || die "Unreadable /health response from $GATEWAY_IP:18080: $PROXY_HEALTH"
+echo "  proxy:  $PROXY_BUILD"
+for spec in "${RUNTIMES[@]}"; do
+    # shellcheck disable=SC2086  # "java -jar <path>" for the JVM
+    CLI_BUILD=$(${spec#*=} --version 2>/dev/null | sed -nE '1s/^incus-spawn (.*)$/\1/p') || true
+    [ -n "$CLI_BUILD" ] || die "Could not read the ${spec%%=*} CLI's version (${spec#*=} --version)"
+    [ "$CLI_BUILD" = "$PROXY_BUILD" ] && continue
+    if $ALLOW_DRIFT; then
+        echo "  Warning: ${spec%%=*} CLI is $CLI_BUILD; drift warnings and one proxy restart will skew its timings." >&2
+        continue
+    fi
+    die "The ${spec%%=*} CLI under test is $CLI_BUILD, but the running proxy is $PROXY_BUILD.
+Every command would warn about the drift, and the first would restart the proxy inside a timed sample.
+  Install matching binaries:  ./install.sh --native   (restarts the proxy service too)
+  Or run from the commit the proxy was built at, or pass --allow-drift to compare across builds."
+done
+
 # Lifecycle steps (branch, cold start, destroy) run once, with the first runtime.
 ISX="${RUNTIMES[0]#*=}"
 
@@ -145,7 +179,7 @@ trap cleanup EXIT
 
 # The timing, statistics, result file and comparison all live in Python, so each sample is
 # measured around the child process alone instead of around a `date` fork per timestamp.
-export SCRIPT_DIR PROJECT_DIR RESULTS_DIR LABEL RUNS BRANCH_RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX
+export SCRIPT_DIR PROJECT_DIR RESULTS_DIR LABEL RUNS BRANCH_RUNS FROM INSTANCE GIT_SHA GIT_SUBJECT ISX PROXY_BUILD
 export RUNTIME_SPECS
 RUNTIME_SPECS="$(printf '%s\n' "${RUNTIMES[@]}")"
 
@@ -250,6 +284,8 @@ result = {
     "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "gitSha": env["GIT_SHA"],
     "gitSubject": env["GIT_SUBJECT"],
+    # Differs from the CLI's build only under --allow-drift.
+    "proxyBuild": env["PROXY_BUILD"],
     "source": source,
     "runtimes": results,
     # Single samples: indicative only, dominated by Incus rather than the CLI.

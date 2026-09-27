@@ -210,7 +210,15 @@ take against a live Incus daemon, as a JVM and as a native image.
 bench/cli.sh                          # build both, benchmark both
 bench/cli.sh --skip-build             # reuse cli/target builds
 bench/cli.sh --runtime=native --label=before-my-change
+bench/cli.sh --allow-drift            # against a proxy from another build
 ```
+
+It refuses to start unless the running proxy (its `/health` `version` and `gitSha`) is the
+build of the CLI under test. A CLI from another commit sees version drift: the first
+drifted command restarts the proxy, inside a timed sample, and every later one warns about
+it. After a commit, `./install.sh --native` installs matching binaries and restarts the
+proxy. `--allow-drift` runs anyway, for deliberate cross-build comparisons; each result
+records the proxy's build as `proxyBuild`.
 
 It branches a throwaway instance (`isx-bench-<pid>`, from `--from`, default `tpl-minimal`)
 with `--no-start` and destroys it on exit, including on failure. No existing instance or
