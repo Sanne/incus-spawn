@@ -141,18 +141,19 @@ final class TaskScripts {
     }
 
     /**
-     * Just whether each task is still running: {@code <id> running|done} per line. Cheap enough
-     * to poll, unlike {@link #status}, which also carries the output.
+     * Just whether each task is still running: {@code <id> running|done|unknown} per line, where
+     * {@code unknown} means systemd could not be asked. Cheap enough to poll, unlike
+     * {@link #status}, which also carries the output.
      */
     static String states(Collection<String> taskIds) {
         var sb = new StringBuilder();
         for (var id : taskIds) {
             var d = dir(id);
             sb.append("n=$(cat \"").append(d).append("/current\" 2>/dev/null); ")
-                    .append("if [ -n \"$n\" ] && [ ! -f \"").append(d).append("/exit-$n\" ] && ")
-                    .append("sudo -n systemctl is-active -q ").append(unit(id, "$n"))
-                    .append(" 2>/dev/null; then echo ").append(id).append(" running; else echo ")
-                    .append(id).append(" done; fi; ");
+                    .append("if [ -z \"$n\" ] || [ -f \"").append(d).append("/exit-$n\" ]; then s=done; else ")
+                    .append("s=$(sudo -n systemctl is-active ").append(unit(id, "$n")).append(" 2>/dev/null); ")
+                    .append("case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ")
+                    .append("echo ").append(id).append(" $s; ");
         }
         return sb.append("exit 0").toString();
     }

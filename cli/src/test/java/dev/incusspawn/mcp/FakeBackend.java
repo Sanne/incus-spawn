@@ -95,6 +95,7 @@ class FakeBackend implements InstanceBackend {
 
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
+        if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
         scripts.add(script);
         var answer = responder != null ? responder.apply(script) : execStdout;
         try {

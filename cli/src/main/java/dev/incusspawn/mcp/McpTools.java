@@ -483,6 +483,7 @@ final class McpTools {
         var name = args.requireString("instance");
         var start = System.nanoTime();
         var destroyed = session.destroy(name);
+        tasks.forgetInstance(name);
         McpAuditLog.record(session.id, "destroy_instance", name, null, millisSince(start),
                 destroyed ? "destroyed" : "already-gone");
         return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.");

@@ -52,8 +52,12 @@ class DelegationToolsTest {
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
             if (script.startsWith("n=$(cat")) { // the state probe: one line per task asked about
-                var ids = java.util.regex.Pattern.compile("echo (t[0-9a-z-]+) running").matcher(script).results()
-                        .map(m -> m.group(1) + (taskState.equals("running") ? " running" : " done")).toList();
+                var ids = java.util.regex.Pattern.compile("echo (t[0-9a-z-]+) \\$s").matcher(script).results()
+                        .map(m -> m.group(1) + switch (taskState) {
+                            case "running" -> " running";
+                            case "unknown" -> " unknown";
+                            default -> " done";
+                        }).toList();
                 return String.join("\n", ids) + "\n";
             }
             if (script.contains("systemd-run")) {
@@ -69,6 +73,7 @@ class DelegationToolsTest {
                 return "";
             }
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
+            if (taskState.equals("unknown")) return "run=1\nkind=agent\nunit=\n---\n\n---stderr\n";
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nunit=active\nevents_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -246,6 +251,58 @@ class DelegationToolsTest {
         failLaunch = true;
         assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean());
         assertEquals(before, backend.instances.size(), "an instance whose task failed to start is removed");
+    }
+
+    private String instanceOf(String task) throws Exception {
+        var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
+        for (var inst : listed) {
+            for (var t : inst.path("tasks")) {
+                if (t.path("task_id").asText().equals(task)) return inst.path("instance").asText();
+            }
+        }
+        throw new AssertionError("no instance for " + task);
+    }
+
+    @Test
+    void destroyingAnInstanceFreesItsRunningTasks() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        var task = delegateFresh();
+        var instance = instanceOf(task);
+        assertFalse(call("destroy_instance", "{\"instance\":\"" + instance + "\"}").path("isError").asBoolean());
+        var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+    }
+
+    @Test
+    void anInstanceDeletedBehindTheSessionsBackDoesNotBlockNewTasks() throws Exception {
+        // The user deleted it from the TUI: probing it fails, and must not fail everything else.
+        var instance = instanceOf(delegateFresh());
+        backend.instances.remove(instance);
+        var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertTrue(text(call("list_instances", "{}")).contains("\"running\" : true"));
+    }
+
+    @Test
+    void aStateNobodyCouldReadKeepsTheTaskCounted() throws Exception {
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+                .path("instance").asText();
+        assertFalse(call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}")
+                .path("isError").asBoolean());
+        taskState = "unknown";
+        var status = text(call("task_status", "{\"task_id\":\"" + instanceTask(instance) + "\"}"));
+        assertTrue(status.contains("state: unknown"), status);
+        var second = call("delegate", "{\"instruction\":\"y\",\"instance\":\"" + instance + "\"}");
+        assertTrue(second.path("isError").asBoolean(), "a second agent in the same working tree");
+        assertTrue(text(second).contains("already an agent"), text(second));
+    }
+
+    private String instanceTask(String instance) throws Exception {
+        var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
+        for (var inst : listed) {
+            if (inst.path("instance").asText().equals(instance)) return inst.path("tasks").get(0).path("task_id").asText();
+        }
+        throw new AssertionError("no task in " + instance);
     }
 
     @Test

@@ -121,7 +121,8 @@ final class Tasks {
     Status status(Task task) {
         var status = parse(run(task.instance(),
                 TaskScripts.status(task.id(), AGENT.equals(task.kind()) ? RESULT_TAIL : STATUS_TAIL), null));
-        markRunning(Map.of(task.id(), status.running()));
+        // "unknown" says nothing about the task: keep what we last knew rather than free its slot.
+        if (!"unknown".equals(status.state())) markRunning(Map.of(task.id(), status.running()));
         return status;
     }
 
@@ -131,7 +132,8 @@ final class Tasks {
      */
     Status await(Task task, int seconds, ToolContext ctx) throws InterruptedException {
         var deadline = System.nanoTime() + seconds * 1_000_000_000L;
-        while (running(task.instance(), List.of(task.id())).getOrDefault(task.id(), false)
+        // An unknown state may still be running: keep waiting rather than return early.
+        while (!"done".equals(probe(task.instance(), List.of(task.id())).getOrDefault(task.id(), "done"))
                 && System.nanoTime() < deadline && !ctx.cancelled()) {
             ctx.progress("task " + task.id() + " still running");
             Thread.sleep(2000);
@@ -200,8 +202,20 @@ final class Tasks {
         synchronized (this) {
             believedRunning = tasks.values().stream().filter(t -> t.running() && !t.launching()).toList();
         }
-        believedRunning.stream().collect(Collectors.groupingBy(Task::instance))
-                .forEach((instance, list) -> running(instance, list.stream().map(Task::id).toList()));
+        believedRunning.stream().collect(Collectors.groupingBy(Task::instance)).forEach((instance, list) -> {
+            try {
+                probe(instance, list.stream().map(Task::id).toList());
+            } catch (RuntimeException e) {
+                // An instance that is gone takes its tasks with it; one we merely cannot reach
+                // right now keeps them as they were, so their slots stay counted.
+                if (backend.metadata(instance) == null) forgetInstance(instance);
+            }
+        });
+    }
+
+    /** Forget the tasks of an instance that no longer exists. */
+    synchronized void forgetInstance(String instance) {
+        tasks.values().removeIf(t -> t.instance().equals(instance));
     }
 
     /**
@@ -226,13 +240,20 @@ final class Tasks {
     }
 
     /** Which of these tasks in one instance are still running, from one cheap exec. */
-    private Map<String, Boolean> running(String instance, List<String> ids) {
-        var result = new HashMap<String, Boolean>();
+    /**
+     * {@code running}, {@code done} or {@code unknown} for each of these tasks in one instance,
+     * from one cheap exec. Records what it learned, except for {@code unknown}.
+     */
+    private Map<String, String> probe(String instance, List<String> ids) {
+        var result = new HashMap<String, String>();
+        var known = new HashMap<String, Boolean>();
         for (var line : run(instance, TaskScripts.states(ids), null).split("\n")) {
             var parts = line.strip().split(" ");
-            if (parts.length == 2) result.put(parts[0], parts[1].equals("running"));
+            if (parts.length != 2) continue;
+            result.put(parts[0], parts[1]);
+            if (!parts[1].equals("unknown")) known.put(parts[0], parts[1].equals("running"));
         }
-        markRunning(result);
+        markRunning(known);
         return result;
     }
 

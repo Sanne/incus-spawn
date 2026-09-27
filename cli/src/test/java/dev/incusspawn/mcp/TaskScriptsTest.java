@@ -221,6 +221,17 @@ class TaskScriptsTest {
     }
 
     @Test
+    void theStateProbeSaysUnknownWhenSystemdCannotBeAsked() throws Exception {
+        sh(TaskScripts.launch("t10-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t10-abc", work.toString(), Map.of(), "sleep 300")), "");
+        // As in a container where the session cannot reach systemd: no answer at all.
+        stub("systemctl", "exit 1");
+        assertEquals("t10-abc unknown\n", sh(TaskScripts.states(java.util.List.of("t10-abc")), ""));
+        var pid = Files.readString(home.resolve("units/isx-task-t10-abc-1")).strip();
+        sh("kill -TERM -- -" + pid, "");
+    }
+
+    @Test
     void anUnknownTaskIsLost() throws Exception {
         assertEquals("lost", Tasks.parse(sh(TaskScripts.status("t9-zzz", 1000), "")).state());
     }
