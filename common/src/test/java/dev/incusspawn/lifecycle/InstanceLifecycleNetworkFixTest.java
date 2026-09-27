@@ -106,20 +106,23 @@ class InstanceLifecycleNetworkFixTest {
     @Test
     void migrateAllInstancesToNewSubnet_handlesFailureGracefully() {
         var incus = mock(IncusClient.class);
-        when(incus.list()).thenReturn(List.of(
-                Map.of("name", "fail-instance", "status", "Stopped", "type", "container"),
-                Map.of("name", "ok-instance", "status", "Stopped", "type", "container")));
-
-        // First instance: stale IP that will fail during fix
-        when(incus.configGet("fail-instance", Metadata.STATIC_IP)).thenReturn("172.20.0.2");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
+        // One listing names every stale instance: no read per instance
+        when(incus.listJsonConfig()).thenReturn("""
+                [{"name":"fail-instance","config":{"%1$s":"172.20.0.2"}},
+                 {"name":"ok-instance","config":{"%1$s":"172.21.0.3"}},
+                 {"name":"stale-instance","config":{"%1$s":"172.20.0.4"}}]
+                """.formatted(Metadata.STATIC_IP));
         when(incus.findNicDeviceName("fail-instance", "incusbr0"))
                 .thenThrow(new RuntimeException("no NIC"));
+        when(incus.findNicDeviceName("stale-instance", "incusbr0")).thenReturn("eth0");
+        when(incus.configGet("stale-instance", Metadata.PROXY_GATEWAY)).thenReturn("");
+        when(incus.isVm("stale-instance")).thenReturn(false);
 
-        // Second instance: already on correct subnet
-        when(incus.configGet("ok-instance", Metadata.STATIC_IP)).thenReturn("172.21.0.3");
-
-        int migrated = InstanceLifecycle.migrateAllInstancesToNewSubnet(incus);
-        assertEquals(0, migrated);
+        assertEquals(1, InstanceLifecycle.migrateAllInstancesToNewSubnet(incus),
+                "a failure on one instance must not stop the others");
+        verify(incus).deviceConfigSet("stale-instance", "eth0", "ipv4.address", "172.21.0.2");
+        verify(incus, never()).configGet(anyString(), eq(Metadata.STATIC_IP));
+        verify(incus, never()).deviceConfigSet(eq("ok-instance"), any(), any(), any());
     }
 }

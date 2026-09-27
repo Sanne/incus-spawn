@@ -37,6 +37,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
+    private final Map<String, String> pushedModes = new LinkedHashMap<>();
     private boolean refuseNextWrite;
     private int nextOperation = 1;
 
@@ -123,6 +124,11 @@ public final class FakeIncusDaemon implements IncusTransport {
         return new IncusClient(new IncusApi(this));
     }
 
+    /** The mode a file was last pushed into an instance with, or null if it never was. */
+    public String pushedMode(String instanceName, String path) {
+        return pushedModes.get(instanceName + path);
+    }
+
     /** Every request so far, as {@code "METHOD path"}, in order. */
     public List<String> requests() {
         return List.copyOf(requests);
@@ -144,9 +150,11 @@ public final class FakeIncusDaemon implements IncusTransport {
                                Map<String, String> extraHeaders, Path bodyFile) {
         requests.add(method + " " + path);
         var name = instanceName(path);
-        return name != null && instances.containsKey(name) && path.contains("/files?")
-                ? sync(JSON.createObjectNode())
-                : notFound();
+        if (name == null || !instances.containsKey(name) || !path.contains("/files?")) return notFound();
+        var file = java.net.URLDecoder.decode(path.substring(path.indexOf("path=") + 5),
+                java.nio.charset.StandardCharsets.UTF_8);
+        pushedModes.put(name + file, extraHeaders.getOrDefault("X-Incus-mode", ""));
+        return sync(JSON.createObjectNode());
     }
 
     @Override

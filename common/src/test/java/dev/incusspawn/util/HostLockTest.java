@@ -147,11 +147,53 @@ class HostLockTest {
             try {
                 assertTrue(held.await(10, TimeUnit.SECONDS));
                 var e = assertThrows(HostLock.HostLockException.class, () -> HostLock.acquire(
-                        lockFile(), "testing", s -> {}, Duration.ofMillis(100)));
+                        lockFile(), "testing", s -> {}, Duration.ofMillis(100), null));
                 assertEquals("Timed out waiting for another isx process testing.", e.getMessage());
             } finally {
                 release.countDown();
             }
         }
+    }
+
+    @Test
+    void anUnusableLockFileFailsAcquireButDegradesWithOneWarning() throws Exception {
+        // A regular file where the lock's directory should be: nothing there can be locked,
+        // as on a home without working fcntl locks
+        var blocker = tmp.resolve("not-a-dir");
+        Files.writeString(blocker, "");
+        var unusable = blocker.resolve("test.lock");
+
+        assertThrows(HostLock.HostLockException.class,
+                () -> HostLock.acquire(unusable, "testing", s -> {}));
+
+        var warnings = new CopyOnWriteArrayList<String>();
+        var held = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            try {
+                pool.submit(() -> {
+                    try (var lock = HostLock.acquireOrDegrade(unusable, "testing", s -> {}, warnings::add)) {
+                        held.countDown();
+                        release.await();
+                    }
+                    return null;
+                });
+                assertTrue(held.await(10, TimeUnit.SECONDS));
+                // Degraded to the in-process lock, which still holds off this process's threads
+                var second = pool.submit(() -> {
+                    try (var lock = HostLock.acquireOrDegrade(unusable, "testing", s -> {}, warnings::add)) {
+                        return true;
+                    }
+                });
+                Thread.sleep(200);
+                assertFalse(second.isDone(), "the degraded lock let a second thread in");
+                release.countDown();
+                assertTrue(second.get(10, TimeUnit.SECONDS));
+            } finally {
+                release.countDown();
+            }
+        }
+        assertEquals(1, warnings.size(), "warned once per file, not per acquisition: " + warnings);
+        assertTrue(warnings.getFirst().startsWith("Cannot lock " + unusable), warnings.getFirst());
     }
 }

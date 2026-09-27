@@ -31,6 +31,8 @@ class BranchOfABranchTest {
         InstanceLifecycle.configureBranch(incus, "dev-1", settings("tpl"));
         assertEquals("10.166.11.2", daemon.instance("dev-1").path("devices").path("eth0")
                 .path("ipv4.address").asText());
+        // Readable by systemd-networkd whether or not the template shipped the file
+        assertEquals("0644", daemon.pushedMode("dev-1", "/etc/systemd/network/10-eth0.network"));
 
         daemon.clearRequests();
         incus.copy("dev-1", "dev-2");

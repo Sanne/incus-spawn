@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -98,9 +99,9 @@ public final class InstanceLifecycle {
             // One read gives the gateway, the subnet to allocate from and the prefix to push
             bridge = BridgeAddress.require(incus);
             if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
-            nicDevice = IncusClient.nicDeviceName(instance, "incusbr0");
+            nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
             if (nicDevice == null) {
-                throw new IncusException("No NIC device for incusbr0 found on " + name);
+                throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);
             }
             // The address itself is allocated in claimAndWrite, under the allocation lock
             update.device(nicDevice, "security.ipv4_filtering", "true");
@@ -301,14 +302,17 @@ public final class InstanceLifecycle {
      * separation between instances that is not enforced.
      */
     public static void applyIpFiltering(IncusClient incus, String name, String nicDevice) {
+        applyIpFiltering(incus, name, nicDevice, STDERR_WARN);
+    }
+
+    private static void applyIpFiltering(IncusClient incus, String name, String nicDevice,
+                                         Consumer<String> warn) {
         try {
             incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
         } catch (RuntimeException e) {
-            System.err.println(BuildOutput.STEP_INDENT
-                    + "Warning: could not enable IP spoofing protection on " + name + ": "
+            warn.accept("could not enable IP spoofing protection on " + name + ": "
                     + e.getMessage());
-            System.err.println(BuildOutput.STEP_INDENT
-                    + "Instances on this host can impersonate each other's credential accounts.");
+            warn.accept("Instances on this host can impersonate each other's credential accounts.");
         }
     }
 
@@ -354,7 +358,7 @@ public final class InstanceLifecycle {
 
     private static boolean disableIpFiltering(IncusClient incus, String name) {
         try {
-            var nic = incus.findNic(name, "incusbr0");
+            var nic = incus.findNic(name, BridgeAddress.BRIDGE);
             if (nic == null || !"true".equals(nic.config().get("security.ipv4_filtering"))) {
                 return false;
             }
@@ -374,13 +378,27 @@ public final class InstanceLifecycle {
         return BridgeAddress.read(incus).map(BridgeAddress::prefixLen).orElse(24);
     }
 
+    /** Warnings from flows that print them, as the terminal shows them. */
+    private static final Consumer<String> STDERR_WARN =
+            msg -> System.err.println(BuildOutput.STEP_INDENT + "Warning: " + msg);
+
+    static void pushStaticNetworkConfig(IncusClient incus, String name,
+                                        String ip, String gateway, int prefixLen) {
+        pushStaticNetworkConfig(incus, name, ip, gateway, prefixLen, STDERR_WARN);
+    }
+
     /**
      * Push a systemd-networkd static config into the container, overwriting the
      * DHCP config the template carries from build time. This makes the branch
      * boot directly into static addressing (instant network, no DHCP round trip).
+     *
+     * <p>Root-owned 0644 explicitly: the mode would otherwise be the temp file's 0600, which
+     * {@code systemd-networkd}, running as {@code systemd-network}, cannot read. A template's
+     * own {@code 10-eth0.network} hid this, since overwriting keeps a file's mode; a template
+     * without one got a branch with no network.
      */
-    static void pushStaticNetworkConfig(IncusClient incus, String name,
-                                                String ip, String gateway, int prefixLen) {
+    static void pushStaticNetworkConfig(IncusClient incus, String name, String ip,
+                                        String gateway, int prefixLen, Consumer<String> warn) {
         var content = "[Match]\nName=eth0\n\n[Network]\n"
                 + "Address=" + ip + "/" + prefixLen + "\n"
                 + "Gateway=" + gateway + "\n"
@@ -389,12 +407,13 @@ public final class InstanceLifecycle {
             var tmp = Files.createTempFile("isx-network-", ".network");
             try {
                 Files.writeString(tmp, content);
-                incus.filePush(tmp.toString(), name, "/etc/systemd/network/10-eth0.network");
+                incus.filePush(tmp.toString(), name, "/etc/systemd/network/10-eth0.network",
+                        "0", "0", "0644");
             } finally {
                 Files.deleteIfExists(tmp);
             }
         } catch (IOException | RuntimeException e) {
-            System.err.println(BuildOutput.STEP_INDENT + "Warning: failed to push static network config: " + e.getMessage());
+            warn.accept("failed to push static network config: " + e.getMessage());
         }
     }
 
@@ -427,24 +446,30 @@ public final class InstanceLifecycle {
      * @return true if a fix was applied
      */
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name) {
+        return fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL);
+    }
+
+    /** @param output where the reassignment, and any wait for the allocation lock, is reported */
+    public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
+                                              StaticIpAllocator.Output output) {
         var storedIp = incus.configGet(name, Metadata.STATIC_IP);
         if (storedIp.isEmpty()) return false;
         var bridge = BridgeAddress.read(incus);
-        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get());
+        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get(), output);
     }
 
     private static boolean fixStaticIp(IncusClient incus, String name, String storedIp,
-                                       BridgeAddress bridge) {
+                                       BridgeAddress bridge, StaticIpAllocator.Output output) {
         if (storedIp.isEmpty() || CidrUtils.isInSubnet(storedIp, bridge.subnet())) return false;
 
         var newGateway = bridge.gateway();
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
 
-        var newIp = StaticIpAllocator.claim(incus, bridge, ip -> {
-            BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + ip);
+        var newIp = StaticIpAllocator.claim(incus, bridge, output, ip -> {
+            output.step().accept("Reassigning " + name + ": " + storedIp + " → " + ip);
             incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
         });
-        applyIpFiltering(incus, name, nicDevice);
+        applyIpFiltering(incus, name, nicDevice, output.warn());
 
         var updates = new HashMap<String, String>();
         updates.put(Metadata.STATIC_IP, newIp);
@@ -456,7 +481,8 @@ public final class InstanceLifecycle {
         incus.configSetAll(name, updates);
 
         if (!incus.isVm(name)) {
-            pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen());
+            pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen(),
+                    output.warn());
         }
         return true;
     }
@@ -471,19 +497,17 @@ public final class InstanceLifecycle {
     public static int migrateAllInstancesToNewSubnet(IncusClient incus) {
         int fixed = 0;
         try {
-            // Read once for every instance, not once per instance
+            // One bridge read and one listing for every instance, not requests per instance
             var bridge = BridgeAddress.read(incus);
             if (bridge.isEmpty()) return 0;
-            for (var instance : incus.list()) {
-                var name = instance.get("name");
-                if (name == null || name.isEmpty()) continue;
+            for (var stale : staleStaticIps(incus, bridge.get()).entrySet()) {
                 try {
-                    if (fixStaticIp(incus, name, incus.configGet(name, Metadata.STATIC_IP),
-                            bridge.get())) {
+                    if (fixStaticIp(incus, stale.getKey(), stale.getValue(), bridge.get(),
+                            StaticIpAllocator.Output.TERMINAL)) {
                         fixed++;
                     }
                 } catch (Exception e) {
-                    System.err.println("  Warning: failed to migrate " + name
+                    System.err.println("  Warning: failed to migrate " + stale.getKey()
                             + ": " + e.getMessage());
                 }
             }
@@ -519,9 +543,12 @@ public final class InstanceLifecycle {
      */
     public static List<String> findStaleSubnetInstances(IncusClient incus) {
         var bridge = BridgeAddress.read(incus);
-        if (bridge.isEmpty()) return List.of();
-        var bridgeCidr = bridge.get().subnet();
+        return bridge.isEmpty() ? List.of()
+                : List.copyOf(staleStaticIps(incus, bridge.get()).keySet());
+    }
 
+    /** Each instance whose static IP is off the bridge's subnet, with that IP. */
+    private static Map<String, String> staleStaticIps(IncusClient incus, BridgeAddress bridge) {
         // The listing already carries each instance's config: one request, not one per instance.
         JsonNode instances;
         try {
@@ -529,14 +556,14 @@ public final class InstanceLifecycle {
         } catch (IOException e) {
             throw new IncusException("Failed to parse instance list: " + e.getMessage());
         }
-        var stale = new ArrayList<String>();
+        var stale = new LinkedHashMap<String, String>();
         for (var instance : instances) {
             var name = instance.path("name").asText("");
             if (name.isEmpty()) continue;
             var storedIp = instance.path("config").path(Metadata.STATIC_IP).asText("");
             if (storedIp.isEmpty()) continue;
-            if (!CidrUtils.isInSubnet(storedIp, bridgeCidr)) {
-                stale.add(name);
+            if (!CidrUtils.isInSubnet(storedIp, bridge.subnet())) {
+                stale.put(name, storedIp);
             }
         }
         return stale;

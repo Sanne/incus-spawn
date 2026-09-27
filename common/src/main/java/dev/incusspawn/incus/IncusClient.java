@@ -635,11 +635,17 @@ public class IncusClient {
         return updateProfileRootDiskPool(profile, profileDevices(profile), newPool);
     }
 
+    /** A device's config as a mutable map, e.g. to send it back changed: Incus replaces a device whole. */
+    static Map<String, String> deviceConfig(JsonNode device) {
+        var config = new LinkedHashMap<String, String>();
+        device.properties().forEach(e -> config.put(e.getKey(), e.getValue().asText("")));
+        return config;
+    }
+
     public boolean updateProfileRootDiskPool(String profile, JsonNode devices, String newPool) {
         var deviceName = rootDiskDeviceNameFromDevices(devices);
         if (deviceName == null) return false;
-        var merged = new LinkedHashMap<String, String>();
-        devices.path(deviceName).fields().forEachRemaining(e -> merged.put(e.getKey(), e.getValue().asText()));
+        var merged = deviceConfig(devices.path(deviceName));
         merged.put("pool", newPool);
         var resp = http().requestAndWait("PATCH", "/1.0/profiles/" + profile,
                 Map.of("devices", Map.of(deviceName, merged)));
@@ -711,8 +717,7 @@ public class IncusClient {
         devices.properties().forEach(e -> {
             var device = e.getValue();
             if (!isNic(device) || device.path("ipv4.address").asText("").isEmpty()) return;
-            var config = new LinkedHashMap<String, String>();
-            device.properties().forEach(p -> config.put(p.getKey(), p.getValue().asText()));
+            var config = deviceConfig(device);
             config.remove("ipv4.address");
             result.put(e.getKey(), config);
         });
@@ -1655,9 +1660,7 @@ public class IncusClient {
             if (isNic(dev)
                     && (networkName.equals(dev.path("network").asText())
                         || networkName.equals(dev.path("parent").asText()))) {
-                var config = new java.util.LinkedHashMap<String, String>();
-                dev.properties().forEach(e -> config.put(e.getKey(), e.getValue().asText("")));
-                return new NicDevice(entry.getKey(), config);
+                return new NicDevice(entry.getKey(), deviceConfig(dev));
             }
         }
         return null;

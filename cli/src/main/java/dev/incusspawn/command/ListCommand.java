@@ -16,6 +16,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -5119,13 +5120,21 @@ public class ListCommand extends BaseCommand {
     private void fixStaticIpIfNeeded(String name) {
         vmIpFixApplied = false;
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
+        // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
+        // protection refused, an unusable allocation lock) is worth the status line; progress
+        // is not, since nothing can render until this returns.
+        var warning = new String[1];
+        var output = new StaticIpAllocator.Output(msg -> {}, msg -> {
+            if (warning[0] == null) warning[0] = msg;
+        });
         try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
+            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output)) {
                 vmIpFixApplied = incus.isVm(name);
                 statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
         }
+        if (warning[0] != null) statusMessage = "Warning: " + warning[0];
     }
 
     private void fixResolvConfIfNeeded(String name) {

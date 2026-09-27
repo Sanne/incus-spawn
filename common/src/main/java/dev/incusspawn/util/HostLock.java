@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -58,17 +59,36 @@ public final class HostLock implements AutoCloseable {
      * @throws HostLockException if the lock cannot be taken in time or at all
      */
     public static HostLock acquire(Path lockFile, String activity, Consumer<String> log) {
-        return acquire(lockFile, activity, log, TIMEOUT);
+        return acquire(lockFile, activity, log, TIMEOUT, null);
     }
 
-    static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout) {
+    /**
+     * As {@link #acquire}, but where the file cannot be locked at all -- a home on NFS without
+     * lockd, a read-only or odd filesystem -- warn once and go on holding only the in-process
+     * lock, rather than fail. For a caller with a backstop of its own when processes do collide.
+     * A holder that never lets go still times the wait out: only an unusable file degrades.
+     *
+     * @param warn where to say, once per file and process, that the file lock is not held
+     */
+    public static HostLock acquireOrDegrade(Path lockFile, String activity, Consumer<String> log,
+                                            Consumer<String> warn) {
+        return acquire(lockFile, activity, log, TIMEOUT, warn);
+    }
+
+    /** @param degradeWarn non-null to degrade rather than fail on an unusable file */
+    static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout,
+                            Consumer<String> degradeWarn) {
+        var degrade = degradeWarn != null;
         Path key;
+        IOException unusable = null;
         try {
             // fcntl locks a file, not a path: two spellings of one directory must share a lock
             Files.createDirectories(lockFile.getParent());
             key = lockFile.getParent().toRealPath().resolve(lockFile.getFileName());
         } catch (IOException e) {
-            throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
+            if (!degrade) throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
+            key = lockFile.toAbsolutePath().normalize();
+            unusable = e;
         }
         var inProcess = IN_PROCESS.computeIfAbsent(key, p -> new ReentrantLock());
         if (inProcess.isHeldByCurrentThread()) {
@@ -83,6 +103,7 @@ public final class HostLock implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
         }
+        if (unusable != null) return degraded(inProcess, lockFile, activity, degradeWarn, unusable);
         try {
             var channel = FileChannel.open(key, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             try {
@@ -92,12 +113,26 @@ public final class HostLock implements AutoCloseable {
                 throw e;
             }
         } catch (IOException e) {
+            if (degrade) return degraded(inProcess, lockFile, activity, degradeWarn, e);
             inProcess.unlock();
             throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
         } catch (RuntimeException e) {
             inProcess.unlock();
             throw e;
         }
+    }
+
+    private static final Set<Path> WARNED_UNUSABLE = ConcurrentHashMap.newKeySet();
+
+    private static HostLock degraded(ReentrantLock inProcess, Path lockFile, String activity,
+                                     Consumer<String> warn, IOException cause) {
+        // Once per file and process: a TUI would otherwise repeat it on every action
+        if (WARNED_UNUSABLE.add(lockFile.toAbsolutePath().normalize())) {
+            warn.accept("Cannot lock " + lockFile + " (" + cause.getMessage()
+                    + "); going on without it, so isx processes " + activity
+                    + " at the same time are not held off each other.");
+        }
+        return new HostLock(inProcess, null, null);
     }
 
     private static FileLock lockFile(FileChannel channel, String activity, Consumer<String> log,
@@ -128,8 +163,9 @@ public final class HostLock implements AutoCloseable {
     @Override
     public void close() {
         try {
-            try { lock.release(); } catch (IOException ignored) {}
-            try { channel.close(); } catch (IOException ignored) {}
+            // Both null when degraded to the in-process lock alone
+            if (lock != null) try { lock.release(); } catch (IOException ignored) {}
+            if (channel != null) try { channel.close(); } catch (IOException ignored) {}
         } finally {
             inProcess.unlock();
         }

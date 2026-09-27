@@ -19,7 +19,7 @@ public final class BridgeSubnetCheck {
     private BridgeSubnetCheck() {}
 
     public static String resolveBridgeCidr(IncusClient incus) {
-        return incus.networkConfigGet("incusbr0", "ipv4.address");
+        return incus.networkConfigGet(BridgeAddress.BRIDGE, "ipv4.address");
     }
 
     public static List<String> getHostRoutes() {

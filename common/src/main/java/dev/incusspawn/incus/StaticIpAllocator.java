@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.Environment;
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.HostLock;
 
 import java.io.IOException;
@@ -33,19 +34,36 @@ public final class StaticIpAllocator {
      * serializes the isx processes of one user; Incus's own conflict check (409 "IP address ...
      * already defined on another NIC") refuses most duplicates from writers outside it, such as
      * {@code sudo isx} or another user on the same daemon, but not two such writes at once.
+     * That check is also why a home that cannot be locked only warns: branching goes on, and
+     * a collision fails a branch rather than sharing an address.
      *
      * @param bridge read by the caller before the claim, so no one waits on that read
      * @return the address written
      */
     public static String claim(IncusClient incus, BridgeAddress bridge, Consumer<String> write) {
-        return claim(incus, bridge, Environment.lockDir().resolve(LOCK_FILE), write);
+        return claim(incus, bridge, Output.TERMINAL, write);
     }
 
-    static String claim(IncusClient incus, BridgeAddress bridge, Path lockFile,
+    /**
+     * Where a claim, and the flows around it, report progress (waiting for another process)
+     * and warnings (a lock it cannot take). The TUI passes its own: printing would draw over
+     * its screen.
+     */
+    public record Output(Consumer<String> step, Consumer<String> warn) {
+        public static final Output TERMINAL = new Output(BuildOutput::step, BuildOutput::warn);
+    }
+
+    public static String claim(IncusClient incus, BridgeAddress bridge, Output output,
+                               Consumer<String> write) {
+        return claim(incus, bridge, Environment.lockDir().resolve(LOCK_FILE), output, write);
+    }
+
+    static String claim(IncusClient incus, BridgeAddress bridge, Path lockFile, Output output,
                         Consumer<String> write) {
         // Nesting would hand the inner claim the outer's still unwritten address: HostLock
         // refuses it
-        try (var lock = HostLock.acquire(lockFile, "assigning a static IP", System.err::println)) {
+        try (var lock = HostLock.acquireOrDegrade(lockFile, "assigning a static IP",
+                output.step(), output.warn())) {
             var claimed = getClaimedIps(incus);
             claimed.add(CidrUtils.ipToLong(bridge.gateway()));
             var ip = pickFreeIp(bridge.subnet(), claimed);
@@ -74,7 +92,7 @@ public final class StaticIpAllocator {
      * so we check expanded_devices rather than instance devices.
      */
     public static String findNicDevice(IncusClient incus, String instanceName) {
-        var name = incus.findNicDeviceName(instanceName, "incusbr0");
+        var name = incus.findNicDeviceName(instanceName, BridgeAddress.BRIDGE);
         if (name == null) {
             throw new IncusException("No NIC device for incusbr0 found on " + instanceName);
         }
