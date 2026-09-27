@@ -35,7 +35,8 @@ public final class McpMain {
         var cwd = Path.of("").toAbsolutePath().toString();
         var backend = new IncusInstanceBackend(RuntimeServices.incus(), RuntimeServices.lockManager());
         var session = new McpSession(self, owner, clientPid, cwd, backend, () -> SpawnConfig.load().mcp());
-        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> SpawnConfig.load().mcp()));
+        var tasks = new Tasks(session, backend, () -> SpawnConfig.load().mcp());
+        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> SpawnConfig.load().mcp()), tasks);
 
         var reaped = new AtomicBoolean();
         Runnable reap = () -> {

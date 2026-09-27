@@ -40,7 +40,8 @@ class McpToolsTest {
         System.setProperty("user.home", home.toString()); // the audit log goes here
         config.setTemplates(List.of("tpl-java"));
         session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config);
-        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> config));
+        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
+                new Tasks(session, backend, () -> config));
         server = new McpServer(out, tools.all(), "1", null, null);
     }
 

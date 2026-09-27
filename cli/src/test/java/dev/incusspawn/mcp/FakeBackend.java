@@ -22,6 +22,8 @@ class FakeBackend implements InstanceBackend {
     volatile String execStdout = "";
     volatile int execExit = 0;
     volatile RuntimeException createFailure;
+    /** When set, answers each exec script with its stdout (exit 0), instead of execStdout/execExit. */
+    volatile java.util.function.Function<String, String> responder;
 
     FakeBackend template(String name, boolean built, String... tools) {
         templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), false));
@@ -83,11 +85,12 @@ class FakeBackend implements InstanceBackend {
     @Override
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         scripts.add(script);
+        var answer = responder != null ? responder.apply(script) : execStdout;
         try {
-            if (stdout != null) stdout.write(execStdout.getBytes(StandardCharsets.UTF_8));
+            if (stdout != null) stdout.write(answer.getBytes(StandardCharsets.UTF_8));
         } catch (java.io.IOException e) {
             throw new IllegalStateException(e);
         }
-        return execExit;
+        return responder != null ? 0 : execExit;
     }
 }
