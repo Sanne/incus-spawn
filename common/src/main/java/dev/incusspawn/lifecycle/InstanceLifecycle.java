@@ -9,6 +9,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
+import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.Container;
@@ -81,7 +82,7 @@ public final class InstanceLifecycle {
         update.config("limits.memory", settings.memory());
         update.device("root", "size", settings.disk());
 
-        String gateway = null;
+        BridgeAddress bridge = null;
         String nicDevice = null;
         // Full internet is the absence of a mode, not whatever the source was copied with
         update.config(Metadata.NETWORK_MODE, mode == NetworkMode.FULL ? null : mode.name());
@@ -93,7 +94,8 @@ public final class InstanceLifecycle {
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
-            gateway = ProxyConfig.resolveGatewayIp(incus);
+            // One read gives the gateway, the subnet to allocate from and the prefix to push
+            bridge = BridgeAddress.require(incus);
             if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
             nicDevice = IncusClient.nicDeviceName(instance, "incusbr0");
             if (nicDevice == null) {
@@ -101,9 +103,10 @@ public final class InstanceLifecycle {
             }
             // The address itself is allocated in claimAndWrite, under the allocation lock
             update.device(nicDevice, "security.ipv4_filtering", "true");
-            update.config(Metadata.STATIC_GATEWAY, gateway);
+            update.config(Metadata.STATIC_GATEWAY, bridge.gateway());
         }
-        update.config(Metadata.PROXY_GATEWAY, mode == NetworkMode.PROXY_ONLY ? gateway : null);
+        update.config(Metadata.PROXY_GATEWAY,
+                mode == NetworkMode.PROXY_ONLY ? bridge.gateway() : null);
 
         update.config(Metadata.TYPE, Metadata.TYPE_CLONE);
         update.config(Metadata.PARENT, settings.parent());
@@ -120,7 +123,7 @@ public final class InstanceLifecycle {
         }
 
         if (nicDevice == null) incus.update(name, instance, update);
-        else claimAndWrite(incus, name, instance, update, nicDevice, gateway);
+        else claimAndWrite(incus, name, instance, update, nicDevice, bridge);
     }
 
     /**
@@ -129,10 +132,9 @@ public final class InstanceLifecycle {
      * concurrent branches wait on each other only for the listing, the push and the write (#815).
      */
     private static void claimAndWrite(IncusClient incus, String name, JsonNode instance,
-                                      InstanceUpdate update, String nicDevice, String gateway) {
+                                      InstanceUpdate update, String nicDevice, BridgeAddress bridge) {
         var isVm = "virtual-machine".equals(instance.path("type").asText(""));
-        var prefixLen = isVm ? 0 : bridgePrefixLen(incus);
-        StaticIpAllocator.claim(incus, ip -> {
+        StaticIpAllocator.claim(incus, bridge, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
             BuildOutput.step("Assigning static IP " + ip + ".");
@@ -141,7 +143,9 @@ public final class InstanceLifecycle {
             // Pushed before the write rather than after, so the push is not the last thing
             // before the start: see "Why nothing is pushed into an instance just before it
             // starts".
-            if (!isVm) pushStaticNetworkConfig(incus, name, ip, gateway, prefixLen);
+            if (!isVm) {
+                pushStaticNetworkConfig(incus, name, ip, bridge.gateway(), bridge.prefixLen());
+            }
             try {
                 incus.update(name, instance, update);
             } catch (IncusException e) {
@@ -363,8 +367,7 @@ public final class InstanceLifecycle {
     }
 
     static int bridgePrefixLen(IncusClient incus) {
-        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
-        return bridgeAddr.contains("/") ? CidrUtils.parseCidr(bridgeAddr).prefixLen() : 24;
+        return BridgeAddress.read(incus).map(BridgeAddress::prefixLen).orElse(24);
     }
 
     /**
@@ -422,18 +425,18 @@ public final class InstanceLifecycle {
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name) {
         var storedIp = incus.configGet(name, Metadata.STATIC_IP);
         if (storedIp.isEmpty()) return false;
+        var bridge = BridgeAddress.read(incus);
+        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get());
+    }
 
-        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
-        if (bridgeAddr.isEmpty()) return false;
-        var bridgeCidr = CidrUtils.parseCidr(bridgeAddr);
+    private static boolean fixStaticIp(IncusClient incus, String name, String storedIp,
+                                       BridgeAddress bridge) {
+        if (storedIp.isEmpty() || CidrUtils.isInSubnet(storedIp, bridge.subnet())) return false;
 
-        if (CidrUtils.isInSubnet(storedIp, bridgeCidr)) return false;
-
-        var newGateway = ProxyConfig.resolveGatewayIp(incus);
+        var newGateway = bridge.gateway();
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
-        var prefixLen = bridgePrefixLen(incus);
 
-        var newIp = StaticIpAllocator.claim(incus, ip -> {
+        var newIp = StaticIpAllocator.claim(incus, bridge, ip -> {
             BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + ip);
             incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
         });
@@ -449,7 +452,7 @@ public final class InstanceLifecycle {
         incus.configSetAll(name, updates);
 
         if (!incus.isVm(name)) {
-            pushStaticNetworkConfig(incus, name, newIp, newGateway, prefixLen);
+            pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen());
         }
         return true;
     }
@@ -464,11 +467,15 @@ public final class InstanceLifecycle {
     public static int migrateAllInstancesToNewSubnet(IncusClient incus) {
         int fixed = 0;
         try {
+            // Read once for every instance, not once per instance
+            var bridge = BridgeAddress.read(incus);
+            if (bridge.isEmpty()) return 0;
             for (var instance : incus.list()) {
                 var name = instance.get("name");
                 if (name == null || name.isEmpty()) continue;
                 try {
-                    if (fixStaticIpIfNeeded(incus, name)) {
+                    if (fixStaticIp(incus, name, incus.configGet(name, Metadata.STATIC_IP),
+                            bridge.get())) {
                         fixed++;
                     }
                 } catch (Exception e) {
@@ -507,9 +514,9 @@ public final class InstanceLifecycle {
      * current bridge. Used by {@code DoctorCommand} for detection.
      */
     public static List<String> findStaleSubnetInstances(IncusClient incus) {
-        var bridgeAddr = incus.networkConfigGet("incusbr0", "ipv4.address");
-        if (bridgeAddr.isEmpty()) return List.of();
-        var bridgeCidr = CidrUtils.parseCidr(bridgeAddr);
+        var bridge = BridgeAddress.read(incus);
+        if (bridge.isEmpty()) return List.of();
+        var bridgeCidr = bridge.get().subnet();
 
         // The listing already carries each instance's config: one request, not one per instance.
         JsonNode instances;

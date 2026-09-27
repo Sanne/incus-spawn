@@ -4,13 +4,11 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
+import dev.incusspawn.util.HostLock;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,45 +70,9 @@ public final class ProxyService {
 
     // --- Lifecycle lock ---
 
-    private static class ProxyLockHolder implements AutoCloseable {
-        private final FileChannel channel;
-        private final FileLock lock;
-        ProxyLockHolder(FileChannel channel, FileLock lock) {
-            this.channel = channel;
-            this.lock = lock;
-        }
-        @Override public void close() {
-            try { lock.release(); } catch (IOException ignored) {}
-            try { channel.close(); } catch (IOException ignored) {}
-        }
-    }
-
-    private static final int PROXY_LOCK_TIMEOUT_SECONDS = 30;
-
-    private static ProxyLockHolder acquireProxyLock() {
-        try {
-            Files.createDirectories(Environment.configDir());
-            var path = Environment.configDir().resolve("proxy.lock");
-            var channel = FileChannel.open(path,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            var lock = channel.tryLock();
-            if (lock != null) return new ProxyLockHolder(channel, lock);
-
-            ProxyLog.info("Another isx process is managing the proxy — waiting...");
-            long deadline = System.nanoTime() + PROXY_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
-            while (System.nanoTime() < deadline) {
-                try { Thread.sleep(500); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-                lock = channel.tryLock();
-                if (lock != null) return new ProxyLockHolder(channel, lock);
-            }
-            channel.close();
-            throw new RuntimeException("Timed out waiting for another isx process to finish managing the proxy.");
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to acquire proxy lock: " + e.getMessage());
-        }
+    private static HostLock acquireProxyLock() {
+        return HostLock.acquire(Environment.configDir().resolve("proxy.lock"),
+                "managing the proxy", ProxyLog::info);
     }
 
     /** The systemd unit written by {@link #install()}. Package-private so tests can assert on it. */

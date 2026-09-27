@@ -136,11 +136,11 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void configuringABranchIsOneWrite() {
         // #804: this was nine writes, each one an Incus backup-file rewrite. Around the one
-        // PATCH: the instance read, three bridge reads (gateway, allocation, prefix length), the
-        // listing that finds free addresses, and the push of the static network config.
+        // PATCH: the instance read, one bridge read (gateway, subnet and prefix length together),
+        // the listing that finds free addresses, and the push of the static network config.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of("limits.cpu", "4"));
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
-        assertBudget(7, daemon, "configureBranch");
+        assertBudget(5, daemon, "configureBranch");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
         var after = daemon.instance(NAME);
@@ -162,11 +162,11 @@ class InstanceLifecycleRequestBudgetTest {
 
     @Test
     void aVmBranchGetsFreePageReportingInTheSameWrite() {
-        // A VM gets no static network config pushed before start, so it skips that push and the
-        // bridge prefix read that goes with it: two requests fewer than a container.
+        // A VM gets no static network config pushed before start: one request fewer than a
+        // container.
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
-        assertBudget(5, daemon, "configureBranch (VM)");
+        assertBudget(4, daemon, "configureBranch (VM)");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
         assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF, daemon.instance(NAME)
                 .path("config").path(InstanceLifecycle.RAW_QEMU_CONF).asText());
@@ -287,7 +287,7 @@ class InstanceLifecycleRequestBudgetTest {
                 .device(NAME, "eth0", Map.of("type", "none"))
                 .device(NAME, "cache", Map.of("type", "none"));
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
-        assertBudget(8, daemon, "configureBranch (full, from an airgapped instance)");
+        assertBudget(6, daemon, "configureBranch (full, from an airgapped instance)");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
         assertEquals(List.of("eth0"), attachedNics(daemon));

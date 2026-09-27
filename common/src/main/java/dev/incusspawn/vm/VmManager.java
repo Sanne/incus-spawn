@@ -7,6 +7,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
+import dev.incusspawn.util.HostLock;
 import dev.incusspawn.Platform;
 
 import java.io.ByteArrayOutputStream;
@@ -17,12 +18,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -251,44 +249,12 @@ public final class VmManager {
 
     // --- VM lifecycle lock ---
 
-    private static class VmLockHolder implements AutoCloseable {
-        private final FileChannel channel;
-        private final FileLock lock;
-        VmLockHolder(FileChannel channel, FileLock lock) {
-            this.channel = channel;
-            this.lock = lock;
-        }
-        @Override public void close() {
-            try { lock.release(); } catch (IOException ignored) {}
-            try { channel.close(); } catch (IOException ignored) {}
-        }
-    }
-
-    private static final int VM_LOCK_TIMEOUT_SECONDS = 30;
-
-    private static VmLockHolder acquireVmLock() {
+    private static HostLock acquireVmLock() {
         try {
-            Files.createDirectories(Environment.vmStateDir());
-            var path = Environment.vmStateDir().resolve("vm.lock");
-            var channel = FileChannel.open(path,
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            var lock = channel.tryLock();
-            if (lock != null) return new VmLockHolder(channel, lock);
-
-            System.err.println("Another isx process is managing the VM — waiting...");
-            long deadline = System.nanoTime() + VM_LOCK_TIMEOUT_SECONDS * 1_000_000_000L;
-            while (System.nanoTime() < deadline) {
-                try { Thread.sleep(500); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-                lock = channel.tryLock();
-                if (lock != null) return new VmLockHolder(channel, lock);
-            }
-            channel.close();
-            throw new VmException("Timed out waiting for another isx process to finish managing the VM.");
-        } catch (IOException e) {
-            throw new VmException("Failed to acquire VM lock: " + e.getMessage());
+            return HostLock.acquire(Environment.vmStateDir().resolve("vm.lock"),
+                    "managing the VM", System.err::println);
+        } catch (HostLock.HostLockException e) {
+            throw new VmException(e.getMessage());
         }
     }
 

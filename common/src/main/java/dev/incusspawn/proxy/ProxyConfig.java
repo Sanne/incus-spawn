@@ -1,6 +1,7 @@
 package dev.incusspawn.proxy;
 
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
@@ -92,11 +93,8 @@ public final class ProxyConfig {
     public static String resolveGatewayIp(IncusClient incus) {
         RuntimeException error = null;
         try {
-            var addr = incus.networkConfigGet("incusbr0", "ipv4.address");
-            if (addr.contains("/")) {
-                addr = addr.substring(0, addr.indexOf('/'));
-            }
-            if (!addr.isEmpty()) return addr;
+            var bridge = BridgeAddress.read(incus);
+            if (bridge.isPresent()) return bridge.get().gateway();
         } catch (RuntimeException e) {
             error = e;
         }
