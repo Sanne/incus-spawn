@@ -886,9 +886,9 @@ the setup script polls for the network address every 50 ms rather than every 0.5
 Two kinds of file still go in before the start, because they must be in place at boot: the
 static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the
 empty files that clear them, when a branch drops GUI state it inherited). Both are pushed well
-before the start: GUI setup runs first, right after the copy, and the `.network` push follows
-the resource limits and network configuration, with the account stamp, host integration and
-the runtime prefetch still between it and the start. That has been enough to finish the flush;
+before the start: GUI setup runs first, right after the copy, and `configureBranch()` pushes
+the `.network` file just before its combined settings write, leaving that write, host
+integration and the runtime prefetch between it and the start. That has been enough to finish the flush;
 if a trace ever shows the one-second gap again, the `.network` push is the next candidate.
 
 ### Why a branch is configured in one write
@@ -914,8 +914,11 @@ fragment Incus rejects. `InstanceLifecycleRequestBudgetTest` pins the one write.
 One write cannot say which of its settings Incus refused, and the old separate writes existed
 partly to keep two apart: failing to pin the address is fatal, failing to enable
 `security.ipv4_filtering` only warns. Incus rolls a refused write back whole, so on failure the
-write is retried once without filtering: success means filtering was the problem (and is
-reported as before), failure surfaces the real error. The retry only happens on the failure path.
+write is retried once without filtering: failure surfaces the real error. Success does not
+prove filtering was the problem -- the first failure may have been transient -- so filtering is
+then enabled on its own with `applyIpFiltering()`, which warns as before if Incus refuses it.
+The source address is what identifies an instance to the proxy, so a first failure must not
+quietly leave the branch without it. Both extra writes happen only on the failure path.
 
 Airgap mode still detaches the NIC separately before the combined write; it is rare, and the
 detach has to override a profile device before it can remove it. Enabling GUI or KVM

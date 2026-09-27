@@ -30,6 +30,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
+    private boolean refuseNextWrite;
     private int nextOperation = 1;
 
     public FakeIncusDaemon() {
@@ -75,6 +76,12 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     public FakeIncusDaemon refuseWritesContaining(String needle) {
         refusedWrites.add(needle);
+        return this;
+    }
+
+    /** Refuse the next instance PUT or PATCH, whatever it carries, as a transient failure would. */
+    public FakeIncusDaemon refuseNextWrite() {
+        refuseNextWrite = true;
         return this;
     }
 
@@ -150,6 +157,10 @@ public final class FakeIncusDaemon implements IncusTransport {
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
         if (rest.isEmpty() && (method.equals("PUT") || method.equals("PATCH")) && body != null) {
+            if (refuseNextWrite) {
+                refuseNextWrite = false;
+                return badRequest();
+            }
             var text = new String(body, java.nio.charset.StandardCharsets.UTF_8);
             if (refusedWrites.stream().anyMatch(text::contains)) return badRequest();
         }

@@ -199,13 +199,25 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())
                 .refuseWritesContaining("security.ipv4_filtering");
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
-        assertEquals(2, writes(daemon).size(), "the refused write, then one without filtering");
+        assertEquals(3, writes(daemon).size(),
+                "the refused write, one without filtering, then filtering alone, refused again");
 
         var after = daemon.instance(NAME);
         var nic = after.path("devices").path("eth0");
         assertEquals("10.166.11.2", nic.path("ipv4.address").asText());
         assertFalse(nic.has("security.ipv4_filtering"));
         assertEquals("10.166.11.2", after.path("config").path(Metadata.STATIC_IP).asText());
+    }
+
+    @Test
+    void aTransientRefusalDoesNotCostIpFiltering() {
+        // A first write refused for a reason unrelated to filtering must not leave the branch
+        // without spoofing protection: the proxy identifies callers by source address.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of()).refuseNextWrite();
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        var nic = daemon.instance(NAME).path("devices").path("eth0");
+        assertEquals("10.166.11.2", nic.path("ipv4.address").asText());
+        assertEquals("true", nic.path("security.ipv4_filtering").asText());
     }
 
     @Test

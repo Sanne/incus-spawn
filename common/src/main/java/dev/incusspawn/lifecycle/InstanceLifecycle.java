@@ -115,21 +115,24 @@ public final class InstanceLifecycle {
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
 
+        // Pushed before the write rather than after, so the push is not the last thing before
+        // the start: see "Why nothing is pushed into an instance just before it starts".
+        if (ip != null && !"virtual-machine".equals(instance.path("type").asText(""))) {
+            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+        }
+
         try {
             incus.update(name, instance, update);
         } catch (IncusException e) {
             if (nicDevice == null) throw e;
-            // Failing to pin the address is fatal, failing to enable filtering only warns (see
-            // applyIpFiltering), and one write cannot say which of them Incus refused. Incus
-            // rolls a refused write back whole, so retry without filtering: if that goes
-            // through, filtering was the problem; if not, the error is the real one.
+            // Failing to pin the address is fatal, failing to enable filtering only warns, and
+            // one write cannot say which of them Incus refused. Incus rolls a refused write back
+            // whole, so retry without filtering: if that fails too, the error is the real one.
+            // If it goes through, enable filtering on its own, so a first failure that had
+            // nothing to do with filtering does not leave the instance without it.
             incus.update(name, instance,
                     update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
-            warnIpFilteringUnavailable(name, e.getMessage());
-        }
-
-        if (ip != null && !"virtual-machine".equals(instance.path("type").asText(""))) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
+            applyIpFiltering(incus, name, nicDevice);
         }
     }
 
@@ -204,15 +207,12 @@ public final class InstanceLifecycle {
         try {
             incus.deviceConfigSet(name, nicDevice, "security.ipv4_filtering", "true");
         } catch (RuntimeException e) {
-            warnIpFilteringUnavailable(name, e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Warning: could not enable IP spoofing protection on " + name + ": "
+                    + e.getMessage());
+            System.err.println(BuildOutput.STEP_INDENT
+                    + "Instances on this host can impersonate each other's credential accounts.");
         }
-    }
-
-    private static void warnIpFilteringUnavailable(String name, String reason) {
-        System.err.println(BuildOutput.STEP_INDENT
-                + "Warning: could not enable IP spoofing protection on " + name + ": " + reason);
-        System.err.println(BuildOutput.STEP_INDENT
-                + "Instances on this host can impersonate each other's credential accounts.");
     }
 
     /**
