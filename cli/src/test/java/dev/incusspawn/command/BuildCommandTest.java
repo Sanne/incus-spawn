@@ -2668,6 +2668,65 @@ class BuildCommandTest {
         }
     }
 
+    @Test
+    void disableSelinuxSeedsAConfigThatSelinuxPolicyPostKeeps(@TempDir Path tempDir) throws Exception {
+        var config = tempDir.resolve("etc/selinux/config");
+        assertEquals(0, runSh(BuildCommand.disableSelinuxScript(config.toString())));
+        assertTrue(Files.readString(config).lines().anyMatch("SELINUX=disabled"::equals));
+
+        // selinux-policy's %post writes SELINUX=enforcing only when the file is missing or empty (#842)
+        var post = "if [ ! -s " + config + " ]; then echo SELINUX=enforcing > " + config + "; fi";
+        assertEquals(0, runSh(post));
+        assertEquals(0, runSh(BuildCommand.selinuxNotEnforcingScript(config.toString())));
+    }
+
+    @Test
+    void disableSelinuxRewritesAnEnforcingConfigFromAnOlderParent(@TempDir Path tempDir) throws Exception {
+        var config = tempDir.resolve("config");
+        Files.writeString(config, "# comment SELINUX=enforcing\n  SELINUX=enforcing\nSELINUXTYPE=targeted\n");
+        assertEquals(1, runSh(BuildCommand.selinuxNotEnforcingScript(config.toString())));
+
+        assertEquals(0, runSh(BuildCommand.disableSelinuxScript(config.toString())));
+        assertEquals("# comment SELINUX=enforcing\nSELINUX=disabled\nSELINUXTYPE=targeted\n",
+                Files.readString(config));
+        assertEquals(0, runSh(BuildCommand.selinuxNotEnforcingScript(config.toString())));
+    }
+
+    @Test
+    void selinuxGuardFlagsOnlyEnforcing(@TempDir Path tempDir) throws Exception {
+        var config = tempDir.resolve("config");
+        var check = BuildCommand.selinuxNotEnforcingScript(config.toString());
+        assertEquals(0, runSh(check), "no config: no policy is loaded");
+        for (var line : new String[] {"SELINUX=disabled", "SELINUX=permissive", "#SELINUX=enforcing"}) {
+            Files.writeString(config, line + "\n");
+            assertEquals(0, runSh(check), line);
+        }
+        for (var line : new String[] {"SELINUX=enforcing", "SELINUX=\"enforcing\"", "SELINUX=Enforcing"}) {
+            Files.writeString(config, line + "\n");
+            assertEquals(1, runSh(check), line);
+        }
+    }
+
+    @Test
+    void selinuxGuardFailsTheBuildWhenTheGuestWouldBootEnforcing() {
+        var incus = mock(IncusClient.class);
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        var container = new Container(incus, "b");
+        var check = BuildCommand.selinuxNotEnforcingScript(BuildCommand.SELINUX_CONFIG);
+
+        when(incus.shellExec("b", "sh", "-c", check)).thenReturn(OK);
+        assertDoesNotThrow(() -> cmd.assertGuestSelinuxNotEnforcing(container));
+
+        when(incus.shellExec("b", "sh", "-c", check)).thenReturn(FAIL);
+        var e = assertThrows(IllegalStateException.class, () -> cmd.assertGuestSelinuxNotEnforcing(container));
+        assertTrue(e.getMessage().contains("enforcing"), e.getMessage());
+    }
+
+    private static int runSh(String script) throws Exception {
+        return new ProcessBuilder("sh", "-c", script).inheritIO().start().waitFor();
+    }
+
     private static void writeStub(Path path, String body) throws Exception {
         Files.writeString(path, "#!/bin/sh\n" + body + "\n");
         path.toFile().setExecutable(true);

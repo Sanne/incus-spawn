@@ -1034,6 +1034,10 @@ public class BuildCommand extends BaseCommand {
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
         }
 
+        if (effectiveVm) {
+            disableGuestSelinux(container);
+        }
+
         removePackages(container, imageDef);
 
         var toolResolution = collectEffectiveTools(imageDef, defs);
@@ -1054,6 +1058,9 @@ public class BuildCommand extends BaseCommand {
         updateCodexTrust(container, imageDef);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
+        if (effectiveVm) {
+            assertGuestSelinuxNotEnforcing(container);
+        }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
@@ -1211,6 +1218,7 @@ public class BuildCommand extends BaseCommand {
                             "{ " + installDeps + "; } && " +
                             "growpart /dev/sda 2 && " +
                             "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi"))));
+            disableGuestSelinux(container);
         }
 
         if (!prebaked) {
@@ -1300,6 +1308,9 @@ public class BuildCommand extends BaseCommand {
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
+        if (effectiveVm) {
+            assertGuestSelinuxNotEnforcing(container);
+        }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
         unmountDnfCache(buildName);
@@ -1722,6 +1733,50 @@ public class BuildCommand extends BaseCommand {
         container.sh(
                 "dnf remove -y --setopt=clean_requirements_on_remove=True " +
                 String.join(" ", pkgs) + " 2>/dev/null; true");
+    }
+
+    static final String SELINUX_CONFIG = "/etc/selinux/config";
+
+    /**
+     * Pins a VM guest's SELinux to {@code disabled} before any package is installed (#842).
+     * The base image ships no policy and a filesystem nothing ever labelled, but a package
+     * like {@code perl} pulls in {@code selinux-policy-targeted}, whose {@code %post} writes
+     * {@code SELINUX=enforcing}: the next boot then denies the incus-agent's vsock
+     * {@code listen} and the instance is unreachable. Relabelling cannot fix that -- the
+     * targeted policy has no rule for the agent at all. The {@code %post} only writes the
+     * file when it is missing or empty, so a non-empty file seeded here also survives every
+     * later install, in the template and in its branches. A parent built before this fix
+     * may already carry {@code enforcing}, so an existing file is rewritten, not skipped.
+     */
+    void disableGuestSelinux(Container container) {
+        container.sh(disableSelinuxScript(SELINUX_CONFIG))
+                .assertSuccess("Failed to disable SELinux in the VM guest");
+    }
+
+    static String disableSelinuxScript(String config) {
+        return "if grep -q '^[[:space:]]*SELINUX=' " + config + " 2>/dev/null; then "
+                + "sed -i 's/^[[:space:]]*SELINUX=.*/SELINUX=disabled/' " + config + "; "
+                + "else mkdir -p \"$(dirname " + config + ")\" && "
+                + "printf '%s\\n' '# Set by incus-spawn: the guest filesystem is not labelled (issue #842).' "
+                + "SELINUX=disabled SELINUXTYPE=targeted >> " + config + "; fi";
+    }
+
+    /**
+     * Fails the build if the VM guest would boot SELinux enforcing, which kills the
+     * incus-agent on the next boot. The build itself runs on the boot before the policy
+     * takes effect, so without this the breakage only shows up later, on {@code isx shell}.
+     */
+    void assertGuestSelinuxNotEnforcing(Container container) {
+        if (!container.sh(selinuxNotEnforcingScript(SELINUX_CONFIG)).success()) {
+            throw new IllegalStateException("The VM guest would boot SELinux enforcing: "
+                    + SELINUX_CONFIG + " was set to 'enforcing' during the build (a package or "
+                    + "tool setup rewrote it). The guest filesystem is not labelled and the "
+                    + "policy denies the incus-agent, so the instance would be unreachable.");
+        }
+    }
+
+    static String selinuxNotEnforcingScript(String config) {
+        return "! grep -qiE '^[[:space:]]*SELINUX=[[:space:]]*\"?enforcing' " + config + " 2>/dev/null";
     }
 
     private void maskServices(Container container, ImageDef imageDef) {
