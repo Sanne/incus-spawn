@@ -3,6 +3,7 @@ package dev.incusspawn.config;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Collects {@link EnvEntry} declarations from templates and tools, validates
@@ -113,7 +114,7 @@ public class EnvResolver {
             sb.append("export ").append(name).append("=\"")
                     .append(valueText(entry))
                     .append("${").append(name).append(":+")
-                    .append(shellEscape(sep))
+                    .append(shellEscape(sep, false))
                     .append("$").append(name).append("}\"\n");
         }
 
@@ -122,7 +123,7 @@ public class EnvResolver {
             var sep = entry.getSeparator();
             sb.append("export ").append(name).append("=\"${")
                     .append(name).append(":+$").append(name)
-                    .append(shellEscape(sep)).append("}")
+                    .append(shellEscape(sep, false)).append("}")
                     .append(valueText(entry)).append("\"\n");
         }
     }
@@ -134,26 +135,28 @@ public class EnvResolver {
     }
 
     /**
-     * The value as it goes between double quotes: fully escaped, or with {@code $} left
-     * live for an entry the shell expands at login. Quotes, backslashes and backticks are
+     * The value as it goes between double quotes: fully escaped, or, for an entry the
+     * shell expands at login, with plain variable references ({@code $NAME},
+     * {@code ${NAME}}) left live. Every other {@code $}, quote, backslash and backtick is
      * escaped either way, so no value can end the string or run a command.
      */
     private static String valueText(EnvEntry entry) {
         return shellEscape(entry.getValue(), entry.expandsAtLogin());
     }
 
-    static String shellEscape(String value) {
-        return shellEscape(value, false);
-    }
+    private static final Pattern VARIABLE_REFERENCE =
+            Pattern.compile("\\$(?:[a-zA-Z_][a-zA-Z0-9_]*|\\{[a-zA-Z_][a-zA-Z0-9_]*})");
 
-    private static String shellEscape(String value, boolean keepExpansions) {
+    static String shellEscape(String value, boolean keepVariableReferences) {
         var sb = new StringBuilder(value.length());
+        var references = VARIABLE_REFERENCE.matcher(value);
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             switch (c) {
                 case '\\' -> sb.append("\\\\");
                 case '"'  -> sb.append("\\\"");
-                case '$'  -> sb.append(keepExpansions ? "$" : "\\$");
+                case '$'  -> sb.append(keepVariableReferences
+                        && references.region(i, value.length()).lookingAt() ? "$" : "\\$");
                 case '`'  -> sb.append("\\`");
                 case '\n', '\r' -> throw new IllegalArgumentException(
                         "Env var value must not contain newline or carriage return characters");

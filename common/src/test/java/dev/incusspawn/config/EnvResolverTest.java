@@ -124,6 +124,14 @@ class EnvResolverTest {
     }
 
     @Test
+    void expandAtLoginEscapesDollarThatIsNotAVariableReference() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.set("X", "$(id)${Y:-z}$HOME$").expandingAtLogin(), "built-in");
+        var script = resolver.resolve();
+        assertTrue(script.contains("export X=\"\\$(id)\\${Y:-z}$HOME\\$\"\n"), script);
+    }
+
+    @Test
     void expandAtLoginEntryConflictsWithDifferentSet() {
         var resolver = new EnvResolver();
         resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");

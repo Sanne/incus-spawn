@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * A declarative environment variable entry. Supports four strategies:
@@ -47,10 +48,16 @@ public class EnvEntry {
     public EnvEntry() {}
 
     private EnvEntry(String name, String value, Strategy strategy, String separator) {
+        this(name, value, strategy, separator, false);
+    }
+
+    private EnvEntry(String name, String value, Strategy strategy, String separator,
+                     boolean expandAtLogin) {
         this.name = name;
         this.value = value;
         this.strategy = strategy;
         this.separator = separator;
+        this.expandAtLogin = expandAtLogin;
     }
 
     public static EnvEntry set(String name, String value) {
@@ -75,9 +82,7 @@ public class EnvEntry {
      * setter, so YAML definitions cannot reach it.
      */
     public EnvEntry expandingAtLogin() {
-        var copy = new EnvEntry(name, value, strategy, separator);
-        copy.expandAtLogin = true;
-        return copy;
+        return new EnvEntry(name, value, strategy, separator, true);
     }
 
     public boolean expandsAtLogin() { return expandAtLogin; }
@@ -95,9 +100,7 @@ public class EnvEntry {
      * Return a copy of this entry with parameter substitution applied.
      */
     public EnvEntry withSubstitution(java.util.function.UnaryOperator<String> substitutor) {
-        var copy = new EnvEntry(name, substitutor.apply(value), strategy, separator);
-        copy.expandAtLogin = expandAtLogin;
-        return copy;
+        return new EnvEntry(name, substitutor.apply(value), strategy, separator, expandAtLogin);
     }
 
     public String fingerprintString() {
@@ -127,7 +130,7 @@ public class EnvEntry {
 
             while (p.nextToken() != JsonToken.END_ARRAY) {
                 if (p.currentToken() == JsonToken.VALUE_STRING) {
-                    throw new IOException(rawStringError(p.getText()));
+                    throw new IOException(shellStringError(p.getText()));
                 } else if (p.currentToken() == JsonToken.START_OBJECT) {
                     result.add(parseStructuredEntry(p));
                 } else {
@@ -137,10 +140,12 @@ public class EnvEntry {
             return result;
         }
 
-        private static final java.util.regex.Pattern EXPORT_LINE =
-                java.util.regex.Pattern.compile("\\s*(?:export\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)=(.*)");
+        private static final String NAME_REGEX = "[a-zA-Z_][a-zA-Z0-9_]*";
+        private static final Pattern VALID_NAME = Pattern.compile(NAME_REGEX);
+        private static final Pattern EXPORT_LINE =
+                Pattern.compile("\\s*(?:export\\s+)?(" + NAME_REGEX + ")=(.*)");
 
-        static String rawStringError(String line) {
+        static String shellStringError(String line) {
             var msg = new StringBuilder("Env entry '").append(line)
                     .append("' is a shell string, which is not supported; use a structured entry");
             var m = EXPORT_LINE.matcher(line);
@@ -148,7 +153,7 @@ public class EnvEntry {
                 msg.append(":\n  - name: ").append(m.group(1))
                         .append("\n    value: ").append(m.group(2));
             } else {
-                msg.append(" with 'name' and 'value' (and optionally 'strategy': set, set-if-unset, prepend, append)");
+                msg.append(" with 'name' and 'value'");
             }
             return msg.toString();
         }
@@ -159,9 +164,6 @@ public class EnvEntry {
                 "prepend", Strategy.PREPEND,
                 "append", Strategy.APPEND
         );
-
-        private static final java.util.regex.Pattern VALID_NAME =
-                java.util.regex.Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
 
         private static EnvEntry parseStructuredEntry(JsonParser p) throws IOException {
             var entry = new EnvEntry();
@@ -189,7 +191,7 @@ public class EnvEntry {
             }
             if (!VALID_NAME.matcher(entry.getName()).matches()) {
                 throw new IOException("Invalid env var name '" + entry.getName()
-                        + "'; must match [a-zA-Z_][a-zA-Z0-9_]*");
+                        + "'; must match " + NAME_REGEX);
             }
             if (entry.getValue() == null) {
                 throw new IOException("Structured env entry '" + entry.getName() + "' requires a 'value' field");
