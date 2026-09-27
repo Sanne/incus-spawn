@@ -223,8 +223,19 @@ runs (default 20), reported as median, p90 and min:
 | `instances` | `isx instances` | Connecting to Incus plus one listing |
 | `accountShow` | `isx account show <instance>` | A typical read-only instance query |
 | `prepareRunning` | `isx run <instance> --action=<unknown>` | Everything `isx shell` does before attaching a terminal: instance checks, proxy health, IP/CA/resolv.conf repair |
+| `shellToPrompt` | `isx shell <instance>` | What a user waits for: from launch until the shell inside the running instance runs a command |
+| `branchToPrompt` | `isx branch <new> --from <template> --shell` | A full branch to a usable prompt: copy, start, runtime setup, CA/resolv.conf repair, identity reconcile, attach. `--branch-runs` samples (default 3), each destroyed afterwards |
 
-`isx shell` itself needs a terminal, so `prepareRunning` stands in for it: an unknown action
+The two `ToPrompt` operations run on a pseudo-terminal and type
+`echo ISXBENCH_$((6*7))_READY; exit` straight away. The line waits in the terminal's input
+queue until the shell inside the instance reads it, so `ISXBENCH_42_READY` appears exactly
+when the prompt is usable. The terminal's echo of the typed line shows `$((6*7))`, never 42,
+so it cannot be mistaken for the shell's output. `--shell` keeps a template's default action
+out of `branchToPrompt`; if the instance attaches tmux or zmx by itself, that time is
+included, as it is for a user. `TMUX` is removed from the environment so the benchmark never
+renames your own tmux window.
+
+`prepareRunning` isolates the host-side part of `isx shell`: an unknown action
 makes `isx run` do the same preparation and then exit 1 with "action ... not found". The
 harness checks for exactly that message, so a run that fails for any other reason (proxy
 down, say) aborts instead of being timed. Branch, cold start and destroy are timed once each
@@ -234,8 +245,8 @@ Prerequisites: a working `isx init`, a running Incus daemon **and proxy**, a bui
 branch from, and `native-image` unless `--skip-build` or `--runtime=jvm`.
 
 Results go to `bench/results/cli/`, separate from the proxy results, and each runtime's
-medians are compared with the most recent earlier result that measured it. Changes of 10% or
-more are flagged: below that, desktop run-to-run noise dominates.
+medians are compared with the most recent earlier result that measured it. A change is flagged
+when it is at least 10% and at least 1 ms: below either, desktop run-to-run noise dominates.
 
 This is for comparing before and after on one machine, not for gating PRs. The deterministic
 check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many Incus round
@@ -248,6 +259,7 @@ counting requests needs neither timing nor a daemon.
 bench/
   run.sh                  # Proxy benchmark
   cli.sh                  # CLI latency benchmark, JVM vs native
+  isxbench.py             # Shared helper: run a command to a usable shell prompt
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
   proxy-maven.hf.yaml     # Cached-artifact ladder over TLS (--load=maven)
