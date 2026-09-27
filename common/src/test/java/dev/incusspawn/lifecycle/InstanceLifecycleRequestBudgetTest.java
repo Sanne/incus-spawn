@@ -251,7 +251,7 @@ class InstanceLifecycleRequestBudgetTest {
 
     @Test
     void anEmptyAccountSelectionKeepsTheCopiedPins() {
-        // The TUI does not resolve a selection yet (#800); it must not wipe what the copy carried.
+        // A caller passing no selection must not wipe what the copy carried.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.accountKey("github"), "work"));
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertEquals("work", daemon.instance(NAME).path("config")

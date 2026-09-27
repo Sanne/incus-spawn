@@ -635,7 +635,7 @@ public final class InstanceLifecycle {
 
     /**
      * Read what {@link #setupRuntime} needs while the new instance is still stopped, then
-     * start it. Shared by {@code isx branch} and the TUI's branch action.
+     * start it. Used by {@link BranchFlow}, behind both {@code isx branch} and the TUI.
      *
      * <p>Nothing is pushed into the instance between the two: Incus stops its forkfile file
      * server on start, and one still finishing a push makes the start wait a full second.

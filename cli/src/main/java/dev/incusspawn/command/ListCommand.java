@@ -6,7 +6,6 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -17,12 +16,11 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.StaticIpAllocator;
+import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.GuiPassthrough;
-import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.lifecycle.InstanceType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -4948,65 +4946,33 @@ public class ListCommand extends BaseCommand {
         }
     }
 
+    /**
+     * Branch through {@link BranchFlow}, as {@code isx branch} does, so a TUI branch gets the same
+     * account selection, proxy refresh, CA and identity repairs (#800). Only the inputs (the
+     * modal's fields) and the shell that follows are the TUI's own.
+     */
     private void createBranch(String source, String name, boolean gui, boolean kvm,
                                NetworkMode networkMode, String inboxPath, boolean vm) {
-        if (incus.exists(name)) {
-            throw new RuntimeException("an instance named '" + name + "' already exists.");
-        }
-        HostResourceSetup.requireBranchableTemplate(incus, source);
-
-        BuildOutput.branchHeader(name, source);
-
-        BuildOutput.stepStart("Copying from template...");
-        incus.copy(source, name);
-        BuildOutput.stepDone();
-
-        // Configure GUI before start so environment.* keys are visible to init. First, because
-        // it may push files: any push lands well before the start (see prefetchAndStart).
-        if (gui) {
-            if (GuiPassthrough.configureGui(incus, name)) {
-                incus.configSet(name, Metadata.GUI_ENABLED, "true");
-            } else {
-                GuiPassthrough.removeGui(incus, name);
-                System.err.println("Continuing without GUI passthrough.");
-            }
-        } else {
-            GuiPassthrough.removeGui(incus, name);
-        }
-
-        String cpu, memory, disk;
+        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
+        Integer cpu = null;
+        String memory = null, disk = null;
         if (vm) {
             var cpuText = vmCpuInput.text().strip();
-            cpu = cpuText.isEmpty() ? null : cpuText;
-            memory = vmMemoryInput.text().strip();
-            disk = vmDiskInput.text().strip();
-        } else {
-            cpu = null;
-            memory = ResourceLimits.adaptiveMemoryLimit();
-            disk = ResourceLimits.defaultDiskLimit();
+            if (!cpuText.isEmpty()) {
+                try {
+                    cpu = Integer.valueOf(cpuText);
+                } catch (NumberFormatException e) {
+                    throw new BranchFlow.BranchException("CPU limit '" + cpuText + "' is not a number.");
+                }
+            }
+            memory = blankToNull(vmMemoryInput.text());
+            disk = blankToNull(vmDiskInput.text());
         }
-        BuildOutput.step("Resource limits: " +
-                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
-        InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
-                cpu, memory, disk, networkMode, source, java.util.Map.of(), kvm));
-        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
+        var request = new BranchFlow.Request(source, name, gui, kvm, networkMode, inbox,
+                cpu, memory, disk, java.util.List.of(), true, java.util.Map.of());
 
-        if (kvm && !KvmPassthrough.configureKvm(incus, name)) {
-            System.err.println("Continuing without KVM — VMs inside this branch will not work.");
-        }
-
-        boolean isVm = incus.isVm(name);
-        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
-        InstanceLifecycle.attachInbox(incus, name, inbox);
-        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
-        if (isVm) {
-            BuildOutput.stepStart("Waiting for VM agent...");
-            incus.waitForReady(name);
-            BuildOutput.stepDone();
-            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
-        }
-
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched);
+        var preflight = BranchFlow.preflight(incus, request, imageDefs);
+        var prefetched = BranchFlow.create(incus, preflight);
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
@@ -5016,6 +4982,11 @@ public class ListCommand extends BaseCommand {
         }
         incus.interactiveShell(name, "agentuser", shellPrep);
         System.out.println();
+    }
+
+    private static String blankToNull(String text) {
+        var stripped = text.strip();
+        return stripped.isEmpty() ? null : stripped;
     }
 
     private volatile boolean proxyRestartInProgress;

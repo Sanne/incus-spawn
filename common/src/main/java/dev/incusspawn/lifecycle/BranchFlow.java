@@ -39,6 +39,9 @@ public final class BranchFlow {
 
     private BranchFlow() {}
 
+    /** Tells the proxy to re-read the instance list; replaced by tests, which have no proxy. */
+    static Runnable proxyRefresh = ProxyService::signalAccountRefresh;
+
     /**
      * What to branch. {@code kvm} null means "whatever the source template was built with";
      * null {@code cpu}/{@code memory}/{@code disk} mean the adaptive defaults.
@@ -286,7 +289,7 @@ public final class BranchFlow {
         // would still map that address to the old instance and hand its account to this one.
         // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
         // so the first request from inside already sees the right answer.
-        ProxyService.signalAccountRefresh();
+        proxyRefresh.run();
     }
 
     private static void warnIfTemplateWantsGui(IncusClient incus, String source,

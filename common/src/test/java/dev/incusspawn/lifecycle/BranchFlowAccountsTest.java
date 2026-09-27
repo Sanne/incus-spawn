@@ -1,0 +1,118 @@
+package dev.incusspawn.lifecycle;
+
+import dev.incusspawn.config.ImageDef;
+import dev.incusspawn.config.NetworkMode;
+import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.Metadata;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+/**
+ * Every branch, whichever front end asks for it, carries its account selection by the time the
+ * proxy is told to re-read the instance list. Static IPs are handed out lowest-free, so a new
+ * branch often reuses a destroyed instance's address; a proxy that re-read before the pins were
+ * stamped, or was never told, would serve the old instance's account (#800).
+ */
+@ExtendWith(TempHome.class)
+class BranchFlowAccountsTest {
+
+    private static final String GITHUB = Metadata.accountKey("github");
+
+    /** The branch's pin each time the proxy was signalled. */
+    private final List<String> pinAtRefresh = new ArrayList<>();
+    private FakeIncusDaemon daemon;
+    private Runnable originalRefresh;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        var configDir = SpawnConfig.configDir();
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("config.yaml"), """
+                github:
+                  accounts:
+                    personal:
+                      token: "ghp_personal"
+                    work:
+                      token: "ghp_work"
+                    bot:
+                      token: "ghp_bot"
+                  default: personal
+                """);
+        originalRefresh = BranchFlow.proxyRefresh;
+        BranchFlow.proxyRefresh = () -> pinAtRefresh.add(
+                daemon.instance("dev-2").path("config").path(GITHUB).asText(""));
+    }
+
+    @AfterEach
+    void tearDown() {
+        BranchFlow.proxyRefresh = originalRefresh;
+    }
+
+    private static Map<String, ImageDef> templateWithAccount(String account) throws Exception {
+        return Map.of("tpl-dev", ImageDef.parseYaml(
+                "name: tpl-dev\naccounts:\n  github: " + account + "\n"));
+    }
+
+    private void branch(String source, List<String> overrides, Map<String, ImageDef> defs) {
+        // Airgapped and not started: what is under test is the selection and the signal, not
+        // the proxy health check or the guest's boot.
+        var request = new BranchFlow.Request(source, "dev-2", false, false, NetworkMode.AIRGAP,
+                null, null, null, null, overrides, false, Map.of());
+        BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, defs));
+    }
+
+    @Test
+    void theTemplatesAccountIsStampedBeforeTheProxyIsTold() throws Exception {
+        daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        branch("tpl-dev", List.of(), templateWithAccount("work"));
+
+        assertEquals("work", daemon.instance("dev-2").path("config").path(GITHUB).asText());
+        assertEquals(List.of("work"), pinAtRefresh,
+                "the proxy must be signalled once, after the pin is on the branch");
+    }
+
+    @Test
+    void theSourceInstancesOwnPinWinsOverItsTemplate() throws Exception {
+        // dev-1 was re-pointed with 'isx account set' after it was branched from tpl-dev
+        daemon = new FakeIncusDaemon().container("dev-1",
+                Map.of(Metadata.PROFILE, "tpl-dev", GITHUB, "bot"));
+        branch("dev-1", List.of(), templateWithAccount("work"));
+
+        assertEquals("bot", daemon.instance("dev-2").path("config").path(GITHUB).asText());
+        assertEquals(List.of("bot"), pinAtRefresh);
+    }
+
+    @Test
+    void theProxyIsToldEvenWhenNothingIsPinned() {
+        // The branch may reuse a destroyed instance's address; the proxy must forget that one.
+        daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        branch("tpl-dev", List.of(), Map.of());
+
+        assertEquals(List.of(""), pinAtRefresh);
+    }
+
+    @Test
+    void aPinToAMissingAccountIsRefusedBeforeAnythingIsCreated() throws Exception {
+        daemon = new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        assertThrows(BranchFlow.BranchException.class,
+                () -> branch("tpl-dev", List.of(), templateWithAccount("nobody")));
+
+        assertEquals(List.of(), pinAtRefresh);
+        assertEquals(List.of(), daemon.requests().stream()
+                .filter(r -> r.startsWith("POST ")).toList(), "no branch was created");
+    }
+}
