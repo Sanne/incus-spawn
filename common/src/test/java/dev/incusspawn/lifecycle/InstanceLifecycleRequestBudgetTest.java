@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
@@ -225,11 +226,8 @@ class InstanceLifecycleRequestBudgetTest {
 
     /** Every NIC Incus would attach at start, whatever it comes from. */
     private static List<String> attachedNics(FakeIncusDaemon daemon) {
-        var nics = new java.util.ArrayList<String>();
-        daemon.instance(NAME).path("expanded_devices").properties().forEach(e -> {
-            if ("nic".equals(e.getValue().path("type").asText())) nics.add(e.getKey());
-        });
-        return nics;
+        return daemon.instance(NAME).path("expanded_devices").properties().stream()
+                .filter(e -> IncusClient.isNic(e.getValue())).map(Map.Entry::getKey).toList();
     }
 
     @Test
@@ -282,10 +280,15 @@ class InstanceLifecycleRequestBudgetTest {
 
     @Test
     void branchingWithNetworkFromAnAirgappedInstanceReconnects() {
+        // The profile's NIC overwrites the mask in the one write; a mask the template set on a
+        // device of its own is not airgap's to lift.
         var daemon = new FakeIncusDaemon()
                 .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
-                .device(NAME, "eth0", Map.of("type", "none"));
+                .device(NAME, "eth0", Map.of("type", "none"))
+                .device(NAME, "cache", Map.of("type", "none"));
         InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertBudget(8, daemon, "configureBranch (full, from an airgapped instance)");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
         assertEquals(List.of("eth0"), attachedNics(daemon));
         var after = daemon.instance(NAME);
@@ -293,6 +296,7 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("incusbr0", after.path("devices").path("eth0").path("network").asText());
         assertFalse(after.path("config").has(Metadata.NETWORK_MODE),
                 "full internet is the absence of a mode, not the airgap the source had");
+        assertEquals("none", after.path("devices").path("cache").path("type").asText());
     }
 
     @Test

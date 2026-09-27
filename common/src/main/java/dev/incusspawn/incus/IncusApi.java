@@ -308,13 +308,8 @@ class IncusApi {
             props.forEach(merged::put);
             changedDevices.put(deviceName, merged);
         });
-        update.replacedDevices().forEach((deviceName, deviceConfig) -> {
-            var replacement = JSON.createObjectNode();
-            deviceConfig.forEach(replacement::put);
-            var props = update.deviceProperties().get(deviceName);
-            if (props != null) props.forEach(replacement::put);
-            changedDevices.put(deviceName, replacement);
-        });
+        update.replacedDevices().forEach((deviceName, deviceConfig) ->
+                changedDevices.put(deviceName, JSON.valueToTree(deviceConfig)));
         var removing = update.removedDevices().stream().anyMatch(instanceDevices::has);
 
         if (!removing) {

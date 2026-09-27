@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
@@ -63,16 +64,17 @@ public final class InstanceLifecycle {
      * when an inherited KVM device has to go.
      *
      * <p>Airgap masks every NIC with {@code type: none} in that same write, which is the only way
-     * to take a profile's NIC away from one instance (#813).
+     * to take a profile's NIC away from one instance (#813). Branching with network from an
+     * airgapped instance overwrites those masks with the profile's NICs, in the same write too.
      */
     public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
         var mode = settings.networkMode();
         var instance = incus.instanceMetadata(name);
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
-        if (mode != NetworkMode.AIRGAP && isAirgapped(instance)) {
-            instance = unmaskNics(incus, name, instance);
-        }
         var update = new InstanceUpdate();
+        if (mode != NetworkMode.AIRGAP && isAirgapped(instance)) {
+            instance = unmaskNics(incus, instance, update);
+        }
 
         var cpu = settings.cpu();
         update.config("limits.cpu", cpu != null && !cpu.isEmpty() ? cpu : null);
@@ -82,26 +84,18 @@ public final class InstanceLifecycle {
         String ip = null;
         String gateway = null;
         String nicDevice = null;
+        // Full internet is the absence of a mode, not whatever the source was copied with
+        update.config(Metadata.NETWORK_MODE, mode == NetworkMode.FULL ? null : mode.name());
         if (mode == NetworkMode.AIRGAP) {
             BuildOutput.step("Enabling network airgap.");
             maskNics(instance, update);
-            update.config(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name());
             // A copy of a networked instance carries its address: the proxy must not take this
             // one for its source.
-            update.unset(Metadata.PROXY_GATEWAY);
             update.unset(Metadata.STATIC_IP);
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
             gateway = ProxyConfig.resolveGatewayIp(incus);
-            if (mode == NetworkMode.PROXY_ONLY) {
-                BuildOutput.step("Configuring proxy-only network.");
-                update.config(Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
-                update.config(Metadata.PROXY_GATEWAY, gateway);
-            } else {
-                // Full internet is the absence of a mode, not what the source was copied with
-                update.unset(Metadata.NETWORK_MODE);
-                update.unset(Metadata.PROXY_GATEWAY);
-            }
+            if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
             ip = StaticIpAllocator.allocate(incus);
@@ -115,6 +109,7 @@ public final class InstanceLifecycle {
             update.config(Metadata.STATIC_IP, ip);
             update.config(Metadata.STATIC_GATEWAY, gateway);
         }
+        update.config(Metadata.PROXY_GATEWAY, mode == NetworkMode.PROXY_ONLY ? gateway : null);
 
         update.config(Metadata.TYPE, Metadata.TYPE_CLONE);
         update.config(Metadata.PARENT, settings.parent());
@@ -165,30 +160,37 @@ public final class InstanceLifecycle {
      * applies again. A {@code type: none} device of the same name masks it.
      */
     static void maskNics(JsonNode instance, InstanceUpdate update) {
-        for (var it = instance.path("expanded_devices").properties().iterator(); it.hasNext(); ) {
-            var device = it.next();
-            if ("nic".equals(device.getValue().path("type").asText())) {
-                update.replaceDevice(device.getKey(), MASKED_DEVICE);
-            }
-        }
+        instance.path("expanded_devices").properties().forEach(e -> {
+            if (IncusClient.isNic(e.getValue())) update.replaceDevice(e.getKey(), MASKED_DEVICE);
+        });
     }
 
     /**
-     * Branching with network from an airgapped instance: drop the masks {@link #maskNics} left,
-     * so the profile's NIC applies again. Its own write, since which NIC comes back is only known
-     * from the instance Incus expands afterwards; rare enough not to fold into the main one.
+     * Put back the profile NICs {@link #maskNics} masked, as instance devices overwriting the
+     * masks: a PATCH replaces a device whole, so this needs no separate removal. Returns the
+     * instance as it will then expand, so the static IP is set on the NIC that comes back. Only
+     * masks of a profile NIC are touched: a {@code type: none} device the template set itself
+     * stays.
      */
-    private static JsonNode unmaskNics(IncusClient incus, String name, JsonNode instance) {
-        var masks = new ArrayList<String>();
+    private static JsonNode unmaskNics(IncusClient incus, JsonNode instance, InstanceUpdate update) {
+        // Later profiles override earlier ones, as Incus expands them
+        var profileDevices = new LinkedHashMap<String, JsonNode>();
+        for (var profile : instance.path("profiles")) {
+            incus.profileDevices(profile.asText()).properties()
+                    .forEach(e -> profileDevices.put(e.getKey(), e.getValue()));
+        }
+        var view = instance.deepCopy();
+        var expanded = (ObjectNode) view.path("expanded_devices");
         instance.path("devices").properties().forEach(e -> {
-            if ("none".equals(e.getValue().path("type").asText())) masks.add(e.getKey());
+            var profileDevice = profileDevices.get(e.getKey());
+            if ("none".equals(e.getValue().path("type").asText())
+                    && profileDevice != null && IncusClient.isNic(profileDevice)) {
+                expanded.set(e.getKey(), profileDevice);
+                // A changed device is sent whole from the expanded view: the profile's NIC
+                update.device(e.getKey(), "type", "nic");
+            }
         });
-        if (masks.isEmpty()) return instance;
-        BuildOutput.step("Reconnecting the network the source was airgapped from.");
-        incus.devicesRemoveAll(name, masks);
-        var reread = incus.instanceMetadata(name);
-        if (reread.isMissingNode()) throw new IncusException("Failed to read instance " + name);
-        return reread;
+        return view;
     }
 
     static final String RAW_QEMU_CONF = "raw.qemu.conf";

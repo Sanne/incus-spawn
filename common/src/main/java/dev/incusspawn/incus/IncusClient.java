@@ -1202,13 +1202,17 @@ public class IncusClient {
         return nicDeviceName(resp.body().path("metadata"), networkName);
     }
 
+    public static boolean isNic(JsonNode device) {
+        return "nic".equals(device.path("type").asText());
+    }
+
     /** As {@link #findNicDeviceName}, from an instance representation already read. */
     public static String nicDeviceName(JsonNode instanceMetadata, String networkName) {
         var expandedDevices = instanceMetadata.path("expanded_devices");
         for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
             var entry = it.next();
             var dev = entry.getValue();
-            if ("nic".equals(dev.path("type").asText()) &&
+            if (isNic(dev) &&
                 (networkName.equals(dev.path("network").asText()) ||
                  networkName.equals(dev.path("parent").asText()))) {
                 return entry.getKey();
@@ -1608,7 +1612,7 @@ public class IncusClient {
         for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
             var entry = it.next();
             var dev = entry.getValue();
-            if ("nic".equals(dev.path("type").asText())
+            if (isNic(dev)
                     && (networkName.equals(dev.path("network").asText())
                         || networkName.equals(dev.path("parent").asText()))) {
                 var config = new java.util.LinkedHashMap<String, String>();

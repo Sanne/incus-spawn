@@ -19,7 +19,7 @@ import java.util.Map;
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
  * <p>Serves the subset of the API those flows use: instance GET/PUT/PATCH/state, instance listing,
- * network GET, file push and async-operation waits. Anything else answers 404, so an
+ * network and profile GET, file push and async-operation waits. Anything else answers 404, so an
  * unexpected request still shows up in {@link #requests()}.
  */
 public final class FakeIncusDaemon implements IncusTransport {
@@ -28,11 +28,11 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     private final Map<String, ObjectNode> instances = new LinkedHashMap<>();
     /**
-     * Devices the instance's profiles provide. {@code expanded_devices} is always these with the
-     * instance's own devices on top, as Incus computes it: removing an instance device that
-     * shadows a profile device brings the profile's back.
+     * Profiles by name. {@code expanded_devices} is always an instance's profiles' devices with
+     * its own on top, as Incus computes it: removing an instance device that shadows a profile
+     * device brings the profile's back.
      */
-    private final Map<String, ObjectNode> profileDevices = new LinkedHashMap<>();
+    private final Map<String, ObjectNode> profiles = new LinkedHashMap<>();
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
@@ -41,12 +41,23 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
+        var profile = JSON.createObjectNode();
+        profile.put("name", "default");
+        var devices = profile.putObject("devices");
+        var nic = devices.putObject("eth0");
+        nic.put("type", "nic");
+        nic.put("network", "incusbr0");
+        nic.put("name", "eth0");
+        var root = devices.putObject("root");
+        root.put("type", "disk");
+        root.put("path", "/");
+        root.put("pool", "default");
+        profiles.put("default", profile);
     }
 
     /** Add a device to an existing instance, as if it had been configured or copied over. */
     public FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
-        var instance = instances.get(instanceName);
-        ((ObjectNode) instance.get("devices")).set(deviceName, JSON.valueToTree(config));
+        ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));
         expand(instanceName);
         return this;
     }
@@ -65,17 +76,6 @@ public final class FakeIncusDaemon implements IncusTransport {
         node.set("config", JSON.valueToTree(config));
         node.putArray("profiles").add("default");
         node.putObject("devices");
-        // As the default profile provides them.
-        var profile = JSON.createObjectNode();
-        var nic = profile.putObject("eth0");
-        nic.put("type", "nic");
-        nic.put("network", "incusbr0");
-        nic.put("name", "eth0");
-        var root = profile.putObject("root");
-        root.put("type", "disk");
-        root.put("path", "/");
-        root.put("pool", "default");
-        profileDevices.put(name, profile);
         instances.put(name, node);
         expand(name);
         return this;
@@ -83,7 +83,8 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     private void expand(String instanceName) {
         var instance = instances.get(instanceName);
-        var expanded = profileDevices.get(instanceName).deepCopy();
+        var expanded = JSON.createObjectNode();
+        instance.path("profiles").forEach(p -> expanded.setAll((ObjectNode) profiles.get(p.asText()).get("devices")));
         instance.path("devices").properties().forEach(e -> expanded.set(e.getKey(), e.getValue()));
         instance.set("expanded_devices", expanded);
     }
@@ -163,6 +164,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             var list = JSON.createArrayNode();
             instances.values().forEach(list::add);
             return sync(list);
+        }
+        if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
+            var profile = profiles.get(path.substring("/1.0/profiles/".length()));
+            return profile == null ? notFound() : sync(profile.deepCopy());
         }
         if (path.startsWith("/1.0/networks/") && method.equals("GET")) {
             var network = networks.get(path.substring("/1.0/networks/".length()));

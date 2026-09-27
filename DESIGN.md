@@ -427,7 +427,7 @@ iptables -A OUTPUT -d <gateway> -p udp --dport 53 -j ACCEPT      # DNS
 iptables -P OUTPUT DROP
 ```
 
-**Airgapped** (`--airgap`): Every NIC is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP`. Complete network isolation — no egress at all. Masking is the only way: Incus cannot remove a profile device from one instance, and removing an instance device that overrides one only drops the override, so the profile's NIC applies again. That is how airgap branches kept full network access until #813. A branch with network from an airgapped instance removes the masks first, so the profile's NIC returns.
+**Airgapped** (`--airgap`): Every NIC is masked with a `type: none` device of the same name, and the instance is stamped `network-mode=AIRGAP`. Complete network isolation — no egress at all. Masking is the only way: Incus cannot remove a profile device from one instance, and removing an instance device that overrides one only drops the override, so the profile's NIC applies again. That is how airgap branches kept full network access until #813. A branch with network from an airgapped instance writes the profiles' NICs back over the masks.
 
 ### Auth & Security: MITM TLS Proxy
 
@@ -929,8 +929,8 @@ The source address is what identifies an instance to the proxy, so a first failu
 quietly leave the branch without it. Both extra writes happen only on the failure path.
 
 Airgap rides in the same write: it masks each NIC with `type: none` (`InstanceUpdate.replaceDevice`),
-which a PATCH can carry since it replaces a device whole. Only branching with network from an
-airgapped instance adds a write, to drop the masks before the NIC it gets back can be read.
+which a PATCH can carry since it replaces a device whole. Branching with network from an
+airgapped instance reads the profiles and writes their NICs over the masks, in that same write.
 Enabling GUI or KVM passthrough and host resources still add their own devices afterwards.
 
 ### Build-time initialization must not capture host paths

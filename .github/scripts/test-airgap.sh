@@ -41,7 +41,7 @@ nics() {
 no_nics() { [ -z "$(nics "$1")" ]; }
 has_nic() { [ -n "$(nics "$1")" ]; }
 stamped() { [ "$(incus config get "$1" user.incus-spawn.network-mode)" = "$2" ]; }
-no_global_ipv4() { ! incus exec "$1" -- ip -4 -o addr show scope global | grep -q inet; }
+only_loopback() { [ "$(incus exec "$1" -- ls /sys/class/net)" = "lo" ]; }
 cannot_reach_internet() { ! incus exec "$1" -- curl -s -m 5 -o /dev/null https://1.1.1.1; }
 
 wait_for_ipv4() {
@@ -63,9 +63,7 @@ incus config show "$AIRGAPPED" --expanded
 check "no NIC in expanded_devices" no_nics "$AIRGAPPED"
 check "stamped network-mode AIRGAP" stamped "$AIRGAPPED" AIRGAP
 incus start "$AIRGAPPED"
-# Long enough for DHCP to have handed out an address, had there been a NIC to ask on
-sleep 5
-check "no global IPv4 address" no_global_ipv4 "$AIRGAPPED"
+check "no interface but loopback" only_loopback "$AIRGAPPED"
 check "cannot reach the internet" cannot_reach_internet "$AIRGAPPED"
 incus stop -f "$AIRGAPPED"
 
