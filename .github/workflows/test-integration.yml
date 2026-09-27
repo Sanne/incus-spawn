@@ -271,8 +271,20 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.qemu_pkg }} socat
           # vsock for the guest: the same transport vfkit gives the appliance on macOS.
+          # Loading the module fires a udev "add" event that is handled asynchronously; a bare
+          # chmod raced it, and udev resetting the node to root:kvm 0660 left QEMU with EACCES.
+          # A rule makes udev itself apply the mode, and settling waits for it to have done so.
+          echo 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666", OPTIONS+="static_node=vhost-vsock"' \
+            | sudo tee /etc/udev/rules.d/99-vhost-vsock4all.rules
+          sudo udevadm control --reload-rules
           sudo modprobe vhost_vsock
+          sudo udevadm settle
           sudo chmod 666 /dev/vhost-vsock
+          if ! [ -r /dev/vhost-vsock ] || ! [ -w /dev/vhost-vsock ]; then
+            echo "::error::/dev/vhost-vsock is not accessible to the runner user"
+            ls -l /dev/vhost-vsock
+            exit 1
+          fi
 
       # One boot covers both halves: the in-guest smoke test (Incus works inside the VM) and
       # the host-facing tunnel, reached the way isx reaches it on macOS. host socat stands in
