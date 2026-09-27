@@ -187,6 +187,10 @@ public class BranchCommand extends BaseCommand {
             System.err.println("Continuing without KVM — VMs inside this branch will not work.");
         }
 
+        // Before the --no-start return: the inbox is plain device config, so it is there
+        // however the instance is later started (#852).
+        InstanceLifecycle.attachInbox(incus, name, inbox);
+
         if (noStart) {
             BuildOutput.success(name + " is ready.");
             return CommandResult.SUCCESS;
@@ -195,7 +199,6 @@ public class BranchCommand extends BaseCommand {
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
         boolean isVm = incus.isVm(name);
-        InstanceLifecycle.attachInbox(incus, name, inbox);
         var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
 
         if (isVm) {
