@@ -50,8 +50,7 @@ class BranchFlowAccountsTest {
                   default: personal
                 """);
         originalRefresh = BranchFlow.proxyRefresh;
-        BranchFlow.proxyRefresh = () -> pinAtRefresh.add(
-                daemon.instance("dev-2").path("config").path(GITHUB).asText(""));
+        BranchFlow.proxyRefresh = () -> pinAtRefresh.add(pin());
     }
 
     @AfterEach
@@ -64,21 +63,30 @@ class BranchFlowAccountsTest {
                 "name: tpl-dev\naccounts:\n  github: " + account + "\n"));
     }
 
-    private void branch(String source, List<String> overrides, Map<String, ImageDef> defs) {
+    /** The branch's github pin, or "" when it has none. */
+    private String pin() {
+        return daemon.instance("dev-2").path("config").path(GITHUB).asText("");
+    }
+
+    private static FakeIncusDaemon template() {
+        return new FakeIncusDaemon().container("tpl-dev",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+    }
+
+    private void branch(String source, Map<String, ImageDef> defs) {
         // Airgapped and not started: what is under test is the selection and the signal, not
         // the proxy health check or the guest's boot.
         var request = new BranchFlow.Request(source, "dev-2", false, false, NetworkMode.AIRGAP,
-                null, null, null, null, overrides, false, Map.of());
+                null, null, null, null, List.of(), false, Map.of());
         BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, defs));
     }
 
     @Test
     void theTemplatesAccountIsStampedBeforeTheProxyIsTold() throws Exception {
-        daemon = new FakeIncusDaemon().container("tpl-dev",
-                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
-        branch("tpl-dev", List.of(), templateWithAccount("work"));
+        daemon = template();
+        branch("tpl-dev", templateWithAccount("work"));
 
-        assertEquals("work", daemon.instance("dev-2").path("config").path(GITHUB).asText());
+        assertEquals("work", pin());
         assertEquals(List.of("work"), pinAtRefresh,
                 "the proxy must be signalled once, after the pin is on the branch");
     }
@@ -88,28 +96,26 @@ class BranchFlowAccountsTest {
         // dev-1 was re-pointed with 'isx account set' after it was branched from tpl-dev
         daemon = new FakeIncusDaemon().container("dev-1",
                 Map.of(Metadata.PROFILE, "tpl-dev", GITHUB, "bot"));
-        branch("dev-1", List.of(), templateWithAccount("work"));
+        branch("dev-1", templateWithAccount("work"));
 
-        assertEquals("bot", daemon.instance("dev-2").path("config").path(GITHUB).asText());
+        assertEquals("bot", pin());
         assertEquals(List.of("bot"), pinAtRefresh);
     }
 
     @Test
     void theProxyIsToldEvenWhenNothingIsPinned() {
         // The branch may reuse a destroyed instance's address; the proxy must forget that one.
-        daemon = new FakeIncusDaemon().container("tpl-dev",
-                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
-        branch("tpl-dev", List.of(), Map.of());
+        daemon = template();
+        branch("tpl-dev", Map.of());
 
         assertEquals(List.of(""), pinAtRefresh);
     }
 
     @Test
     void aPinToAMissingAccountIsRefusedBeforeAnythingIsCreated() throws Exception {
-        daemon = new FakeIncusDaemon().container("tpl-dev",
-                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-dev"));
+        daemon = template();
         assertThrows(BranchFlow.BranchException.class,
-                () -> branch("tpl-dev", List.of(), templateWithAccount("nobody")));
+                () -> branch("tpl-dev", templateWithAccount("nobody")));
 
         assertEquals(List.of(), pinAtRefresh);
         assertEquals(List.of(), daemon.requests().stream()

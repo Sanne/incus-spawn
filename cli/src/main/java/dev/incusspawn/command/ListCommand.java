@@ -497,10 +497,7 @@ public class ListCommand extends BaseCommand {
                 case BRANCH -> {
                     returnToInstance = pendingActionTarget;
                     try {
-                        createBranch(branchSourceName, pendingActionTarget,
-                                branchGuiCheck.isChecked(), branchKvmCheck.isChecked(), branchNetworkMode(),
-                                branchInboxCheck.isChecked() ? branchInboxInput.text().strip() : null,
-                                branchSourceIsVm);
+                        createBranchFromModal(pendingActionTarget);
                         statusMessage = "Created branch " + pendingActionTarget;
                     } catch (Exception e) {
                         statusMessage = "Failed to create branch " + pendingActionTarget + ": " + e.getMessage();
@@ -4951,14 +4948,14 @@ public class ListCommand extends BaseCommand {
      * account selection, proxy refresh, CA and identity repairs (#800). Only the inputs (the
      * modal's fields) and the shell that follows are the TUI's own.
      */
-    private void createBranch(String source, String name, boolean gui, boolean kvm,
-                               NetworkMode networkMode, String inboxPath, boolean vm) {
-        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
+    private void createBranchFromModal(String name) {
+        var source = branchSourceName;
+        var inboxText = branchInboxCheck.isChecked() ? blankToNull(branchInboxInput.text()) : null;
         Integer cpu = null;
         String memory = null, disk = null;
-        if (vm) {
-            var cpuText = vmCpuInput.text().strip();
-            if (!cpuText.isEmpty()) {
+        if (branchSourceIsVm) {
+            var cpuText = blankToNull(vmCpuInput.text());
+            if (cpuText != null) {
                 try {
                     cpu = Integer.valueOf(cpuText);
                 } catch (NumberFormatException e) {
@@ -4968,11 +4965,12 @@ public class ListCommand extends BaseCommand {
             memory = blankToNull(vmMemoryInput.text());
             disk = blankToNull(vmDiskInput.text());
         }
-        var request = new BranchFlow.Request(source, name, gui, kvm, networkMode, inbox,
+        var request = new BranchFlow.Request(source, name, branchGuiCheck.isChecked(),
+                branchKvmCheck.isChecked(), branchNetworkMode(),
+                inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, java.util.List.of(), true, java.util.Map.of());
 
-        var preflight = BranchFlow.preflight(incus, request, imageDefs);
-        var prefetched = BranchFlow.create(incus, preflight);
+        var prefetched = BranchFlow.create(incus, BranchFlow.preflight(incus, request, imageDefs));
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
