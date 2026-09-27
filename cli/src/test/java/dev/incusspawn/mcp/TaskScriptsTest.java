@@ -155,6 +155,22 @@ class TaskScriptsTest {
     }
 
     @Test
+    void aLinkedWorktreesChangesAreInTheDiff() throws Exception {
+        // A worktree's .git is a file, not a directory: .git/index does not exist there.
+        git("worktree", "add", "-q", home.resolve("wt").toString());
+        var wt = home.resolve("wt");
+        assertTrue(Files.isRegularFile(wt.resolve(".git")));
+        var id = "t9-wt";
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, wt.toString(), null)), "in a worktree");
+        awaitFinished(id);
+        var diff = sh(TaskScripts.diff(id, null, 100_000), "");
+        assertTrue(diff.contains("+changed by: in a worktree"), diff);
+        assertTrue(diff.contains("+more"), diff);
+        assertTrue(sh("cd " + wt + " && git status --porcelain", "").contains("?? NEW_FILE"),
+                "the worktree's own index is untouched");
+    }
+
+    @Test
     void aBackgroundCommandRecordsItsOutputAndExitCode() throws Exception {
         var id = "t3-abc";
         sh(TaskScripts.launch(id, 1, Tasks.COMMAND,

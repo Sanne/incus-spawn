@@ -29,9 +29,18 @@ final class Tasks {
     static final int STATUS_TAIL = 64 * 1024;
     static final int RESULT_TAIL = 256 * 1024;
 
-    record Task(String id, String instance, String kind, int runs, boolean running) {
-        Task withRuns(int n) { return new Task(id, instance, kind, n, true); }
-        Task withRunning(boolean r) { return new Task(id, instance, kind, runs, r); }
+    /**
+     * A task. {@code cwd} is where every run of it works: Claude Code keeps its sessions per
+     * directory, so a resumed agent must start where the first run did. {@code launching} marks
+     * a run whose slot is reserved but whose launch has not returned: it counts as running, and
+     * the state probe (which cannot see it yet) must not say otherwise.
+     */
+    record Task(String id, String instance, String kind, String cwd, int runs, boolean running,
+                boolean launching) {
+        Task launchingRun(int n) { return new Task(id, instance, kind, cwd, n, true, true); }
+        Task launched() { return new Task(id, instance, kind, cwd, runs, true, false); }
+        Task withRunning(boolean r) { return launching ? this : new Task(id, instance, kind, cwd, runs, r, false); }
+        boolean busy() { return running || launching; }
     }
 
     /** A task, with its instance's config as read when checking that this session owns it. */
@@ -79,27 +88,34 @@ final class Tasks {
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
-        var id = reserve(instance, COMMAND);
-        run(instance, TaskScripts.launch(id, 1, COMMAND, TaskScripts.commandRun(id, cwd, env, command)), "");
-        return put(new Task(id, instance, COMMAND, 1, true));
+        var task = reserve(null, new Task(nextId(), instance, COMMAND, cwd, 1, true, true));
+        return launch(task, null, TaskScripts.commandRun(task.id(), cwd, env, command), "");
     }
 
     /** Start a delegated agent in {@code instance}, which the caller checked is owned. */
     Task delegate(String instance, String cwd, String instruction) {
-        var id = reserve(instance, AGENT);
-        var script = TaskScripts.agentRun(id, 1, cwd, config.get().delegateMaxTurns());
-        run(instance, TaskScripts.launch(id, 1, AGENT, script), instruction);
-        return put(new Task(id, instance, AGENT, 1, true));
+        var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true));
+        return launch(task, null,
+                TaskScripts.agentRun(task.id(), 1, cwd, config.get().delegateMaxTurns()), instruction);
     }
 
-    /** Continue a finished agent task's conversation with a new message. */
-    Task sendMessage(Task task, String message, String cwd) {
+    /** Continue a finished agent task's conversation with a new message, where it started. */
+    Task sendMessage(Task task, String message) {
         if (!AGENT.equals(task.kind())) throw new ToolError("task " + task.id() + " is a command, not a delegated agent.");
-        checkCapacity(task.instance(), AGENT, task.id());
-        var run = task.runs() + 1;
-        var script = TaskScripts.agentRun(task.id(), run, cwd, config.get().delegateMaxTurns());
-        run(task.instance(), TaskScripts.launch(task.id(), run, AGENT, script), message);
-        return put(task.withRuns(run));
+        var reserved = reserve(task.id(), null);
+        return launch(reserved, task, TaskScripts.agentRun(task.id(), reserved.runs(), task.cwd(),
+                config.get().delegateMaxTurns()), message);
+    }
+
+    /**
+     * Refuse now what {@link #reserve} would refuse, without reserving: for a caller about to
+     * create an instance for a new agent task, which should not be made only to be turned away.
+     */
+    void checkCapacityForNewAgent() {
+        refreshStates();
+        synchronized (this) {
+            checkLimit();
+        }
     }
 
     Status status(Task task) {
@@ -133,37 +149,79 @@ final class Tasks {
     }
 
     /**
-     * Refuse a new task beyond the session's limit, or a second agent in one working tree.
-     * {@code continuing} is a task being resumed, which does not count against itself.
+     * Reserve a task slot before launching: a new task ({@code fresh}), or the next run of task
+     * {@code continuing}. Refuses beyond {@code mcp.max-concurrent-tasks}, a second agent in one
+     * working tree, or a run of a task still running. The check and the reservation happen under
+     * one lock, so concurrent calls see each other's reservations; asking the instances which
+     * tasks have finished happens before it, outside the lock.
      */
-    private void checkCapacity(String instance, String kind, String continuing) {
-        List<Task> believedRunning;
+    private Task reserve(String continuing, Task fresh) {
+        refreshStates();
         synchronized (this) {
-            believedRunning = tasks.values().stream().filter(Task::running).toList();
-        }
-        // Most will have finished since we last looked: ask each instance once.
-        var byInstance = believedRunning.stream().collect(Collectors.groupingBy(Task::instance));
-        long running = 0;
-        for (var entry : byInstance.entrySet()) {
-            var states = running(entry.getKey(), entry.getValue().stream().map(Task::id).toList());
-            for (var t : entry.getValue()) {
-                if (!states.getOrDefault(t.id(), false)) continue;
-                if (t.id().equals(continuing)) {
-                    throw new ToolError("task " + t.id() + " is still running; wait for it (task_status "
+            if (continuing != null) {
+                var task = tasks.get(continuing);
+                if (task.busy()) {
+                    throw new ToolError("task " + continuing + " is still running; wait for it (task_status "
                             + "with wait_seconds) or cancel_task it first.");
                 }
-                running++;
-                if (AGENT.equals(kind) && AGENT.equals(t.kind()) && t.instance().equals(instance)) {
-                    throw new ToolError("task " + t.id() + " is already an agent working in " + instance
-                            + "; two would clash in one working tree. Delegate with template instead of "
-                            + "instance to get a fresh one.");
+                checkLimit();
+                var next = task.launchingRun(task.runs() + 1);
+                tasks.put(continuing, next);
+                return next;
+            }
+            if (AGENT.equals(fresh.kind())) {
+                for (var t : tasks.values()) {
+                    if (t.busy() && AGENT.equals(t.kind()) && t.instance().equals(fresh.instance())) {
+                        throw new ToolError("task " + t.id() + " is already an agent working in "
+                                + fresh.instance() + "; two would clash in one working tree. Delegate "
+                                + "with template instead of instance to get a fresh one.");
+                    }
                 }
             }
+            checkLimit();
+            tasks.put(fresh.id(), fresh);
+            return fresh;
         }
+    }
+
+    /** Refuse a new run when as many as {@code mcp.max-concurrent-tasks} are busy. Holds the lock. */
+    private void checkLimit() {
+        var busy = tasks.values().stream().filter(Task::busy).count();
         var max = config.get().maxConcurrentTasks();
-        if (running >= max) {
-            throw new ToolError(running + " task(s) are running, the most mcp.max-concurrent-tasks "
+        if (busy >= max) {
+            throw new ToolError(busy + " task(s) are running, the most mcp.max-concurrent-tasks "
                     + "allows (" + max + "). Wait for one to finish or cancel_task it.");
+        }
+    }
+
+    /** Ask each instance, once, which of the tasks believed running still are. */
+    private void refreshStates() {
+        List<Task> believedRunning;
+        synchronized (this) {
+            believedRunning = tasks.values().stream().filter(t -> t.running() && !t.launching()).toList();
+        }
+        believedRunning.stream().collect(Collectors.groupingBy(Task::instance))
+                .forEach((instance, list) -> running(instance, list.stream().map(Task::id).toList()));
+    }
+
+    /**
+     * Launch a reserved run. On failure the reservation is undone: a fresh task is forgotten, a
+     * continued one goes back to how it was.
+     */
+    private Task launch(Task reserved, Task previous, String runScript, String stdin) {
+        try {
+            run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(), runScript), stdin);
+        } catch (RuntimeException e) {
+            synchronized (this) {
+                if (previous == null) tasks.remove(reserved.id());
+                else tasks.put(previous.id(), previous);
+            }
+            throw e;
+        }
+        synchronized (this) {
+            var launched = reserved.launched();
+            tasks.put(launched.id(), launched);
+            return launched;
         }
     }
 
@@ -182,14 +240,8 @@ final class Tasks {
         states.forEach((id, r) -> tasks.computeIfPresent(id, (k, t) -> t.withRunning(r)));
     }
 
-    private String reserve(String instance, String kind) {
-        checkCapacity(instance, kind, null);
+    private String nextId() {
         return "t" + counter.incrementAndGet() + "-" + Long.toString(session.id.pid(), 36);
-    }
-
-    private synchronized Task put(Task task) {
-        tasks.put(task.id(), task);
-        return task;
     }
 
     /** Run a control script in the instance and return its stdout; stdin null for none. */

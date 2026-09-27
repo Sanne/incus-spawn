@@ -30,6 +30,10 @@ class DelegationToolsTest {
     private int nextId = 1;
     /** What the status script reports: running, or finished with this events tail. */
     private volatile String taskState = "running";
+    /** When set, a launch waits here, as a slow exec would: counted down on entry, then awaited. */
+    private volatile java.util.concurrent.CountDownLatch launchEntered;
+    private volatile java.util.concurrent.CountDownLatch launchRelease;
+    private volatile boolean failLaunch;
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -52,7 +56,19 @@ class DelegationToolsTest {
                         .map(m -> m.group(1) + (taskState.equals("running") ? " running" : " done")).toList();
                 return String.join("\n", ids) + "\n";
             }
-            if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // launch, cancel
+            if (script.contains("systemd-run")) {
+                if (launchEntered != null) {
+                    launchEntered.countDown();
+                    try {
+                        launchRelease.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (failLaunch) throw new ToolError("launch failed");
+                return "";
+            }
+            if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nunit=active\nevents_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
@@ -149,6 +165,87 @@ class DelegationToolsTest {
         var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"open a PR\"}");
         assertFalse(r.path("isError").asBoolean(), text(r));
         assertTrue(backend.scripts.stream().anyMatch(s -> s.contains("--unit=isx-task-" + task + "-2")));
+    }
+
+    /** The run script inside a launch, which travels base64-encoded. */
+    private String runScript(int run) {
+        var launch = backend.scripts.stream().filter(sc -> sc.contains("isx-task-") && sc.contains("-" + run + " --"))
+                .reduce((a, b) -> b).orElseThrow();
+        var m = java.util.regex.Pattern.compile("echo (\\S+) \\| base64 -d > \"\\$D/run-" + run + "\\.sh\"")
+                .matcher(launch);
+        assertTrue(m.find(), launch);
+        return new String(java.util.Base64.getDecoder().decode(m.group(1)), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void aResumedAgentWorksWhereTheFirstRunDid() throws Exception {
+        // Claude Code keeps its sessions per directory: --resume from elsewhere finds nothing.
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+                .path("instance").asText();
+        var r = call("delegate", "{\"instruction\":\"x\",\"instance\":\"" + instance
+                + "\",\"cwd\":\"/home/agentuser/other-repo\"}");
+        var task = JsonRpc.JSON.readTree(text(r)).path("task_id").asText();
+        taskState = "finished";
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"more\"}")
+                .path("isError").asBoolean());
+        assertTrue(runScript(2).contains("cd -- '/home/agentuser/other-repo'"), runScript(2));
+        assertTrue(runScript(2).contains("--resume"), runScript(2));
+    }
+
+    @Test
+    void concurrentDelegationsToOneInstanceCannotBothStart() throws Exception {
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-agent\"}")))
+                .path("instance").asText();
+        launchEntered = new java.util.concurrent.CountDownLatch(1);
+        launchRelease = new java.util.concurrent.CountDownLatch(1);
+        var args = "{\"instruction\":\"x\",\"instance\":\"" + instance + "\"}";
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":101,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
+        assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS), "first launch under way");
+        // The first launch has not returned yet; its slot must already count.
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":102,\"method\":\"tools/call\",\"params\":{\"name\":\"delegate\",\"arguments\":" + args + "}}");
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 102) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        var second = out.byId(102).path("result");
+        assertTrue(second.path("isError").asBoolean(), second.toString());
+        launchRelease.countDown();
+        server.awaitIdle();
+        assertFalse(out.byId(101).path("result").path("isError").asBoolean());
+    }
+
+    @Test
+    void concurrentMessagesToOneTaskCannotBothStart() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        launchEntered = new java.util.concurrent.CountDownLatch(1);
+        launchRelease = new java.util.concurrent.CountDownLatch(1);
+        var args = "{\"task_id\":\"" + task + "\",\"message\":\"m\"}";
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":201,\"method\":\"tools/call\",\"params\":{\"name\":\"send_message\",\"arguments\":" + args + "}}");
+        assertTrue(launchEntered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+        server.handle("{\"jsonrpc\":\"2.0\",\"id\":202,\"method\":\"tools/call\",\"params\":{\"name\":\"send_message\",\"arguments\":" + args + "}}");
+        var deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (out.sent.stream().noneMatch(m -> m.path("id").asInt() == 202) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(out.byId(202).path("result").path("isError").asBoolean());
+        launchRelease.countDown();
+        server.awaitIdle();
+        assertEquals(1, backend.scripts.stream().filter(sc -> sc.contains("--unit=isx-task-" + task + "-2")).count());
+    }
+
+    @Test
+    void aRefusedDelegationToATemplateLeavesNoInstanceBehind() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        delegateFresh();
+        var before = backend.instances.size();
+        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean());
+        assertEquals(before, backend.instances.size(), "no instance made only to be turned away");
+
+        config.setMaxConcurrentTasks(5);
+        failLaunch = true;
+        assertTrue(call("delegate", "{\"instruction\":\"x\",\"template\":\"tpl-agent\"}").path("isError").asBoolean());
+        assertEquals(before, backend.instances.size(), "an instance whose task failed to start is removed");
     }
 
     @Test

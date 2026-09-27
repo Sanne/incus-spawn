@@ -177,7 +177,11 @@ final class TaskScripts {
         return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                 + "out=$(mktemp); stat=$(mktemp); "
                 + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
-                + "idx=$(mktemp); cp .git/index \"$idx\" 2>/dev/null; export GIT_INDEX_FILE=\"$idx\"; "
+                // The repository's own index as a starting point (by --git-path: a worktree or
+                // submodule has a .git file, not a directory); failing that, none -- an empty
+                // file would be a corrupt index, a missing one is an empty index.
+                + "idx=$(mktemp); cp \"$(git rev-parse --git-path index)\" \"$idx\" 2>/dev/null || rm -f \"$idx\"; "
+                + "export GIT_INDEX_FILE=\"$idx\"; "
                 + "git add -A >/dev/null 2>&1; "
                 + "echo \"## $repo\" >> \"$stat\"; git diff --cached --stat \"$base\"" + pathspec + " >> \"$stat\"; "
                 + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "

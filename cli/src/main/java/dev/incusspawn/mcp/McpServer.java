@@ -166,10 +166,13 @@ final class McpServer {
                 result = ToolResult.error("isx failed running " + name + ": " + e.getMessage());
                 System.err.println("isx mcp: " + name + " failed:");
                 e.printStackTrace();
+            }
+            try {
+                if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
             } finally {
+                // Only once answered: a call is in flight until its response is out.
                 inFlight.remove(id);
             }
-            if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
         });
     }
 

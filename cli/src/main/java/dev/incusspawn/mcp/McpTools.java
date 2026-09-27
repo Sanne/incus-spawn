@@ -236,7 +236,7 @@ final class McpTools {
                 var tn = owned.addObject();
                 tn.put("task_id", t.id());
                 tn.put("kind", t.kind());
-                tn.put("running", t.running());
+                tn.put("running", t.busy());
             });
         }
         return ToolResult.json(list);
@@ -334,9 +334,12 @@ final class McpTools {
             throw new ToolError("give exactly one of instance or template");
         }
         String workdir;
-        if (template != null) {
+        boolean fresh = template != null;
+        if (fresh) {
             var info = policy.require(template);
             requireDelegate(info);
+            // Refuse before branching an instance the task could not start in.
+            tasks.checkCapacityForNewAgent();
             var created = newInstance(info, "task", ctx);
             instance = created.name();
             workdir = created.workdir();
@@ -350,7 +353,20 @@ final class McpTools {
             workdir = IncusInstanceBackend.workdir(metadata);
         }
         var cwd = args.string("cwd");
-        var task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, instruction);
+        Tasks.Task task;
+        try {
+            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, instruction);
+        } catch (RuntimeException e) {
+            // An instance made for this task alone is no use to the agent, which never learns its name.
+            if (fresh) {
+                try {
+                    session.destroy(instance);
+                } catch (RuntimeException cleanup) {
+                    System.err.println("isx mcp: could not remove " + instance + ": " + cleanup.getMessage());
+                }
+            }
+            throw e;
+        }
         McpAuditLog.record(session.id, "delegate", instance, instruction, 0, "task=" + task.id());
         var node = JsonRpc.JSON.createObjectNode();
         node.put("task_id", task.id());
@@ -432,10 +448,9 @@ final class McpTools {
     }
 
     private ToolResult sendMessage(McpTool.Args args) {
-        var owned = tasks.require(args.requireString("task_id"));
-        var task = owned.task();
+        var task = tasks.require(args.requireString("task_id")).task();
         var message = args.requireString("message");
-        var updated = tasks.sendMessage(task, message, IncusInstanceBackend.workdir(owned.metadata()));
+        var updated = tasks.sendMessage(task, message);
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs());
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
