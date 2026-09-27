@@ -239,8 +239,8 @@ Image schema fields (all optional except `name`):
 - `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders). `file://` is accepted here for testing locally built images, but a project-local template may only point inside its project. Loopback and link-local hosts are refused, as for tool downloads
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
-- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is a VM with `/dev/kvm` passthrough for nested virtualization. Inherits from parent -- a child without `type` inherits its parent's type
-- `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm` or `kvm`. Supports `{arch}` and `{tag}` placeholders
+- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is not a VM: it is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (branches get the passthrough unless created with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
+- `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm`. Supports `{arch}` and `{tag}` placeholders
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
 - `packages` -- dnf packages to install

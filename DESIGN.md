@@ -222,14 +222,15 @@ Before building templates or running `isx update-all`, `HostRepoRefresh` fetches
 
 **VM-specific build behavior:**
 
-When `type` is `vm` or `kvm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone — parent Incus instances are not needed, so container parent rebuilds are skipped when a type change is detected in `buildChain`. Additional differences:
+When `type` is `vm` (set in the definition or via `--type`), `buildFromScratch` applies the entire ancestor tool/package chain from YAML definitions alone — parent Incus instances are not needed, so container parent rebuilds are skipped when a type change is detected in `buildChain`. Additional differences:
 
 - **Base image**: uses `vm_image_url` (pre-baked VM qcow2) when available, falls back to a stock Incus VM image otherwise
 - **Disk expansion**: runs `growpart` + `resize2fs`/`xfs_growfs` before package install (both for pre-baked images that ship at 10G and the final build which defaults to 100G)
 - **Security config**: container-specific security settings (raw.idmap, nesting, setxattr interception) are skipped — VMs have their own kernel and don't need them
 - **No restart**: VMs don't need the container restart that applies security config changes
 - **Tool downloads**: large file pushes over vsock are slow, so `YamlToolSetup` uses a mount-and-copy strategy for both extracted archive and downloaded files exposed via `destination_file`
-- **KVM passthrough**: when `type: kvm`, `/dev/kvm` is passed through to the VM for nested virtualization
+
+None of this applies to `type: kvm`, which builds a **container**: `effectiveVm()` is true only for `vm`. The type is stamped as the template's `instance-mode`, and `isx branch` then passes the host's `/dev/kvm` (and `/dev/vhost-vsock`) in as `unix-char` devices (`KvmPassthrough`) so the branch can run VMs itself; `--no-kvm` opts a branch out. A device node can only be handed to a container, which is why `kvm` is a container type.
 
 **`buildFromParent` (derived image):**
 1. Copy parent image, start, wait for network
