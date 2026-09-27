@@ -38,7 +38,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.configGet("test", Metadata.STATIC_IP)).thenReturn("172.20.0.5");
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.21.0.1/24");
 
-        // StaticIpAllocator.allocate needs these
+        // StaticIpAllocator.claim needs these
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");

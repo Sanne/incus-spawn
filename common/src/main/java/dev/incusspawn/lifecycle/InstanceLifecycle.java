@@ -81,7 +81,6 @@ public final class InstanceLifecycle {
         update.config("limits.memory", settings.memory());
         update.device("root", "size", settings.disk());
 
-        String ip = null;
         String gateway = null;
         String nicDevice = null;
         // Full internet is the absence of a mode, not whatever the source was copied with
@@ -96,17 +95,12 @@ public final class InstanceLifecycle {
         } else {
             gateway = ProxyConfig.resolveGatewayIp(incus);
             if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
-            // A static IP, so no DHCP lease is ever acquired: leases expire across host
-            // sleep/wake. See pushStaticNetworkConfig for the guest side.
-            ip = StaticIpAllocator.allocate(incus);
             nicDevice = IncusClient.nicDeviceName(instance, "incusbr0");
             if (nicDevice == null) {
                 throw new IncusException("No NIC device for incusbr0 found on " + name);
             }
-            BuildOutput.step("Assigning static IP " + ip + ".");
-            update.device(nicDevice, "ipv4.address", ip);
+            // The address itself is allocated in claimAndWrite, under the allocation lock
             update.device(nicDevice, "security.ipv4_filtering", "true");
-            update.config(Metadata.STATIC_IP, ip);
             update.config(Metadata.STATIC_GATEWAY, gateway);
         }
         update.config(Metadata.PROXY_GATEWAY, mode == NetworkMode.PROXY_ONLY ? gateway : null);
@@ -125,25 +119,43 @@ public final class InstanceLifecycle {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
 
-        // Pushed before the write rather than after, so the push is not the last thing before
-        // the start: see "Why nothing is pushed into an instance just before it starts".
-        if (ip != null && !"virtual-machine".equals(instance.path("type").asText(""))) {
-            pushStaticNetworkConfig(incus, name, ip, gateway, bridgePrefixLen(incus));
-        }
+        if (nicDevice == null) incus.update(name, instance, update);
+        else claimAndWrite(incus, name, instance, update, nicDevice, gateway);
+    }
 
-        try {
-            incus.update(name, instance, update);
-        } catch (IncusException e) {
-            if (nicDevice == null) throw e;
-            // Failing to pin the address is fatal, failing to enable filtering only warns, and
-            // one write cannot say which of them Incus refused. Incus rolls a refused write back
-            // whole, so retry without filtering: if that fails too, the error is the real one.
-            // If it goes through, enable filtering on its own, so a first failure that had
-            // nothing to do with filtering does not leave the instance without it.
-            incus.update(name, instance,
-                    update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
-            applyIpFiltering(incus, name, nicDevice);
-        }
+    /**
+     * Allocate the branch's address and write {@code update} with it, holding the allocation
+     * lock throughout. Everything that does not depend on the address is read before it, so
+     * concurrent branches wait on each other only for the listing, the push and the write (#815).
+     */
+    private static void claimAndWrite(IncusClient incus, String name, JsonNode instance,
+                                      InstanceUpdate update, String nicDevice, String gateway) {
+        var isVm = "virtual-machine".equals(instance.path("type").asText(""));
+        var prefixLen = isVm ? 0 : bridgePrefixLen(incus);
+        StaticIpAllocator.claim(incus, ip -> {
+            // A static IP, so no DHCP lease is ever acquired: leases expire across host
+            // sleep/wake. See pushStaticNetworkConfig for the guest side.
+            BuildOutput.step("Assigning static IP " + ip + ".");
+            update.device(nicDevice, "ipv4.address", ip);
+            update.config(Metadata.STATIC_IP, ip);
+            // Pushed before the write rather than after, so the push is not the last thing
+            // before the start: see "Why nothing is pushed into an instance just before it
+            // starts".
+            if (!isVm) pushStaticNetworkConfig(incus, name, ip, gateway, prefixLen);
+            try {
+                incus.update(name, instance, update);
+            } catch (IncusException e) {
+                // Failing to pin the address is fatal, failing to enable filtering only warns,
+                // and one write cannot say which of them Incus refused. Incus rolls a refused
+                // write back whole, so retry without filtering: if that fails too, the error is
+                // the real one. If it goes through, enable filtering on its own, so a first
+                // failure that had nothing to do with filtering does not leave the instance
+                // without it.
+                incus.update(name, instance,
+                        update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
+                applyIpFiltering(incus, name, nicDevice);
+            }
+        });
     }
 
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
@@ -417,13 +429,14 @@ public final class InstanceLifecycle {
 
         if (CidrUtils.isInSubnet(storedIp, bridgeCidr)) return false;
 
-        var newIp = StaticIpAllocator.allocate(incus);
         var newGateway = ProxyConfig.resolveGatewayIp(incus);
         var nicDevice = StaticIpAllocator.findNicDevice(incus, name);
         var prefixLen = bridgePrefixLen(incus);
 
-        BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + newIp);
-        incus.deviceConfigSet(name, nicDevice, "ipv4.address", newIp);
+        var newIp = StaticIpAllocator.claim(incus, ip -> {
+            BuildOutput.step("Reassigning " + name + ": " + storedIp + " → " + ip);
+            incus.deviceConfigSet(name, nicDevice, "ipv4.address", ip);
+        });
         applyIpFiltering(incus, name, nicDevice);
 
         var updates = new HashMap<String, String>();
