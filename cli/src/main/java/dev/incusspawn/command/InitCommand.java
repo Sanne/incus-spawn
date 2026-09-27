@@ -754,6 +754,53 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    private static final String KSM_RUN = "/sys/kernel/mm/ksm/run";
+    private static final String KSM_TMPFILES = "/etc/tmpfiles.d/incus-spawn-ksm.conf";
+
+    /**
+     * Turn on kernel same-page merging. QEMU marks guest RAM mergeable, and branches of one
+     * template hold many identical pages (kernel, JDK, libraries), so VMs share them instead of
+     * each holding a copy. Containers are unaffected: their processes do not opt in. Persisted as
+     * a tmpfiles.d {@code w} line, which only writes when the file exists.
+     */
+    private void configureKsm() {
+        if (!Files.exists(Path.of(KSM_RUN))) {
+            return; // kernel built without CONFIG_KSM
+        }
+        if ("active".equals(captureOutput("systemctl", "is-active", "ksmtuned"))) {
+            System.out.println("  KSM is managed by ksmtuned; leaving it alone.");
+            return;
+        }
+        var content = """
+                # Written by isx init: share identical memory pages between VMs.
+                w %s - - - - 1
+                """.formatted(KSM_RUN);
+        var confPath = Path.of(KSM_TMPFILES);
+        Path tempFile = null;
+        try {
+            // Also check the live value: a written config whose apply failed must be retried
+            if (Files.exists(confPath) && content.equals(Files.readString(confPath))
+                    && "1".equals(Files.readString(Path.of(KSM_RUN)).strip())) {
+                return;
+            }
+            tempFile = Files.createTempFile("isx-ksm-", ".conf");
+            Files.writeString(tempFile, content);
+            if (runHostQuiet("sudo", "cp", tempFile.toString(), KSM_TMPFILES) != 0) {
+                System.err.println("  Warning: could not write " + KSM_TMPFILES + "; KSM stays off.");
+            } else if (runHostQuiet("sudo", "systemd-tmpfiles", "--create", KSM_TMPFILES) != 0) {
+                System.err.println("  Warning: could not enable KSM now; it will be on after a reboot.");
+            } else {
+                System.out.println("  Enabled kernel same-page merging (KSM) for VMs.");
+            }
+        } catch (IOException e) {
+            System.err.println("  Warning: could not enable KSM: " + e.getMessage());
+        } finally {
+            if (tempFile != null) {
+                try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
+            }
+        }
+    }
+
     private void configureMitmProxy() {
         startStep("MITM Authentication Proxy",
                 "The MITM proxy intercepts HTTPS from containers and injects",
@@ -775,6 +822,7 @@ public class InitCommand extends BaseCommand {
         }
 
         configureHostSysctls();
+        configureKsm();
 
         // Generate CA certificate if it doesn't exist
         if (CertificateAuthority.exists()) {

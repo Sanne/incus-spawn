@@ -343,13 +343,17 @@ the TUI) are not step sequences and stay as plain output.
 
 ### Resource Limits (Adaptive)
 
-Detected at branch time from host resources:
+Detected at branch time from host resources (`ResourceLimits`):
 
-- **CPU**: `available_cores - 2` (host keeps 2 cores, minimum 1)
-- **Memory**: 60% of total RAM
-- **Disk**: 20GB root disk
+- **CPU**: VMs get `available_cores - 2` (host keeps 2 cores, minimum 1); containers are not pinned
+- **Memory**: containers 60% of total RAM; VMs 25% of total RAM, capped at 16 GiB, at least 4 GiB (but never more than the container default, on hosts too small for that floor)
+- **Disk**: 100GB root disk (a ceiling: CoW storage is thin-provisioned)
 
-Overridable via TUI branch modal (for VMs, all three fields are shown).
+Overridable with `isx branch --cpu/--memory/--disk` and via the TUI branch modal (for VMs, all three fields are shown).
+
+**Why VMs get a separate, smaller memory default.** `limits.memory` means two different things. On a container it is a cgroup ceiling: nothing is reserved, and 60% per container just stops one runaway from taking the host down. On a VM it is the guest's RAM size. QEMU allocates lazily, but the guest kernel treats all of it as its own and grows its page cache into it, so after one large build a VM holds most of its `limits.memory` on the host. Two VMs at 60% each overcommit the host. Idle vCPUs cost almost nothing, so the CPU default is not held to the same standard.
+
+**Free page reporting.** VMs also get virtio-balloon free page reporting, set through `raw.qemu.conf` (`[device "qemu_balloon"] free-page-reporting = "on"`, which Incus merges into its own balloon device). Without it QEMU keeps every page the guest ever touched until the VM stops. With it, pages the guest frees are returned to the host, so memory freed after a build is given back instead of lingering until shutdown. Page cache still counts as used, so this complements the smaller default rather than replacing it. `InstanceLifecycle.enableFreePageReporting()` applies it at VM build and at derive (whose parent may predate it). At branch (whose template may predate it) `configureBranch()` adds it to its one write, at no extra request. A `raw.qemu.conf` someone else set is left alone, because a merge that breaks the QEMU config leaves a VM that won't start. QEMU rejects unknown device properties, so this needs QEMU 5.1 or later.
 
 ### Container Configuration
 
@@ -357,6 +361,8 @@ Overridable via TUI branch modal (for VMs, all three fields are shown).
 
 **Host sysctl relaxation** (`/etc/sysctl.d/99-incus-spawn.conf`, applied by `isx init`):
 - `kernel.perf_event_paranoid = -1` — unrestricted perf profiling (kernel-inclusive sampling, hardware counters where available)
+
+**Kernel same-page merging** (`/etc/tmpfiles.d/incus-spawn-ksm.conf`, applied by `isx init` on Linux): sets `/sys/kernel/mm/ksm/run` to 1. QEMU marks guest RAM `MADV_MERGEABLE` by default, and VMs branched from one template hold many identical pages (kernel, JDK, libraries, page cache of the same files), so KSM lets them share one copy. It costs some host CPU for scanning, bounded by the kernel defaults (`pages_to_scan`, `sleep_millisecs`, and `smart_scan` on 6.7+), which isx does not tune. Containers are unaffected, because their processes do not opt in. KSM breaks transparent huge pages it merges into 4K pages, trading some TLB efficiency for memory on the shared pages only. Init leaves KSM alone when `ksmtuned` is active, since that daemon owns the knob.
 
 These are host-wide because they are not namespace-aware. `kernel.dmesg_restrict = 0` and `kernel.yama.ptrace_scope = 0` hold by default (`dmesg_restrict`'s default is 0; Yama is not compiled into the appliance kernel, so ptrace is unrestricted). `ping_group_range` is wide in modern kernels and further ensured by not dropping `CAP_NET_RAW`.
 

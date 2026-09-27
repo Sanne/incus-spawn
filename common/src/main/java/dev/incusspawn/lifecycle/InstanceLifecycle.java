@@ -114,6 +114,11 @@ public final class InstanceLifecycle {
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
+        // Templates built before free page reporting existed don't carry it to their copies
+        if ("virtual-machine".equals(instance.path("type").asText(""))
+                && instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
+            update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
+        }
 
         // Pushed before the write rather than after, so the push is not the last thing before
         // the start: see "Why nothing is pushed into an instance just before it starts".
@@ -133,6 +138,26 @@ public final class InstanceLifecycle {
             incus.update(name, instance,
                     update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
             applyIpFiltering(incus, name, nicDevice);
+        }
+    }
+
+    static final String RAW_QEMU_CONF = "raw.qemu.conf";
+    static final String FREE_PAGE_REPORTING_CONF =
+            "[device \"qemu_balloon\"]\nfree-page-reporting = \"on\"\n";
+
+    /**
+     * Turn on virtio-balloon free page reporting, so memory the guest frees goes back to the host.
+     * Without it QEMU keeps every page the guest ever touched until the VM stops, and a VM's page
+     * cache grows until it has touched all of {@code limits.memory}. Incus merges this into its own
+     * balloon device section. Takes effect at the next start.
+     *
+     * <p>A {@code raw.qemu.conf} set by someone else is left alone: merging into another author's
+     * QEMU config is not worth the risk of a VM that no longer starts.
+     */
+    public static void enableFreePageReporting(IncusClient incus, String name) {
+        var current = incus.configGet(name, RAW_QEMU_CONF);
+        if (current.isBlank()) {
+            incus.configSet(name, RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
     }
 

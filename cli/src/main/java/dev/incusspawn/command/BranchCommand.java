@@ -67,7 +67,7 @@ public class BranchCommand extends BaseCommand {
     @Option(name = "cpu", description = "CPU core limit (default: adaptive)")
     Integer cpuLimit;
 
-    @Option(name = "memory", description = "Memory limit, e.g. '8GB' (default: adaptive)")
+    @Option(name = "memory", description = "Memory limit, e.g. '8GB' (default: 60% of host RAM for containers, 25% up to 16GiB for VMs)")
     String memoryLimit;
 
     @Option(name = "disk", description = "Disk size limit (default: adaptive)")
@@ -153,15 +153,17 @@ public class BranchCommand extends BaseCommand {
             warnIfTemplateWantsGui(resolvedSource, defs);
         }
 
+        boolean sourceIsVm = incus.isVm(resolvedSource);
         String cpu;
         if (cpuLimit != null) {
             cpu = String.valueOf(cpuLimit);
-        } else if (incus.isVm(resolvedSource)) {
+        } else if (sourceIsVm) {
             cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
         } else {
             cpu = null;
         }
-        var memory = memoryLimit != null ? memoryLimit : ResourceLimits.adaptiveMemoryLimit();
+        var memory = memoryLimit != null ? memoryLimit
+                : sourceIsVm ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
         var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
 
         BuildOutput.step("Resource limits: " +

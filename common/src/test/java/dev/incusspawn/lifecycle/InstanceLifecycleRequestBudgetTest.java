@@ -160,6 +160,35 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aVmBranchGetsFreePageReportingInTheSameWrite() {
+        // A VM gets no static network config pushed before start, so it skips that push and the
+        // bridge prefix read that goes with it: two requests fewer than a container.
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertBudget(5, daemon, "configureBranch (VM)");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF, daemon.instance(NAME)
+                .path("config").path(InstanceLifecycle.RAW_QEMU_CONF).asText());
+    }
+
+    @Test
+    void aVmBranchKeepsSomeoneElsesRawQemuConf() {
+        var custom = "[machine]\nfoo = \"bar\"\n";
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
+                Map.of(InstanceLifecycle.RAW_QEMU_CONF, custom));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(custom, daemon.instance(NAME)
+                .path("config").path(InstanceLifecycle.RAW_QEMU_CONF).asText());
+    }
+
+    @Test
+    void aContainerBranchGetsNoRawQemuConf() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertFalse(daemon.instance(NAME).path("config").has(InstanceLifecycle.RAW_QEMU_CONF));
+    }
+
+    @Test
     void droppingInheritedKvmFoldsEverythingIntoOnePut() {
         // PATCH cannot remove a device, so the removal needs a PUT -- which then carries every
         // other change too, rather than adding a PATCH next to it.
@@ -236,6 +265,29 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
         daemon.client().devicesRemoveAll(NAME, List.of("kvm", "vhost-vsock"));
         assertBudget(1, daemon, "devicesRemoveAll of absent devices");
+    }
+
+    @Test
+    void enablingFreePageReportingOnAVmWithoutRawQemuConf() {
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
+        var incus = daemon.client();
+        InstanceLifecycle.enableFreePageReporting(incus, NAME);
+
+        assertBudget(2, daemon, "enableFreePageReporting (unset)");
+        assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF,
+                incus.configGet(NAME, InstanceLifecycle.RAW_QEMU_CONF));
+    }
+
+    @Test
+    void freePageReportingLeavesSomeoneElsesRawQemuConfAlone() {
+        var custom = "[machine]\nfoo = \"bar\"\n";
+        var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
+                Map.of(InstanceLifecycle.RAW_QEMU_CONF, custom));
+        var incus = daemon.client();
+        InstanceLifecycle.enableFreePageReporting(incus, NAME);
+
+        assertBudget(1, daemon, "enableFreePageReporting (already set)");
+        assertEquals(custom, incus.configGet(NAME, InstanceLifecycle.RAW_QEMU_CONF));
     }
 
     @Test

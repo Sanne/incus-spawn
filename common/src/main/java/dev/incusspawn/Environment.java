@@ -50,7 +50,9 @@ public final class Environment {
     // state but not fix it.
     // v7: host sysctl now sets kernel.perf_event_paranoid=-1 so profilers inside containers can
     // access kernel-inclusive perf events (the default of 2 blocks perf record with kernel samples).
-    public static final int INIT_VERSION = 7;
+    // v8: enable KSM (/etc/tmpfiles.d/incus-spawn-ksm.conf) so VMs branched from one template
+    // share identical pages.
+    public static final int INIT_VERSION = 8;
 
     public static boolean hasBeenInitialized() {
         var marker = initCompleteMarker();

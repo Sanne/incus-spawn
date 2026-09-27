@@ -36,6 +36,34 @@ public final class ResourceLimits {
         return limitMB + "MB";
     }
 
+    private static final long GIB = 1024L * 1024 * 1024;
+    static final long VM_MEMORY_CEILING = 16 * GIB;
+    static final long VM_MEMORY_FLOOR = 4 * GIB;
+
+    /**
+     * Default guest RAM for a VM: 25% of host RAM, capped at 16 GiB, at least 4 GiB (or 60% of
+     * host RAM on hosts too small for that).
+     *
+     * <p>Unlike a container's {@code limits.memory}, which is a cgroup ceiling, a VM's is its RAM
+     * size: the guest fills it with page cache, and QEMU keeps whatever the guest touched. The
+     * container default ({@link #adaptiveMemoryLimit()}) given to every VM overcommits the host
+     * as soon as two of them run.
+     */
+    public static String defaultVmMemoryLimit() {
+        return vmMemoryLimitFor(totalMemoryBytes());
+    }
+
+    static String vmMemoryLimitFor(long totalBytes) {
+        if (totalBytes <= 0) {
+            return VM_MEMORY_FLOOR / GIB + "GiB";
+        }
+        // The floor never exceeds the container default, so a small host is no worse off than before
+        long floor = Math.min(VM_MEMORY_FLOOR, (long) (totalBytes * 0.6));
+        long bytes = Math.max(floor, Math.min(VM_MEMORY_CEILING, totalBytes / 4));
+        long mib = bytes / (1024 * 1024);
+        return mib % 1024 == 0 ? mib / 1024 + "GiB" : mib + "MiB";
+    }
+
     /**
      * Default disk limit for containers. This is a ceiling, not an allocation —
      * with COW storage (btrfs/zfs) actual usage is thin-provisioned.

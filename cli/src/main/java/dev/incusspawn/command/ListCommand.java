@@ -1605,7 +1605,7 @@ public class ListCommand extends BaseCommand {
         branchInboxCheck = new CheckboxState(false);
         branchInboxInput = new TextInputState("");
         branchSourceIsVm = runtime.toUpperCase().contains("VIRTUAL");
-        var adaptiveMemory = ResourceLimits.adaptiveMemoryLimit();
+        var adaptiveMemory = ResourceLimits.defaultVmMemoryLimit();
         var adaptiveDisk = ResourceLimits.defaultDiskLimit();
         vmCpuInput = new TextInputState(String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2)));
         vmMemoryInput = new TextInputState(adaptiveMemory);

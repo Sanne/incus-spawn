@@ -25,6 +25,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -967,6 +968,10 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "raw.lxc", "lxc.cap.drop =");
             incus.deviceAdd(buildName, "tun", "unix-char",
                     "source=/dev/net/tun", "path=/dev/net/tun", "mode=0666");
+        } else {
+            // A parent built by an older isx carries a stale memory size and no page reporting
+            incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
+            InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
         incus.start(buildName);
         incus.waitForReady(buildName);
@@ -1114,7 +1119,8 @@ public class BuildCommand extends BaseCommand {
         }
         if (effectiveVm) {
             incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
-            incus.configSet(buildName, "limits.memory", ResourceLimits.adaptiveMemoryLimit());
+            incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
+            InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
         incus.start(buildName);
         waitForReady(buildName);
