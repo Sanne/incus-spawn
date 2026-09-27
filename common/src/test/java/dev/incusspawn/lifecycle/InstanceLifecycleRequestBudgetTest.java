@@ -252,6 +252,21 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void aBranchOfAnAgentsInstanceIsNotTheAgents() {
+        // A kept instance still carries the session that created it. A user's branch of it must
+        // not inherit that, or the orphan reaper would take it for the dead session's.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.MCP_SESSION, "4242-1700000000000", Metadata.MCP_OWNER, "alice",
+                Metadata.MCP_KEPT, "2026-09-27"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        var config = daemon.instance(NAME).path("config");
+        assertFalse(config.has(Metadata.MCP_SESSION));
+        assertFalse(config.has(Metadata.MCP_OWNER));
+        assertFalse(config.has(Metadata.MCP_KEPT));
+    }
+
+    @Test
     void anEmptyAccountSelectionKeepsTheCopiedPins() {
         // A caller passing no selection must not wipe what the copy carried.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.accountKey("github"), "work"));

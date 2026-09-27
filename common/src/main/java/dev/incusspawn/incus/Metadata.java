@@ -51,6 +51,20 @@ public final class Metadata {
     // of contentFingerprint(), so stamping it never triggers a rebuild.
     public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 
+    /**
+     * MCP ownership (see {@code isx mcp}). {@link #MCP_SESSION} is the only key authorization
+     * reads: {@code <pid>-<processStartMillis>} of the {@code isx mcp} process that created the
+     * instance. The rest are for display and for scoping orphan reaping to this host user.
+     */
+    public static final String MCP_PREFIX = PREFIX + "mcp-";
+    public static final String MCP_SESSION = MCP_PREFIX + "session";
+    public static final String MCP_OWNER = MCP_PREFIX + "owner";
+    public static final String MCP_CLIENT = MCP_PREFIX + "client";
+    public static final String MCP_CLIENT_PID = MCP_PREFIX + "client-pid";
+    public static final String MCP_CWD = MCP_PREFIX + "cwd";
+    /** Set by {@code keep_instance}: the instance now belongs to the user and outlives the session. */
+    public static final String MCP_KEPT = MCP_PREFIX + "kept";
+
     public static final String TYPE_BASE = "base";
     public static final String TYPE_PROJECT = "project";
     public static final String TYPE_CLONE = "clone";
@@ -68,6 +82,10 @@ public final class Metadata {
      * a tool declares). The value is an account <em>name</em>, never a credential:
      * secrets stay on the host, which is the whole point of the proxy.
      */
+    public static boolean isMcpKey(String key) {
+        return key.startsWith(MCP_PREFIX);
+    }
+
     public static String accountKey(String namespace) {
         return ACCOUNT_PREFIX + namespace;
     }

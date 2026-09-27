@@ -136,6 +136,12 @@ public final class InstanceLifecycle {
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
+        // A copy carries its source's MCP ownership stamps. A branch of an agent's instance
+        // (say, one it handed over with keep_instance) belongs to whoever made the branch, and
+        // must not be mistaken for the dead session's orphan and reaped.
+        instance.path("config").fieldNames().forEachRemaining(key -> {
+            if (Metadata.isMcpKey(key) && !settings.extraConfig().containsKey(key)) update.unset(key);
+        });
         update.config(settings.extraConfig());
         // Templates built before free page reporting existed don't carry it to their copies
         if (IncusClient.machineType(instance) == MachineType.VM
