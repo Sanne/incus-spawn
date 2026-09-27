@@ -15,6 +15,8 @@ mvn verify -DskipITs=false      # integration tests (requires Incus)
 ./install.sh --native   # native (requires Docker, Podman, or GraalVM)
 ```
 
+To try a change against a real Incus on a disposable Linux machine (a scratch VM, an isx instance), install it with `./install.sh` and run `scripts/local-incus.sh`: it sets Incus up the way CI's integration job does.
+
 ## Website Development
 
 The project website is hosted on GitHub Pages. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).

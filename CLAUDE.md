@@ -23,6 +23,8 @@ mvn package -Dnative -DskipTests           # GraalVM native binaries (isx + isx-
 ./install.sh --native          # Build and install native binaries
 ```
 
+To check a change against a real Incus on a disposable Linux host, `scripts/local-incus.sh` sets one up the way CI's `isx-integration-tests-native` job does, and the `validate-on-real-incus` skill (`.claude/skills/`) covers what to exercise and inspect.
+
 ## Tech Stack
 
 - **Java 25**, **Quarkus 3.x** with aesh for CLI commands

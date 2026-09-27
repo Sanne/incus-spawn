@@ -2,6 +2,8 @@
 paths:
   - ".github/**"
   - "bench/**"
+  # Mirrors the isx-integration-tests-native setup for local runs; keep the two in sync.
+  - "scripts/local-incus.sh"
   # Cross-cutting trigger: VmManager holds the CLI half of the release-asset
   # name contract below, so editing it must load this file too.
   - "common/src/main/java/dev/incusspawn/vm/VmManager.java"
@@ -18,6 +20,8 @@ paths:
 - **`integration-tests (x86_64)`, `integration-tests (aarch64)`**: a matrix; each boots its arch's appliance VM image under QEMU with a `vhost-vsock-pci` device, checks it reaches `ISX READY` and passes the in-guest Incus smoke test, then bridges the guest's vsock ports to Unix sockets with host `socat` (standing in for vfkit) and runs `appliance/test-tunnel.sh` and the real native `isx` through them -- see below
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`, `tpl-test-codex`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
+
+`scripts/local-incus.sh` reproduces the `isx-integration-tests-native` setup (packages, `sg incus-admin -c "isx init </dev/null"`, the default profile on the `cow` pool) on a local host, for the `validate-on-real-incus` skill. A change to how that job prepares Incus belongs in the script too.
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 
