@@ -287,7 +287,8 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
-        this.configFingerprint = configFingerprint;
+        // Null would compare unequal to every capture: permanent drift, a restart per command.
+        this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -2869,7 +2870,7 @@ public class MitmProxy {
         }
     }
 
-    private boolean hasConfigChangedSinceLoad() {
+    boolean hasConfigChangedSinceLoad() {
         return !ConfigFingerprint.capture().equals(configFingerprint);
     }
 

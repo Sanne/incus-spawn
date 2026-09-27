@@ -54,6 +54,37 @@ class ConfigFingerprintTest {
     }
 
     @Test
+    void anEditRacingTheReadIsDrift() throws Exception {
+        var config = Files.writeString(dir.resolve("config.yaml"), "a: 1\n");
+
+        var loaded = ConfigFingerprint.load(dir, () -> {
+            try {
+                Files.writeString(config, "a: 12\n");
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            return null;
+        });
+
+        assertNotEquals(loaded.fingerprint(), ConfigFingerprint.capture(dir),
+                "a fingerprint taken after the read would record the racing edit as already loaded");
+    }
+
+    @Test
+    void aSaveByRenameIsDriftEvenWithTheSameMtimeAndSize() throws Exception {
+        var config = Files.writeString(dir.resolve("config.yaml"), "a: 1\n");
+        var mtime = Files.getLastModifiedTime(config);
+        var loaded = ConfigFingerprint.capture(dir);
+
+        var replacement = Files.writeString(dir.resolve("config.yaml.tmp"), "a: 2\n");
+        Files.setLastModifiedTime(replacement, mtime);
+        Files.move(replacement, config, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+
+        assertNotEquals(loaded, ConfigFingerprint.capture(dir));
+    }
+
+    @Test
     void configAppearingOrDisappearingIsDrift() throws Exception {
         var empty = ConfigFingerprint.capture(dir);
         Files.writeString(dir.resolve("config.yaml"), "a: 1\n");

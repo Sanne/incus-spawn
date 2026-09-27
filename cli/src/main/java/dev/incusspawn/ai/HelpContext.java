@@ -158,7 +158,7 @@ public class HelpContext {
         if (!Files.isDirectory(dir)) return;
         try (var stream = Files.list(dir)) {
             var paths = stream
-                    .filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
+                    .filter(ToolDefLoader::isToolFile)
                     .sorted()
                     .toList();
             if (paths.isEmpty()) return;
