@@ -55,16 +55,8 @@ class BuildAccountValidationTest {
     }
 
     @Test
-    void configuredAccountPasses() {
+    void configuredAccountPasses() throws Exception {
         assertNull(BuildCommand.validateTemplateAccounts(List.of("tpl-isx"),
-                Map.of("tpl-isx", parse("name: tpl-isx\naccounts:\n  github: default\n"))));
-    }
-
-    private static ImageDef parse(String yaml) {
-        try {
-            return ImageDef.parseYaml(yaml);
-        } catch (Exception e) {
-            throw new AssertionError(e);
-        }
+                Map.of("tpl-isx", ImageDef.parseYaml("name: tpl-isx\naccounts:\n  github: default\n"))));
     }
 }

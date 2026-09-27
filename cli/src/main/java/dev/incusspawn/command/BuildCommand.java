@@ -264,6 +264,8 @@ public class BuildCommand extends BaseCommand {
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
                 return CommandResult.valueOf(1);
             }
+            // buildChain may rebuild any ancestor that turns out to be missing or outdated
+            requireValidAccounts(ImageDef.chain(imageDef, defs).stream().map(ImageDef::getName).toList(), defs);
             startHostRepoRefresh(List.of(imageDef), defs, executor);
             build(imageDef, defs);
             return CommandResult.SUCCESS;
@@ -510,11 +512,6 @@ public class BuildCommand extends BaseCommand {
      * is built first (recursively).
      */
     private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
-        // The image and whichever of its ancestors turn out to need a rebuild
-        var chain = new ArrayList<String>();
-        collectAllRecursive(imageDef, defs, chain, new HashSet<>());
-        requireValidAccounts(chain, defs);
-
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
@@ -2257,9 +2254,7 @@ public class BuildCommand extends BaseCommand {
     static String validateTemplateAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
         SpawnConfig config = null;
         for (var name : templates) {
-            var imageDef = defs.get(name);
-            if (imageDef == null) continue;
-            var selection = ImageDef.resolveAccounts(imageDef, defs);
+            var selection = ImageDef.resolveAccounts(defs.get(name), defs);
             if (selection.isEmpty()) continue;
             if (config == null) config = SpawnConfig.load();
             try {
