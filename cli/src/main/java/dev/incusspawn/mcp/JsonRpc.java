@@ -16,7 +16,6 @@ final class JsonRpc {
     static final int INVALID_REQUEST = -32600;
     static final int METHOD_NOT_FOUND = -32601;
     static final int INVALID_PARAMS = -32602;
-    static final int INTERNAL_ERROR = -32603;
 
     private JsonRpc() {}
 

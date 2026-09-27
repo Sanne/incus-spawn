@@ -1,5 +1,6 @@
 package dev.incusspawn.mcp;
 
+import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -10,9 +11,11 @@ import java.nio.charset.StandardCharsets;
  */
 final class TailBuffer extends OutputStream {
 
+    private static final int MAX_LINE = 200;
+
     private final byte[] ring;
     private long total;
-    private final StringBuilder currentLine = new StringBuilder();
+    private final ByteArrayOutputStream currentLine = new ByteArrayOutputStream();
     private volatile String lastLine = "";
 
     TailBuffer(int capacity) {
@@ -20,24 +23,38 @@ final class TailBuffer extends OutputStream {
     }
 
     @Override
-    public synchronized void write(int b) {
-        ring[(int) (total % ring.length)] = (byte) b;
-        total++;
-        trackLine((byte) b);
+    public void write(int b) {
+        write(new byte[] {(byte) b}, 0, 1);
     }
 
     @Override
     public synchronized void write(byte[] b, int off, int len) {
-        for (int i = 0; i < len; i++) write(b[off + i]);
+        // Only the part of this chunk that can survive in the ring is copied, in at most two runs.
+        int keep = Math.min(len, ring.length);
+        int from = off + len - keep;
+        int pos = (int) ((total + len - keep) % ring.length);
+        int first = Math.min(keep, ring.length - pos);
+        System.arraycopy(b, from, ring, pos, first);
+        System.arraycopy(b, from + first, ring, 0, keep - first);
+        total += len;
+        trackLines(b, off, len);
     }
 
-    private void trackLine(byte b) {
-        if (b == '\n') {
-            if (!currentLine.isEmpty()) lastLine = currentLine.toString();
-            currentLine.setLength(0);
-        } else if (currentLine.length() < 200 && b != '\r') {
-            currentLine.append((char) (b & 0xff));
+    private void trackLines(byte[] b, int off, int len) {
+        int start = off;
+        for (int i = off; i < off + len; i++) {
+            if (b[i] != '\n') continue;
+            appendToLine(b, start, i - start);
+            var line = currentLine.toString(StandardCharsets.UTF_8).strip();
+            if (!line.isEmpty()) lastLine = line;
+            currentLine.reset();
+            start = i + 1;
         }
+        appendToLine(b, start, off + len - start);
+    }
+
+    private void appendToLine(byte[] b, int off, int len) {
+        currentLine.write(b, off, Math.min(len, Math.max(0, MAX_LINE - currentLine.size())));
     }
 
     synchronized long total() {
@@ -57,7 +74,9 @@ final class TailBuffer extends OutputStream {
         int size = (int) Math.min(total, ring.length);
         var out = new byte[size];
         int start = (int) ((total - size) % ring.length);
-        for (int i = 0; i < size; i++) out[i] = ring[(start + i) % ring.length];
+        int first = Math.min(size, ring.length - start);
+        System.arraycopy(ring, start, out, 0, first);
+        System.arraycopy(ring, 0, out, first, size - first);
         return new String(out, StandardCharsets.UTF_8);
     }
 }

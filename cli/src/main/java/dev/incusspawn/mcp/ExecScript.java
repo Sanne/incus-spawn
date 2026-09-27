@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.incus.Container;
+
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -15,7 +17,7 @@ final class ExecScript {
 
     static final String RUN_DIR = "$HOME/.isx-mcp/run";
     private static final Pattern ENV_KEY = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    private static final Pattern RUN_ID = Pattern.compile("[a-z0-9-]+");
+    private static final Pattern ID = Pattern.compile("[a-z0-9-]+");
 
     private ExecScript() {}
 
@@ -25,15 +27,10 @@ final class ExecScript {
      */
     static String build(String runId, String cwd, Map<String, String> env, String command,
                         Integer timeoutSeconds) {
-        requireRunId(runId);
+        requireId(runId);
         var sb = new StringBuilder();
         sb.append("mkdir -p ").append(RUN_DIR).append(" && cd -- ").append(quote(cwd)).append(" || exit 125; ");
-        for (var e : env.entrySet()) {
-            if (!ENV_KEY.matcher(e.getKey()).matches()) {
-                throw new ToolError("invalid environment variable name: " + e.getKey());
-            }
-            sb.append("export ").append(e.getKey()).append('=').append(quote(e.getValue())).append("; ");
-        }
+        appendExports(sb, env, "; ");
         // $$ of the inner bash is the new session's id (setsid made it the leader); exec keeps
         // it for the command, so the pid file names the session every descendant belongs to.
         sb.append("exec setsid --wait bash -c ")
@@ -49,7 +46,7 @@ final class ExecScript {
 
     /** Kill the process tree of a running {@link #build} script, TERM first, then KILL. */
     static String kill(String runId) {
-        requireRunId(runId);
+        requireId(runId);
         var pidFile = RUN_DIR + "/" + runId + ".pid";
         return "p=$(cat " + pidFile + " 2>/dev/null) || exit 0; "
                 + "kill -TERM -- -\"$p\" 2>/dev/null; "
@@ -59,18 +56,26 @@ final class ExecScript {
                 + "rm -f " + pidFile;
     }
 
-    /** Remove a finished run's pid file. */
-    static String cleanup(String runId) {
-        requireRunId(runId);
-        return "rm -f " + RUN_DIR + "/" + runId + ".pid";
-    }
-
     /** Single-quote {@code value} for a POSIX shell. */
     static String quote(String value) {
-        return "'" + value.replace("'", "'\\''") + "'";
+        return Container.shellQuote(value);
     }
 
-    private static void requireRunId(String runId) {
-        if (!RUN_ID.matcher(runId).matches()) throw new IllegalArgumentException("bad run id: " + runId);
+    /**
+     * Append {@code export K='v'} for each entry, each followed by {@code separator}, refusing a
+     * name that is not a shell identifier (it would otherwise be interpreted by the shell).
+     */
+    static void appendExports(StringBuilder sb, Map<String, String> env, String separator) {
+        for (var e : env.entrySet()) {
+            if (!ENV_KEY.matcher(e.getKey()).matches()) {
+                throw new ToolError("invalid environment variable name: " + e.getKey());
+            }
+            sb.append("export ").append(e.getKey()).append('=').append(quote(e.getValue())).append(separator);
+        }
+    }
+
+    /** Ids of runs and tasks are embedded in paths and unit names: lowercase, digits, dashes. */
+    static void requireId(String id) {
+        if (!ID.matcher(id).matches()) throw new IllegalArgumentException("bad id: " + id);
     }
 }

@@ -10,7 +10,7 @@ package dev.incusspawn.util;
  */
 public final class Headless {
 
-    public static final String PROPERTY = "isx.headless";
+    private static final String PROPERTY = "isx.headless";
 
     private Headless() {}
 

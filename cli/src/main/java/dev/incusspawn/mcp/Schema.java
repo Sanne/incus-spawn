@@ -50,6 +50,6 @@ final class Schema {
     }
 
     ObjectNode build() {
-        return root.deepCopy();
+        return root;
     }
 }

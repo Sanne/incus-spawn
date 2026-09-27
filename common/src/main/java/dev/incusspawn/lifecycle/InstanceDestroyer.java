@@ -6,9 +6,9 @@ import dev.incusspawn.proxy.ProxyService;
 
 /**
  * Deleting an instance and everything isx set up for it on the host. The caller holds the
- * instance's lock ({@code InstanceLockManager}). {@code isx destroy} and its bulk variants delete
- * through {@link #deleteHeld}; the TUI, which refreshes its view between marking and deleting,
- * does the same steps itself and calls {@link #refreshProxy()} after.
+ * instance's lock ({@code InstanceLockManager}). {@code isx destroy}, its bulk variants and
+ * {@code isx mcp} delete through {@link #deleteHeld}; the TUI, which refreshes its view between
+ * marking and deleting, does the same steps itself and calls {@link #refreshProxy()} after.
  */
 public final class InstanceDestroyer {
 

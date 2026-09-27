@@ -3,6 +3,9 @@ package dev.incusspawn.mcp;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * One tool the server offers. Plain data plus a handler, so the tool list is ordinary code
  * with no annotation processing or reflection.
@@ -26,7 +29,7 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
         node.put("name", name);
         node.put("description", description);
         node.set("inputSchema", inputSchema);
-        if (annotations != null && !annotations.isEmpty()) node.set("annotations", annotations);
+        node.set("annotations", annotations);
         return node;
     }
 
@@ -72,9 +75,9 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
             return v.asBoolean();
         }
 
-        java.util.Map<String, String> stringMap(String name) {
+        Map<String, String> stringMap(String name) {
             var v = node.get(name);
-            var map = new java.util.LinkedHashMap<String, String>();
+            var map = new LinkedHashMap<String, String>();
             if (v == null || v.isNull()) return map;
             if (!v.isObject()) throw new ToolError("argument '" + name + "' must be an object of strings");
             for (var e : v.properties()) {

@@ -51,9 +51,9 @@ class TaskScriptsTest {
                 mkdir -p "$HOME/units"; setsid "$@" < /dev/null > /dev/null 2>&1 & echo $! > "$HOME/units/$unit"
                 """);
         stub("systemctl", """
-                p=$(cat "$HOME/units/$2" 2>/dev/null)
+                p=$(cat "$HOME/units/${@: -1}" 2>/dev/null)
                 case "$1" in
-                  is-active) if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then echo active; else echo inactive; exit 3; fi;;
+                  is-active) if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then [ "$2" = -q ] || echo active; else [ "$2" = -q ] || echo inactive; exit 3; fi;;
                   stop) [ -n "$p" ] && kill -TERM -- -"$p" 2>/dev/null; sleep 0.5;;
                 esac
                 """);
@@ -108,7 +108,7 @@ class TaskScriptsTest {
     @Test
     void aDelegatedAgentRunsReportsAndCanBeResumed() throws Exception {
         var id = "t1-abc";
-        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), 30), true),
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), 30)),
                 "fix the 'flaky' test; don't push");
         var status = awaitFinished(id);
         assertEquals("finished", status.state());
@@ -134,7 +134,7 @@ class TaskScriptsTest {
         assertTrue(Files.exists(index));
 
         // A second turn resumes the recorded session.
-        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), null), false),
+        sh(TaskScripts.launch(id, 2, Tasks.AGENT, TaskScripts.agentRun(id, 2, work.toString(), null)),
                 "now open a PR");
         var second = awaitFinished(id);
         assertEquals(2, second.run());
@@ -145,7 +145,7 @@ class TaskScriptsTest {
     @Test
     void aPathLimitsTheDiffAndATooLargeOneReturnsOnlyTheSummary() throws Exception {
         var id = "t2-abc";
-        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), null), true), "go");
+        sh(TaskScripts.launch(id, 1, Tasks.AGENT, TaskScripts.agentRun(id, 1, work.toString(), null)), "go");
         awaitFinished(id);
         var only = sh(TaskScripts.diff(id, "tracked.txt", 100_000), "");
         assertTrue(only.contains("+more") && !only.contains("NEW_FILE"), only);
@@ -159,10 +159,9 @@ class TaskScriptsTest {
         var id = "t3-abc";
         sh(TaskScripts.launch(id, 1, Tasks.COMMAND,
                 TaskScripts.commandRun(id, work.toString(), Map.of("GREETING", "it's me"),
-                        "echo \"$GREETING\"; echo oops >&2; exit 4"), false), "");
+                        "echo \"$GREETING\"; echo oops >&2; exit 4")), "");
         var status = awaitFinished(id);
         assertEquals(4, status.exit());
-        assertEquals("command", status.kind());
         assertTrue(status.output().startsWith("it's me"), status.output());
         assertTrue(status.stderr().startsWith("oops"), status.stderr());
     }
@@ -171,7 +170,7 @@ class TaskScriptsTest {
     void cancellingStopsARunningTask() throws Exception {
         var id = "t4-abc";
         sh(TaskScripts.launch(id, 1, Tasks.COMMAND,
-                TaskScripts.commandRun(id, work.toString(), Map.of(), "sleep 300 & sleep 300"), false), "");
+                TaskScripts.commandRun(id, work.toString(), Map.of(), "sleep 300 & sleep 300")), "");
         assertEquals("running", Tasks.parse(sh(TaskScripts.status(id, 1000), "")).state());
         sh(TaskScripts.cancel(id), "");
         var status = Tasks.parse(sh(TaskScripts.status(id, 1000), ""));
@@ -191,6 +190,18 @@ class TaskScriptsTest {
         Files.writeString(d.resolve("current"), "1\n");
         Files.writeString(d.resolve("kind"), "agent\n");
         assertEquals(1, Tasks.parse(sh(TaskScripts.status("t5-abc", 1000), "")).run());
+    }
+
+    @Test
+    void theStateProbeTellsRunningFromDone() throws Exception {
+        sh(TaskScripts.launch("t6-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t6-abc", work.toString(), Map.of(), "sleep 300")), "");
+        sh(TaskScripts.launch("t7-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t7-abc", work.toString(), Map.of(), "true")), "");
+        awaitFinished("t7-abc");
+        assertEquals("t6-abc running\nt7-abc done\nt8-abc done\n",
+                sh(TaskScripts.states(java.util.List.of("t6-abc", "t7-abc", "t8-abc")), ""));
+        sh(TaskScripts.cancel("t6-abc"), "");
     }
 
     @Test

@@ -2,8 +2,8 @@ package dev.incusspawn.mcp;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * The shell scripts behind background tasks: {@code exec(background)} and {@code delegate}.
@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 final class TaskScripts {
 
     static final String TASKS_DIR = "$HOME/.isx-mcp/tasks";
-    private static final Pattern TASK_ID = Pattern.compile("[a-z0-9-]+");
+    private static final String UNIT_PREFIX = "isx-task-";
 
     /**
      * Appended to the inner agent's system prompt. It frames the role; it does not forbid
@@ -39,13 +39,14 @@ final class TaskScripts {
     private TaskScripts() {}
 
     static String dir(String taskId) {
-        requireId(taskId);
+        ExecScript.requireId(taskId);
         return TASKS_DIR + "/" + taskId;
     }
 
-    static String unit(String taskId, int run) {
-        requireId(taskId);
-        return "isx-task-" + taskId + "-" + run;
+    /** The unit of one run; {@code run} may be a shell expression such as {@code $n}. */
+    static String unit(String taskId, String run) {
+        ExecScript.requireId(taskId);
+        return UNIT_PREFIX + taskId + "-" + run;
     }
 
     /** The run script of a background command. */
@@ -54,7 +55,7 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { echo 125 > \"$D/exit-1\"; exit 0; }\n");
-        appendEnv(sb, env);
+        ExecScript.appendExports(sb, env, "\n");
         sb.append("bash -c ").append(ExecScript.quote(command))
                 .append(" < /dev/null > \"$D/stdout\" 2> \"$D/stderr\"\n");
         sb.append("echo $? > \"$D/exit-1\"\n");
@@ -95,20 +96,21 @@ final class TaskScripts {
 
     /**
      * Start run {@code run} of a task: write its files, then hand the run script to systemd.
-     * The exec's stdin becomes the prompt file (empty for a command task).
+     * The exec's stdin becomes the prompt file (empty for a command task). An agent's first run
+     * also writes the brief its runs append to their system prompt.
      */
-    static String launch(String taskId, int run, String kind, String runScript, boolean writeBrief) {
+    static String launch(String taskId, int run, String kind, String runScript) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("set -e; D=").append(d).append("; mkdir -p \"$D\"; ");
         sb.append("cat > \"$D/prompt-").append(run).append(".md\"; ");
         sb.append("echo ").append(b64(runScript)).append(" | base64 -d > \"$D/run-").append(run).append(".sh\"; ");
-        if (writeBrief) sb.append("echo ").append(b64(DELEGATE_BRIEF)).append(" | base64 -d > \"$D/brief.md\"; ");
+        if (Tasks.AGENT.equals(kind) && run == 1) sb.append("echo ").append(b64(DELEGATE_BRIEF)).append(" | base64 -d > \"$D/brief.md\"; ");
         sb.append("echo ").append(kind).append(" > \"$D/kind\"; ");
         sb.append("echo ").append(run).append(" > \"$D/current\"; ");
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
-        sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, run))
+        sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
                 .append(" --property=KillMode=control-group -- su - agentuser -c \"bash $D/run-")
                 .append(run).append(".sh\"");
         return sb.toString();
@@ -124,7 +126,7 @@ final class TaskScripts {
                 + "n=$(cat \"$D/current\"); k=$(cat \"$D/kind\"); echo run=$n; echo kind=$k; "
                 // Through sudo: an unprivileged login session in a container may not reach
                 // systemd's system bus, and would report every running task as gone.
-                + "echo unit=$(sudo -n systemctl is-active isx-task-" + taskId + "-$n 2>/dev/null); "
+                + "echo unit=$(sudo -n systemctl is-active " + unit(taskId, "$n") + " 2>/dev/null); "
                 + "[ -f \"$D/exit-$n\" ] && echo exit=$(cat \"$D/exit-$n\"); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo events_bytes=$(stat -c %s \"$D/events-$n.jsonl\" 2>/dev/null || echo 0); echo ---; "
@@ -138,11 +140,28 @@ final class TaskScripts {
                 + "exit 0";
     }
 
+    /**
+     * Just whether each task is still running: {@code <id> running|done} per line. Cheap enough
+     * to poll, unlike {@link #status}, which also carries the output.
+     */
+    static String states(Collection<String> taskIds) {
+        var sb = new StringBuilder();
+        for (var id : taskIds) {
+            var d = dir(id);
+            sb.append("n=$(cat \"").append(d).append("/current\" 2>/dev/null); ")
+                    .append("if [ -n \"$n\" ] && [ ! -f \"").append(d).append("/exit-$n\" ] && ")
+                    .append("sudo -n systemctl is-active -q ").append(unit(id, "$n"))
+                    .append(" 2>/dev/null; then echo ").append(id).append(" running; else echo ")
+                    .append(id).append(" done; fi; ");
+        }
+        return sb.append("exit 0").toString();
+    }
+
     /** Stop the task's current run, and everything it started. */
     static String cancel(String taskId) {
         var d = dir(taskId);
         return "D=" + d + "; n=$(cat \"$D/current\" 2>/dev/null) || exit 0; "
-                + "sudo -n systemctl stop isx-task-" + taskId + "-$n 2>/dev/null; "
+                + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "[ -f \"$D/exit-$n\" ] || echo 143 > \"$D/exit-$n\"";
     }
 
@@ -168,20 +187,7 @@ final class TaskScripts {
                 + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
     }
 
-    private static void appendEnv(StringBuilder sb, Map<String, String> env) {
-        for (var e : env.entrySet()) {
-            if (!Pattern.matches("[A-Za-z_][A-Za-z0-9_]*", e.getKey())) {
-                throw new ToolError("invalid environment variable name: " + e.getKey());
-            }
-            sb.append("export ").append(e.getKey()).append('=').append(ExecScript.quote(e.getValue())).append('\n');
-        }
-    }
-
     private static String b64(String text) {
         return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static void requireId(String id) {
-        if (!TASK_ID.matcher(id).matches()) throw new IllegalArgumentException("bad task id: " + id);
     }
 }

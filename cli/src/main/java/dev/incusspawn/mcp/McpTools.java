@@ -1,10 +1,10 @@
 package dev.incusspawn.mcp;
 
-import dev.incusspawn.incus.Metadata;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -189,7 +189,7 @@ final class McpTools {
     private ToolResult createInstance(McpTool.Args args, ToolContext ctx) {
         var template = args.requireString("template");
         var info = policy.require(template);
-        var created = newInstance(template, args.string("name_hint"), ctx);
+        var created = newInstance(info, args.string("name_hint"), ctx);
         var node = JsonRpc.JSON.createObjectNode();
         node.put("instance", created.name());
         node.put("template", template);
@@ -203,22 +203,22 @@ final class McpTools {
         return ToolResult.json(node);
     }
 
-    private InstanceBackend.CreatedInstance newInstance(String template, String hint, ToolContext ctx) {
+    private InstanceBackend.CreatedInstance newInstance(InstanceBackend.TemplateInfo template, String hint,
+                                                        ToolContext ctx) {
         var name = session.reserve(template, hint);
-        ctx.progress("Creating " + name + " from " + template);
+        ctx.progress("Creating " + name + " from " + template.name());
         var start = System.nanoTime();
         InstanceBackend.CreatedInstance created;
         try {
-            created = backend.create(template, name, session.stamps());
+            created = backend.create(template.name(), name, session.stamps());
         } catch (RuntimeException e) {
             session.abandon(name);
-            McpAuditLog.record(session.id, "create_instance", name, template,
-                    (System.nanoTime() - start) / 1_000_000, "failed: " + e.getMessage());
+            McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start),
+                    "failed: " + e.getMessage());
             throw e;
         }
         session.created(name);
-        McpAuditLog.record(session.id, "create_instance", name, template,
-                (System.nanoTime() - start) / 1_000_000, "created");
+        McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start), "created");
         return created;
     }
 
@@ -247,7 +247,7 @@ final class McpTools {
         var metadata = session.requireOwned(name);
         var command = args.requireString("command");
         var cwd = args.string("cwd");
-        if (cwd == null || cwd.isBlank()) cwd = workdir(metadata);
+        if (cwd == null || cwd.isBlank()) cwd = IncusInstanceBackend.workdir(metadata);
         var env = args.stringMap("env");
         var stdin = args.string("stdin");
         if (stdin != null && stdin.getBytes(StandardCharsets.UTF_8).length > MAX_STDIN_BYTES) {
@@ -273,7 +273,7 @@ final class McpTools {
         // protocol reader.
         ctx.onCancel(() -> Thread.startVirtualThread(() ->
                 backend.exec(name, ExecScript.kill(runId), null, null, null)));
-        var progress = Thread.startVirtualThread(() -> {
+        var progress = !ctx.wantsProgress() ? null : Thread.startVirtualThread(() -> {
             try {
                 while (true) {
                     Thread.sleep(2000);
@@ -291,10 +291,12 @@ final class McpTools {
                     stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)),
                     out, err);
         } finally {
-            progress.interrupt();
-            progress.join();
+            if (progress != null) {
+                progress.interrupt();
+                progress.join();
+            }
         }
-        var millis = (System.nanoTime() - start) / 1_000_000;
+        var millis = millisSince(start);
         McpAuditLog.record(session.id, "exec", name, command, millis, "exit=" + exit);
 
         var timedOut = timeout != null && (exit == 124 || exit == 137);
@@ -314,13 +316,14 @@ final class McpTools {
             sb.append("--- ").append(label).append(": (empty) ---\n");
             return;
         }
+        var text = buffer.text();
         sb.append("--- ").append(label);
         if (buffer.truncated()) {
-            sb.append(" (last ").append(buffer.text().getBytes(StandardCharsets.UTF_8).length)
+            sb.append(" (last ").append(text.getBytes(StandardCharsets.UTF_8).length)
                     .append(" of ").append(buffer.total()).append(" bytes)");
         }
-        sb.append(" ---\n").append(buffer.text());
-        if (!buffer.text().endsWith("\n")) sb.append('\n');
+        sb.append(" ---\n").append(text);
+        if (!text.endsWith("\n")) sb.append('\n');
     }
 
     private ToolResult delegate(McpTool.Args args, ToolContext ctx) {
@@ -334,17 +337,17 @@ final class McpTools {
         if (template != null) {
             var info = policy.require(template);
             requireDelegate(info);
-            var created = newInstance(template, "task", ctx);
+            var created = newInstance(info, "task", ctx);
             instance = created.name();
             workdir = created.workdir();
         } else {
             var metadata = session.requireOwned(instance);
             var owned = instance;
-            var tpl = session.instances().stream().filter(o -> o.name().equals(owned))
-                    .map(McpSession.Owned::template).findFirst().orElse("");
-            requireDelegate(backend.templates().stream().filter(t -> t.name().equals(tpl)).findFirst()
-                    .orElseThrow(() -> new ToolError("cannot tell which template " + owned + " came from.")));
-            workdir = workdir(metadata);
+            if (session.instances().stream().noneMatch(o -> o.name().equals(owned) && o.supportsDelegate())) {
+                throw new ToolError("the template " + owned + " came from has no Claude Code to delegate to. "
+                        + "Use a template whose list_templates entry has supports_delegate, or exec.");
+            }
+            workdir = IncusInstanceBackend.workdir(metadata);
         }
         var cwd = args.string("cwd");
         var task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, instruction);
@@ -365,7 +368,7 @@ final class McpTools {
     }
 
     private ToolResult taskStatus(McpTool.Args args, ToolContext ctx) throws InterruptedException {
-        var task = tasks.require(args.requireString("task_id"));
+        var task = tasks.require(args.requireString("task_id")).task();
         var wait = args.integer("wait_seconds");
         var status = wait == null || wait <= 0 ? tasks.status(task)
                 : tasks.await(task, Math.min(wait, 300), ctx);
@@ -398,7 +401,7 @@ final class McpTools {
     }
 
     private ToolResult taskResult(McpTool.Args args) {
-        var task = tasks.require(args.requireString("task_id"));
+        var task = tasks.require(args.requireString("task_id")).task();
         var status = tasks.status(task);
         if (status.running()) {
             throw new ToolError("task " + task.id() + " is still running; use task_status with wait_seconds.");
@@ -429,10 +432,10 @@ final class McpTools {
     }
 
     private ToolResult sendMessage(McpTool.Args args) {
-        var task = tasks.require(args.requireString("task_id"));
+        var owned = tasks.require(args.requireString("task_id"));
+        var task = owned.task();
         var message = args.requireString("message");
-        var metadata = session.requireOwned(task.instance());
-        var updated = tasks.sendMessage(task.id(), message, workdir(metadata));
+        var updated = tasks.sendMessage(task, message, IncusInstanceBackend.workdir(owned.metadata()));
         McpAuditLog.record(session.id, "send_message", task.instance(), message, 0,
                 "task=" + task.id() + " turn=" + updated.runs());
         return ToolResult.text("Sent. Task " + task.id() + " is running turn " + updated.runs()
@@ -440,14 +443,14 @@ final class McpTools {
     }
 
     private ToolResult cancelTask(McpTool.Args args) {
-        var task = tasks.require(args.requireString("task_id"));
+        var task = tasks.require(args.requireString("task_id")).task();
         tasks.cancel(task);
         McpAuditLog.record(session.id, "cancel_task", task.instance(), null, 0, "task=" + task.id());
         return ToolResult.text("Stopped task " + task.id() + ".");
     }
 
     private ToolResult getDiff(McpTool.Args args) {
-        var task = tasks.require(args.requireString("task_id"));
+        var task = tasks.require(args.requireString("task_id")).task();
         if (!Tasks.AGENT.equals(task.kind())) {
             throw new ToolError("get_diff is for delegated tasks; for a command, run git diff with exec.");
         }
@@ -458,15 +461,15 @@ final class McpTools {
 
     private static String lastLines(String text, int n) {
         var lines = text.strip().split("\n");
-        return String.join("\n", java.util.Arrays.asList(lines).subList(Math.max(0, lines.length - n), lines.length));
+        return String.join("\n", Arrays.asList(lines).subList(Math.max(0, lines.length - n), lines.length));
     }
 
     private ToolResult destroyInstance(McpTool.Args args) {
         var name = args.requireString("instance");
         var start = System.nanoTime();
         var destroyed = session.destroy(name);
-        McpAuditLog.record(session.id, "destroy_instance", name, null,
-                (System.nanoTime() - start) / 1_000_000, destroyed ? "destroyed" : "already-gone");
+        McpAuditLog.record(session.id, "destroy_instance", name, null, millisSince(start),
+                destroyed ? "destroyed" : "already-gone");
         return ToolResult.text(destroyed ? "Destroyed " + name + "." : name + " was already gone.");
     }
 
@@ -478,8 +481,7 @@ final class McpTools {
                 + "who can open it with: isx shell " + name);
     }
 
-    static String workdir(java.util.Map<String, String> metadata) {
-        var workdir = metadata.getOrDefault(Metadata.WORKDIR, "");
-        return workdir.isEmpty() ? IncusInstanceBackend.AGENT_HOME : workdir;
+    private static long millisSince(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 }

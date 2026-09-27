@@ -56,10 +56,21 @@ class FakeBackend implements InstanceBackend {
     }
 
     @Override
-    public boolean destroy(String name) {
-        if (instances.remove(name) == null) return false;
+    public java.util.Optional<TemplateInfo> template(String name) {
+        return templates.stream().filter(t -> t.name().equals(name)).findFirst();
+    }
+
+    @Override
+    public void destroy(String name) {
+        instances.remove(name);
         destroyed.add(name);
-        return true;
+    }
+
+    volatile int proxyRefreshes;
+
+    @Override
+    public void refreshProxy() {
+        proxyRefreshes++;
     }
 
     @Override

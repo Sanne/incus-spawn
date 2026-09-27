@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,7 +40,6 @@ final class McpServer {
     private final String instructions;
     private final Consumer<JsonNode> onInitialize;
     private final Map<JsonNode, ToolContext> inFlight = new ConcurrentHashMap<>();
-    private final Set<JsonNode> cancelled = ConcurrentHashMap.newKeySet();
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
     McpServer(McpTransport transport, List<McpTool> tools, String version, String instructions,
@@ -113,7 +111,6 @@ final class McpServer {
             var ctx = inFlight.get(requestId);
             if (ctx != null) {
                 // The client has stopped waiting: no response is sent for a cancelled request.
-                cancelled.add(requestId);
                 ctx.cancel();
             }
         }
@@ -172,12 +169,12 @@ final class McpServer {
             } finally {
                 inFlight.remove(id);
             }
-            if (!cancelled.remove(id)) send(JsonRpc.response(id, result.toJson()));
+            if (!ctx.cancelled()) send(JsonRpc.response(id, result.toJson()));
         });
     }
 
     private ToolContext.ProgressSink progressSink(JsonNode token) {
-        if (token == null || token.isNull()) return message -> {};
+        if (token == null || token.isNull()) return null;
         var state = new Object() {
             int count;
             long last;

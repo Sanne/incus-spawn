@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -27,9 +28,10 @@ final class McpSession {
     private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 
     /** An instance this session created (or is creating). */
-    record Owned(String name, String template, Instant created, boolean ready, boolean kept) {
-        Owned asReady() { return new Owned(name, template, created, true, kept); }
-        Owned asKept() { return new Owned(name, template, created, ready, true); }
+    record Owned(String name, String template, boolean supportsDelegate, Instant created,
+                 boolean ready, boolean kept) {
+        Owned asReady() { return new Owned(name, template, supportsDelegate, created, true, kept); }
+        Owned asKept() { return new Owned(name, template, supportsDelegate, created, ready, true); }
     }
 
     final SessionId id;
@@ -72,7 +74,7 @@ final class McpSession {
      * it exists: two concurrent creates must not both pass a cap of one. Registered before the
      * copy, so a session that ends mid-create still reaps it.
      */
-    synchronized String reserve(String template, String hint) {
+    synchronized String reserve(InstanceBackend.TemplateInfo template, String hint) {
         var max = config.get().maxInstances();
         var active = owned.values().stream().filter(o -> !o.kept()).count();
         if (active >= max) {
@@ -83,7 +85,7 @@ final class McpSession {
             throw new ToolError("name_hint must be 1-16 characters of a-z, 0-9 and '-', "
                     + "starting with a letter or digit");
         }
-        var base = template.startsWith("tpl-") ? template.substring(4) : template;
+        var base = template.name().startsWith("tpl-") ? template.name().substring(4) : template.name();
         String name;
         do {
             name = "mcp-" + base + (hint != null ? "-" + hint : "") + "-" + randomSuffix();
@@ -91,7 +93,7 @@ final class McpSession {
         if (name.length() > 63) {
             throw new ToolError("instance name '" + name + "' would exceed 63 characters; use a shorter name_hint");
         }
-        owned.put(name, new Owned(name, template, Instant.now(), false, false));
+        owned.put(name, new Owned(name, template.name(), template.supportsDelegate(), Instant.now(), false, false));
         return name;
     }
 
@@ -108,11 +110,7 @@ final class McpSession {
         return List.copyOf(owned.values());
     }
 
-    /**
-     * Check that this session owns {@code name}, in the registry and by the stamp in Incus, and
-     * return the instance's {@code user.incus-spawn.*} config read for that check.
-     */
-    Map<String, String> requireOwned(String name) {
+    private Owned lookup(String name) {
         Owned entry;
         synchronized (this) {
             entry = owned.get(name);
@@ -121,15 +119,26 @@ final class McpSession {
             throw new ToolError("'" + name + "' is not an instance this session created. "
                     + "Use list_instances to see yours, or create_instance to make one.");
         }
-        if (!entry.ready()) throw new ToolError("'" + name + "' is still being created.");
+        return entry;
+    }
+
+    /** Whether the instance Incus has under an owned name still carries this session's stamp. */
+    private boolean ours(Map<String, String> metadata) {
+        return id.toString().equals(metadata.get(Metadata.MCP_SESSION));
+    }
+
+    /**
+     * Check that this session owns {@code name}, in the registry and by the stamp in Incus, and
+     * return the instance's {@code user.incus-spawn.*} config read for that check.
+     */
+    Map<String, String> requireOwned(String name) {
+        if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created.");
         var metadata = backend.metadata(name);
         if (metadata == null) {
             abandon(name);
             throw new ToolError("'" + name + "' no longer exists.");
         }
-        if (!id.toString().equals(metadata.get(Metadata.MCP_SESSION))) {
-            throw new ToolError("'" + name + "' is not owned by this session any more.");
-        }
+        if (!ours(metadata)) throw new ToolError("'" + name + "' is not owned by this session any more.");
         if (!metadata.getOrDefault(Metadata.PENDING_OP, "").isEmpty()) {
             throw new ToolError("'" + name + "' is busy (" + metadata.get(Metadata.PENDING_OP) + ").");
         }
@@ -147,20 +156,17 @@ final class McpSession {
 
     /** Destroy an owned instance. Idempotent for instances already gone. */
     boolean destroy(String name) {
-        Owned entry;
-        synchronized (this) {
-            entry = owned.get(name);
-        }
-        if (entry == null) {
-            throw new ToolError("'" + name + "' is not an instance this session created.");
-        }
+        lookup(name);
         var metadata = backend.metadata(name);
-        if (metadata != null && !id.toString().equals(metadata.get(Metadata.MCP_SESSION))) {
+        if (metadata != null && !ours(metadata)) {
             throw new ToolError("'" + name + "' is not owned by this session any more.");
         }
-        var destroyed = metadata != null && backend.destroy(name);
+        if (metadata != null) {
+            backend.destroy(name);
+            backend.refreshProxy();
+        }
         abandon(name);
-        return destroyed;
+        return metadata != null;
     }
 
     /**
@@ -178,11 +184,11 @@ final class McpSession {
                 try {
                     var metadata = backend.metadata(o.name());
                     // Never delete what is not ours, even at exit.
-                    if (metadata == null || !id.toString().equals(metadata.get(Metadata.MCP_SESSION))
-                            || metadata.containsKey(Metadata.MCP_KEPT)) {
+                    if (metadata == null || !ours(metadata) || metadata.containsKey(Metadata.MCP_KEPT)) {
                         return null;
                     }
-                    return backend.destroy(o.name()) ? o.name() : null;
+                    backend.destroy(o.name());
+                    return o.name();
                 } catch (RuntimeException e) {
                     System.err.println("isx mcp: could not reap " + o.name() + ": " + e.getMessage());
                     return null;
@@ -197,6 +203,7 @@ final class McpSession {
                 }
             }
         }
+        if (!reaped.isEmpty()) backend.refreshProxy();
         synchronized (this) {
             reaped.forEach(owned::remove);
         }
@@ -206,7 +213,7 @@ final class McpSession {
     private static String randomSuffix() {
         // Uniqueness, not secrecy; and no Random in a static field, which the native image
         // would initialize at build time.
-        var random = java.util.concurrent.ThreadLocalRandom.current();
+        var random = ThreadLocalRandom.current();
         var sb = new StringBuilder(5);
         for (int i = 0; i < 5; i++) sb.append(ALPHABET.charAt(random.nextInt(ALPHABET.length())));
         return sb.toString();

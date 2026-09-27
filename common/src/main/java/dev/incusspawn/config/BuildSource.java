@@ -109,6 +109,11 @@ public class BuildSource {
         return root != null ? root.toString() : null;
     }
 
+    /** Whether any definition this image was built from was project-local. */
+    public boolean usedProjectLocal() {
+        return definitions.values().stream().anyMatch(def -> def.getProjectRoot() != null);
+    }
+
     public static BuildSource fromJson(String json) {
         if (json == null || json.isBlank()) return null;
         try {

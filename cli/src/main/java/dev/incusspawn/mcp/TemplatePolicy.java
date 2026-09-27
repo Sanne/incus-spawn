@@ -10,6 +10,9 @@ import java.util.function.Supplier;
  * be defined by a trusted layer (never a project-local {@code .incus-spawn/} definition, nor an
  * image built from one), and be built. Unbuilt templates are refused, never built on demand.
  *
+ * <p>Definitions come from trusted layers only (see {@code IncusInstanceBackend}), so a
+ * repository's definitions cannot stand in for an approved template's.
+ *
  * <p>The config is read on every call, so a person narrowing the list affects a running session
  * at once. Nothing here, or anywhere in {@code isx mcp}, can widen it.
  */
@@ -43,11 +46,11 @@ final class TemplatePolicy {
                     + (listed.isEmpty() ? " (none are)." : "; approved: " + String.join(", ", listed) + ".")
                     + " " + HOW_TO_APPROVE);
         }
-        var info = backend.templates().stream().filter(t -> t.name().equals(name)).findFirst()
+        var info = backend.template(name)
                 .orElseThrow(() -> new ToolError("template '" + name + "' is approved but has no "
                         + "definition. Ask the user to check mcp.templates in their config."));
         if (info.projectLocal()) {
-            throw new ToolError("template '" + name + "' comes from a project-local definition "
+            throw new ToolError("template '" + name + "' was built from a project-local definition "
                     + "(.incus-spawn/ in a repository), which agents may never use.");
         }
         if (!info.built()) {

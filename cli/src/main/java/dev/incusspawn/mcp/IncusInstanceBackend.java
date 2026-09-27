@@ -12,13 +12,17 @@ import dev.incusspawn.tui.InstanceLockManager;
 
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
-/** {@link InstanceBackend} over the real Incus daemon, through the same code paths as the CLI. */
+/**
+ * {@link InstanceBackend} over the real Incus daemon, through the same code paths as the CLI.
+ * Definitions always come from {@link ImageDef#loadTrusted()}: {@code isx mcp} runs in whatever
+ * repository the agent was started in, and its {@code .incus-spawn/} must not reach an agent's
+ * instance -- not even by overriding a parent of an approved template.
+ */
 final class IncusInstanceBackend implements InstanceBackend {
 
     static final String AGENT_USER = "agentuser";
@@ -32,23 +36,35 @@ final class IncusInstanceBackend implements InstanceBackend {
         this.locks = locks;
     }
 
+    /** Where commands run by default: the template's workdir, else agentuser's home. */
+    static String workdir(Map<String, String> metadata) {
+        var workdir = metadata == null ? "" : metadata.getOrDefault(Metadata.WORKDIR, "");
+        return workdir.isEmpty() ? AGENT_HOME : workdir;
+    }
+
     @Override
     public List<TemplateInfo> templates() {
-        var defs = ImageDef.loadAll();
+        var defs = ImageDef.loadTrusted();
         var instances = instanceConfigs();
-        var version = BuildInfo.instance().version();
-        var result = new ArrayList<TemplateInfo>();
-        for (var def : defs.values()) {
-            var config = instances.get(def.getName());
-            var built = config != null && Metadata.TYPE_BASE.equals(config.get(Metadata.TYPE));
-            var stale = built && !version.equals(config.getOrDefault(Metadata.BUILD_VERSION, ""));
-            // The definition may be trusted now while the image was built from a project-local one
-            var projectLocal = def.getProjectRoot() != null
-                    || (config != null && builtFromProjectLocal(config));
-            result.add(new TemplateInfo(def.getName(), def.getDescription(), built, stale,
-                    chainTools(def, defs), projectLocal));
-        }
-        return result;
+        return defs.values().stream().map(def -> describe(def, defs, instances.get(def.getName()))).toList();
+    }
+
+    @Override
+    public Optional<TemplateInfo> template(String name) {
+        var defs = ImageDef.loadTrusted();
+        var def = defs.get(name);
+        return def == null ? Optional.empty() : Optional.of(describe(def, defs, metadata(name)));
+    }
+
+    private static TemplateInfo describe(ImageDef def, Map<String, ImageDef> defs, Map<String, String> config) {
+        var built = config != null && Metadata.TYPE_BASE.equals(config.get(Metadata.TYPE));
+        var stale = built && !BuildInfo.instance().version().equals(config.getOrDefault(Metadata.BUILD_VERSION, ""));
+        var source = config == null ? null : BuildSource.fromJson(config.get(Metadata.BUILD_SOURCE));
+        var tools = ImageDef.chain(def, defs).stream()
+                .flatMap(d -> d.getTools().stream().map(ref -> ref.getName()))
+                .distinct().toList();
+        return new TemplateInfo(def.getName(), def.getDescription(), built, stale, tools,
+                source != null && source.usedProjectLocal());
     }
 
     @Override
@@ -58,7 +74,7 @@ final class IncusInstanceBackend implements InstanceBackend {
         var request = BranchFlow.Request.defaults(template, name).withExtraConfig(stamps);
         BranchFlow.Preflight preflight;
         try {
-            preflight = BranchFlow.preflight(incus, request);
+            preflight = BranchFlow.preflight(incus, request, ImageDef.loadTrusted());
         } catch (BranchFlow.BranchException e) {
             throw new ToolError("cannot create an instance from " + template + ": " + e.getMessage());
         }
@@ -67,7 +83,10 @@ final class IncusInstanceBackend implements InstanceBackend {
         } catch (RuntimeException e) {
             // A half-made branch is useless to the agent and invisible to the user; take it away.
             try {
-                if (incus.exists(name)) destroy(name);
+                if (incus.exists(name)) {
+                    destroy(name);
+                    refreshProxy();
+                }
             } catch (RuntimeException cleanup) {
                 System.err.println("isx mcp: could not remove the failed instance " + name
                         + ": " + cleanup.getMessage());
@@ -75,22 +94,21 @@ final class IncusInstanceBackend implements InstanceBackend {
             throw new ToolError("creating " + name + " from " + template + " failed: " + e.getMessage());
         }
         var config = metadata(name);
-        var workdir = config == null ? "" : config.getOrDefault(Metadata.WORKDIR, "");
-        return new CreatedInstance(name,
-                config == null ? null : config.get(Metadata.STATIC_IP),
-                workdir.isEmpty() ? AGENT_HOME : workdir);
+        return new CreatedInstance(name, config == null ? null : config.get(Metadata.STATIC_IP), workdir(config));
     }
 
     @Override
-    public boolean destroy(String name) {
-        if (!incus.exists(name)) return false;
+    public void destroy(String name) {
         var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
         if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process; try again.");
         try (var held = lock.get()) {
             InstanceDestroyer.deleteHeld(incus, name);
         }
+    }
+
+    @Override
+    public void refreshProxy() {
         InstanceDestroyer.refreshProxy();
-        return true;
     }
 
     @Override
@@ -140,23 +158,5 @@ final class IncusInstanceBackend implements InstanceBackend {
             if (e.getKey().startsWith(Metadata.PREFIX)) config.put(e.getKey(), e.getValue().asText());
         });
         return config;
-    }
-
-    private static boolean builtFromProjectLocal(Map<String, String> config) {
-        var source = BuildSource.fromJson(config.get(Metadata.BUILD_SOURCE));
-        return source != null && source.getDefinitions().values().stream()
-                .anyMatch(def -> def.getProjectRoot() != null);
-    }
-
-    /** Tool names across the template's parent chain. */
-    private static List<String> chainTools(ImageDef def, Map<String, ImageDef> defs) {
-        var tools = new LinkedHashSet<String>();
-        var seen = new LinkedHashSet<String>();
-        var current = def;
-        while (current != null && seen.add(current.getName())) {
-            current.getTools().forEach(ref -> tools.add(ref.getName()));
-            current = current.getParent() == null ? null : defs.get(current.getParent());
-        }
-        return List.copyOf(tools);
     }
 }

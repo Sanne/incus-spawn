@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
 
 /**
  * What agents did through {@code isx mcp}, one line per tool call, in
@@ -23,7 +24,7 @@ final class McpAuditLog {
 
     static void record(SessionId session, String tool, String instance, String detail,
                        long millis, String outcome) {
-        var text = detail == null ? "" : SecretRedactor.scrubText(detail, java.util.Map.of()).text().replace('\n', ' ');
+        var text = detail == null ? "" : SecretRedactor.scrubText(detail, Map.of()).text().replace('\n', ' ');
         if (text.length() > MAX_DETAIL) text = text.substring(0, MAX_DETAIL) + "...";
         var line = LocalDateTime.now().format(FMT) + " session=" + session + " tool=" + tool
                 + (instance != null ? " instance=" + instance : "")

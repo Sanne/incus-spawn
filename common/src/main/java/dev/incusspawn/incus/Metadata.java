@@ -76,16 +76,16 @@ public final class Metadata {
 
     private Metadata() {}
 
+    public static boolean isMcpKey(String key) {
+        return key.startsWith(MCP_PREFIX);
+    }
+
     /**
      * Key holding which named credential account this instance uses for a config
      * namespace ({@code claude}, {@code github}, ... -- the {@code config-namespace}
      * a tool declares). The value is an account <em>name</em>, never a credential:
      * secrets stay on the host, which is the whole point of the proxy.
      */
-    public static boolean isMcpKey(String key) {
-        return key.startsWith(MCP_PREFIX);
-    }
-
     public static String accountKey(String namespace) {
         return ACCOUNT_PREFIX + namespace;
     }

@@ -17,6 +17,8 @@ class McpSessionTest {
     private static final SessionId SELF = new SessionId(4242, 1_700_000_000_000L);
 
     private final FakeBackend backend = new FakeBackend().template("tpl-dev", true);
+    private static final InstanceBackend.TemplateInfo TEMPLATE =
+            new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, List.of(), false);
 
     private McpSession session(int maxInstances) {
         var config = new McpConfig();
@@ -25,7 +27,7 @@ class McpSessionTest {
     }
 
     private static String create(McpSession session, FakeBackend backend) {
-        var name = session.reserve("tpl-dev", null);
+        var name = session.reserve(TEMPLATE, null);
         backend.create("tpl-dev", name, session.stamps());
         session.created(name);
         return name;
@@ -34,31 +36,31 @@ class McpSessionTest {
     @Test
     void namesSayWhereTheyCameFrom() {
         var s = session(3);
-        assertTrue(s.reserve("tpl-dev", null).matches("mcp-dev-[a-z2-7]{5}"));
-        assertTrue(s.reserve("tpl-dev", "flaky-test").matches("mcp-dev-flaky-test-[a-z2-7]{5}"));
+        assertTrue(s.reserve(TEMPLATE, null).matches("mcp-dev-[a-z2-7]{5}"));
+        assertTrue(s.reserve(TEMPLATE, "flaky-test").matches("mcp-dev-flaky-test-[a-z2-7]{5}"));
     }
 
     @Test
     void aHintCannotSmuggleCharactersIntoTheName() {
         var s = session(3);
         for (var hint : List.of("Upper", "semi;colon", "-leading", "much-too-long-a-hint", "a b")) {
-            assertThrows(ToolError.class, () -> s.reserve("tpl-dev", hint), hint);
+            assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, hint), hint);
         }
     }
 
     @Test
     void theCapCountsCreatesStillInFlight() {
         var s = session(1);
-        s.reserve("tpl-dev", null); // not created yet
-        var e = assertThrows(ToolError.class, () -> s.reserve("tpl-dev", null));
+        s.reserve(TEMPLATE, null); // not created yet
+        var e = assertThrows(ToolError.class, () -> s.reserve(TEMPLATE, null));
         assertTrue(e.getMessage().contains("mcp.max-instances"), e.getMessage());
     }
 
     @Test
     void anAbandonedCreateFreesItsSlot() {
         var s = session(1);
-        s.abandon(s.reserve("tpl-dev", null));
-        s.reserve("tpl-dev", null);
+        s.abandon(s.reserve(TEMPLATE, null));
+        s.reserve(TEMPLATE, null);
     }
 
     @Test
@@ -113,7 +115,7 @@ class McpSessionTest {
     @Test
     void anInstanceStillBeingCreatedIsNotUsable() {
         var s = session(3);
-        var name = s.reserve("tpl-dev", null);
+        var name = s.reserve(TEMPLATE, null);
         assertThrows(ToolError.class, () -> s.requireOwned(name));
     }
 
@@ -134,6 +136,7 @@ class McpSessionTest {
         var temp = create(s, backend);
         s.keep(kept);
         assertEquals(List.of(temp), s.reap());
+        assertEquals(1, backend.proxyRefreshes, "one proxy refresh for the whole reap");
         assertTrue(backend.instances.containsKey(kept));
         assertFalse(backend.instances.containsKey(temp));
     }

@@ -36,9 +36,8 @@ import java.util.Map;
  *
  * <p>Split in two so a caller can refuse before anything exists: {@link #preflight} runs every
  * check that can reject the request and creates nothing; {@link #create} copies, configures and
- * (optionally) starts. Any caller that branches for someone -- {@code isx branch} today, other
- * front ends later -- goes through here, so every branch gets the same account resolution and
- * the same credential and CA checks.
+ * (optionally) starts. Both {@code isx branch} and {@code isx mcp} go through here, so an agent
+ * gets exactly the branch a user would -- same account resolution, same credential and CA checks.
  *
  * <p>Progress is reported through {@link BuildOutput} as before; a headless caller redirects
  * {@code System.out} rather than getting a second code path.
@@ -113,16 +112,16 @@ public final class BranchFlow {
 
     /**
      * Run every check that can refuse the branch, before anything is created. The caller has
-     * already established that {@code source} exists (the CLI does, while resolving it), so it is
-     * not looked up again here.
+     * already established that {@code source} exists (the CLI while resolving it, the MCP server
+     * through its template policy), so it is not looked up again here.
      */
     public static Preflight preflight(IncusClient incus, Request req) {
         return preflight(incus, req, ImageDef.loadAll());
     }
 
     /**
-     * {@link #preflight(IncusClient, Request)} against a given set of definitions, for a caller
-     * that must not see all of them (e.g. none from the working directory's project).
+     * {@link #preflight(IncusClient, Request)} against a given set of definitions, e.g.
+     * {@link ImageDef#loadTrusted()} for a caller that must not see project-local ones.
      */
     public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs) {
         if (incus.exists(req.name())) {

@@ -594,7 +594,25 @@ public class ImageDef {
         return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn);
     }
 
+    /**
+     * The definitions from trusted layers only -- built-in, user and search paths -- leaving out
+     * the working directory's {@code .incus-spawn/}. For a caller acting for someone other than
+     * the user in that directory ({@code isx mcp}, whose working directory is whatever repository
+     * the agent was started in), a project-local definition must not so much as override a
+     * parent of an approved template.
+     */
+    public static Map<String, ImageDef> loadTrusted() {
+        Consumer<String> warnings = msg -> System.err.println(msg);
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), warnings, false).defs();
+    }
+
     static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {
+        return loadAllWithConflicts(searchPaths, warnings, true);
+    }
+
+    private static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths,
+                                                                     Consumer<String> warnings,
+                                                                     boolean includeProject) {
         var defs = new LayeredDefinitions<ImageDef>("image");
         loadBuiltins(defs, warnings);
         loadFromDirectory(userImagesDir(), defs, warnings, null);
@@ -602,7 +620,7 @@ public class ImageDef {
             var expandedPath = HostResourceSetup.expandHostTilde(searchPath);
             loadFromDirectory(Path.of(expandedPath).resolve("images"), defs, warnings, null);
         }
-        loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
+        if (includeProject) loadFromDirectory(PROJECT_IMAGES_DIR, defs, warnings, projectRoot());
         inheritTypes(defs.defs());
         return defs;
     }

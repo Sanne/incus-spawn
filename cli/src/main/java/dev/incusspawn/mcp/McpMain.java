@@ -2,12 +2,14 @@ package dev.incusspawn.mcp;
 
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * {@code isx mcp}: serve this session over stdio until the client goes away, then destroy the
@@ -26,17 +28,25 @@ public final class McpMain {
     private McpMain() {}
 
     /** Serve until end of input; returns the process exit code. */
-    public static int run(BooleanSupplier initialized) throws Exception {
+    public static int run(BooleanSupplier isInitialized) throws Exception {
         var guard = StdioGuard.install();
+        // Re-checked per call so `isx init` can run mid-session; once true it stays true.
+        var initDone = new AtomicBoolean();
+        BooleanSupplier initialized = () -> {
+            if (!initDone.get() && isInitialized.getAsBoolean()) initDone.set(true);
+            return initDone.get();
+        };
 
         var self = SessionId.current();
         var owner = System.getProperty("user.name", "");
         var clientPid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(-1L);
         var cwd = Path.of("").toAbsolutePath().toString();
         var backend = new IncusInstanceBackend(RuntimeServices.incus(), RuntimeServices.lockManager());
-        var session = new McpSession(self, owner, clientPid, cwd, backend, () -> SpawnConfig.load().mcp());
-        var tasks = new Tasks(session, backend, () -> SpawnConfig.load().mcp());
-        var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> SpawnConfig.load().mcp()), tasks);
+        // Read on every use: a person narrowing the config affects a running session at once.
+        Supplier<McpConfig> config = () -> SpawnConfig.load().mcp();
+        var session = new McpSession(self, owner, clientPid, cwd, backend, config);
+        var tasks = new Tasks(session, backend, config);
+        var tools = new McpTools(session, backend, new TemplatePolicy(backend, config), tasks);
 
         var reaped = new AtomicBoolean();
         Runnable reap = () -> {

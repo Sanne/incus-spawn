@@ -17,12 +17,13 @@ final class ToolContext {
     private final List<Runnable> onCancel = new ArrayList<>();
     private volatile boolean cancelled;
 
+    /** {@code progress} null when the client did not ask for progress notifications. */
     ToolContext(ProgressSink progress) {
         this.progress = progress;
     }
 
-    static ToolContext none() {
-        return new ToolContext(m -> {});
+    boolean wantsProgress() {
+        return progress != null;
     }
 
     boolean cancelled() {
@@ -30,7 +31,7 @@ final class ToolContext {
     }
 
     void progress(String message) {
-        progress.progress(message);
+        if (progress != null) progress.progress(message);
     }
 
     /** Run {@code action} if the call is cancelled -- at once, if it already has been. */

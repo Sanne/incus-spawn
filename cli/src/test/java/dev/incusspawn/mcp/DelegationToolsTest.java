@@ -47,6 +47,11 @@ class DelegationToolsTest {
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
+            if (script.startsWith("n=$(cat")) { // the state probe: one line per task asked about
+                var ids = java.util.regex.Pattern.compile("echo (t[0-9a-z-]+) running").matcher(script).results()
+                        .map(m -> m.group(1) + (taskState.equals("running") ? " running" : " done")).toList();
+                return String.join("\n", ids) + "\n";
+            }
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // launch, cancel
             return taskState.equals("running")
                     ? "run=1\nkind=agent\nunit=active\nevents_bytes=10\n---\n" + EVENTS.lines().limit(2)
