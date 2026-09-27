@@ -1163,7 +1163,7 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
         incus.start(buildName);
-        waitForReady(buildName);
+        incus.waitForReady(buildName);
         BuildOutput.stepDone();
         warnDnfCacheUnavailable(dnfCacheWarning);
 
@@ -2299,13 +2299,6 @@ public class BuildCommand extends BaseCommand {
                 throw new RuntimeException(message);
             }
             try { Thread.sleep(2000); } catch (InterruptedException e) { break; }
-        }
-    }
-
-    private void waitForReady(String container) {
-        if (!incus.pollUntilReady(container, 30, "echo", "ready")) {
-            throw new RuntimeException(
-                    "Container " + container + " failed to become ready after 30 seconds");
         }
     }
 

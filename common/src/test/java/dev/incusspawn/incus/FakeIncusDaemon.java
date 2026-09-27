@@ -19,8 +19,10 @@ import java.util.Map;
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
  * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
- * instance listing, network and profile GET, file push and async-operation waits. Anything else
- * answers 404, so an unexpected request still shows up in {@link #requests()}.
+ * instance listing, console log GET, network and profile GET, file push and async-operation
+ * waits. Anything else answers 404, so an unexpected request still shows up in
+ * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
+ * answers.
  */
 public final class FakeIncusDaemon implements IncusTransport {
 
@@ -38,6 +40,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
     private final Map<String, String> pushedModes = new LinkedHashMap<>();
+    private final Map<String, String> consoleLogs = new LinkedHashMap<>();
     private boolean refuseNextWrite;
     private int nextOperation = 1;
 
@@ -103,6 +106,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Refuse the next instance PUT or PATCH, whatever it carries, as a transient failure would. */
     public FakeIncusDaemon refuseNextWrite() {
         refuseNextWrite = true;
+        return this;
+    }
+
+    /** What the instance's console log holds, as {@code incus console --show-log} would print it. */
+    public FakeIncusDaemon consoleLog(String instanceName, String log) {
+        consoleLogs.put(instanceName, log);
         return this;
     }
 
@@ -235,6 +244,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             applyPatch(instance, JSON.readTree(body));
             expand(name);
             return sync(JSON.createObjectNode());
+        }
+        if (rest.equals("/console") && method.equals("GET")) {
+            var log = consoleLogs.getOrDefault(name, "");
+            return new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         if (rest.equals("/state") && method.equals("PUT")) {
             var action = JSON.readTree(body).path("action").asText();

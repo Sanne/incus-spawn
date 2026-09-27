@@ -243,31 +243,143 @@ public class IncusClient {
             try {
                 if (shellExec(name, command).success()) return true;
             } catch (Exception ignored) {
-                try {
-                    var status = getInstanceStatus(name);
-                    if ("Stopped".equals(status) || "Error".equals(status)) {
-                        throw new IncusException("Container " + name
-                                + " died during startup (status: " + status + ")");
-                    }
-                } catch (IncusException e) {
-                    throw e;
-                } catch (Exception statusCheckFailed) {
-                    // Daemon unreachable — retry the poll rather than crashing.
-                }
+                failIfDied(name, startupState(name));
             }
-            try {
-                Thread.sleep(POLL_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+            if (!pause()) break;
         }
         return false;
     }
 
+    /**
+     * How long {@link #waitForReady} waits. A container answers exec as soon as it starts; a VM
+     * only once firmware, kernel and systemd have brought up its incus-agent, which a first boot
+     * (cloud-init, growpart) or nested virtualization can stretch well past a container's budget.
+     * A VM whose console log shows the agent failing gets {@code agentFailureGraceNanos} more to
+     * recover, since systemd restarts it, then fails fast instead of waiting out the whole budget.
+     */
+    record ReadyTimeouts(long containerNanos, long vmNanos, long agentFailureGraceNanos,
+                         long consoleCheckIntervalNanos) {
+        static final ReadyTimeouts DEFAULT = new ReadyTimeouts(
+                seconds(30), seconds(120), seconds(20), seconds(2));
+
+        static long seconds(long s) {
+            return s * 1_000_000_000L;
+        }
+    }
+
+    private ReadyTimeouts readyTimeouts = ReadyTimeouts.DEFAULT;
+
+    /** Shorten {@link #waitForReady}'s waits; tests only. */
+    void readyTimeouts(ReadyTimeouts timeouts) {
+        this.readyTimeouts = timeouts;
+    }
+
+    /**
+     * Wait until {@code name} answers exec. For a VM that means its incus-agent is up, so a
+     * failure names the agent and quotes whatever its console log says about it (#844).
+     *
+     * <p>Whether {@code name} is a VM is learnt from the status GET that follows a failed probe,
+     * so an instance that is ready at once costs no extra request.
+     */
     public void waitForReady(String name) {
-        if (!pollUntilReady(name, 30, "echo", "ready")) {
-            throw new IncusException("Container " + name + " failed to become ready after 30 seconds");
+        var t = readyTimeouts;
+        long start = System.nanoTime();
+        long deadline = start + t.containerNanos();
+        boolean vm = false;
+        long nextConsoleCheck = start;
+        long agentFailedAt = 0;
+        List<String> agentFailure = List.of();
+        while (System.nanoTime() < deadline) {
+            try {
+                if (shellExec(name, "echo", "ready").success()) return;
+            } catch (Exception ignored) {
+                var instance = startupState(name);
+                if (!vm && instance != null
+                        && "virtual-machine".equals(instance.path("type").asText(""))) {
+                    vm = true;
+                    deadline = start + t.vmNanos();
+                }
+                failIfDied(name, instance);
+            }
+            long now = System.nanoTime();
+            if (vm && now >= nextConsoleCheck) {
+                nextConsoleCheck = now + t.consoleCheckIntervalNanos();
+                var lines = VmAgentFailure.matchingLines(consoleLog(name));
+                if (!lines.isEmpty()) {
+                    agentFailure = lines;
+                    if (agentFailedAt == 0) agentFailedAt = now;
+                }
+                if (agentFailedAt != 0 && now - agentFailedAt >= t.agentFailureGraceNanos()) {
+                    throw new IncusException(agentFailedMessage(name, agentFailure));
+                }
+            }
+            if (!pause()) break;
+        }
+        long waited = (System.nanoTime() - start) / 1_000_000_000L;
+        if (!vm) {
+            throw new IncusException("Container " + name + " failed to become ready after "
+                    + waited + " seconds");
+        }
+        if (agentFailure.isEmpty()) {
+            agentFailure = VmAgentFailure.matchingLines(consoleLog(name));
+        }
+        if (!agentFailure.isEmpty()) throw new IncusException(agentFailedMessage(name, agentFailure));
+        throw new IncusException("VM " + name + " is running, but its incus-agent did not come up within "
+                + waited + " seconds.\nIts boot log may say why: incus console " + name + " --show-log");
+    }
+
+    private static String agentFailedMessage(String name, List<String> lines) {
+        var msg = new StringBuilder("The incus-agent in VM ").append(name)
+                .append(" failed to start. Its console log says:\n");
+        lines.forEach(l -> msg.append("  ").append(l).append('\n'));
+        msg.append("Full boot log: incus console ").append(name).append(" --show-log");
+        return msg.toString();
+    }
+
+    /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */
+    private void failIfDied(String name, JsonNode instance) {
+        if (instance == null) return;
+        var status = instance.path("status").asText("");
+        if (!"Stopped".equals(status) && !"Error".equals(status)) return;
+        if (!"virtual-machine".equals(instance.path("type").asText(""))) {
+            throw new IncusException("Container " + name + " died during startup (status: " + status + ")");
+        }
+        var msg = "VM " + name + " died during startup (status: " + status + ")";
+        var lines = VmAgentFailure.matchingLines(consoleLog(name));
+        if (!lines.isEmpty()) msg += "\n" + agentFailedMessage(name, lines);
+        throw new IncusException(msg);
+    }
+
+    /** The instance's metadata, or null when the daemon cannot say (retry rather than crash). */
+    private JsonNode startupState(String name) {
+        try {
+            var resp = http().get("/1.0/instances/" + name);
+            return resp.isSuccess() ? resp.body().path("metadata") : null;
+        } catch (Exception daemonUnreachable) {
+            return null;
+        }
+    }
+
+    /** Sleep one poll interval; false if interrupted. */
+    private static boolean pause() {
+        try {
+            Thread.sleep(POLL_INTERVAL_MS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * What {@code incus console --show-log} prints: a VM's serial console so far, where systemd
+     * reports units that failed to start. Empty if it cannot be read.
+     */
+    public String consoleLog(String name) {
+        try {
+            return http().getText("/1.0/instances/" + name + "/console");
+        } catch (Exception e) {
+            return "";
         }
     }
 
