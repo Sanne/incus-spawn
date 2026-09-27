@@ -54,6 +54,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -188,16 +189,6 @@ public class BuildCommand extends BaseCommand {
         }
         var defs = loaded.defs();
 
-        // A template naming an account that is not configured must be reported here, before
-        // any build path runs: otherwise it surfaces as an unhandled exception partway through
-        // a build, from ClaudeSetup.envEntries or the metadata stamp. Checked across every
-        // loaded definition rather than per build path, since this method has six of them.
-        var accountError = validateTemplateAccounts(defs);
-        if (accountError != null) {
-            System.err.println("Cannot build: " + accountError);
-            return CommandResult.valueOf(1);
-        }
-
         var executor = Executors.newCachedThreadPool(r -> {
             var t = new Thread(r, "git-refresh");
             t.setDaemon(true);
@@ -319,6 +310,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("All templates are up to date.");
             return;
         }
+        requireValidAccounts(templatesToRebuild, defs);
 
         // Confirm with user
         BuildOutput.step((outdatedOnly ? "Templates to rebuild: " : "This will rebuild: ")
@@ -465,14 +457,19 @@ public class BuildCommand extends BaseCommand {
                 .filter(d -> !d.isRoot())
                 .map(ImageDef::getParent)
                 .collect(Collectors.toSet());
-        var leaves = defs.values().stream()
+        var missingLeaves = defs.values().stream()
                 .filter(d -> !parentNames.contains(d.getName()))
+                .filter(d -> !incus.exists(d.getName()))
                 .toList();
-        for (var leaf : leaves) {
-            if (!incus.exists(leaf.getName())) {
-                build(leaf, defs);
-                System.out.println();
-            }
+        var toCheck = new ArrayList<String>();
+        var seen = new LinkedHashSet<String>();
+        for (var leaf : missingLeaves) {
+            collectAllRecursive(leaf, defs, toCheck, seen);
+        }
+        requireValidAccounts(toCheck, defs);
+        for (var leaf : missingLeaves) {
+            build(leaf, defs);
+            System.out.println();
         }
     }
 
@@ -483,6 +480,7 @@ public class BuildCommand extends BaseCommand {
         var chain = new ArrayList<String>();
         var seen = new LinkedHashSet<String>();
         collectAllRecursive(imageDef, defs, chain, seen);
+        requireValidAccounts(chain, defs);
 
         BuildOutput.step("This will rebuild: " + String.join(", ", chain));
         if (!confirm("Continue?")) return;
@@ -499,6 +497,7 @@ public class BuildCommand extends BaseCommand {
         chain.add(imageDef.getName());
         seen.add(imageDef.getName());
         collectDescendants(imageDef.getName(), defs, chain, seen);
+        requireValidAccounts(chain, defs);
 
         BuildOutput.step("This will rebuild: " + String.join(", ", chain));
         if (!confirm("Continue?")) return;
@@ -511,6 +510,11 @@ public class BuildCommand extends BaseCommand {
      * is built first (recursively).
      */
     private void build(ImageDef imageDef, Map<String, ImageDef> defs) {
+        // The image and whichever of its ancestors turn out to need a rebuild
+        var chain = new ArrayList<String>();
+        collectAllRecursive(imageDef, defs, chain, new HashSet<>());
+        requireValidAccounts(chain, defs);
+
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
             ProxyHealthCheck.requireProxy(incus);
@@ -2232,19 +2236,36 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * The first template whose {@code accounts:} names something that is not configured, or
-     * null when every definition resolves. Only definitions that select anything are examined,
-     * so a host with no named accounts pays nothing.
+     * Fail the build up front when a template about to be built names an account that is not
+     * configured: otherwise it surfaces as an unhandled exception partway through a build, from
+     * ClaudeSetup.envEntries or the metadata stamp. Each build path passes exactly the templates
+     * it may build, so a broken definition elsewhere never blocks an unrelated build (#805).
      */
-    static String validateTemplateAccounts(Map<String, ImageDef> defs) {
-        var config = SpawnConfig.load();
-        for (var entry : defs.entrySet()) {
-            var selection = ImageDef.resolveAccounts(entry.getValue(), defs);
+    private static void requireValidAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
+        var accountError = validateTemplateAccounts(templates, defs);
+        if (accountError != null) {
+            System.err.println("Cannot build: " + accountError);
+            throw new BuildFailedException();
+        }
+    }
+
+    /**
+     * The first of {@code templates} whose {@code accounts:} names something that is not
+     * configured, or null when all of them resolve. Only definitions that select anything are
+     * examined, so a host with no named accounts pays nothing.
+     */
+    static String validateTemplateAccounts(Collection<String> templates, Map<String, ImageDef> defs) {
+        SpawnConfig config = null;
+        for (var name : templates) {
+            var imageDef = defs.get(name);
+            if (imageDef == null) continue;
+            var selection = ImageDef.resolveAccounts(imageDef, defs);
             if (selection.isEmpty()) continue;
+            if (config == null) config = SpawnConfig.load();
             try {
                 AccountSelection.validate(config, selection);
             } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-                return "template '" + entry.getKey() + "': " + e.getMessage();
+                return "template '" + name + "': " + e.getMessage();
             }
         }
         return null;
