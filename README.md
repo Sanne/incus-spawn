@@ -182,8 +182,10 @@ With this configuration, `isx branch` adds a git remote named after the instance
 
 An agent running on your machine -- Claude Code, say -- can use isx itself: create disposable instances from templates you approved, run builds and tests in them, and hand whole tasks to the Claude Code inside an instance. `isx mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
 
+`isx init` offers to set this up (it is experimental, so off by default): it registers `isx mcp` with Claude Code for all projects and asks, for each template that installs Claude Code, whether agents may use it. To do the same by hand:
+
 ```shell
-claude mcp add isx -- isx mcp
+claude mcp add --scope user isx -- ~/.local/bin/isx mcp
 ```
 
 Nothing is available until you approve templates in `~/.config/incus-spawn/config.yaml`. Agents never can -- `isx mcp` reads this section on every call and has no way to write it:
