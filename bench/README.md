@@ -253,12 +253,41 @@ check is `InstanceLifecycleRequestBudgetTest` in `mvn test`, which pins how many
 trips a flow makes: an extra round trip is the usual cause of a CLI latency regression, and
 counting requests needs neither timing nor a daemon.
 
+## Where a Branch Spends Its Time (`trace-branch.sh`)
+
+`cli.sh` says how long `isx branch` takes; `trace-branch.sh` says where the time goes. It
+records the Incus daemon's event stream (`incus monitor --format=json`) while one
+`isx branch --shell` runs to a usable prompt and `isx destroy` then removes the running
+instance, and prints for each (the destroy's window runs until `isx destroy` exits, so
+host-side work after Incus has finished shows as a trailing gap):
+
+- a timeline of every API request, operation, exec'd command and lifecycle event the daemon
+  saw, with the time since the branch started and since the previous event;
+- the longest gaps before the prompt, each marked as inside an operation (Incus or the
+  instance doing the work) or outside any operation (isx itself computing, or waiting
+  between polls);
+- the longest operations, from each operation's creation to the event reporting its final
+  status (Incus does not advance `updated_at` on task operations, so that field is not used).
+
+```shell
+bench/trace-branch.sh                                 # native build, tpl-minimal
+bench/trace-branch.sh --runtime=jvm --from=tpl-java
+```
+
+It adds nothing to isx: it observes the daemon from outside, so the same release build that
+users run is what gets traced. It needs the `incus` client with access to the same daemon
+(so a Linux host, not the macOS appliance), and uses the build already in `cli/target`. The
+timeline (`*.timeline.txt`) is saved under `bench/results/trace/` next to the raw events
+(`*.events.json`), which carry each event's full detail for when a gap needs a closer look.
+The daemon's events include everything else happening on it, so run it on a quiet host.
+
 ## File Layout
 
 ```
 bench/
   run.sh                  # Proxy benchmark
   cli.sh                  # CLI latency benchmark, JVM vs native
+  trace-branch.sh         # Daemon-side timeline of one isx branch
   isxbench.py             # Shared helper: run a command to a usable shell prompt
   proxy-health.hf.yaml    # Constant-rate profile (--load=constant, default)
   proxy-saturate.hf.yaml  # Closed-loop /health ladder (--load=saturate)
@@ -266,4 +295,5 @@ bench/
   README.md               # This file
   results/                # JSON result files (git-ignored)
     cli/                  # cli.sh results
+    trace/                # trace-branch.sh events and timelines
 ```
