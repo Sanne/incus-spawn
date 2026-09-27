@@ -118,6 +118,12 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /** Drop a network, the default {@code incusbr0} included, so reads of it fail. */
+    public FakeIncusDaemon withoutNetwork(String name) {
+        networks.remove(name);
+        return this;
+    }
+
     /** A client wired to this daemon. */
     public IncusClient client() {
         return new IncusClient(new IncusApi(this));

@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.vm.VmManager;
 import org.junit.jupiter.api.Test;
@@ -555,5 +556,70 @@ class DoctorCommandTest {
         var summary = DoctorCommand.describeRedactions(result);
         assertTrue(summary.contains("1 config key ("), summary);
         assertFalse(summary.contains("in the logs"), "nothing was scrubbed: " + summary);
+    }
+
+    // ---- Bridge DNS finding by proxy state (#839) ----
+
+    private static final java.util.Set<String> DNS_DOMAINS = java.util.Set.of("github.com", "api.anthropic.com");
+
+    private static String overridesFor(String... domains) {
+        var sb = new StringBuilder("# BEGIN incus-spawn intercepted domains (rewritten by isx)\n");
+        for (var d : domains) sb.append("address=/").append(d).append("/10.1.2.1\nlocal=/").append(d).append("/\n");
+        return sb.append("# END incus-spawn intercepted domains").toString();
+    }
+
+    private static DoctorCommand.Finding dnsFinding(ProxyHealthCheck.ProxyStatus proxy, String overrides) {
+        return DoctorCommand.bridgeDnsFinding(proxy, overrides, DNS_DOMAINS, () -> {});
+    }
+
+    @Test
+    void bridgeDnsWithNoOverridesFailsWhileTheProxyRuns() {
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, "");
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertTrue(f.detail().contains("none configured"), f.detail());
+        assertNotNull(f.remediation(), "the proxy is listening, so rewriting the overrides is safe");
+    }
+
+    @Test
+    void bridgeDnsWithOnlyUserLinesCountsAsNone() {
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, "server=/corp.example/10.0.0.53");
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+    }
+
+    @Test
+    void bridgeDnsWithNoOverridesStillRepairsWhileTheProxyWaitsForDns() {
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.WAITING_FOR_DNS, "");
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
+        assertNotNull(f.remediation());
+    }
+
+    @Test
+    void bridgeDnsIsNotRepairedWhileTheProxyIsDown() {
+        // Writing overrides now would point every intercepted domain at a gateway where nothing
+        // listens, which is worse than bypassing the proxy.
+        for (var proxy : java.util.List.of(ProxyHealthCheck.ProxyStatus.NOT_RUNNING,
+                ProxyHealthCheck.ProxyStatus.STALE_DNS)) {
+            for (var overrides : java.util.List.of("", overridesFor("github.com"))) {
+                var f = dnsFinding(proxy, overrides);
+                assertEquals(DoctorCommand.Status.NOTE, f.status(), proxy + " / " + overrides);
+                assertTrue(f.detail().contains("proxy is not running"), f.detail());
+                assertNull(f.remediation(), proxy + " must not offer to write DNS");
+            }
+        }
+    }
+
+    @Test
+    void bridgeDnsWithEveryDomainIsOk() {
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, overridesFor("github.com", "api.anthropic.com"));
+        assertEquals(DoctorCommand.Status.OK, f.status());
+        assertNull(f.remediation());
+    }
+
+    @Test
+    void bridgeDnsMissingSomeDomainsWarnsAndNamesThem() {
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, overridesFor("github.com"));
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.detail().contains("missing: api.anthropic.com"), f.detail());
+        assertNotNull(f.remediation());
     }
 }

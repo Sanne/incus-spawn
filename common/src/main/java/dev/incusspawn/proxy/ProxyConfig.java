@@ -342,22 +342,30 @@ public final class ProxyConfig {
         }
     }
 
+    /** The bridge's {@code raw.dnsmasq}; throws when Incus cannot be read. */
+    public static String readDnsOverrides(IncusClient incus) {
+        return incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+    }
+
+    /**
+     * {@link #readDnsOverrides}, with a failed read as {@code ""}: for callers that only look
+     * for overrides to act on. Never conclude from it that overrides are absent or complete.
+     */
     public static String getDnsOverrides(IncusClient incus) {
         try {
-            return incus.networkConfigGet("incusbr0", "raw.dnsmasq");
+            return readDnsOverrides(incus);
         } catch (Exception e) {
             return "";
         }
     }
 
-    public static boolean isBridgeDnsComplete(IncusClient incus) {
-        return isBridgeDnsComplete(incus, Set.of());
-    }
-
+    /**
+     * Whether the bridge overrides every one of {@code allDomains}. No overrides at all is not
+     * complete (#839): containers then resolve intercepted domains to their real addresses and
+     * bypass the proxy. Throws when Incus cannot be read, which is not an answer either way.
+     */
     public static boolean isBridgeDnsComplete(IncusClient incus, Set<String> allDomains) {
-        var overrides = getDnsOverrides(incus);
-        if (overrides.isEmpty()) return true;
         var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        return BridgeDns.status(overrides, domains).complete();
+        return BridgeDns.status(readDnsOverrides(incus), domains).complete();
     }
 }

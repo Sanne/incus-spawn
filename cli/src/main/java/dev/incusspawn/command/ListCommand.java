@@ -5019,7 +5019,12 @@ public class ListCommand extends BaseCommand {
         dnsVerified = true;
         var toolProxyDomains = dev.incusspawn.proxy.ToolProxyResolver.resolvedDomains(SpawnConfig.load());
         var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
-        if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) return;
+        try {
+            if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) return;
+        } catch (Exception e) {
+            // Unreadable is not incomplete: a write would fail the same way.
+            return;
+        }
         setStatusMessage("Updating bridge DNS overrides...");
         var thread = new Thread(() -> {
             try {

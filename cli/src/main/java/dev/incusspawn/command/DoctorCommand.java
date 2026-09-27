@@ -44,6 +44,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
@@ -1039,22 +1040,42 @@ public class DoctorCommand extends BaseCommand {
     }
 
     private Finding checkBridgeDns(IncusClient incus) {
+        Set<String> allDomains;
+        String overrides;
         try {
             var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
-            var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
-            var overrides = ProxyConfig.getDnsOverrides(incus);
-            var status = BridgeDns.status(overrides, allDomains);
-            // No overrides at all reads as complete, as in ProxyConfig.isBridgeDnsComplete().
-            if (overrides.isEmpty() || status.complete()) {
-                return Finding.ok("Bridge DNS overrides",
-                        "all " + allDomains.size() + " domains configured");
-            }
-            return Finding.warn("Bridge DNS overrides incomplete", status.describe(),
-                    new Remediation("Reconfigure bridge DNS", false,
-                            () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains)));
+            allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
+            overrides = ProxyConfig.readDnsOverrides(incus);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
+        return bridgeDnsFinding(ProxyHealthCheck.check(incus), overrides, allDomains,
+                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains));
+    }
+
+    /**
+     * Overrides only help while the proxy is listening: written without it, they send every
+     * intercepted domain to a gateway where nothing answers, which is worse than bypassing it.
+     * So with the proxy down this reports nothing to fix (the "Proxy running" finding carries
+     * the problem), and with it up, missing overrides are a failure the rewrite repairs (#839).
+     */
+    static Finding bridgeDnsFinding(ProxyHealthCheck.ProxyStatus proxy, String overrides,
+                                    Set<String> domains, Action rewrite) {
+        if (proxy == ProxyHealthCheck.ProxyStatus.NOT_RUNNING
+                || proxy == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
+            return Finding.note("Bridge DNS overrides", "(not checked: the proxy is not running)");
+        }
+        var status = BridgeDns.status(overrides, domains);
+        if (status.complete()) {
+            return Finding.ok("Bridge DNS overrides", "all " + domains.size() + " domains configured");
+        }
+        var repair = new Remediation("Rewrite bridge DNS overrides", false, rewrite);
+        if (status.legacy().isEmpty() && status.missing().size() == domains.size()) {
+            return Finding.fail("Bridge DNS overrides",
+                    "none configured (instances reach intercepted domains directly, bypassing the proxy)",
+                    repair);
+        }
+        return Finding.warn("Bridge DNS overrides incomplete", status.describe(), repair);
     }
 
     private Finding checkIptablesRedirect() {
