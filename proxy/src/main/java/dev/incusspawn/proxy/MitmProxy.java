@@ -271,14 +271,19 @@ public class MitmProxy {
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
         // Tests construct without a config in hand, so the default account's entries stand in
-        // for the across-accounts domain set; fromConfig passes the real one.
+        // for the across-accounts domain set, and there is no config read to capture ahead of.
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress,
-                credentials, credentials.toolProxies());
+                credentials, credentials.toolProxies(), ConfigFingerprint.capture());
     }
 
+    /**
+     * @param configFingerprint the files {@code credentials} came from, captured <em>before</em>
+     *                          the config was read (see {@link ConfigFingerprint})
+     */
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials,
-                     List<ResolvedToolProxy> proxiesAcrossAccounts) {
+                     List<ResolvedToolProxy> proxiesAcrossAccounts,
+                     ConfigFingerprint configFingerprint) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
@@ -286,14 +291,7 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
-        // A baseline for callers that never report their own; ProxyMain and fromConfig
-        // replace it with the capture they took before reading the config.
-        this.configFingerprint = ConfigFingerprint.capture();
-    }
-
-    /** Record the files the running config was read from, captured before that read. */
-    void configLoadedFrom(ConfigFingerprint fingerprint) {
-        this.configFingerprint = fingerprint;
+        this.configFingerprint = configFingerprint;
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -528,10 +526,10 @@ public class MitmProxy {
                 ProxyConfig.DEFAULT_HEALTH_PORT,
                 gatewayIp,
                 ProxyCredentials.forAccounts(config, Map.of(), setups),
-                ToolProxyResolver.resolveAcrossAccounts(config, setups));
+                ToolProxyResolver.resolveAcrossAccounts(config, setups),
+                fingerprint);
         proxy.configSnapshot = config;
         proxy.toolSetupsSnapshot = setups;
-        proxy.configLoadedFrom(fingerprint);
         return proxy;
     }
 

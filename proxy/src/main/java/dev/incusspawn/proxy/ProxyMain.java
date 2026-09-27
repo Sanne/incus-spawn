@@ -139,8 +139,8 @@ public class ProxyMain implements QuarkusApplication {
 
         var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
-        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, creds);
-        proxy.configLoadedFrom(configFingerprint);
+        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
+                creds, creds.toolProxies(), configFingerprint);
         proxy.setIncusClient(incus);
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
