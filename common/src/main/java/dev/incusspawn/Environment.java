@@ -148,6 +148,11 @@ public final class Environment {
         return vmStateDir().resolve("proxy-service.log");
     }
 
+    /** One line per {@code isx mcp} tool call: what an agent did, for the user to review. */
+    public static Path mcpLogFile() {
+        return home().resolve(".local/state/incus-spawn/mcp.log");
+    }
+
     public static Path proxyLifecycleLogFile() {
         return home().resolve(".local/state/incus-spawn/proxy-lifecycle.log");
     }

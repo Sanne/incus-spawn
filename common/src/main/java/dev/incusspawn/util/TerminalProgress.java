@@ -64,7 +64,7 @@ public final class TerminalProgress {
     }
 
     public static boolean isAnsiTerminal() {
-        if (System.console() == null) return false;
+        if (Headless.active() || System.console() == null) return false;
         var term = System.getenv("TERM");
         return term != null && !term.equals("dumb");
     }

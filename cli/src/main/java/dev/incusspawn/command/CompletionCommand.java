@@ -419,6 +419,7 @@ public class CompletionCommand extends BaseCommand {
                     'templates:manage template definitions'
                     'tools:list and inspect available tool definitions'
                     'account:show or change the credential accounts an instance uses'
+                    'mcp:serve isx to a local AI agent over MCP (stdio)'
                     'vm:manage the incus-spawn VM appliance'
                     'update-base:check for and install base image updates'
                     'doctor:run health checks and offer to fix problems'
@@ -475,14 +476,14 @@ public class CompletionCommand extends BaseCommand {
               local cur prev words cword
               _init_completion || return
 
-              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates account tools vm doctor help"
+              local commands="init build clean project branch shell run list destroy reset update-all update-base proxy templates account mcp tools vm doctor help"
 
               # Determine which subcommand is active
               local cmd=""
               local i
               for (( i=1; i < cword; i++ )); do
                 case "${words[i]}" in
-                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|tools|vm|doctor|help)
+                  init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)
                     cmd="${words[i]}"
                     break ;;
                 esac
@@ -739,7 +740,7 @@ public class CompletionCommand extends BaseCommand {
 
             # Helper: true when no subcommand has been typed yet
             function __isx_no_subcommand
-              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
+              not string match -qr -- '^(init|build|clean|project|branch|shell|run|list|destroy|reset|update-all|update-base|proxy|templates|account|mcp|tools|vm|doctor|help)$' (commandline -opc)[2..-1]
             end
 
             # Helper: true when a specific subcommand is active
@@ -763,6 +764,7 @@ public class CompletionCommand extends BaseCommand {
             complete -c isx -f -n __isx_no_subcommand -a proxy        -d 'Manage the MITM authentication proxy'
             complete -c isx -f -n __isx_no_subcommand -a templates    -d 'Manage template definitions'
             complete -c isx -f -n __isx_no_subcommand -a tools        -d 'List and inspect available tool definitions'
+            complete -c isx -f -n __isx_no_subcommand -a mcp          -d 'Serve isx to a local AI agent over MCP (stdio)'
             complete -c isx -f -n __isx_no_subcommand -a vm              -d 'Manage the incus-spawn VM appliance'
             complete -c isx -f -n __isx_no_subcommand -a update-base     -d 'Check for and install base image updates'
             complete -c isx -f -n __isx_no_subcommand -a doctor          -d 'Run health checks and offer to fix problems'

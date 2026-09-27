@@ -222,6 +222,20 @@ public class IncusClient {
     }
 
     /**
+     * Run {@code script} as {@code user} in a login shell ({@code su -}), streaming its output
+     * and forwarding {@code stdin} (null for none). Returns the exit code. Unlike
+     * {@link #execInContainer} the output is never buffered whole, so the caller bounds it.
+     */
+    public int execScriptAsUser(String container, String user, String script,
+                                InputStream stdin, OutputStream stdout, OutputStream stderr) {
+        var command = List.of("su", "-", user, "-c", LOGIN_PATH_PREFIX + script);
+        return stdin == null
+                ? http().execStream(container, command, 0, 0, null, Map.of(), stdout, stderr)
+                : http().execBidirectional(container, command, 0, 0, null, Map.of(),
+                        stdin, stdout, stderr);
+    }
+
+    /**
      * Execute a bidirectional command inside a container, forwarding stdin from the host.
      * Used for binary protocols like the git pack protocol.
      */
