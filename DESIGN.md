@@ -916,6 +916,28 @@ The removal is stateless — rather than tracking which remotes were added, we s
 
 Host repos may use SSH URLs (`git@github.com:org/repo.git`) while container repos use HTTPS (`https://github.com/org/repo.git`). The URL matcher normalizes both formats by stripping the scheme, `user@` prefix, SSH `:` separator, trailing `.git`, `www.` prefix, and lowercasing. The result is a canonical form like `github.com/org/repo` that matches regardless of protocol.
 
+### MCP server: delegating work to isx instances
+
+`isx mcp` lets an agent on the host -- the user's own Claude Code -- use isx the way the user does: create disposable instances from approved templates, run commands in them, and hand whole tasks to the Claude Code inside one. The host agent plans and reviews; instances do the work, with the same isolation and credential injection as any branch.
+
+**Hand-rolled protocol, measured.** The Quarkus MCP extension was tried first, initialized only on demand (`quarkus.mcp.server.stdio.initialization-enabled=false`, started explicitly by the command). It still cost every isx command: native `isx --help` went from 3.2 to 4.9 ms (+55%; Vert.x alone was +0.7 ms), the binary grew 11% and RSS 5 MB, because the extension's config mappings and metadata are built at runtime init whether or not MCP is served. What isx needs of the protocol is small -- `initialize`, `ping`, `tools/list`, `tools/call`, cancellation, progress -- so `cli/.../mcp/` implements it over Jackson trees (no reflection registration), and startup is unchanged. `McpTransport` is the seam for a later HTTP transport.
+
+**Stdout is the protocol.** Much of isx prints progress to `System.out`. Rather than teach every helper about MCP, `StdioGuard` hands the raw fd 0/1 to the transport, points `System.out` at stderr (which the client logs) and empties `System.in`; the `Headless` flag makes `TerminalProgress` stop animating and `Prompts.console()` return nothing, so no prompt can consume protocol bytes. The MCP path never calls `requireInit()` or anything that `System.exit`s: each becomes a tool error telling the agent what to ask the user.
+
+**Who is calling.** Over stdio there is no endpoint: the client spawned `isx mcp` and holds both pipes, so authentication is the OS user -- anyone who could reach the server could run `isx` anyway. A session is the `isx mcp` process, identified as `<pid>-<processStartMillis>`; the start time makes the id safe to test for liveness after the pid is reused. The client's self-reported name, its pid and working directory are stamped too, for display only.
+
+**Ownership is stamped by the copy.** `BranchFlow.Request.extraConfig` rides the `POST /1.0/instances` copy request (Incus lays the request's `config` over the source's) and `configureBranch`'s one write, so an agent's instance never exists without its owner and costs no extra request. Every tool that names an instance checks the session's registry *and* the stamp read back from Incus, which refuses a user's instance recreated under a name the session once used. `configureBranch` drops copied `mcp-*` keys a caller does not re-stamp, so a user's branch of a kept instance is never mistaken for that session's orphan.
+
+**Reaping.** A name is registered before its copy starts, so a session ending mid-create still covers it. On end of input or SIGTERM the session destroys everything it owns that was not handed over with `keep_instance`. SIGKILL leaves orphans, so each new session reaps instances of this host user whose session is dead -- never kept ones, never ones in a pending operation.
+
+**The agent gets `isx branch`, not options.** Instances are created through `BranchFlow` with `Request.defaults()`: the template's network mode, account pins, KVM and resource defaults, no GUI, no inbox. Template approval lives in the `mcp:` section of `config.yaml`, read on every call; a template must be listed, defined by a trusted layer, not built from a project-local definition (`BuildSource.projectRoots`), and built. Nothing in the package can write config or definitions; `McpNoWritePathTest` pins that at the source level, so widening it means deleting a line of that test.
+
+**Exec has no server-imposed time limit.** How long a build may run is the controlling agent's call: `timeout_seconds` is optional with no default. What matters is that a command nobody waits for does not keep running: `exec` runs the command in its own session (`setsid`) and records the session id, and a cancelled call kills that session's process tree from a second exec. Output is bounded to the tail (`TailBuffer`), which is about the size of a tool result, not about how long a command runs.
+
+**Tasks run as systemd units in the guest.** `exec(background)` and `delegate` start a transient unit (`sudo -n systemd-run`, each run `isx-task-<id>-<n>`) writing into `~/.isx-mcp/tasks/<id>/`. They outlive the call, the connection and the session's process; only destroying the instance ends them, and a person can inspect one with `isx shell`. The files and the unit are the task's state: nothing about a task is kept on the host beyond which session owns it. Instructions and prompts arrive on stdin and run scripts as base64, so nothing an agent sends is interpolated into a shell. Unit state is read through `sudo` too: an unprivileged login session in a container cannot reach systemd's system bus, and read directly every running task looked lost.
+
+**Delegation.** The inner agent is `claude -p --output-format stream-json`, resumed with `--resume <session_id>` for each `send_message`. The appended brief frames the role -- a delegate reporting to a coordinator -- and forbids nothing: what a delegate can reach is bounded by the credentials the template's proxy account carries, what it does by the instruction. That is what makes "fix it, don't push" -> review `get_diff` -> "push and open the PR" a controlled flow rather than a prompt-level honour system. `get_diff` compares against the commit each repository was at when the task started, using a throwaway index so untracked files are included and the instance's own index is untouched. One agent per instance, because two would clash in one working tree; `delegate(template=...)` gives parallelism instead.
+
 ### Native image CPU baseline
 
 Both binaries are built with `-march=haswell` on x86_64, set by arch-gated Maven profiles in
@@ -1325,6 +1347,10 @@ The MITM TLS proxy provides credential isolation:
 3. The proxy terminates TLS, replaces placeholder auth with real credentials, and forwards to real upstream over TLS
 4. Placeholder values cannot authenticate against any service — they only bypass local tool checks
 5. In proxy-only mode, iptables OUTPUT rules additionally block all egress except the proxy port (443) and DNS
+
+### Agents driving isx over MCP
+
+`isx mcp` exposes a deliberately narrow surface: approved, trusted, built templates only; each instance usable only by the session that created it; no host command execution and no host file access; results returned as text. It runs as the user, so that boundary holds for the MCP tools, not for an agent that may also run `isx` or edit `~/.config/incus-spawn` through its shell -- the README gives the Claude Code permission rules that close that path. Text coming back from an instance (command output, a delegate's report, a diff) is produced inside the sandbox and may try to instruct the host agent; tool descriptions say to treat it as data. A delegated agent can do anything its template's credentials allow, which is why those are the user's choice per template and not the agent's.
 
 ### Doctor: a finding that is neither healthy nor broken
 
