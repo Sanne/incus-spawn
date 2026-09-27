@@ -669,6 +669,14 @@ public class MitmProxy {
                     ProxyLog.info("MITM connection closed: " + err.getMessage());
                     return;
                 }
+                var rejection = certificateRejection(err);
+                if (rejection != null) {
+                    // The client's own verdict on our leaf, not a proxy fault. Vert.x does
+                    // not say which connection failed, so the instance and domain are unknown.
+                    ProxyLog.warn("A client rejected the proxy's certificate (" + rejection
+                            + "): something in an instance does not trust the isx CA");
+                    return;
+                }
                 System.err.println("MITM server error: " + err.getMessage());
                 err.printStackTrace(System.err);
             });
@@ -793,6 +801,27 @@ public class MitmProxy {
             cause = cause.getCause();
         }
         return false;
+    }
+
+    /** TLS alerts a client sends when it refuses the certificate it was shown. */
+    private static final Set<String> CERTIFICATE_REJECTION_ALERTS = Set.of(
+            "bad_certificate", "unknown_ca", "certificate_unknown", "certificate_expired",
+            "unsupported_certificate", "certificate_revoked");
+
+    private static final Pattern RECEIVED_ALERT = Pattern.compile("Received fatal alert: (\\w+)");
+
+    /**
+     * The alert name when {@code err} is a client refusing the proxy's certificate
+     * (e.g. {@code bad_certificate}, which Go sends for an unknown CA), otherwise null.
+     */
+    static String certificateRejection(Throwable err) {
+        for (var cause = err; cause != null; cause = cause.getCause()) {
+            if (cause instanceof javax.net.ssl.SSLHandshakeException && cause.getMessage() != null) {
+                var m = RECEIVED_ALERT.matcher(cause.getMessage());
+                if (m.find() && CERTIFICATE_REJECTION_ALERTS.contains(m.group(1))) return m.group(1);
+            }
+        }
+        return null;
     }
 
     // --- Request routing ---
