@@ -3,6 +3,8 @@ package dev.incusspawn.incus;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -46,12 +48,11 @@ class VmAgentFailureTest {
     @Test
     void reportsEachLineOnceAndBoundsTheCount() {
         var log = "Failed to start incus-agent.service - Incus - agent.\n".repeat(5)
-                + "[    %d.0] avc: denied { listen } comm=\"incus-agent\" pid=%d\n".repeat(20);
-        var numbered = new StringBuilder();
-        var parts = log.split("\n");
-        for (int i = 0; i < parts.length; i++) numbered.append(parts[i].replace("%d", String.valueOf(i))).append('\n');
+                + IntStream.range(0, 20)
+                        .mapToObj(i -> "avc: denied { listen } comm=\"incus-agent\" pid=" + i + "\n")
+                        .collect(Collectors.joining());
 
-        var lines = VmAgentFailure.matchingLines(numbered.toString());
+        var lines = VmAgentFailure.matchingLines(log);
 
         assertEquals(VmAgentFailure.MAX_LINES, lines.size());
         assertEquals(1, lines.stream().filter(l -> l.startsWith("Failed to start")).count());

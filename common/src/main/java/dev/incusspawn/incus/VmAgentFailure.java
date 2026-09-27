@@ -1,5 +1,7 @@
 package dev.incusspawn.incus;
 
+import dev.incusspawn.util.BuildOutput;
+
 import java.util.List;
 
 /**
@@ -25,8 +27,8 @@ public final class VmAgentFailure {
     public static List<String> matchingLines(String consoleLog) {
         if (consoleLog == null || consoleLog.isEmpty()) return List.of();
         return consoleLog.lines()
-                .map(VmAgentFailure::stripControl)
-                .map(String::strip)
+                .filter(l -> l.contains("incus-agent"))
+                .map(l -> BuildOutput.stripAnsi(l).replace("\r", "").strip())
                 .filter(VmAgentFailure::isFailure)
                 .distinct()
                 .limit(MAX_LINES)
@@ -36,10 +38,5 @@ public final class VmAgentFailure {
     static boolean isFailure(String line) {
         if (line.contains("Failed to start incus-agent")) return true;
         return line.contains("avc:") && line.contains("denied") && line.contains("comm=\"incus-agent\"");
-    }
-
-    /** Console output carries ANSI colour and carriage returns; neither belongs in an error message. */
-    private static String stripControl(String line) {
-        return line.replaceAll("\u001B\\[[0-9;?]*[A-Za-z]", "").replace("\r", "");
     }
 }

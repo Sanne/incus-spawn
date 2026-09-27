@@ -24,9 +24,9 @@ public final class BuildOutput {
     private static final String RESET = "[0m";
 
     private static final java.util.regex.Pattern ANSI_PATTERN =
-            java.util.regex.Pattern.compile("\\[[0-9;]*m");
+            java.util.regex.Pattern.compile("\u001B\\[[0-9;?]*[A-Za-z]");
 
-    /** Strip ANSI escape sequences from a string. */
+    /** Strip ANSI escape sequences (colour, cursor, erase) from a string. */
     public static String stripAnsi(String s) {
         return ANSI_PATTERN.matcher(s).replaceAll("");
     }

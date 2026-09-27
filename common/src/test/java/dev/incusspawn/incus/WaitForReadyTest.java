@@ -2,8 +2,8 @@ package dev.incusspawn.incus;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -23,12 +23,13 @@ class WaitForReadyTest {
 
     private IncusClient client(long containerMs, long vmMs, long graceMs) {
         var client = daemon.client();
-        client.readyTimeouts(new IncusClient.ReadyTimeouts(ms(containerMs), ms(vmMs), ms(graceMs), ms(20)));
+        client.readyTimeouts(new IncusClient.ReadyTimeouts(Duration.ofMillis(containerMs),
+                Duration.ofMillis(vmMs), Duration.ofMillis(graceMs), Duration.ofMillis(20)));
         return client;
     }
 
     private static long ms(long millis) {
-        return TimeUnit.MILLISECONDS.toNanos(millis);
+        return Duration.ofMillis(millis).toNanos();
     }
 
     @Test
