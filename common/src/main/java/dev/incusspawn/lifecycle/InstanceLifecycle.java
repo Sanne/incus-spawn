@@ -52,9 +52,21 @@ public final class InstanceLifecycle {
      *                 they do not name; empty leaves the copied pins as they are
      * @param kvm      whether KVM passthrough is configured next; if not, KVM devices and
      *                 metadata inherited from the source are dropped
+     * @param extraConfig further {@code config} keys the caller stamps on its branch, in the
+     *                 same write; applied last
      */
     public record BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
-                                 String parent, Map<String, String> accounts, boolean kvm) {}
+                                 String parent, Map<String, String> accounts, boolean kvm,
+                                 Map<String, String> extraConfig) {
+        public BranchSettings {
+            extraConfig = extraConfig == null ? Map.of() : Map.copyOf(extraConfig);
+        }
+
+        public BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
+                              String parent, Map<String, String> accounts, boolean kvm) {
+            this(cpu, memory, disk, networkMode, parent, accounts, kvm, Map.of());
+        }
+    }
 
     /**
      * Configure a freshly copied branch before its first start, in one write to Incus.
@@ -118,6 +130,7 @@ public final class InstanceLifecycle {
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
+        update.config(settings.extraConfig());
         // Templates built before free page reporting existed don't carry it to their copies
         if ("virtual-machine".equals(instance.path("type").asText(""))
                 && instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {

@@ -30,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InstanceLifecycleRequestBudgetTest {
 
     private static final String NAME = "dev-1";
+    /** A key a caller stamps on its branch; any key works. */
+    private static final String OWNER = Metadata.PREFIX + "owner";
 
     private static void assertBudget(int expected, FakeIncusDaemon daemon, String flow) {
         var requests = daemon.requests();
@@ -215,6 +217,36 @@ class InstanceLifecycleRequestBudgetTest {
         assertEquals("10.166.11.1", config.path(Metadata.PROXY_GATEWAY).asText());
         assertEquals("20GiB", after.path("devices").path("root").path("size").asText());
         assertEquals("10.166.11.2", after.path("devices").path("eth0").path("ipv4.address").asText());
+    }
+
+    @Test
+    void aCopyCarriesItsOwnerFromTheCopyRequestItself() {
+        // A caller's metadata is stamped by the copy request, so no extra write and no moment in
+        // which the new instance exists without it.
+        var daemon = new FakeIncusDaemon().container("tpl-java",
+                Map.of(Metadata.TYPE, Metadata.TYPE_BASE, Metadata.PROFILE, "tpl-java"));
+        daemon.client().copy("tpl-java", NAME,
+                new IncusClient.CopyPlan("cow", "btrfs", "cow", true, Map.of()),
+                Map.of(OWNER, "someone"));
+        assertBudget(2, daemon, "copy (the POST and its operation wait)");
+
+        var config = daemon.instance(NAME).path("config");
+        assertEquals("someone", config.path(OWNER).asText());
+        assertEquals("tpl-java", config.path(Metadata.PROFILE).asText(),
+                "the override is laid over the source's config, not in place of it");
+    }
+
+    @Test
+    void extraConfigRidesInTheBranchsOneWrite() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, new InstanceLifecycle.BranchSettings(
+                null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-java", Map.of(), false,
+                Map.of(OWNER, "someone", Metadata.PREFIX + "note", "x")));
+        assertBudget(5, daemon, "configureBranch with extra config");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+        var config = daemon.instance(NAME).path("config");
+        assertEquals("someone", config.path(OWNER).asText());
+        assertEquals("x", config.path(Metadata.PREFIX + "note").asText());
     }
 
     @Test

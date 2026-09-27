@@ -19,6 +19,7 @@ import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.KvmPassthrough;
+import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.lifecycle.InstanceType;
@@ -1923,6 +1924,7 @@ public class ListCommand extends BaseCommand {
                             backgroundTasks.releaseClaim(name);
                         }
                     }
+                    if (destroyed > 0) InstanceDestroyer.refreshProxy();
                     String msg = "Destroyed " + destroyed + " template(s)";
                     if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
@@ -1970,6 +1972,7 @@ public class ListCommand extends BaseCommand {
                             backgroundTasks.releaseClaim(entry.name());
                         }
                     }
+                    if (destroyed > 0) InstanceDestroyer.refreshProxy();
                     String msg = "Destroyed " + destroyed + " instance(s)";
                     if (skipped > 0) msg += " (" + skipped + " skipped, locked)";
                     if (destroyed > 0 || skipped > 0) setStatusMessage(msg);
@@ -1984,6 +1987,7 @@ public class ListCommand extends BaseCommand {
                         () -> {
                             incus.delete(pendingDeleteName, true);
                             InstanceLifecycle.removeHostIntegration(pendingDeleteName);
+                            InstanceDestroyer.refreshProxy();
                         });
             }
         }

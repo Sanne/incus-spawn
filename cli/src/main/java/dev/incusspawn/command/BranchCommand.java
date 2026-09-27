@@ -1,29 +1,15 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
-import dev.incusspawn.config.AccountResolver;
-import dev.incusspawn.config.AccountSelection;
-import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
-import dev.incusspawn.config.SpawnConfig;
-import dev.incusspawn.incus.BridgeSubnetCheck;
-import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.incus.ResourceLimits;
-import dev.incusspawn.lifecycle.GuiPassthrough;
+import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
-import dev.incusspawn.lifecycle.InstanceType;
-import dev.incusspawn.lifecycle.KvmPassthrough;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.util.BuildOutput;
-import dev.incusspawn.proxy.CertificateAuthority;
-import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
-import dev.incusspawn.proxy.ProxyConfig;
-import dev.incusspawn.proxy.ProxyHealthCheck;
-import dev.incusspawn.proxy.ProxyService;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -94,190 +80,38 @@ public class BranchCommand extends BaseCommand {
         var resolvedSource = resolveSource();
         if (resolvedSource == null) return CommandResult.valueOf(1);
 
-        if (incus.exists(name)) {
-            System.err.println("Error: an instance named '" + name + "' already exists.");
+        if (airgap && proxyOnly) {
+            System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
             return CommandResult.valueOf(1);
         }
+        var networkMode = airgap ? NetworkMode.AIRGAP
+                : proxyOnly ? NetworkMode.PROXY_ONLY : NetworkMode.FULL;
+        Boolean kvmChoice = kvm ? Boolean.TRUE : noKvm ? Boolean.FALSE : null;
+        var request = new BranchFlow.Request(resolvedSource, name, gui, kvmChoice, networkMode,
+                inbox, cpuLimit, memoryLimit, diskLimit, accounts, !noStart, Map.of());
 
-        var defs = ImageDef.loadAll();
-
-        // Resolve and validate the account selection before anything is created: a typo
-        // should be reported now, not as a failed API call inside the container later.
-        Map<String, String> accountSelection;
+        BranchFlow.Preflight preflight;
+        InstanceLifecycle.RuntimeConfig prefetched;
         try {
-            accountSelection = resolveAccountSelection(resolvedSource, defs);
-        } catch (AccountSelection.InvalidSelectionException
-                 | AccountResolver.UnknownAccountException e) {
-            System.err.println("Error: " + e.getMessage());
+            preflight = BranchFlow.preflight(incus, request);
+            prefetched = BranchFlow.create(incus, preflight);
+        } catch (BranchFlow.BranchException e) {
+            if (!e.reported()) System.err.println("Error: " + e.getMessage());
             return CommandResult.valueOf(1);
-        }
-
-        var networkMode = resolveNetworkMode();
-        if (networkMode != NetworkMode.AIRGAP) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) return CommandResult.valueOf(1);
-            BridgeSubnetCheck.warnIfConflict(incus);
-            FirewallDetector.warnIfNotRunning();
-            if (checkCaMismatch(resolvedSource)) return CommandResult.valueOf(1);
-            var def = defs.get(resolvedSource);
-            if (def != null) {
-                var credError = SpawnConfig.checkCredentials(def, defs, n -> false);
-                if (!credError.isEmpty()) {
-                    System.err.println("Error: " + credError);
-                    return CommandResult.valueOf(1);
-                }
-            }
-        }
-
-        try {
-            HostResourceSetup.requireBranchableTemplate(incus, resolvedSource);
-        } catch (HostResourceSetup.ForbiddenMountTargetException e) {
-            System.err.println("Error: " + e.getMessage());
-            return CommandResult.valueOf(1);
-        }
-
-        BuildOutput.branchHeader(name, resolvedSource);
-
-        var copyPlan = incus.planCopy(resolvedSource);
-        if (!copyPlan.cow()) {
-            BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
-                    + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
-        }
-        BuildOutput.stepStart("Copying from template...");
-        incus.copy(resolvedSource, name, copyPlan);
-        BuildOutput.stepDone();
-
-        // Configure GUI before start so environment.* keys are visible to init. First, because
-        // it may push files: any push lands well before the start (see prefetchAndStart).
-        if (gui) {
-            if (configureGui()) {
-                incus.configSet(name, Metadata.GUI_ENABLED, "true");
-            } else {
-                GuiPassthrough.removeGui(incus, name);
-                System.err.println("Continuing without GUI passthrough.");
-            }
-        } else {
-            // Clean up inherited GUI devices/env from incus copy
-            GuiPassthrough.removeGui(incus, name);
-            warnIfTemplateWantsGui(resolvedSource, defs);
-        }
-
-        boolean sourceIsVm = incus.isVm(resolvedSource);
-        String cpu;
-        if (cpuLimit != null) {
-            cpu = String.valueOf(cpuLimit);
-        } else if (sourceIsVm) {
-            cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
-        } else {
-            cpu = null;
-        }
-        var memory = memoryLimit != null ? memoryLimit
-                : sourceIsVm ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
-        var disk = diskLimit != null ? diskLimit : ResourceLimits.defaultDiskLimit();
-
-        BuildOutput.step("Resource limits: " +
-                (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
-        var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
-        InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
-                cpu, memory, disk, networkMode, resolvedSource, accountSelection, enableKvm));
-        announceAccountSelection(accountSelection);
-        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
-
-        // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
-        if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
-            System.err.println("Continuing without KVM — VMs inside this branch will not work.");
-        }
-
-        // Before the --no-start return: the inbox is plain device config, so it is there
-        // however the instance is later started (#852).
-        InstanceLifecycle.attachInbox(incus, name, inbox);
-
-        if (noStart) {
-            BuildOutput.success(name + " is ready.");
-            return CommandResult.SUCCESS;
-        }
-
-        // Pre-fetch config while instance is stopped — the Incus daemon blocks
-        // API calls after start due to seccomp_notify lock contention.
-        boolean isVm = incus.isVm(name);
-        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
-
-        if (isVm) {
-            BuildOutput.stepStart("Waiting for VM agent...");
-            incus.waitForReady(name);
-            BuildOutput.stepDone();
-            InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
-        }
-
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched);
-
-        if (networkMode != NetworkMode.AIRGAP) {
-            CertificateAuthority.fixContainerCaIfNeeded(incus, name);
-            ProxyConfig.fixResolvConfIfNeeded(incus, name);
-            // The template baked its own account's identity; a branch pinned to a different one
-            // must not commit under it. Re-derived here rather than only on the next
-            // InstancePrep, so an instance used via incus exec, SSH or an IDE is right too.
-            // Needs the CA and resolv.conf above -- re-deriving goes through the proxy.
-            InstanceLifecycle.reconcileAccountIdentities(incus, name);
         }
 
         BuildOutput.success(name + " is ready.");
+        if (noStart) return CommandResult.SUCCESS;
+
         var shellPrep = prefetched.toShellPrep();
         if (!shell) {
-            var defaultCmd = resolveDefaultCommand(resolvedSource, defs);
+            var defaultCmd = resolveDefaultCommand(resolvedSource, preflight.defs());
             if (defaultCmd != null) {
                 shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
         }
         incus.interactiveShell(name, "agentuser", shellPrep);
         return CommandResult.SUCCESS;
-    }
-
-    /**
-     * The account selection this branch inherits: the source template's {@code accounts:}
-     * merged down its chain, with any {@code --account} override applied on top.
-     *
-     * <p>Resolved against the template the instance is branched from, which for a branch of a
-     * branch is the leaf template recorded in {@link Metadata#PROFILE} -- the same rule
-     * {@code InstancePrep} uses to find the chain.
-     */
-    private Map<String, String> resolveAccountSelection(String resolvedSource,
-                                                        Map<String, ImageDef> defs) {
-        var profile = incus.configGet(resolvedSource, Metadata.PROFILE);
-        var templateName = (profile != null && !profile.isEmpty()) ? profile : resolvedSource;
-
-        // Lowest precedence first, each layer overwriting the last:
-        //   template chain  <  the source instance's own pins  <  --account
-        // The source's pins win over the template because a source re-pointed with
-        // 'isx account set' shows that choice to the user, and the CoW copy carries it across
-        // regardless -- resolving the template here would silently stamp over it.
-        var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
-        selection.putAll(AccountSelection.read(incus, resolvedSource));
-        selection.putAll(AccountSelection.parse(accounts));
-
-        var config = SpawnConfig.load();
-        AccountSelection.validate(config, selection);
-
-        // A branch is a CoW copy of an already-built template, so its environment is already
-        // baked -- an --account that crosses auth modes is exactly as unhonourable here as it
-        // is in 'isx account set', and must be refused the same way. Checked against the
-        // source, whose env class the copy inherits.
-        var reason = AccountSelection.incompatibilityReason(config, incus, resolvedSource, selection);
-        if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
-
-        return selection;
-    }
-
-    /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */
-    private void announceAccountSelection(Map<String, String> selection) {
-        if (!selection.isEmpty()) {
-            BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
-        }
-        // Signalled even when this branch pins nothing. Static IPs are handed out lowest-free,
-        // so a new instance frequently reuses a destroyed one's address; without this the proxy
-        // would still map that address to the old instance and hand its account to this one.
-        // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
-        // so the first request from inside already sees the right answer.
-        ProxyService.signalAccountRefresh();
     }
 
     private String resolveSource() {
@@ -324,61 +158,4 @@ public class BranchCommand extends BaseCommand {
 
         return action.get().shellCommand(null).orElse(null);
     }
-
-    private boolean configureGui() {
-        return GuiPassthrough.configureGui(incus, name);
-    }
-
-    private void warnIfTemplateWantsGui(String source, java.util.Map<String, ImageDef> defs) {
-        if ("true".equals(incus.configGet(source, Metadata.GUI_ENABLED))) {
-            System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
-            return;
-        }
-        var def = defs.get(source);
-        if (def != null && def.isGui()) {
-            System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
-        }
-    }
-
-    private NetworkMode resolveNetworkMode() {
-        if (airgap && proxyOnly) {
-            System.err.println("Error: --airgap and --proxy-only are mutually exclusive.");
-            System.exit(1);
-        }
-        if (airgap) return NetworkMode.AIRGAP;
-        if (proxyOnly) return NetworkMode.PROXY_ONLY;
-        return NetworkMode.FULL;
-    }
-
-    private boolean checkCaMismatch(String source) {
-        var status = CertificateAuthority.CaTrust.snapshot()
-                .classify(incus.configGet(source, Metadata.CA_FINGERPRINT));
-        if (status != CaStatus.FOREIGN && status != CaStatus.REPAIRABLE) return false;
-        var profile = incus.configGet(source, Metadata.PROFILE);
-
-        // REPAIRABLE is let through, FOREIGN is not — and the difference is provenance, not
-        // repairability: InstancePrep pushes the current CA into the instance on first use
-        // either way. But a CA this host never issued usually means a deleted config dir or
-        // a ~/.config copied from another machine, which is worth stopping for.
-        if (status == CaStatus.REPAIRABLE) {
-            System.err.println("Note: '" + source + "' still carries the pre-upgrade MITM CA "
-                    + "certificate. The new one is installed into the instance on first use."
-                    + (profile.isEmpty() ? "" : " Rebuild when convenient: isx build " + profile));
-            return false;
-        }
-
-        if (!profile.isEmpty()) {
-            BuildOutput.warnBanner("CA certificate mismatch",
-                    "Template '" + source + "' was built with a different CA certificate.",
-                    "TLS connections through the proxy will fail in branches.",
-                    "Rebuild the template to fix: \033[1misx build " + profile + "\033[0m");
-        } else {
-            BuildOutput.warnBanner("CA certificate mismatch",
-                    "Template '" + source + "' was built with a different CA certificate.",
-                    "TLS connections through the proxy will fail in branches.");
-        }
-        return true;
-    }
-
-
 }

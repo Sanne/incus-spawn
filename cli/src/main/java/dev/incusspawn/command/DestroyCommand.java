@@ -4,9 +4,8 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
-import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.tui.InstanceLockManager;
-import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -88,19 +87,8 @@ public class DestroyCommand extends BaseCommand {
             }
 
             BuildOutput.stepStart("Removing instance...");
-            incus.setPendingOperation(target, Metadata.OP_DELETING);
-            try {
-                incus.delete(target, true);
-                InstanceLifecycle.removeHostIntegration(target);
-                // The freed static IP is the lowest free address, so the next branch usually
-                // reuses it. Until the proxy re-reads the instance list, that address still
-                // maps to this instance -- and the new one would inherit its credential
-                // account. Tell the proxy now rather than leaving a window.
-                ProxyService.signalAccountRefresh();
-            } catch (Exception e) {
-                incus.clearPendingOperation(target);
-                throw e;
-            }
+            InstanceDestroyer.deleteHeld(incus, target);
+            InstanceDestroyer.refreshProxy();
             BuildOutput.stepDone();
 
             BuildOutput.success("Destroyed " + target + ".");
@@ -222,19 +210,17 @@ public class DestroyCommand extends BaseCommand {
             }
             try (var lock = lockOpt.get()) {
                 BuildOutput.stepStart("Destroying " + n + "...");
-                incus.setPendingOperation(n, Metadata.OP_DELETING);
                 try {
-                    incus.delete(n, true);
-                    InstanceLifecycle.removeHostIntegration(n);
+                    InstanceDestroyer.deleteHeld(incus, n);
                     BuildOutput.stepDone();
                     destroyed++;
                 } catch (Exception e) {
-                    incus.clearPendingOperation(n);
                     BuildOutput.stepFail(e.getMessage());
                     failures++;
                 }
             }
         }
+        if (destroyed > 0) InstanceDestroyer.refreshProxy();
         return new DestroyResult(destroyed, skipped, failures);
     }
 

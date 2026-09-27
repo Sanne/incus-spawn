@@ -1358,6 +1358,15 @@ public class IncusClient {
     }
 
     public void copy(String source, String target, CopyPlan plan) {
+        copy(source, target, plan, Map.of());
+    }
+
+    /**
+     * Copy with {@code config} keys set on the copy itself, in the same request: Incus lays them
+     * over the source's config. This is how an instance can be created already carrying
+     * metadata its creator stamps, with no window in which it exists without it.
+     */
+    public void copy(String source, String target, CopyPlan plan, Map<String, String> configOverrides) {
         var http = http();
         if (plan.targetPool() == null) {
             throw new IncusException("No target storage pool for copy — " + plan.fullCopyReason());
@@ -1369,7 +1378,11 @@ public class IncusClient {
         // A device in the request replaces the source's whole; an empty config value unsets.
         // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by.
         if (!plan.addressedNics().isEmpty()) body.put("devices", plan.addressedNics());
-        body.put("config", Map.of(Metadata.STATIC_IP, "", Metadata.STATIC_GATEWAY, ""));
+        var config = new LinkedHashMap<String, String>();
+        config.put(Metadata.STATIC_IP, "");
+        config.put(Metadata.STATIC_GATEWAY, "");
+        config.putAll(configOverrides);
+        body.put("config", config);
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
         if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
     }
