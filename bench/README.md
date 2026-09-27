@@ -78,7 +78,7 @@ latency, not the proxy's. `UpstreamStub.java` stands in for it on loopback, serv
 any upstream. The payload sits at a coordinate no repository has
 (`dev/incusspawn/bench/payload`), and the harness removes it from the cache afterwards. Each
 recorded request therefore includes one loopback `HEAD`, so `maven` results from before this
-change are not comparable with later ones. It needs `java` and `keytool` from JDK 21 or later (the stub uses virtual threads).
+change are not comparable with later ones. The stub speaks only HTTP/1.1, so these `HEAD`s take the proxy's HTTP/1.1 fallback rather than the HTTP/2 it uses against Central. It needs `java` and `keytool` from JDK 21 or later (the stub uses virtual threads).
 
 Results record `loadMode`, and the delta table only ever compares runs of the same mode.
 

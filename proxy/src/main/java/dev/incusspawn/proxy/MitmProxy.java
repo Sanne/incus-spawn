@@ -244,6 +244,8 @@ public class MitmProxy {
     int upstreamWsPort = 443;
     boolean upstreamWsSsl = true;
     boolean upstreamTrustAll = false;
+    // Overridable for tests: see probeClient's options
+    int probeReadIdleSeconds = 15;
     // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
     // send a host's upstream connections to a local stub. Host header and SNI still
     // name the real host. Set before start().
@@ -614,14 +616,24 @@ public class MitmProxy {
         if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
         upstreamClient = vertx.createHttpClient(clientOptions);
 
+        // Every cache hit waits on one of these: h2 (via ALPN) shares a connection.
+        // The read-idle timeout only fires while an exchange is waiting, and being
+        // shorter than probeOptions()' it closes a silently dead connection (whose
+        // exchange is then retried on a new one) before any request times out on it.
+        // A few h2 connections per host, so a burst to a host that falls back to
+        // HTTP/1.1, or does not answer at all, is not handled one connect at a time.
         var probeOptions = new HttpClientOptions()
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
+                .setProtocolVersion(HttpVersion.HTTP_2)
+                .setUseAlpn(true)
+                .setHttp2KeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
+                .setHttp2MaxPoolSize(4)
                 .setMaxPoolSize(32)
-                .setKeepAliveTimeout(30)
+                .setKeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
                 .setConnectTimeout(10_000)
-                .setReadIdleTimeout(30);
+                .setReadIdleTimeout(probeReadIdleSeconds);
         if (upstreamTrust != null) probeOptions.setTrustOptions(upstreamTrust);
         probeClient = vertx.createHttpClient(probeOptions);
 
@@ -1912,6 +1924,9 @@ public class MitmProxy {
 
     private static final int MAX_SIDECAR_BYTES = 64 * 1024;
     static final long UNREACHABLE_BACKOFF_SECONDS = 30;
+
+    // How long probeClient keeps an idle connection; DESIGN.md says why not longer
+    private static final int PROBE_KEEP_ALIVE_SECONDS = 60;
 
     // Per caching domain, when a connection to it last failed (requestWithAsyncDns
     // keeps this). While recent, a request with a cached copy to fall back on uses it

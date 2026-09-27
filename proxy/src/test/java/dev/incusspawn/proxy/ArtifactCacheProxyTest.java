@@ -4,14 +4,18 @@ import dev.incusspawn.DerEncoder;
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 import io.vertx.core.net.SocketAddress;
@@ -27,7 +31,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -56,9 +62,12 @@ class ArtifactCacheProxyTest {
     static Vertx vertx;
     static MitmProxy proxy;
     static HttpServer upstream;
+    /** The same routes on a listener without ALPN, like an upstream that only speaks HTTP/1.1. */
+    static HttpServer h1Upstream;
     static HttpClient client;
     static int mitmPort;
     static int upstreamPort;
+    static int h1UpstreamPort;
 
     /** A reply status that closes the connection instead of answering. */
     static final int DROP = -2;
@@ -72,6 +81,12 @@ class ArtifactCacheProxyTest {
     /** Keyed by "host path"; anything else is a 404. Hits are keyed by "METHOD host path". */
     static final Map<String, Reply> routes = new ConcurrentHashMap<>();
     static final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
+    /** The protocols and connections HEADs arrived on. */
+    static final Set<HttpVersion> headVersions = ConcurrentHashMap.newKeySet();
+    static final Set<HttpConnection> headConnections = ConcurrentHashMap.newKeySet();
+    /** HEADs left to receive but never answer, like a connection that died silently. */
+    static final AtomicInteger headsToStall = new AtomicInteger();
+    static volatile long headDelayMs;
 
     @BeforeAll
     static void start() throws Exception {
@@ -86,37 +101,24 @@ class ArtifactCacheProxyTest {
         var ca = CertificateAuthority.loadOrCreate();
         var leaf = ca.generateDomainCert(CENTRAL);
         vertx = Vertx.vertx();
-        upstream = vertx.createHttpServer(new HttpServerOptions()
-                .setSsl(true)
-                .setKeyCertOptions(new PemKeyCertOptions()
-                        .setCertValue(Buffer.buffer(DerEncoder.toPem("CERTIFICATE", leaf.cert().getEncoded())))
-                        .setKeyValue(Buffer.buffer(DerEncoder.toPem("PRIVATE KEY", leaf.key().getEncoded())))));
-        upstream.requestHandler(req -> {
-            var host = req.authority().host();
-            var key = host + " " + req.path();
-            hits.computeIfAbsent(req.method() + " " + key, k -> new AtomicInteger()).incrementAndGet();
-            var reply = routes.get(key);
-            var resp = req.response();
-            if (reply == null) {
-                resp.setStatusCode(404).end("not found");
-                return;
-            }
-            if (reply.status() == DROP) {
-                req.connection().close();
-                return;
-            }
-            resp.setStatusCode(reply.status());
-            if (reply.location() != null) resp.putHeader("Location", reply.location());
-            if (reply.checksumHeader() != null) resp.putHeader("X-Checksum-SHA1", reply.checksumHeader());
-            resp.end(Buffer.buffer(reply.body() == null ? new byte[0] : reply.body()));
-        });
+        var keyCert = new PemKeyCertOptions()
+                .setCertValue(Buffer.buffer(DerEncoder.toPem("CERTIFICATE", leaf.cert().getEncoded())))
+                .setKeyValue(Buffer.buffer(DerEncoder.toPem("PRIVATE KEY", leaf.key().getEncoded())));
+        // Offers h2 like the real repositories do, so confirmations run over HTTP/2
+        upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true).setUseAlpn(true).setKeyCertOptions(keyCert))
+                .requestHandler(ArtifactCacheProxyTest::answer);
         upstreamPort = upstream.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
+                .get(5, TimeUnit.SECONDS).actualPort();
+        h1Upstream = vertx.createHttpServer(new HttpServerOptions().setSsl(true).setKeyCertOptions(keyCert))
+                .requestHandler(ArtifactCacheProxyTest::answer);
+        h1UpstreamPort = h1Upstream.listen(0, "127.0.0.1").toCompletionStage().toCompletableFuture()
                 .get(5, TimeUnit.SECONDS).actualPort();
 
         mitmPort = WebSocketProxyTest.findFreePort();
         proxy = new MitmProxy(vertx, "127.0.0.1", mitmPort, WebSocketProxyTest.findFreePort(), "127.0.0.1",
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
+        proxy.probeReadIdleSeconds = 1;
         var ready = new CountDownLatch(1);
         var thread = new Thread(() -> {
             try {
@@ -130,7 +132,40 @@ class ArtifactCacheProxyTest {
         assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
 
         client = vertx.createHttpClient(new HttpClientOptions()
-                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false));
+                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false).setMaxPoolSize(16));
+    }
+
+    static void answer(HttpServerRequest req) {
+        var host = req.authority().host();
+        var key = host + " " + req.path();
+        hits.computeIfAbsent(req.method() + " " + key, k -> new AtomicInteger()).incrementAndGet();
+        if (req.method() == HttpMethod.HEAD) {
+            headVersions.add(req.version());
+            headConnections.add(req.connection());
+            if (headsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) return;
+            if (headDelayMs > 0) {
+                vertx.setTimer(headDelayMs, t -> reply(req, key));
+                return;
+            }
+        }
+        reply(req, key);
+    }
+
+    static void reply(HttpServerRequest req, String key) {
+        var reply = routes.get(key);
+        var resp = req.response();
+        if (reply == null) {
+            resp.setStatusCode(404).end("not found");
+            return;
+        }
+        if (reply.status() == DROP) {
+            req.connection().close();
+            return;
+        }
+        resp.setStatusCode(reply.status());
+        if (reply.location() != null) resp.putHeader("Location", reply.location());
+        if (reply.checksumHeader() != null) resp.putHeader("X-Checksum-SHA1", reply.checksumHeader());
+        resp.end(Buffer.buffer(reply.body() == null ? new byte[0] : reply.body()));
     }
 
     @AfterAll
@@ -147,6 +182,10 @@ class ArtifactCacheProxyTest {
     void reset() throws Exception {
         routes.clear();
         hits.clear();
+        headVersions.clear();
+        headConnections.clear();
+        headsToStall.set(0);
+        headDelayMs = 0;
         online();
         for (var dir : new Path[] {Environment.mavenCacheDir(), Environment.gradleCacheDir(),
                 Environment.m2Repository()}) {
@@ -184,6 +223,10 @@ class ArtifactCacheProxyTest {
     }
 
     static Response get(String host, String path) throws Exception {
+        return getAsync(host, path).toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
+
+    static Future<Response> getAsync(String host, String path) {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
@@ -193,8 +236,7 @@ class ArtifactCacheProxyTest {
         return client.request(options)
                 .compose(HttpClientRequest::send)
                 .compose(resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
-                        resp.getHeader("X-Checksum-SHA1"))))
-                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+                        resp.getHeader("X-Checksum-SHA1"))));
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
@@ -294,6 +336,70 @@ class ArtifactCacheProxyTest {
         assertEquals(1, headsOn(CENTRAL, JAR));
         assertEquals(0, hitsOn(CENTRAL, JAR));
         assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"));
+    }
+
+    /** Cache the jars, then confirm them all at once, each HEAD answered after {@code delayMs}. */
+    static void confirmConcurrently(List<String> jars, long delayMs) throws Exception {
+        for (var jar : jars) {
+            publishJar(CENTRAL, jar, jar);
+            get(CENTRAL, jar);
+            awaitFile(cached(CENTRAL, jar), jar);
+        }
+        headDelayMs = delayMs;
+        var responses = Future.all(jars.stream().map(jar -> getAsync(CENTRAL, jar)).toList())
+                .toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        for (int i = 0; i < jars.size(); i++) {
+            assertEquals(jars.get(i), responses.<Response>resultAt(i).text());
+            assertNotNull(responses.<Response>resultAt(i).checksumHeader(), "confirmed by upstream");
+        }
+    }
+
+    static List<String> jars(int n) {
+        return java.util.stream.IntStream.range(0, n)
+                .mapToObj(i -> "/maven2/org/example/lib" + i + "/1.0/lib" + i + "-1.0.jar").toList();
+    }
+
+    @Test
+    void concurrentConfirmationsShareOneHttp2Connection() throws Exception {
+        // One confirmation first, so the burst finds the connection already open
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        get(CENTRAL, JAR);
+
+        confirmConcurrently(jars(6), 300);
+        assertEquals(Set.of(HttpVersion.HTTP_2), headVersions);
+        assertEquals(1, headConnections.size(), "every HEAD multiplexed on one connection");
+    }
+
+    @Test
+    void confirmationsToAnHttp1UpstreamRunInParallel() throws Exception {
+        assertTrue(ProxyMain.applyBenchUpstream(proxy, CENTRAL + "=127.0.0.1:" + h1UpstreamPort, ""));
+        long start = System.nanoTime();
+        confirmConcurrently(jars(8), 500);
+        long confirmMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertEquals(Set.of(HttpVersion.HTTP_1_1), headVersions);
+        assertTrue(headConnections.size() > 1, "HEADs spread over " + headConnections.size() + " connection(s)");
+        // One at a time would take 8 x 500ms on top of the downloads
+        assertTrue(confirmMs < 4000, "took " + confirmMs + "ms");
+    }
+
+    @Test
+    void silentlyDeadConnectionIsReplacedBeforeTheHitTimesOut() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        get(CENTRAL, JAR);
+        awaitFile(cached(CENTRAL, JAR), "v1");
+        get(CENTRAL, JAR);
+        assertEquals(1, headConnections.size());
+
+        headsToStall.set(1);
+        long start = System.nanoTime();
+        var hit = get(CENTRAL, JAR);
+        long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertEquals("v1", hit.text());
+        assertNotNull(hit.checksumHeader(), "confirmed on a new connection, not served unconfirmed");
+        assertEquals(2, headConnections.size(), "the silent connection was replaced");
+        assertTrue(ms < 10_000, "took " + ms + "ms");
     }
 
     @Test
