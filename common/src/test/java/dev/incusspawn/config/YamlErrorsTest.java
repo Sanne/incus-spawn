@@ -106,4 +106,47 @@ class YamlErrorsTest {
         assertTrue(result.hasErrors());
         assertTrue(result.errors().stream().anyMatch(e -> e.contains("duplicate key")));
     }
+
+    @Test
+    void listWhereScalarExpectedNamesTheField(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("isx.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                type:
+                  - kvm
+                """);
+        var ex = assertThrows(Exception.class, () -> ImageDef.parseFile(file));
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.startsWith("isx.yaml:"), "Should start with filename and line: " + msg);
+        assertTrue(msg.contains("'type' expects a single value, but got a list"), msg);
+        assertTrue(msg.contains("type: value"), "Should show the scalar form: " + msg);
+        assertFalse(msg.contains("java.lang"), "Should not leak Java types: " + msg);
+    }
+
+    @Test
+    void scalarWhereListExpectedNamesTheField(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("isx.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                packages:
+                  kvm: yes
+                """);
+        var ex = assertThrows(Exception.class, () -> ImageDef.parseFile(file));
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'packages' expects a list, but got a mapping"), msg);
+    }
+
+    @Test
+    void nestedMismatchReportsFullPath(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("isx.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                repos:
+                  - url:
+                      - https://example.com/a.git
+                """);
+        var ex = assertThrows(Exception.class, () -> ImageDef.parseFile(file));
+        var msg = YamlErrors.friendly("isx.yaml", ex);
+        assertTrue(msg.contains("'repos[0].url' expects a single value, but got a list"), msg);
+    }
 }

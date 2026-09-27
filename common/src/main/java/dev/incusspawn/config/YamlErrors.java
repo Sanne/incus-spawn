@@ -1,5 +1,10 @@
 package dev.incusspawn.config;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+
+import java.util.Collection;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -14,6 +19,9 @@ public final class YamlErrors {
 
     private static final Pattern DUPLICATE_FIELD = Pattern.compile(
             "Duplicate field '([^']+)'");
+
+    private static final Pattern RECEIVED_SHAPE = Pattern.compile(
+            "from (Array|Object|String|Integer|Floating-point|Boolean|Null) value");
 
     /**
      * Produce a one-line, human-readable error from a YAML parse exception.
@@ -60,9 +68,82 @@ public final class YamlErrors {
             return prefix + "malformed key — check for missing ':' or incorrect indentation";
         }
 
+        if (ex instanceof MismatchedInputException mismatch) {
+            var shape = describeMismatch(mismatch, raw);
+            if (shape != null) return prefix + shape;
+        }
+
         // Fallback: extract the first meaningful SnakeYAML message line
         var firstLine = extractFirstMeaningfulLine(raw);
+        if (ex instanceof JsonMappingException mapping) {
+            var path = fieldPath(mapping);
+            if (!path.isEmpty()) return prefix + "'" + path + "': " + firstLine;
+        }
         return prefix + firstLine;
+    }
+
+    /**
+     * Explain a value whose YAML shape (list, mapping, scalar) does not match what the
+     * field expects, naming the field. Returns null when the mismatch cannot be described.
+     */
+    private static String describeMismatch(MismatchedInputException ex, String raw) {
+        var path = fieldPath(ex);
+        var target = ex.getTargetType();
+        var m = RECEIVED_SHAPE.matcher(raw);
+        if (path.isEmpty() || target == null || !m.find()) return null;
+
+        var expected = shapeOf(target);
+        var received = switch (m.group(1)) {
+            case "Array" -> "a list";
+            case "Object" -> "a mapping";
+            case "Null" -> "an empty value";
+            default -> "a single value";
+        };
+        if (expected.equals(received)) return null;
+
+        var field = "'" + path + "'";
+        var hint = switch (received) {
+            case "a list" -> expected.equals("a single value")
+                    ? " — write it on one line, e.g. '" + leafName(ex) + ": value', without a '- ' item"
+                    : "";
+            case "a single value" -> expected.equals("a list")
+                    ? " — put each item on its own line starting with '- '"
+                    : "";
+            default -> "";
+        };
+        return field + " expects " + expected + ", but got " + received + hint;
+    }
+
+    private static String shapeOf(Class<?> type) {
+        if (type.isArray() || Collection.class.isAssignableFrom(type)) return "a list";
+        if (Map.class.isAssignableFrom(type)) return "a mapping";
+        if (type.isPrimitive() || type.isEnum() || CharSequence.class.isAssignableFrom(type)
+                || Number.class.isAssignableFrom(type) || type == Boolean.class) {
+            return "a single value";
+        }
+        return "a mapping";
+    }
+
+    /** The YAML path of the failing value, e.g. {@code repos[1].url}. */
+    static String fieldPath(JsonMappingException ex) {
+        var sb = new StringBuilder();
+        for (var ref : ex.getPath()) {
+            if (ref.getFieldName() != null) {
+                if (!sb.isEmpty()) sb.append('.');
+                sb.append(ref.getFieldName());
+            } else if (ref.getIndex() >= 0) {
+                sb.append('[').append(ref.getIndex()).append(']');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String leafName(JsonMappingException ex) {
+        var refs = ex.getPath();
+        for (int i = refs.size() - 1; i >= 0; i--) {
+            if (refs.get(i).getFieldName() != null) return refs.get(i).getFieldName();
+        }
+        return "key";
     }
 
     static int extractLine(String message) {
