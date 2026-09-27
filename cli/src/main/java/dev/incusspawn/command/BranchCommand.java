@@ -138,6 +138,21 @@ public class BranchCommand extends BaseCommand {
         incus.copy(resolvedSource, name, copyPlan);
         BuildOutput.stepDone();
 
+        // Configure GUI before start so environment.* keys are visible to init. First, because
+        // it may push files: any push lands well before the start (see prefetchAndStart).
+        if (gui) {
+            if (configureGui()) {
+                incus.configSet(name, Metadata.GUI_ENABLED, "true");
+            } else {
+                GuiPassthrough.removeGui(incus, name);
+                System.err.println("Continuing without GUI passthrough.");
+            }
+        } else {
+            // Clean up inherited GUI devices/env from incus copy
+            GuiPassthrough.removeGui(incus, name);
+            warnIfTemplateWantsGui(resolvedSource, defs);
+        }
+
         String cpu;
         if (cpuLimit != null) {
             cpu = String.valueOf(cpuLimit);
@@ -157,20 +172,6 @@ public class BranchCommand extends BaseCommand {
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, resolvedSource);
         applyAccountSelection(accountSelection);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
-
-        // Configure GUI before start so environment.* keys are visible to init
-        if (gui) {
-            if (configureGui()) {
-                incus.configSet(name, Metadata.GUI_ENABLED, "true");
-            } else {
-                GuiPassthrough.removeGui(incus, name);
-                System.err.println("Continuing without GUI passthrough.");
-            }
-        } else {
-            // Clean up inherited GUI devices/env from incus copy
-            GuiPassthrough.removeGui(incus, name);
-            warnIfTemplateWantsGui(resolvedSource, defs);
-        }
 
         var enableKvm = kvm || (!noKvm && "kvm".equals(incus.configGet(resolvedSource, Metadata.INSTANCE_MODE)));
         if (enableKvm) {

@@ -881,10 +881,13 @@ state (it used to rewrite devices and config and push two empty files on every b
 the setup script polls for the network address every 50 ms rather than every 0.5 s, which was
 ~400 ms of idle time per branch.
 
-The static `.network` file is still pushed before start, because it must be in place at boot.
-It goes in well before the start (after resource limits and network configuration), which has
-been enough to finish the flush; if a trace ever shows the one-second gap again, that push is
-the next candidate.
+Two kinds of file still go in before the start, because they must be in place at boot: the
+static `.network` file, and the Wayland profile.d/tmpfiles.d files of a `--gui` branch (or the
+empty files that clear them, when a branch drops GUI state it inherited). Both are pushed well
+before the start: GUI setup runs first, right after the copy, and the `.network` push follows
+the resource limits and network configuration, with the account stamp, host integration and
+the runtime prefetch still between it and the start. That has been enough to finish the flush;
+if a trace ever shows the one-second gap again, the `.network` push is the next candidate.
 
 ### Build-time initialization must not capture host paths
 

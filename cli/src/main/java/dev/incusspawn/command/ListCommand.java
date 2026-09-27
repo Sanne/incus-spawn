@@ -5223,6 +5223,19 @@ public class ListCommand extends BaseCommand {
         incus.copy(source, name);
         BuildOutput.stepDone();
 
+        // Configure GUI before start so environment.* keys are visible to init. First, because
+        // it may push files: any push lands well before the start (see prefetchAndStart).
+        if (gui) {
+            if (GuiPassthrough.configureGui(incus, name)) {
+                incus.configSet(name, Metadata.GUI_ENABLED, "true");
+            } else {
+                GuiPassthrough.removeGui(incus, name);
+                System.err.println("Continuing without GUI passthrough.");
+            }
+        } else {
+            GuiPassthrough.removeGui(incus, name);
+        }
+
         String cpu, memory, disk;
         if (vm) {
             var cpuText = vmCpuInput.text().strip();
@@ -5241,18 +5254,6 @@ public class ListCommand extends BaseCommand {
         InstanceLifecycle.assignStaticIp(incus, name, networkMode);
         InstanceLifecycle.tagMetadata(incus, name, Metadata.TYPE_CLONE, source);
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
-
-        // Configure GUI before start so environment.* keys are visible to init
-        if (gui) {
-            if (GuiPassthrough.configureGui(incus, name)) {
-                incus.configSet(name, Metadata.GUI_ENABLED, "true");
-            } else {
-                GuiPassthrough.removeGui(incus, name);
-                System.err.println("Continuing without GUI passthrough.");
-            }
-        } else {
-            GuiPassthrough.removeGui(incus, name);
-        }
 
         if (kvm) {
             if (!KvmPassthrough.configureKvm(incus, name)) {
