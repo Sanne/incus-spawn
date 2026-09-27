@@ -22,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -152,8 +154,28 @@ class ArtifactCacheProxyTest {
                 Environment.m2Repository()}) {
             // user.home is JVM-global: never let a stray value point this at a real ~/.m2
             assertTrue(dir.startsWith(tempHome), dir + " is outside the test home");
-            FileTrees.delete(dir);
+            await(dir + " to be deleted", () -> deleteOnceIdle(dir));
         }
+    }
+
+    /**
+     * A download is committed after its response ends, so the previous test can leave one
+     * running; deleting under it fails the walk (DirectoryNotEmpty) or lets it write into
+     * the next test. Each in-flight store holds a {@code .tmp} beside its target until it
+     * commits, so wait for none to be left, and retry if one still races the walk.
+     */
+    static boolean deleteOnceIdle(Path dir) {
+        try {
+            if (Files.isDirectory(dir)) {
+                try (var files = Files.walk(dir)) {
+                    if (files.anyMatch(f -> f.getFileName().toString().endsWith(".tmp"))) return false;
+                }
+            }
+            FileTrees.delete(dir);
+        } catch (IOException | UncheckedIOException e) {
+            return false;
+        }
+        return !Files.exists(dir);
     }
 
     // --- helpers ---
@@ -234,13 +256,24 @@ class ArtifactCacheProxyTest {
         return Environment.mavenCacheDir().resolve(host).resolve(path.substring(1));
     }
 
+    @FunctionalInterface
+    interface Condition {
+        boolean holds() throws Exception;
+    }
+
+    /** Polls every 10 ms, so a wait lasts barely longer than the condition takes. */
+    static void await(String what, Condition condition) throws Exception {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!condition.holds()) {
+            if (System.nanoTime() - deadline > 0) fail("Timed out waiting for " + what);
+            Thread.sleep(10);
+        }
+    }
+
     /** Commits happen after the response ends, on a worker thread. */
     static void awaitFile(Path file, String content) throws Exception {
-        for (int i = 0; i < 200; i++) {
-            if (Files.isRegularFile(file) && Files.readString(file).equals(content)) return;
-            Thread.sleep(25);
-        }
-        fail("Expected " + file + " to hold " + content);
+        await(file + " to hold " + content,
+                () -> Files.isRegularFile(file) && Files.readString(file).equals(content));
     }
 
     /**
@@ -248,11 +281,7 @@ class ArtifactCacheProxyTest {
      * for crash safety), so seeing the artifact does not mean the sidecar is there yet.
      */
     static void awaitSidecar(Path file) throws Exception {
-        for (int i = 0; i < 200; i++) {
-            if (Files.isRegularFile(file)) return;
-            Thread.sleep(25);
-        }
-        fail("Expected " + file + " to exist");
+        await(file + " to exist", () -> Files.isRegularFile(file));
     }
 
     static void assertStaysPresent(Path file, String content) throws Exception {
@@ -701,8 +730,7 @@ class ArtifactCacheProxyTest {
     @Test
     void unverifiedLegacyCachesAreDeleted() throws Exception {
         for (var legacy : Environment.unverifiedLegacyCacheDirs()) {
-            for (int i = 0; i < 200 && Files.exists(legacy); i++) Thread.sleep(25);
-            assertFalse(Files.exists(legacy), legacy + " should have been deleted on start");
+            await(legacy + " to be deleted on start", () -> !Files.exists(legacy));
         }
     }
 }
