@@ -2576,39 +2576,63 @@ class BuildCommandTest {
     }
 
     @Test
-    void mountDnfCacheDoesNotPollForContainers() {
+    void attachDnfCacheAddsTheVolumeDeviceWithoutWaitingForTheGuest() {
+        // Attached before start (#828): a VM mounts boot-time devices before incus-agent serves
+        // the first exec, so there is nothing to poll for.
         var incus = mock(IncusClient.class);
-        dnfCacheCommand(incus).mountDnfCache("b", false);
+        assertNull(dnfCacheCommand(incus).attachDnfCache("b"));
 
+        verify(incus).ensureStorageVolume("cow", BuildCommand.DNF_CACHE_VOLUME);
         verify(incus).deviceAdd(eq("b"), eq("dnf-cache"), eq("disk"),
                 eq("pool=cow"), eq("source=" + BuildCommand.DNF_CACHE_VOLUME),
                 eq("path=" + BuildCommand.DNF_CACHE_PATH));
         verify(incus, never()).pollUntilReady(anyString(), anyInt(), any(String[].class));
-        verify(incus, never()).deviceRemove(anyString(), anyString());
+        verify(incus, never()).shellExec(anyString(), any(String[].class));
     }
 
     @Test
-    void mountDnfCacheWaitsForVmMountAndKeepsDevice() {
+    void attachDnfCacheReportsFailureInsteadOfPrintingInsideTheLaunchStep() {
         var incus = mock(IncusClient.class);
-        when(incus.pollUntilReady(eq("b"), anyInt(), any(String[].class))).thenReturn(true);
-        dnfCacheCommand(incus).mountDnfCache("b", true);
+        doThrow(new RuntimeException("pool gone")).when(incus).ensureStorageVolume(anyString(), anyString());
 
-        verify(incus).deviceAdd(eq("b"), eq("dnf-cache"), eq("disk"), any(String[].class));
-        verify(incus).pollUntilReady("b", 15, "mountpoint", "-q", BuildCommand.DNF_CACHE_PATH);
-        verify(incus, never()).deviceRemove(anyString(), anyString());
+        assertEquals("pool gone", dnfCacheCommand(incus).attachDnfCache("b"));
+        verify(incus, never()).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
     }
 
     @Test
-    void mountDnfCacheRemovesDeviceWhenVmMountNeverAppears() {
-        // Leaving the device attached would let the async agent mount it mid-build, over a
-        // cache dir dnf has already started filling; the build must continue uncached.
-        var incus = mock(IncusClient.class);
-        when(incus.pollUntilReady(eq("b"), anyInt(), any(String[].class))).thenReturn(false);
-        when(incus.isVm("b")).thenReturn(true);
-        when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
+    void agentHomeOwnershipFillsSkelAndSkipsMounts(@TempDir Path tempDir) throws Exception {
+        // Host resources are attached before start, so a mount under the agent home can create it
+        // as root before useradd runs: useradd -m then skips skel, and chown -R would hit the
+        // read-only mount. Run the real script with chown and mountpoint stubbed.
+        var home = Files.createDirectories(tempDir.resolve("home"));
+        var skel = Files.createDirectories(tempDir.resolve("skel"));
+        Files.writeString(skel.resolve(".bashrc"), "skel");
+        Files.writeString(skel.resolve(".bash_profile"), "skel");
+        Files.writeString(home.resolve(".bashrc"), "mine");
+        var mount = Files.createDirectories(home.resolve(".m2/ro"));
+        Files.writeString(mount.resolve("hostfile"), "x");
+        var bin = Files.createDirectories(tempDir.resolve("bin"));
+        var chownLog = tempDir.resolve("chown.log");
+        writeStub(bin.resolve("mountpoint"), "[ \"$2\" = \"" + mount + "\" ]");
+        writeStub(bin.resolve("chown"), "shift; [ \"$1\" = agentuser:agentuser ] && shift; echo \"$@\" >> " + chownLog);
 
-        assertDoesNotThrow(() -> dnfCacheCommand(incus).mountDnfCache("b", true));
-        verify(incus).deviceRemove("b", "dnf-cache");
+        var script = BuildCommand.AGENT_HOME_OWNERSHIP
+                .replace("/etc/skel", skel.toString())
+                .replace("/home/agentuser", home.toString());
+        var pb = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var proc = pb.start();
+        var out = new String(proc.getInputStream().readAllBytes());
+        assertEquals(0, proc.waitFor(), out);
+
+        assertEquals("mine", Files.readString(home.resolve(".bashrc")), "skel clobbered a file");
+        assertEquals("skel", Files.readString(home.resolve(".bash_profile")), "skel not copied");
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(
+                Files.getPosixFilePermissions(home)), "home should be 0700 as useradd -m makes it");
+        var chowned = Files.readString(chownLog);
+        assertTrue(chowned.contains(home.resolve(".m2").toString()), chowned);
+        assertTrue(chowned.contains(home.resolve(".bashrc").toString()), chowned);
+        assertFalse(chowned.contains(mount.toString()), "chowned into a mount: " + chowned);
     }
 
     @Test

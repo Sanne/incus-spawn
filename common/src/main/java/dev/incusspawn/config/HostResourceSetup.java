@@ -256,23 +256,56 @@ public final class HostResourceSetup {
         return source.startsWith("http://") || source.startsWith("https://");
     }
 
+    /**
+     * Attach the disk devices of a build's {@code readonly} and {@code overlay} resources. Call it
+     * while the build instance is still stopped (#828): a device present at start gets its own PCIe
+     * root port on a VM, while one hot-plugged into a running VM takes one of only 8 spare hotplug
+     * slots, which repo references need. A VM also mounts boot-time devices before incus-agent
+     * serves its first exec, so nothing has to wait for them to appear.
+     *
+     * <p>Quiet, because it runs inside the launch step's progress line. {@link #applyForBuild}
+     * reports each resource once the instance is up. A missing source is skipped rather than
+     * attached, since Incus refuses to start an instance with a missing {@code source} path.
+     */
+    public static void attachBuildDevices(IncusClient incus, String container,
+                                          List<ImageDef.HostResource> resources, boolean isVm) {
+        for (var hr : resources) {
+            verifyConfined(hr);
+            if (!sourceExists(hr)) continue;
+            switch (effectiveMode(hr, isVm)) {
+                case "readonly" -> addReadonlyDevice(incus, container, hr, isVm);
+                case "overlay" -> {
+                    requireOverlaySupported(hr);
+                    addOverlayDevice(incus, container, hr, isVm);
+                }
+                default -> {}
+            }
+        }
+    }
+
+    /**
+     * The in-guest half of a build's host resources, after {@link #attachBuildDevices} and start:
+     * {@code copy} pushes the files, {@code overlay} mounts the overlay over its already-attached
+     * lower directory, and each resource is reported.
+     */
     public static void applyForBuild(IncusClient incus, Container container, List<ImageDef.HostResource> resources,
                                       boolean isVm) {
         var overlayEntries = new ArrayList<ImageDef.HostResource>();
         for (var hr : resources) {
             verifyConfined(hr);
             switch (effectiveMode(hr, isVm)) {
-                case "copy" -> applyCopy(container, hr);
-                case "readonly" -> applyReadonly(incus, container.name(), hr, isVm);
+                case "copy" -> {
+                    noteVmCopyFallback(hr);
+                    applyCopy(container, hr);
+                }
+                case "readonly" -> {
+                    if (warnIfMissing(hr)) continue;
+                    BuildOutput.note("Mounted " + hr.getSource() + " -> "
+                            + resolveContainerPath(hr.getSource(), hr.getPath()) + " (readonly)");
+                }
                 case "overlay" -> {
-                    if (Platform.isMacOS()) {
-                        throw new IllegalStateException(
-                                "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
-                                + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"
-                                + "  or remove the host-resource entry to skip it entirely.\n"
-                                + "  Tracking: https://github.com/Sanne/incus-spawn/issues/157");
-                    }
-                    applyOverlay(incus, container, hr, isVm);
+                    requireOverlaySupported(hr);
+                    applyOverlay(container, hr);
                     overlayEntries.add(hr);
                 }
                 default -> System.err.println("Warning: unknown host-resource mode '" + hr.getMode()
@@ -329,20 +362,18 @@ public final class HostResourceSetup {
             switch (effectiveMode(hr, isVm)) {
                 case "readonly" -> {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
-                    applyReadonly(incus, container, hr, isVm);
+                    if (warnIfMissing(hr)) continue;
+                    addReadonlyDevice(incus, container, hr, isVm);
+                    BuildOutput.note("Mounted " + hr.getSource() + " -> "
+                            + resolveContainerPath(hr.getSource(), hr.getPath()) + " (readonly)");
                 }
                 case "overlay" -> {
-                    if (Platform.isMacOS()) {
-                        throw new IllegalStateException(
-                                "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
-                                + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"
-                                + "  or remove the host-resource entry to skip it entirely.\n"
-                                + "  Tracking: https://github.com/Sanne/incus-spawn/issues/157");
-                    }
+                    requireOverlaySupported(hr);
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
-                    applyOverlayDevice(incus, container, hr, isVm);
+                    if (warnIfMissing(hr)) continue;
+                    addOverlayDevice(incus, container, hr, isVm);
                 }
-                case "copy" -> {} // already baked into the template
+                case "copy" -> noteVmCopyFallback(hr); // already baked into the template
             }
         }
     }
@@ -392,10 +423,36 @@ public final class HostResourceSetup {
         if (!isVm || "copy".equals(hr.getMode())) return hr.getMode();
         var expandedSource = expandHostTilde(hr.getSource());
         if (Files.exists(Path.of(expandedSource)) && !Files.isDirectory(Path.of(expandedSource))) {
-            BuildOutput.note("VM: falling back to copy mode for file " + hr.getSource());
             return "copy";
         }
         return hr.getMode();
+    }
+
+    private static void noteVmCopyFallback(ImageDef.HostResource hr) {
+        if (!"copy".equals(hr.getMode())) {
+            BuildOutput.note("VM: falling back to copy mode for file " + hr.getSource());
+        }
+    }
+
+    private static boolean sourceExists(ImageDef.HostResource hr) {
+        return Files.exists(Path.of(expandHostTilde(hr.getSource())));
+    }
+
+    /** Warns and returns true when the resource's host source is gone, so the caller skips it. */
+    private static boolean warnIfMissing(ImageDef.HostResource hr) {
+        if (sourceExists(hr)) return false;
+        System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
+        return true;
+    }
+
+    private static void requireOverlaySupported(ImageDef.HostResource hr) {
+        if (Platform.isMacOS()) {
+            throw new IllegalStateException(
+                    "Host-resource '" + hr.getSource() + "' uses overlay mode, which is not yet supported on macOS.\n"
+                    + "  Change the mode to 'readonly' in your image definition to mount it read-only,\n"
+                    + "  or remove the host-resource entry to skip it entirely.\n"
+                    + "  Tracking: https://github.com/Sanne/incus-spawn/issues/157");
+        }
     }
 
     // --- Private helpers ---
@@ -437,62 +494,50 @@ public final class HostResourceSetup {
         }
     }
 
-    private static void applyReadonly(IncusClient incus, String container, ImageDef.HostResource hr, boolean isVm) {
-        var expandedSource = expandHostTilde(hr.getSource());
-        if (!Files.exists(Path.of(expandedSource))) {
-            System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
-            return;
-        }
+    private static void addReadonlyDevice(IncusClient incus, String container, ImageDef.HostResource hr,
+                                          boolean isVm) {
         var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
-        var devName = deviceName(containerPath);
         var args = new java.util.ArrayList<>(java.util.List.of(
-                "source=" + translateForVm(expandedSource),
+                "source=" + translateForVm(expandHostTilde(hr.getSource())),
                 "path=" + containerPath,
                 "readonly=true"));
         addShiftIfSupported(args, isVm);
-        incus.deviceAdd(container, devName, "disk", args.toArray(String[]::new));
-        BuildOutput.note("Mounted " + hr.getSource() + " -> " + containerPath + " (readonly)");
+        incus.deviceAdd(container, deviceName(containerPath), "disk", args.toArray(String[]::new));
     }
 
-    private static void applyOverlay(IncusClient incus, Container container, ImageDef.HostResource hr, boolean isVm) {
+    /** The overlay's read-only lower layer: pure device config, so it is attached before start. */
+    private static void addOverlayDevice(IncusClient incus, String container, ImageDef.HostResource hr,
+                                         boolean isVm) {
+        var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
+        var devArgs = new java.util.ArrayList<>(java.util.List.of(
+                "source=" + translateForVm(expandHostTilde(hr.getSource())),
+                "path=" + overlayDir(containerPath) + "/lower",
+                "readonly=true"));
+        addShiftIfSupported(devArgs, isVm);
+        incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
+                devArgs.toArray(String[]::new));
+    }
+
+    private static void applyOverlay(Container container, ImageDef.HostResource hr) {
+        if (warnIfMissing(hr)) return;
         var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
         var oDir = overlayDir(containerPath);
         var lowerDir = oDir + "/lower";
         var upperDir = oDir + "/upper";
         var workDir = oDir + "/work";
 
-        var expandedSource = expandHostTilde(hr.getSource());
-        if (!Files.exists(Path.of(expandedSource))) {
-            System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
-            return;
-        }
-
-        var overlayArgs = new java.util.ArrayList<>(java.util.List.of(
-                "source=" + translateForVm(expandedSource),
-                "path=" + lowerDir,
-                "readonly=true"));
-        addShiftIfSupported(overlayArgs, isVm);
-        incus.deviceAdd(container.name(), overlayDeviceName(containerPath), "disk",
-                overlayArgs.toArray(String[]::new));
-
         container.exec("mkdir", "-p", upperDir, workDir, containerPath);
         container.exec("chown", "agentuser:agentuser", upperDir);
         chownHomeParents(container, containerPath);
 
-        if (isVm) {
-            // VM disk devices are mounted asynchronously by incus-agent;
-            // wait for the lower directory to be populated before overlaying.
-            if (!incus.pollUntilReady(container.name(), 15,
-                    "sh", "-c", "mountpoint -q " + lowerDir)) {
-                System.err.println("  Warning: VM device for " + hr.getSource()
-                        + " did not mount in time (skipping overlay)");
-                return;
-            }
-        }
-
-        var mountResult = container.exec("mount", "-t", "overlay", "overlay",
-                "-o", "lowerdir=" + lowerDir + ",upperdir=" + upperDir + ",workdir=" + workDir + ",metacopy=off",
-                containerPath);
+        // The lower device was attached before start, so it is mounted by now: containers get it
+        // at start, and a VM's incus-agent mounts boot-time shares before serving any exec. But the
+        // agent only logs a share it fails to mount, and an overlay over the empty mount point would
+        // silently hide the host content, so check (without waiting) in the same exec.
+        var mountResult = container.exec("sh", "-c",
+                "mountpoint -q \"$1\" || { echo \"$1 is not mounted\" >&2; exit 1; }; "
+                + "mount -t overlay overlay -o \"lowerdir=$1,upperdir=$2,workdir=$3,metacopy=off\" \"$4\"",
+                "sh", lowerDir, upperDir, workDir, containerPath);
         if (!mountResult.success()) {
             System.err.println("  Warning: overlay mount failed for " + hr.getSource()
                     + ": " + mountResult.stderr());
@@ -500,26 +545,6 @@ public final class HostResourceSetup {
         }
 
         BuildOutput.note("Mounted " + hr.getSource() + " -> " + containerPath + " (overlay)");
-    }
-
-    private static void applyOverlayDevice(IncusClient incus, String container, ImageDef.HostResource hr,
-                                            boolean isVm) {
-        var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
-        var lowerDir = overlayDir(containerPath) + "/lower";
-
-        var expandedSource = expandHostTilde(hr.getSource());
-        if (!Files.exists(Path.of(expandedSource))) {
-            System.err.println("Warning: host-resource source not found: " + hr.getSource() + " (skipping)");
-            return;
-        }
-
-        var devArgs = new java.util.ArrayList<>(java.util.List.of(
-                "source=" + translateForVm(expandedSource),
-                "path=" + lowerDir,
-                "readonly=true"));
-        addShiftIfSupported(devArgs, isVm);
-        incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
-                devArgs.toArray(String[]::new));
     }
 
     private static void chownHomeParents(Container container, String containerPath) {

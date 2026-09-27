@@ -187,6 +187,7 @@ public class BranchCommand extends BaseCommand {
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
         boolean isVm = incus.isVm(name);
+        InstanceLifecycle.attachInbox(incus, name, inbox);
         var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
 
         if (isVm) {
@@ -196,7 +197,7 @@ public class BranchCommand extends BaseCommand {
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched);
 
         if (networkMode != NetworkMode.AIRGAP) {
             CertificateAuthority.fixContainerCaIfNeeded(incus, name);

@@ -999,6 +999,8 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
             InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
+        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
+        var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
         incus.start(buildName);
         incus.waitForReady(buildName);
 
@@ -1009,6 +1011,7 @@ public class BuildCommand extends BaseCommand {
 
         incus.waitForSystemd(buildName);
         BuildOutput.stepDone();
+        warnDnfCacheUnavailable(dnfCacheWarning);
 
         if (!effectiveVm) {
             waitForIpv4(container);
@@ -1026,9 +1029,6 @@ public class BuildCommand extends BaseCommand {
 
         waitForNetwork(buildName);
 
-        mountDnfCache(buildName, effectiveVm);
-
-        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
@@ -1155,9 +1155,12 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
             InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
+        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
+        var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
         incus.start(buildName);
         waitForReady(buildName);
         BuildOutput.stepDone();
+        warnDnfCacheUnavailable(dnfCacheWarning);
 
         var container = new Container(incus, buildName);
 
@@ -1205,8 +1208,6 @@ public class BuildCommand extends BaseCommand {
 
         waitForNetwork(buildName);
 
-        mountDnfCache(buildName, effectiveVm);
-
         if (effectiveVm) {
             // Before the first dnf run below: the resize tools' install is a package install too.
             disableGuestSelinux(container);
@@ -1250,7 +1251,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.stepStart("Creating agentuser...");
             container.exec("useradd", "-m", "-u", "1000", "-G", "systemd-journal", "agentuser")
                     .assertSuccess("Failed to create agentuser");
-            container.exec("chown", "-R", "agentuser:agentuser", "/home/agentuser")
+            container.sh(AGENT_HOME_OWNERSHIP)
                     .assertSuccess("Failed to set home directory ownership");
             container.exec("mkdir", "-p", "/home/agentuser/inbox")
                     .assertSuccess("Failed to create inbox directory");
@@ -1279,7 +1280,6 @@ public class BuildCommand extends BaseCommand {
                     dnfCommand("install", "-y", "git", "curl", "which", "procps-ng", "findutils"));
         }
 
-        var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
             HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
@@ -2573,25 +2573,56 @@ public class BuildCommand extends BaseCommand {
 
     static final String DNF_CACHE_PATH = "/var/cache/libdnf5";
 
-    void mountDnfCache(String container, boolean isVm) {
+    /**
+     * Give agentuser its home when {@code useradd -m} created it, and when it did not: host
+     * resources are attached before start (#828), so a mount under {@code /home/agentuser} already
+     * made the directory as root. {@code useradd} then succeeds but skips {@code /etc/skel}, and a
+     * {@code chown -R} would fail on the read-only mount. So copy skel without clobbering, chown
+     * everything except mount points, which belong to the host, and give the home the 0700 that
+     * {@code useradd -m} would have (a pre-created one is 0755).
+     */
+    static final String AGENT_HOME_OWNERSHIP =
+            "cp -an /etc/skel/. /home/agentuser/ && chown agentuser:agentuser /home/agentuser && "
+            + "chmod 700 /home/agentuser && "
+            + "find /home/agentuser -mindepth 1 -exec mountpoint -q {} \\; -prune "
+            + "-o -exec chown -h agentuser:agentuser {} +";
+
+    /**
+     * Attach the DNF cache volume to a stopped build instance. Returns why it could not be
+     * attached, or null: the caller is inside a progress line and reports it after the step.
+     */
+    String attachDnfCache(String container) {
         try {
             var pool = incus.findCowPool();
-            if (pool == null) return;
+            if (pool == null) return null;
             incus.ensureStorageVolume(pool, DNF_CACHE_VOLUME);
             incus.deviceAdd(container, DNF_CACHE_DEVICE, "disk",
                     "pool=" + pool,
                     "source=" + DNF_CACHE_VOLUME,
                     "path=" + DNF_CACHE_PATH);
+            return null;
         } catch (Exception e) {
-            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + e.getMessage());
-            return;
+            return e.getMessage();
         }
-        // VMs get the volume over virtiofs, mounted asynchronously by incus-agent. Without
-        // this wait the first dnf run would fill the image's own cache dir instead.
-        if (isVm && !incus.pollUntilReady(container, 15, "mountpoint", "-q", DNF_CACHE_PATH)) {
-            System.err.println("Warning: DNF cache volume did not mount in time (builds will be slower).");
-            try { unmountDnfCache(container); } catch (Exception ignored) {}
+    }
+
+    private static void warnDnfCacheUnavailable(String reason) {
+        if (reason != null) {
+            System.err.println("Warning: could not mount DNF cache (builds will be slower): " + reason);
         }
+    }
+
+    /**
+     * Attach every disk device the build needs while the instance is still stopped (#828). On a VM
+     * a device present at start gets its own PCIe root port, while a hot-plug takes one of only 8
+     * spare slots, which repo references need; and incus-agent mounts boot-time devices before it
+     * serves the first exec, so nothing has to poll for them. Returns the DNF cache warning, if any.
+     */
+    private String attachBootDevices(String buildName, List<ImageDef.HostResource> hostResources,
+                                     boolean effectiveVm) {
+        var dnfCacheWarning = attachDnfCache(buildName);
+        HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, effectiveVm);
+        return dnfCacheWarning;
     }
 
     void unmountDnfCache(String container) {

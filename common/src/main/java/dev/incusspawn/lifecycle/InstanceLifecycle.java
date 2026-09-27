@@ -681,31 +681,35 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Post-start setup: firewall, inbox, home ownership, SSH keys.
-     * GUI is NOT handled here — it must be configured before start.
+     * Attach the {@code --inbox} directory, before start (#828): on a VM a device present at start
+     * gets its own PCIe root port instead of one of the 8 spare hotplug slots.
+     */
+    public static void attachInbox(IncusClient incus, String name, Path inboxPath) {
+        if (inboxPath == null) return;
+        if (!java.nio.file.Files.isDirectory(inboxPath)) {
+            System.err.println(BuildOutput.STEP_INDENT + "Warning: inbox path '" + inboxPath +
+                    "' is not a directory, skipping.");
+            return;
+        }
+        BuildOutput.step("Mounting inbox: " + inboxPath.toAbsolutePath() + ".");
+        incus.deviceAdd(name, "inbox", "disk",
+                "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(
+                        inboxPath.toAbsolutePath().toString()),
+                "path=/home/agentuser/inbox",
+                "readonly=true");
+    }
+
+    /**
+     * Post-start setup: firewall, home ownership, SSH keys.
+     * GUI and the inbox are NOT handled here — they must be configured before start.
      *
      * @param prefetched config read before start to avoid seccomp lock contention;
      *                   if null, config is read live (slower on macOS)
      */
     public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, Path inboxPath,
-                                   RuntimeConfig prefetched) {
+                                   NetworkMode networkMode, RuntimeConfig prefetched) {
         if (networkMode == NetworkMode.PROXY_ONLY) {
             applyProxyOnlyFirewall(incus, name);
-        }
-
-        if (inboxPath != null) {
-            if (java.nio.file.Files.isDirectory(inboxPath)) {
-                BuildOutput.step("Mounting inbox: " + inboxPath.toAbsolutePath() + ".");
-                incus.deviceAdd(name, "inbox", "disk",
-                        "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(
-                                inboxPath.toAbsolutePath().toString()),
-                        "path=/home/agentuser/inbox",
-                        "readonly=true");
-            } else {
-                System.err.println(BuildOutput.STEP_INDENT + "Warning: inbox path '" + inboxPath +
-                        "' is not a directory, skipping.");
-            }
         }
 
         // Build a single setup script that handles readiness polling, home
@@ -737,9 +741,8 @@ public final class InstanceLifecycle {
         configureSshHostEntry(incus, name, sshCapable);
     }
 
-    public static void setupRuntime(IncusClient incus, String name,
-                                   NetworkMode networkMode, Path inboxPath) {
-        setupRuntime(incus, name, networkMode, inboxPath, null);
+    public static void setupRuntime(IncusClient incus, String name, NetworkMode networkMode) {
+        setupRuntime(incus, name, networkMode, null);
     }
 
     /**

@@ -4991,6 +4991,8 @@ public class ListCommand extends BaseCommand {
         }
 
         boolean isVm = incus.isVm(name);
+        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
+        InstanceLifecycle.attachInbox(incus, name, inbox);
         var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
         if (isVm) {
             BuildOutput.stepStart("Waiting for VM agent...");
@@ -4999,8 +5001,7 @@ public class ListCommand extends BaseCommand {
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }
 
-        var inbox = (inboxPath != null && !inboxPath.isEmpty()) ? java.nio.file.Path.of(inboxPath) : null;
-        InstanceLifecycle.setupRuntime(incus, name, networkMode, inbox, prefetched);
+        InstanceLifecycle.setupRuntime(incus, name, networkMode, prefetched);
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();
