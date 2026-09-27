@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -266,6 +267,18 @@ class HostResourceSetupTest {
                         new ImageDef.HostResource(System.getProperty("java.io.tmpdir"), "/opt/ok", "readonly"),
                         new ImageDef.HostResource("~/src", "/etc/x", "overlay")), false));
         org.mockito.Mockito.verifyNoInteractions(incus);
+    }
+
+    @Test
+    void hostPathOfDeviceSourceUndoesTheMacOsHomeTranslation() {
+        assertEquals(Path.of("/home/me/inbox"),
+                HostResourceSetup.hostPathOfDeviceSource("/home/me/inbox", false, "/home/me"));
+        assertEquals(Path.of("/Users/me/inbox"),
+                HostResourceSetup.hostPathOfDeviceSource("/host/inbox", true, "/Users/me"));
+        assertEquals(Path.of("/Users/me"), HostResourceSetup.hostPathOfDeviceSource("/host", true, "/Users/me"));
+        // Outside the shared home the path lives in the appliance VM: not checkable from the host.
+        assertNull(HostResourceSetup.hostPathOfDeviceSource("/srv/data", true, "/Users/me"));
+        assertNull(HostResourceSetup.hostPathOfDeviceSource("/hostile", true, "/Users/me"));
     }
 
     private static ImageDef makeImageDef(String name, String parent, List<ImageDef.HostResource> hostResources) {

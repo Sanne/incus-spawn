@@ -5158,11 +5158,27 @@ public class ListCommand extends BaseCommand {
 
     private void fixCaMismatchIfNeeded(String containerName) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
-            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName);
+            // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
+            // because its host directory is gone must not go unannounced (#852), so it goes on
+            // the status line, which is still there when the shell returns to the TUI.
+            var warnings = new ArrayList<String>();
+            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warnings::add);
+            var status = startWarningStatus(warnings);
+            if (status != null) statusMessage = status;
             incus.start(containerName);
             incus.waitForReady(containerName);
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
+    }
+
+    /**
+     * The status line for the warnings of a pre-start repair: the first, on one line (the CLI
+     * form is indented and may wrap), and how many more there were. Null when there were none.
+     */
+    static String startWarningStatus(List<String> warnings) {
+        if (warnings.isEmpty()) return null;
+        var first = warnings.get(0).strip().replaceAll("\\s*\\R\\s*", " ");
+        return warnings.size() == 1 ? first : first + " (+" + (warnings.size() - 1) + " more)";
     }
 
     private void shellInto(String name) {

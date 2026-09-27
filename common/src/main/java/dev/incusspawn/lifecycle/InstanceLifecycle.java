@@ -605,11 +605,41 @@ public final class InstanceLifecycle {
      * {@code Missing source path}.
      */
     public static void prepareHostDevicesForStart(IncusClient incus, String name) {
-        // Both repairs read the same instance, so fetch it once: start has to
+        prepareHostDevicesForStart(incus, name, System.err::println);
+    }
+
+    /**
+     * As above, reporting each device it removes to {@code warn}. The TUI starts instances while it
+     * owns the terminal, where stderr would be drawn over and lost, so it passes a sink that puts
+     * the warning on its status line instead.
+     */
+    public static void prepareHostDevicesForStart(IncusClient incus, String name, Consumer<String> warn) {
+        // All repairs read the same instance, so fetch it once: start has to
         // stay as cheap as it was before the repairs existed.
         var instance = incus.instanceMetadata(name);
-        HostResourceSetup.removeStaleDevices(incus, name, instance);
+        HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
+        removeStaleInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
+    }
+
+    /**
+     * Removes the {@code --inbox} device when its host directory is gone (#854), which would
+     * otherwise fail Incus start validation with {@code Missing source path}. The inbox is not a
+     * host resource, so {@link HostResourceSetup#removeStaleDevices} never sees it. The user asked
+     * for this mount, so dropping it is announced, with the command to add it back.
+     */
+    static void removeStaleInbox(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+        var source = IncusClient.deviceSource(instance, INBOX_DEVICE);
+        if (source.isEmpty()) return;
+        var hostPath = HostResourceSetup.hostPathOfDeviceSource(source);
+        if (hostPath == null || Files.isDirectory(hostPath)) return;
+        incus.deviceRemove(name, INBOX_DEVICE);
+        // The hint reuses the device's own source: on macOS that is the appliance VM's /host view
+        // of the path, which is what incus needs there, not the host path the user would type.
+        warn.accept(BuildOutput.STEP_INDENT + "Warning: inbox directory not found: " + hostPath
+                + " (device removed, starting without ~/inbox).\n" + BuildOutput.STEP_INDENT
+                + "  To add it back, recreate it, then: incus config device add " + name + " " + INBOX_DEVICE
+                + " disk source=" + source + " path=" + INBOX_PATH + " readonly=true");
     }
 
     /**
@@ -693,6 +723,9 @@ public final class InstanceLifecycle {
         }
     }
 
+    static final String INBOX_DEVICE = "inbox";
+    static final String INBOX_PATH = "/home/agentuser/inbox";
+
     /**
      * Attach the {@code --inbox} directory, before start (#828): on a VM a device present at start
      * gets its own PCIe root port instead of one of the 8 spare hotplug slots.
@@ -705,10 +738,9 @@ public final class InstanceLifecycle {
             return;
         }
         BuildOutput.step("Mounting inbox: " + inboxPath.toAbsolutePath() + ".");
-        incus.deviceAdd(name, "inbox", "disk",
-                "source=" + dev.incusspawn.config.HostResourceSetup.translateForVm(
-                        inboxPath.toAbsolutePath().toString()),
-                "path=/home/agentuser/inbox",
+        incus.deviceAdd(name, INBOX_DEVICE, "disk",
+                "source=" + HostResourceSetup.translateForVm(inboxPath.toAbsolutePath().toString()),
+                "path=" + INBOX_PATH,
                 "readonly=true");
     }
 

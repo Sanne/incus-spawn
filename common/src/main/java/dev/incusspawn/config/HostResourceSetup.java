@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 public final class HostResourceSetup {
 
@@ -62,6 +63,22 @@ public final class HostResourceSetup {
             return "/host";
         }
         return hostPath;
+    }
+
+    /**
+     * The host path a disk device's {@code source} refers to: the inverse of
+     * {@link #translateForVm}. Null for a macOS source outside the shared home, which names a
+     * path inside the appliance VM that the host cannot check.
+     */
+    public static Path hostPathOfDeviceSource(String source) {
+        return hostPathOfDeviceSource(source, Platform.isMacOS(), System.getProperty("user.home"));
+    }
+
+    static Path hostPathOfDeviceSource(String source, boolean macOs, String home) {
+        if (!macOs) return Path.of(source);
+        if (source.equals("/host")) return Path.of(home);
+        if (source.startsWith("/host/")) return Path.of(home + source.substring("/host".length()));
+        return null;
     }
 
     static String deviceName(String containerPath) {
@@ -360,12 +377,15 @@ public final class HostResourceSetup {
      * Removes disk devices whose host source path no longer exists.
      */
     public static void removeStaleDevices(IncusClient incus, String container) {
-        removeStaleDevices(incus, container, incus.instanceMetadata(container));
+        removeStaleDevices(incus, container, incus.instanceMetadata(container), System.err::println);
     }
 
-    /** As above, reading the host-resource list from an already-fetched instance. */
+    /**
+     * As above, reading the host-resource list from an already-fetched instance and reporting each
+     * removed device to {@code warn}.
+     */
     public static void removeStaleDevices(IncusClient incus, String container,
-                                          JsonNode instanceMetadata) {
+                                          JsonNode instanceMetadata, Consumer<String> warn) {
         var hrJson = instanceMetadata.path("config").path(Metadata.HOST_RESOURCES).asText("");
         var resources = deserialize(hrJson);
         for (var hr : resources) {
@@ -374,13 +394,13 @@ public final class HostResourceSetup {
                 verifyConfined(hr);
             } catch (HostPathOutsideProjectException e) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
-                System.err.println("Warning: " + e.getMessage() + " (device removed)");
+                warn.accept("Warning: " + e.getMessage() + " (device removed)");
                 continue;
             }
             var expandedSource = expandHostTilde(hr.getSource());
             if (!Files.exists(Path.of(expandedSource))) {
                 removeExistingDevice(incus, container, deviceNameForMode(hr));
-                System.err.println("Warning: host-resource source not found: "
+                warn.accept("Warning: host-resource source not found: "
                         + hr.getSource() + " (device removed)");
             }
         }
