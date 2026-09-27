@@ -633,8 +633,12 @@ public class BuildCommand extends BaseCommand {
             reportBuildFailure(tempName, canonicalName,
                     "Build failed for " + canonicalName + ": " + e.getMessage());
             try {
-                var failedHostResources = HostResourceSetup.collectEffective(imageDef, defs);
-                HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
+                // A build that failed before its instance existed has no devices to remove, and
+                // trying would print one warning per resource.
+                if (incus.exists(tempName)) {
+                    var failedHostResources = HostResourceSetup.collectEffective(imageDef, defs);
+                    HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
+                }
             } catch (Exception ignored) {}
             promoteToFailedInstance(tempName, canonicalName);
             activeBuild = null;

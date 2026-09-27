@@ -323,6 +323,29 @@ class BuildCommandTest {
         });
     }
 
+    @Test
+    void buildThatFailedBeforeItsInstanceExistedDoesNotTryToRemoveDevices(@TempDir Path tmp) {
+        // Otherwise each host resource prints a "failed to remove build device" warning.
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(false);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doThrow(new IncusException("no vsock")).when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+            imageDef.setHostResources(List.of(
+                    new ImageDef.HostResource("~/a", "/opt/a", "readonly"),
+                    new ImageDef.HostResource("~/b", "/opt/b", "overlay")));
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+            verify(incus, never()).deviceRemove(anyString(), startsWith("hr-"));
+            verify(incus, never()).shellExec(eq("tpl-minimal-rebuilding"), eq("umount"), anyString());
+        });
+    }
+
     // --- collectEffectiveSkills ---
 
     @Test
