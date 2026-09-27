@@ -35,7 +35,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileTime;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -199,7 +198,8 @@ public class MitmProxy {
                 Map.of(), List.of(), ProxyConfig.builtinInterceptedDomains(), List.of());
     }
     private volatile ToolProxyRouting toolRouting = ToolProxyRouting.EMPTY;
-    private volatile FileTime configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
+    /** What {@code config.yaml} and {@code tools/} looked like when the running config was read. */
+    private volatile ConfigFingerprint configFingerprint;
     private dev.incusspawn.incus.IncusClient incusClient;
 
     /**
@@ -286,7 +286,9 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
-        this.configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
+        // Tests construct directly, without a config read to capture ahead of;
+        // fromConfig overwrites this with the capture taken before its read.
+        this.configFingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -507,6 +509,7 @@ public class MitmProxy {
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+        var fingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
         var config = dev.incusspawn.config.SpawnConfig.load();
         // Discovering tool setups scans every tool YAML, so do it once here and thread it
         // through: ProxyCredentials.fromConfig would otherwise load its own copy and throw it
@@ -523,6 +526,7 @@ public class MitmProxy {
                 ToolProxyResolver.resolveAcrossAccounts(config, setups));
         proxy.configSnapshot = config;
         proxy.toolSetupsSnapshot = setups;
+        proxy.configFingerprint = fingerprint;
         return proxy;
     }
 
@@ -549,6 +553,7 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
+            var fingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
             var newConfig = dev.incusspawn.config.SpawnConfig.load();
             var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
             var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
@@ -578,7 +583,7 @@ public class MitmProxy {
                     ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
                 }
             }
-            configLoadedAt = FileTime.fromMillis(System.currentTimeMillis());
+            configFingerprint = fingerprint;
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
@@ -2890,35 +2895,8 @@ public class MitmProxy {
     }
 
     private boolean hasConfigChangedSinceLoad() {
-        try {
-            var configFile = dev.incusspawn.config.SpawnConfig.configDir().resolve("config.yaml");
-            if (Files.exists(configFile)
-                    && Files.getLastModifiedTime(configFile).compareTo(configLoadedAt) > 0) {
-                return true;
-            }
-            var toolsDir = dev.incusspawn.config.SpawnConfig.configDir().resolve("tools");
-            if (Files.isDirectory(toolsDir)) {
-                // Check directory mtime (catches file additions/removals)
-                if (Files.getLastModifiedTime(toolsDir).compareTo(configLoadedAt) > 0) {
-                    return true;
-                }
-                // Check individual tool file mtimes (catches in-place edits)
-                try (var stream = Files.list(toolsDir)) {
-                    if (stream.filter(p -> {
-                                var name = p.getFileName().toString();
-                                return name.endsWith(".yaml") || name.endsWith(".yml");
-                            })
-                            .anyMatch(p -> {
-                                try {
-                                    return Files.getLastModifiedTime(p).compareTo(configLoadedAt) > 0;
-                                } catch (IOException e) { return false; }
-                            })) {
-                        return true;
-                    }
-                }
-            }
-        } catch (IOException ignored) {}
-        return false;
+        return !ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir())
+                .equals(configFingerprint);
     }
 
     private static String escapeJson(String s) {
