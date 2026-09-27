@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -150,10 +152,10 @@ public final class InstanceRegistry {
      * Package-private and static so it can be tested without a running Incus.
      */
     static Map<String, InstanceAccounts> parse(String instancesJson) {
-        var byAddress = new LinkedHashMap<String, InstanceAccounts>();
+        var claimants = new LinkedHashMap<String, List<Claimant>>();
         try {
             var root = JSON.readTree(instancesJson);
-            if (!root.isArray()) return byAddress;
+            if (!root.isArray()) return Map.of();
             for (var instance : root) {
                 var name = instance.path("name").asText("");
                 var config = instance.path("config");
@@ -162,12 +164,45 @@ public final class InstanceRegistry {
                 var address = config.path(Metadata.STATIC_IP).asText("").strip();
                 if (address.isEmpty()) continue;
 
-                byAddress.put(normalize(address), new InstanceAccounts(name, accountsOf(config)));
+                claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
+                        new InstanceAccounts(name, accountsOf(config)),
+                        "Running".equalsIgnoreCase(instance.path("status").asText(""))));
             }
         } catch (Exception e) {
             ProxyLog.warn("Could not parse instance list for the account registry: " + e.getMessage());
         }
+        var byAddress = new LinkedHashMap<String, InstanceAccounts>();
+        claimants.forEach((address, all) -> {
+            var owner = owner(address, all);
+            if (owner != null) byAddress.put(address, owner);
+        });
         return byAddress;
+    }
+
+    private record Claimant(InstanceAccounts accounts, boolean running) {}
+
+    /**
+     * Who an address belongs to. isx gives each address to one instance, but a copy made by an
+     * older isx, or by {@code incus copy}, carries its source's (#815). Incus refuses to start
+     * an instance whose NIC address another NIC holds, so of several claimants only a running
+     * one can be sending traffic from it; never whichever the listing happens to put last.
+     */
+    private static InstanceAccounts owner(String address, List<Claimant> claimants) {
+        if (claimants.size() == 1) return claimants.getFirst().accounts();
+        var running = claimants.stream().filter(Claimant::running).toList();
+        var names = claimants.stream().map(c -> c.accounts().instanceName()).toList();
+        if (running.size() == 1) {
+            ProxyLog.warn("Address " + address + " is claimed by " + names + "; serving "
+                    + running.getFirst().accounts().instanceName() + ", the one running");
+            return running.getFirst().accounts();
+        }
+        // Stopped claimants send nothing. Several running is not something isx creates: map
+        // the address to none of them rather than guess, and say so
+        if (!running.isEmpty()) {
+            ProxyLog.warn("Address " + address + " is claimed by running instances " + names
+                    + "; serving it the defaults until only one holds it");
+        }
+        return null;
     }
 
     private static Map<String, String> accountsOf(JsonNode config) {

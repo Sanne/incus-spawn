@@ -4,13 +4,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -66,9 +67,11 @@ class HostLockTest {
 
     @Test
     void anotherProcessHoldingTheLockIsWaitedFor() throws Exception {
-        // The fcntl half: what two isx processes contend on
+        // The fcntl half: what two isx processes contend on. The child holds the lock until
+        // told to let go, so the test depends on no timing.
         var holder = tmp.resolve("Holder.java");
         Files.writeString(holder, """
+                import java.io.*;
                 import java.nio.channels.FileChannel;
                 import java.nio.file.*;
                 public class Holder {
@@ -79,25 +82,31 @@ class HostLockTest {
                              var l = c.lock()) {
                             System.out.println("locked");
                             System.out.flush();
-                            Thread.sleep(1000);
-                            System.out.println("releasing");
-                            System.out.flush();
+                            new BufferedReader(new InputStreamReader(System.in)).readLine();
                         }
                     }
                 }
                 """);
         var java = ProcessHandle.current().info().command().orElse("java");
+        // stderr apart: the JVM reports JAVA_TOOL_OPTIONS and the like there
         var child = new ProcessBuilder(java, holder.toString(), lockFile().toString())
-                .redirectErrorStream(true).start();
-        try (var out = new BufferedReader(new InputStreamReader(child.getInputStream()))) {
+                .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        try (var out = new BufferedReader(new InputStreamReader(child.getInputStream()));
+             var in = new PrintWriter(child.getOutputStream(), true);
+             var pool = Executors.newSingleThreadExecutor()) {
             assertEquals("locked", out.readLine());
-            var log = new ArrayList<String>();
-            try (var lock = acquire(log)) {
-                // The child writes "releasing" before it lets go, so it is waiting in the pipe
-                // once the lock is ours. Not whether the child is alive: it outlives its lock.
-                assertTrue(ready(out), "acquired while another process held the lock");
-            }
+            var log = new CopyOnWriteArrayList<String>();
+            var acquired = pool.submit(() -> {
+                try (var lock = HostLock.acquire(lockFile(), "testing", log::add)) {
+                    return child.isAlive();
+                }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (log.isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
             assertEquals(List.of("Another isx process is testing — waiting..."), log);
+            assertFalse(acquired.isDone(), "acquired while another process held the lock");
+            in.println("release");
+            acquired.get(10, TimeUnit.SECONDS);
         } finally {
             child.destroyForcibly();
         }
@@ -144,9 +153,5 @@ class HostLockTest {
                 release.countDown();
             }
         }
-    }
-
-    private static boolean ready(BufferedReader out) throws IOException {
-        return out.ready();
     }
 }

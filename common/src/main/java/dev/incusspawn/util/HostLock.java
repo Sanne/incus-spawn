@@ -31,7 +31,12 @@ public final class HostLock implements AutoCloseable {
     public static final Duration TIMEOUT = Duration.ofSeconds(30);
 
     private static final long FIRST_POLL_MILLIS = 10;
-    private static final long MAX_POLL_MILLIS = 500;
+    /**
+     * Low, because {@code fcntl} has no queue: whoever polls first after a release wins, and a
+     * waiter backed off to half a second would keep losing to newcomers polling every 10 ms
+     * until it timed out, with the lock changing hands all along.
+     */
+    private static final long MAX_POLL_MILLIS = 50;
 
     private static final Map<Path, ReentrantLock> IN_PROCESS = new ConcurrentHashMap<>();
 
@@ -57,8 +62,15 @@ public final class HostLock implements AutoCloseable {
     }
 
     static HostLock acquire(Path lockFile, String activity, Consumer<String> log, Duration timeout) {
-        var inProcess = IN_PROCESS.computeIfAbsent(lockFile.toAbsolutePath().normalize(),
-                p -> new ReentrantLock());
+        Path key;
+        try {
+            // fcntl locks a file, not a path: two spellings of one directory must share a lock
+            Files.createDirectories(lockFile.getParent());
+            key = lockFile.getParent().toRealPath().resolve(lockFile.getFileName());
+        } catch (IOException e) {
+            throw new HostLockException("Failed to lock " + lockFile + ": " + e.getMessage(), e);
+        }
+        var inProcess = IN_PROCESS.computeIfAbsent(key, p -> new ReentrantLock());
         if (inProcess.isHeldByCurrentThread()) {
             throw new IllegalStateException("Lock " + lockFile + " is already held by this thread");
         }
@@ -72,8 +84,7 @@ public final class HostLock implements AutoCloseable {
             throw new HostLockException("Interrupted waiting for another isx process " + activity, e);
         }
         try {
-            Files.createDirectories(lockFile.getParent());
-            var channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            var channel = FileChannel.open(key, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             try {
                 return new HostLock(inProcess, channel, lockFile(channel, activity, log, deadline));
             } catch (IOException | RuntimeException e) {

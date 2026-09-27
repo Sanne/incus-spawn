@@ -6,6 +6,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Budgets are exact, so they ratchet: above budget is a regression to fix; below budget is
  * an improvement, so lower the number here in the same change.
  */
+@ExtendWith(TempHome.class)
 class InstanceLifecycleRequestBudgetTest {
 
     private static final String NAME = "dev-1";

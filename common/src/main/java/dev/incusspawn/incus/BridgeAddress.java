@@ -22,9 +22,12 @@ public record BridgeAddress(String gateway, CidrUtils.Cidr subnet) {
                 new IncusException("Bridge " + BRIDGE + " has no ipv4.address configured"));
     }
 
-    /** {@code 10.166.11.1/24}; an address without a prefix length is taken as a /24. */
+    /**
+     * {@code 10.166.11.1/24}; an address without a prefix length is taken as a /24. Empty and
+     * {@code none} (an IPv6-only bridge) are no address.
+     */
     static Optional<BridgeAddress> parse(String cidr) {
-        if (cidr.isEmpty()) return Optional.empty();
+        if (cidr.isEmpty() || cidr.equals("none")) return Optional.empty();
         var slash = cidr.indexOf('/');
         var gateway = slash < 0 ? cidr : cidr.substring(0, slash);
         return Optional.of(new BridgeAddress(gateway,

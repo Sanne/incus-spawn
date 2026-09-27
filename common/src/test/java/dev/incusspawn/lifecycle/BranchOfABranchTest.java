@@ -4,6 +4,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * A branch copied from another branch must not start with its source's address: Incus accepts
  * the conflicting copy, and the proxy would map the address to whichever instance it lists last.
  */
+@ExtendWith(TempHome.class)
 class BranchOfABranchTest {
 
     private static InstanceLifecycle.BranchSettings settings(String parent) {

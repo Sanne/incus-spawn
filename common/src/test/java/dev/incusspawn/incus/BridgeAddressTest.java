@@ -26,5 +26,7 @@ class BridgeAddressTest {
     @Test
     void noAddressIsEmpty() {
         assertEquals(Optional.empty(), BridgeAddress.parse(""));
+        // An IPv6-only bridge: "no address", not "Invalid IP: none"
+        assertEquals(Optional.empty(), BridgeAddress.parse("none"));
     }
 }

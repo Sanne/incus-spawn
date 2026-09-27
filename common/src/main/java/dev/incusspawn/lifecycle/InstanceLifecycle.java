@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Shared helpers for instance/template creation lifecycle.
@@ -134,6 +135,7 @@ public final class InstanceLifecycle {
     private static void claimAndWrite(IncusClient incus, String name, JsonNode instance,
                                       InstanceUpdate update, String nicDevice, BridgeAddress bridge) {
         var isVm = "virtual-machine".equals(instance.path("type").asText(""));
+        var filteringRefused = new AtomicBoolean();
         StaticIpAllocator.claim(incus, bridge, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
@@ -157,9 +159,11 @@ public final class InstanceLifecycle {
                 // without it.
                 incus.update(name, instance,
                         update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
-                applyIpFiltering(incus, name, nicDevice);
+                filteringRefused.set(true);
             }
         });
+        // After the claim: the address is written, so no one need wait on this write
+        if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice);
     }
 
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");

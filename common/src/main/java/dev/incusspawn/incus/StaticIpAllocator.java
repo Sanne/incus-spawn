@@ -15,6 +15,13 @@ public final class StaticIpAllocator {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /**
+     * Dot-prefixed, as no instance name can be: the TUI's per-instance locks in the same
+     * directory are {@code <instance>.lock}, so an instance named {@code static-ip} would
+     * otherwise open, close and delete this very file.
+     */
+    static final String LOCK_FILE = ".static-ip.lock";
+
     private StaticIpAllocator() {}
 
     /**
@@ -22,15 +29,16 @@ public final class StaticIpAllocator {
      * {@code ipv4.address}) and hand it to {@code write}, which must stamp it on the instance's
      * NIC before returning. Nothing reserves an address between the listing that finds it free
      * and that write, so two concurrent branches could otherwise both be given the same one
-     * (#815). A {@link HostLock} is held across both, which serializes every isx process on this
-     * host; Incus's own conflict check (409 "IP address ... already defined on another NIC")
-     * refuses a duplicate from writers outside it.
+     * (#815). A {@link HostLock} is held across both. It lives under the user's home, so it
+     * serializes the isx processes of one user; Incus's own conflict check (409 "IP address ...
+     * already defined on another NIC") refuses most duplicates from writers outside it, such as
+     * {@code sudo isx} or another user on the same daemon, but not two such writes at once.
      *
      * @param bridge read by the caller before the claim, so no one waits on that read
      * @return the address written
      */
     public static String claim(IncusClient incus, BridgeAddress bridge, Consumer<String> write) {
-        return claim(incus, bridge, Environment.lockDir().resolve("static-ip.lock"), write);
+        return claim(incus, bridge, Environment.lockDir().resolve(LOCK_FILE), write);
     }
 
     static String claim(IncusClient incus, BridgeAddress bridge, Path lockFile,

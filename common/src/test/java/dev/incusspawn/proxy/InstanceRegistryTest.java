@@ -99,4 +99,40 @@ class InstanceRegistryTest {
                 """);
         assertNotNull(parsed.get(InstanceRegistry.normalize("::ffff:10.0.0.5")));
     }
+
+    /**
+     * A copy made by an older isx, or by {@code incus copy}, carries its source's address
+     * (#815). Listing order used to decide which one owned it, and the source's traffic could
+     * then be spent on the copy's accounts. Only a running instance can hold the address.
+     */
+    @Test
+    void aSharedAddressBelongsToTheOneRunningClaimant() {
+        var parsed = InstanceRegistry.parse("""
+                [
+                  {"name":"dev-1","status":"Running","config":{
+                     "user.incus-spawn.static-ip":"10.0.0.5",
+                     "user.incus-spawn.account.claude":"work"}},
+                  {"name":"dev-2","status":"Stopped","config":{
+                     "user.incus-spawn.static-ip":"10.0.0.5",
+                     "user.incus-spawn.account.claude":"personal"}}
+                ]
+                """);
+        assertEquals("dev-1", parsed.get("10.0.0.5").instanceName());
+        assertEquals("work", parsed.get("10.0.0.5").accountsByNamespace().get("claude"));
+    }
+
+    @Test
+    void aSharedAddressWithNoSingleRunningClaimantIsNobodys() {
+        for (var statuses : new String[][] {{"Stopped", "Stopped"}, {"Running", "Running"}}) {
+            var parsed = InstanceRegistry.parse("""
+                    [
+                      {"name":"dev-1","status":"%s","config":{"user.incus-spawn.static-ip":"10.0.0.5"}},
+                      {"name":"dev-2","status":"%s","config":{"user.incus-spawn.static-ip":"10.0.0.5"}},
+                      {"name":"dev-3","status":"Running","config":{"user.incus-spawn.static-ip":"10.0.0.6"}}
+                    ]
+                    """.formatted(statuses[0], statuses[1]));
+            assertNull(parsed.get("10.0.0.5"), String.join("/", statuses));
+            assertEquals("dev-3", parsed.get("10.0.0.6").instanceName(), "others are unaffected");
+        }
+    }
 }
