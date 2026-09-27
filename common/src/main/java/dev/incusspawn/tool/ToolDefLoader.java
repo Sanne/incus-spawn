@@ -80,6 +80,11 @@ public class ToolDefLoader {
         return load().conflicts();
     }
 
+    /** Tool files that failed to parse during the last load and were skipped. */
+    public List<Path> parseFailures() {
+        return load().parseFailures();
+    }
+
     /** Cross-layer overrides found during the last load (intentional; for diagnostics). */
     public List<LayeredDefinitions.LayerOverride> overrides() {
         return load().overrides();
@@ -194,6 +199,7 @@ public class ToolDefLoader {
                 } catch (IOException e) {
                     System.err.println("Warning: " + YamlErrors.friendly(
                             path.getFileName().toString(), e));
+                    defs.parseFailed(path.toAbsolutePath().normalize());
                 }
             }
         } catch (IOException e) {

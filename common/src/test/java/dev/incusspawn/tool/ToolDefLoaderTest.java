@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -290,6 +291,22 @@ class ToolDefLoaderTest {
         assertEquals("gradle", conflicts.get(0).name());
         assertEquals(2, conflicts.get(0).files().size());
         assertTrue(loader.overrides().stream().noneMatch(o -> o.name().equals("gradle")));
+    }
+
+    @Test
+    void unparsableFileIsRecordedAsParseFailure(@TempDir Path tempDir) throws Exception {
+        var broken = tempDir.resolve("podman.yaml");
+        Files.writeString(broken, """
+                name: podman
+                description:
+                  - not a string
+                """);
+
+        var loader = new ToolDefLoader();
+        loader.setProjectToolsDir(tempDir);
+
+        assertEquals(List.of(broken.toAbsolutePath().normalize()), loader.parseFailures());
+        assertEquals("built-in", loader.getSource("podman"));
     }
 
     @Test

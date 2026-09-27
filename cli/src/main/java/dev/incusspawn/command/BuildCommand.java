@@ -187,6 +187,17 @@ public class BuildCommand extends BaseCommand {
             }
             return CommandResult.valueOf(1);
         }
+        // A definition that failed to parse was skipped with a warning above. Its name is
+        // unknown, so building anyway could silently use something else in its place: a
+        // lower layer's definition of the same name, or the stale build-source snapshot of
+        // an existing template. Refuse, even for targets that look unrelated.
+        var unparsable = new ArrayList<>(loaded.parseFailures());
+        unparsable.addAll(toolDefLoader.parseFailures());
+        var parseError = unparsableDefinitionsError(unparsable);
+        if (parseError != null) {
+            System.err.println(parseError);
+            return CommandResult.valueOf(1);
+        }
         var defs = loaded.defs();
 
         var executor = Executors.newCachedThreadPool(r -> {
@@ -274,6 +285,20 @@ public class BuildCommand extends BaseCommand {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    /** The refusal for definition files that failed to parse, or null when there are none. */
+    static String unparsableDefinitionsError(List<Path> files) {
+        if (files.isEmpty()) return null;
+        var sb = new StringBuilder("Cannot build: ")
+                .append(files.size() == 1
+                        ? "a definition file could not be parsed"
+                        : files.size() + " definition files could not be parsed")
+                .append(" (see the error above):\n");
+        for (var file : files) {
+            sb.append("  • ").append(file).append('\n');
+        }
+        return sb.append("Fix the file, or move it out of the definitions directory.").toString();
     }
 
     private void startHostRepoRefresh(List<ImageDef> targets, Map<String, ImageDef> defs,

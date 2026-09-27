@@ -394,6 +394,27 @@ class ImageDefTest {
     }
 
     @Test
+    void unparsableFileIsRecordedAsParseFailure(@TempDir Path tempDir) throws Exception {
+        var imagesDir = tempDir.resolve("images");
+        Files.createDirectories(imagesDir);
+        // Meant to override the built-in tpl-java, but 'type' is written as a list.
+        var broken = imagesDir.resolve("java.yaml");
+        Files.writeString(broken, """
+                name: tpl-java
+                type:
+                  - vm
+                """);
+        var warnings = new java.util.ArrayList<String>();
+
+        var result = ImageDef.loadAllWithConflicts(List.of(tempDir.toString()), warnings::add);
+
+        assertEquals(List.of(broken.toAbsolutePath().normalize()), result.parseFailures());
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("'type'")), warnings.toString());
+        // The skipped file leaves the built-in in its place, which is why build must refuse.
+        assertEquals("built-in", result.getSource("tpl-java"));
+    }
+
+    @Test
     void emptySearchPathsWorks() {
         var defs = ImageDef.loadAll(List.of());
         // Should still load builtins

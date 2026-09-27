@@ -672,6 +672,7 @@ public class ImageDef {
                     }
                 } catch (IOException e) {
                     warnings.accept(YamlErrors.friendly(path.getFileName().toString(), e));
+                    defs.parseFailed(path.toAbsolutePath().normalize());
                 }
             }
         } catch (IOException e) {

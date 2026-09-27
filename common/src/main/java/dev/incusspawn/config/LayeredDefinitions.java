@@ -57,6 +57,7 @@ public final class LayeredDefinitions<T> {
     private final Map<String, String> sources = new LinkedHashMap<>();
     private final List<NameConflict> conflicts = new ArrayList<>();
     private final List<LayerOverride> overrides = new ArrayList<>();
+    private final List<Path> parseFailures = new ArrayList<>();
     // Files seen in the directory currently being scanned, keyed by declared name.
     private Map<String, List<Path>> currentDir;
 
@@ -110,6 +111,14 @@ public final class LayeredDefinitions<T> {
         currentDir = null;
     }
 
+    /**
+     * Record a file that could not be parsed. Its {@code name:} is unknown, so it may have
+     * defined anything: a build target, one of its parents, or an override of a lower layer.
+     */
+    public void parseFailed(Path source) {
+        parseFailures.add(source);
+    }
+
     /** Mutable resolved map (callers such as tool fallbacks add to it deliberately). */
     public Map<String, T> defs() { return defs; }
 
@@ -120,6 +129,9 @@ public final class LayeredDefinitions<T> {
 
     /** Immutable snapshot of same-directory conflicts (read-only diagnostics). */
     public List<NameConflict> conflicts() { return List.copyOf(conflicts); }
+
+    /** Immutable snapshot of files that failed to parse and were skipped. */
+    public List<Path> parseFailures() { return List.copyOf(parseFailures); }
 
     /** Immutable snapshot of cross-layer overrides (read-only diagnostics). */
     public List<LayerOverride> overrides() { return List.copyOf(overrides); }

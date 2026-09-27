@@ -35,6 +35,17 @@ class BuildCommandTest {
     private static final IncusClient.ExecResult FAIL = new IncusClient.ExecResult(1, "", "");
 
     @Test
+    void unparsableDefinitionsBlockTheBuild() {
+        assertNull(BuildCommand.unparsableDefinitionsError(List.of()));
+
+        var msg = BuildCommand.unparsableDefinitionsError(
+                List.of(Path.of("/defs/images/isx.yaml"), Path.of("/defs/tools/foo.yaml")));
+        assertTrue(msg.startsWith("Cannot build: 2 definition files could not be parsed"), msg);
+        assertTrue(msg.contains("/defs/images/isx.yaml"), msg);
+        assertTrue(msg.contains("/defs/tools/foo.yaml"), msg);
+    }
+
+    @Test
     void expandHomeTilde() {
         assertEquals("/home/agentuser/quarkus", BuildCommand.expandHome("~/quarkus"));
     }
