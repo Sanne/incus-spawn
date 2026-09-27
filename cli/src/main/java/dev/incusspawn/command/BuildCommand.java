@@ -1208,6 +1208,8 @@ public class BuildCommand extends BaseCommand {
         mountDnfCache(buildName, effectiveVm);
 
         if (effectiveVm) {
+            // Before the first dnf run below: the resize tools' install is a package install too.
+            disableGuestSelinux(container);
             // The prebaked VM image ships these tools; dnf would still spend seconds (tens
             // on a cold cache) loading repo metadata just to find them installed.
             var installDeps = "{ command -v growpart && command -v resize2fs && command -v xfs_growfs; } "
@@ -1218,7 +1220,6 @@ public class BuildCommand extends BaseCommand {
                             "{ " + installDeps + "; } && " +
                             "growpart /dev/sda 2 && " +
                             "if findmnt -n -o FSTYPE / | grep -q xfs; then xfs_growfs /; else resize2fs /dev/sda2; fi"))));
-            disableGuestSelinux(container);
         }
 
         if (!prebaked) {
@@ -1745,8 +1746,10 @@ public class BuildCommand extends BaseCommand {
      * {@code listen} and the instance is unreachable. Relabelling cannot fix that -- the
      * targeted policy has no rule for the agent at all. The {@code %post} only writes the
      * file when it is missing or empty, so a non-empty file seeded here also survives every
-     * later install, in the template and in its branches. A parent built before this fix
-     * may already carry {@code enforcing}, so an existing file is rewritten, not skipped.
+     * later install, in the template and in its branches. An existing file is rewritten, not
+     * skipped. That cannot rescue a parent whose file already says {@code enforcing}: its copy
+     * boots enforcing and the agent is gone before this runs. Such a parent was built by an
+     * older isx, so {@code isImageOutdated} has {@code buildChain} rebuild it first.
      */
     void disableGuestSelinux(Container container) {
         container.sh(disableSelinuxScript(SELINUX_CONFIG))
