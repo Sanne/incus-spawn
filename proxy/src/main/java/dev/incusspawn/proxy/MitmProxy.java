@@ -2294,6 +2294,8 @@ public class MitmProxy {
                         var target = redirectTarget(host, port, uri, location);
                         if (depth >= MAX_REDIRECTS || target == null) {
                             ProxyLog.warn("Not following sidecar redirect to " + location + " for " + host + uri);
+                            // Over h2 the reset reaches this response as an error; it is the one we asked for
+                            resp.exceptionHandler(ignored -> {});
                             resp.request().reset();
                             return Future.succeededFuture(SidecarAnswer.UNUSABLE);
                         }

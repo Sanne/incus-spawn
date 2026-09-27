@@ -86,6 +86,9 @@ class ArtifactCacheProxyTest {
     /** The protocols and connections HEADs arrived on. */
     static final Set<HttpVersion> headVersions = ConcurrentHashMap.newKeySet();
     static final Set<HttpConnection> headConnections = ConcurrentHashMap.newKeySet();
+    /** The connection the last HEAD arrived on, and the one a stalled HEAD was left waiting on. */
+    static volatile HttpConnection lastHeadConnection;
+    static volatile HttpConnection stalledConnection;
     /** HEADs left to receive but never answer, like a connection that died silently. */
     static final AtomicInteger headsToStall = new AtomicInteger();
     static volatile long headDelayMs;
@@ -144,7 +147,11 @@ class ArtifactCacheProxyTest {
         if (req.method() == HttpMethod.HEAD) {
             headVersions.add(req.version());
             headConnections.add(req.connection());
-            if (headsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) return;
+            lastHeadConnection = req.connection();
+            if (headsToStall.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                stalledConnection = req.connection();
+                return;
+            }
             if (headDelayMs > 0) {
                 vertx.setTimer(headDelayMs, t -> reply(req, key));
                 return;
@@ -186,6 +193,8 @@ class ArtifactCacheProxyTest {
         hits.clear();
         headVersions.clear();
         headConnections.clear();
+        lastHeadConnection = null;
+        stalledConnection = null;
         headsToStall.set(0);
         headDelayMs = 0;
         online();
@@ -389,16 +398,20 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
-    void concurrentConfirmationsShareOneHttp2Connection() throws Exception {
+    void concurrentConfirmationsShareHttp2Connections() throws Exception {
         // One confirmation first, so the burst finds the connection already open
         publishJar(CENTRAL, JAR, "v1");
         get(CENTRAL, JAR);
         awaitFile(cached(CENTRAL, JAR), "v1");
         get(CENTRAL, JAR);
 
-        confirmConcurrently(jars(6), 300);
+        var jars = jars(6);
+        confirmConcurrently(jars, 300);
         assertEquals(Set.of(HttpVersion.HTTP_2), headVersions);
-        assertEquals(1, headConnections.size(), "every HEAD multiplexed on one connection");
+        // Over HTTP/1.1 each concurrent HEAD needs a connection of its own. The pool may still
+        // hold connections from earlier tests, so this asserts sharing, not an exact count.
+        assertTrue(headConnections.size() < jars.size(),
+                jars.size() + " concurrent HEADs on " + headConnections.size() + " connections");
     }
 
     @Test
@@ -419,7 +432,6 @@ class ArtifactCacheProxyTest {
         get(CENTRAL, JAR);
         awaitFile(cached(CENTRAL, JAR), "v1");
         get(CENTRAL, JAR);
-        assertEquals(1, headConnections.size());
 
         headsToStall.set(1);
         long start = System.nanoTime();
@@ -427,7 +439,8 @@ class ArtifactCacheProxyTest {
         long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
         assertEquals("v1", hit.text());
         assertNotNull(hit.checksumHeader(), "confirmed on a new connection, not served unconfirmed");
-        assertEquals(2, headConnections.size(), "the silent connection was replaced");
+        assertNotNull(stalledConnection, "a HEAD was stalled");
+        assertNotSame(stalledConnection, lastHeadConnection, "the retry went to another connection");
         assertTrue(ms < 10_000, "took " + ms + "ms");
     }
 
