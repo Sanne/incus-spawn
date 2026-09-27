@@ -276,10 +276,7 @@ public class MitmProxy {
                 credentials, credentials.toolProxies(), ConfigFingerprint.capture());
     }
 
-    /**
-     * @param configFingerprint the files {@code credentials} came from, captured <em>before</em>
-     *                          the config was read (see {@link ConfigFingerprint})
-     */
+    /** @param configFingerprint from the {@link ConfigFingerprint#load()} that read the config */
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials,
                      List<ResolvedToolProxy> proxiesAcrossAccounts,
@@ -512,8 +509,8 @@ public class MitmProxy {
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var fingerprint = ConfigFingerprint.capture();
-        var config = dev.incusspawn.config.SpawnConfig.load();
+        var loaded = ConfigFingerprint.load();
+        var config = loaded.config();
         // Discovering tool setups scans every tool YAML, so do it once here and thread it
         // through: ProxyCredentials.fromConfig would otherwise load its own copy and throw it
         // away. The same map is kept on the proxy so resolving a per-instance selection later
@@ -527,7 +524,7 @@ public class MitmProxy {
                 gatewayIp,
                 ProxyCredentials.forAccounts(config, Map.of(), setups),
                 ToolProxyResolver.resolveAcrossAccounts(config, setups),
-                fingerprint);
+                loaded.fingerprint());
         proxy.configSnapshot = config;
         proxy.toolSetupsSnapshot = setups;
         return proxy;
@@ -556,8 +553,8 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
-            var fingerprint = ConfigFingerprint.capture();
-            var newConfig = dev.incusspawn.config.SpawnConfig.load();
+            var loaded = ConfigFingerprint.load();
+            var newConfig = loaded.config();
             var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
             var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
             configSnapshot = newConfig;
@@ -586,7 +583,7 @@ public class MitmProxy {
                     ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
                 }
             }
-            configFingerprint = fingerprint;
+            configFingerprint = loaded.fingerprint();
             System.out.println("Configuration reloaded successfully.");
             ProxyLog.info("Configuration reloaded (CA fingerprint: " + caFingerprint + ")");
         } catch (Exception e) {
@@ -2898,8 +2895,7 @@ public class MitmProxy {
     }
 
     private boolean hasConfigChangedSinceLoad() {
-        return !ConfigFingerprint.capture()
-                .equals(configFingerprint);
+        return !ConfigFingerprint.capture().equals(configFingerprint);
     }
 
     private static String escapeJson(String s) {

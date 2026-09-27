@@ -48,6 +48,12 @@ public class ToolDefLoader {
     );
 
     private static Path userToolsDir() { return SpawnConfig.configDir().resolve("tools"); }
+
+    /** Whether a file in a tools directory is a tool definition this loader reads. */
+    public static boolean isToolFile(Path path) {
+        var name = path.getFileName().toString();
+        return name.endsWith(".yaml") || name.endsWith(".yml");
+    }
     private Path projectToolsDir = Path.of(".incus-spawn/tools");
     private List<String> searchPaths;
 
@@ -186,7 +192,7 @@ public class ToolDefLoader {
         defs.beginDirectory();
         try (var stream = Files.list(dir)) {
             var paths = stream
-                    .filter(p -> p.toString().endsWith(".yaml") || p.toString().endsWith(".yml"))
+                    .filter(ToolDefLoader::isToolFile)
                     .sorted()
                     .toList();
             for (var path : paths) {

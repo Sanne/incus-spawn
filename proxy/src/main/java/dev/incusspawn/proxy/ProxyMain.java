@@ -68,9 +68,8 @@ public class ProxyMain implements QuarkusApplication {
             return ProxyService.EXIT_CONFIG;
         }
 
-        // Before the read, so an edit racing it reads as drift (see ConfigFingerprint).
-        var configFingerprint = ConfigFingerprint.capture();
-        var config = SpawnConfig.load();
+        var loaded = ConfigFingerprint.load();
+        var config = loaded.config();
         var claude = config.getClaude();
         var creds = ProxyCredentials.fromConfig(config);
 
@@ -140,7 +139,7 @@ public class ProxyMain implements QuarkusApplication {
         var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
-                creds, creds.toolProxies(), configFingerprint);
+                creds, creds.toolProxies(), loaded.fingerprint());
         proxy.setIncusClient(incus);
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
@@ -155,7 +154,7 @@ public class ProxyMain implements QuarkusApplication {
         }
 
         var configWatcher = new ConfigWatcher(
-                dev.incusspawn.config.SpawnConfig.configDir(), proxy::reload);
+                SpawnConfig.configDir(), proxy::reload);
         configWatcher.start();
         ProxyLog.info("Config watcher started");
 
