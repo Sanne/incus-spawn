@@ -533,9 +533,12 @@ public final class HostResourceSetup {
         // The lower device was attached before start, so it is mounted by now: containers get it
         // at start, and a VM's incus-agent mounts boot-time shares before serving any exec. But the
         // agent only logs a share it fails to mount, and an overlay over the empty mount point would
-        // silently hide the host content, so check (without waiting) in the same exec.
+        // silently hide the host content, so check (without waiting) in the same exec. A template
+        // derived from one with overlays boots with the parent's overlay service, which has already
+        // mounted this overlay; stacking a second one would leave one behind at removal.
         var mountResult = container.exec("sh", "-c",
                 "mountpoint -q \"$1\" || { echo \"$1 is not mounted\" >&2; exit 1; }; "
+                + "[ \"$(findmnt -n -o FSTYPE --mountpoint \"$4\")\" = overlay ] && exit 0; "
                 + "mount -t overlay overlay -o \"lowerdir=$1,upperdir=$2,workdir=$3,metacopy=off\" \"$4\"",
                 "sh", lowerDir, upperDir, workDir, containerPath);
         if (!mountResult.success()) {
@@ -586,7 +589,10 @@ public final class HostResourceSetup {
                 "[Unit]\n" +
                 "Description=incus-spawn overlay mounts\n" +
                 "DefaultDependencies=no\n" +
-                "After=local-fs.target\n" +
+                // In a VM the lower layers are virtiofs shares that incus-agent mounts before it
+                // signals ready (Type=notify); without this the overlay can win the race and cover
+                // an empty lower dir. Containers have no such unit, so the ordering is a no-op there.
+                "After=local-fs.target incus-agent.service\n" +
                 "Before=multi-user.target\n" +
                 "\n" +
                 "[Service]\n" +

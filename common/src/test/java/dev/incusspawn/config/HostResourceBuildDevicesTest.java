@@ -96,6 +96,7 @@ class HostResourceBuildDevicesTest {
 
         var bin = Files.createDirectories(tmp.resolve("bin"));
         var mountLog = tmp.resolve("mount.log");
+        stub(bin.resolve("findmnt"), "true");
         for (boolean mounted : new boolean[] {true, false}) {
             Files.deleteIfExists(mountLog);
             stub(bin.resolve("mountpoint"), "exit " + (mounted ? 0 : 1));
@@ -117,6 +118,51 @@ class HostResourceBuildDevicesTest {
                 assertTrue(out.contains("is not mounted"), out);
             }
         }
+    }
+
+    @Test
+    void overlayAlreadyMountedByTheInheritedServiceIsNotStacked(@TempDir Path tmp) throws Exception {
+        // A template derived from one with overlays boots with the parent's overlay service,
+        // which has mounted the overlay by the time the build gets to it.
+        var ov = Files.createDirectories(tmp.resolve("ov"));
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
+        HostResourceSetup.applyForBuild(incus, new Container(incus, "b"), List.of(
+                new ImageDef.HostResource(ov.toString(), "/opt/ov", "overlay")), true);
+        var captor = ArgumentCaptor.forClass(String[].class);
+        verify(incus, atLeastOnce()).shellExec(eq("b"), captor.capture());
+        var mountCall = captor.getAllValues().stream()
+                .filter(args -> args.length > 2 && args[2].contains("mount -t overlay"))
+                .findFirst().orElseThrow();
+
+        var bin = Files.createDirectories(tmp.resolve("bin"));
+        var mountLog = tmp.resolve("mount.log");
+        stub(bin.resolve("mountpoint"), "exit 0");
+        stub(bin.resolve("findmnt"), "[ \"$5\" = /opt/ov ] && echo overlay");
+        stub(bin.resolve("mount"), "echo \"$@\" >> " + mountLog);
+        var pb = new ProcessBuilder(List.of(mountCall)).redirectErrorStream(true);
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var proc = pb.start();
+        var out = new String(proc.getInputStream().readAllBytes());
+
+        assertEquals(0, proc.waitFor(), out);
+        assertFalse(Files.exists(mountLog), "stacked a second overlay");
+    }
+
+    @Test
+    void overlayServiceWaitsForIncusAgentMounts() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
+        var container = spy(new Container(incus, "b"));
+        doNothing().when(container).writeFile(anyString(), anyString());
+        var ov = System.getProperty("java.io.tmpdir");
+
+        HostResourceSetup.applyForBuild(incus, container, List.of(
+                new ImageDef.HostResource(ov, "/opt/ov", "overlay")), true);
+
+        var unit = ArgumentCaptor.forClass(String.class);
+        verify(container).writeFile(eq("/etc/systemd/system/incus-spawn-overlays.service"), unit.capture());
+        assertTrue(unit.getValue().contains("After=local-fs.target incus-agent.service"), unit.getValue());
     }
 
     private static void stub(Path path, String body) throws Exception {

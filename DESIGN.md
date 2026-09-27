@@ -610,7 +610,9 @@ For a host-resource with `mode: overlay` targeting `/home/agentuser/.m2/reposito
 
 3. **At branch time**: `BranchCommand` reads the stored metadata and re-attaches the disk device to the stopped instance before starting it. On boot, the systemd service re-mounts the overlay. The upper layer — now containing build artifacts — was copied via CoW when the instance was branched, so each instance has its own independent writable layer.
 
-4. **On reboot**: the systemd service fires on every boot and re-mounts overlays. This works even if the container is started directly via `incus start` rather than through `isx`.
+4. **On reboot**: the systemd service fires on every boot and re-mounts overlays. This works even if the container is started directly via `incus start` rather than through `isx`. The unit is ordered `After=incus-agent.service`: in a VM the lower layers are virtiofs shares, which incus-agent mounts before it signals ready (`Type=notify`). Without that ordering the service could run first and overlay an empty lower directory, hiding the host content until the next reboot. Containers have no such unit, so the ordering is a no-op there. Templates built before this ordering existed pick it up on rebuild.
+
+5. **Derived builds**: a template built from a parent with overlays boots with the parent's service, so the overlays are already mounted when `applyForBuild` gets to them. The build-time mount checks the target with `findmnt` and leaves an existing overlay in place. Stacking a second one would leave one behind when `removeBuildDevices` unmounts once.
 
 The overlay directory structure mirrors the container path directly under `/var/lib/incus-spawn/overlays/`, so the layout is self-documenting:
 
