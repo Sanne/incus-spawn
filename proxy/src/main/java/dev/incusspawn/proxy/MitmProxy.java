@@ -286,9 +286,14 @@ public class MitmProxy {
         this.healthPort = healthPort;
         this.credentials = credentials;
         applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
-        // Tests construct directly, without a config read to capture ahead of;
-        // fromConfig overwrites this with the capture taken before its read.
-        this.configFingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
+        // A baseline for callers that never report their own; ProxyMain and fromConfig
+        // replace it with the capture they took before reading the config.
+        this.configFingerprint = ConfigFingerprint.capture();
+    }
+
+    /** Record the files the running config was read from, captured before that read. */
+    void configLoadedFrom(ConfigFingerprint fingerprint) {
+        this.configFingerprint = fingerprint;
     }
 
     public void setDnsConfigured(boolean configured) {
@@ -509,7 +514,7 @@ public class MitmProxy {
     /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
     public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
         var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var fingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
+        var fingerprint = ConfigFingerprint.capture();
         var config = dev.incusspawn.config.SpawnConfig.load();
         // Discovering tool setups scans every tool YAML, so do it once here and thread it
         // through: ProxyCredentials.fromConfig would otherwise load its own copy and throw it
@@ -526,7 +531,7 @@ public class MitmProxy {
                 ToolProxyResolver.resolveAcrossAccounts(config, setups));
         proxy.configSnapshot = config;
         proxy.toolSetupsSnapshot = setups;
-        proxy.configFingerprint = fingerprint;
+        proxy.configLoadedFrom(fingerprint);
         return proxy;
     }
 
@@ -553,7 +558,7 @@ public class MitmProxy {
         ProxyLog.info("Reloading configuration and certificates");
         System.out.println("Reloading configuration...");
         try {
-            var fingerprint = ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir());
+            var fingerprint = ConfigFingerprint.capture();
             var newConfig = dev.incusspawn.config.SpawnConfig.load();
             var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
             var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
@@ -2895,7 +2900,7 @@ public class MitmProxy {
     }
 
     private boolean hasConfigChangedSinceLoad() {
-        return !ConfigFingerprint.capture(dev.incusspawn.config.SpawnConfig.configDir())
+        return !ConfigFingerprint.capture()
                 .equals(configFingerprint);
     }
 

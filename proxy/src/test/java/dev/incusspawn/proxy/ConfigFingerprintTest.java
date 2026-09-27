@@ -26,7 +26,6 @@ class ConfigFingerprintTest {
         var future = FileTime.from(Instant.now().plus(Duration.ofHours(1)));
         Files.setLastModifiedTime(config, future);
         Files.setLastModifiedTime(tool, future);
-        Files.setLastModifiedTime(dir.resolve("tools"), future);
 
         assertEquals(ConfigFingerprint.capture(dir), ConfigFingerprint.capture(dir));
     }
@@ -68,27 +67,21 @@ class ConfigFingerprintTest {
     @Test
     void addingOrRemovingAToolIsDrift() throws Exception {
         var tools = Files.createDirectory(dir.resolve("tools"));
-        var dirMtime = Files.getLastModifiedTime(tools);
         var loaded = ConfigFingerprint.capture(dir);
 
         var tool = Files.writeString(tools.resolve("t.yaml"), "name: t\n");
-        // Pin the directory's mtime so only the file's own entry can reveal the addition.
-        Files.setLastModifiedTime(tools, dirMtime);
         assertNotEquals(loaded, ConfigFingerprint.capture(dir));
 
         Files.delete(tool);
-        Files.setLastModifiedTime(tools, dirMtime);
         assertEquals(loaded, ConfigFingerprint.capture(dir));
     }
 
     @Test
     void filesOtherThanToolYamlAreIgnored() throws Exception {
         var tools = Files.createDirectory(dir.resolve("tools"));
-        var dirMtime = Files.getLastModifiedTime(tools);
         var loaded = ConfigFingerprint.capture(dir);
 
         Files.writeString(tools.resolve("notes.txt"), "x");
-        Files.setLastModifiedTime(tools, dirMtime);
 
         assertEquals(loaded, ConfigFingerprint.capture(dir));
     }
