@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class HostResourceSetup {
 
@@ -111,7 +112,45 @@ public final class HostResourceSetup {
                         : confineToProject(def, hr, containerPath));
             }
         }
+        // On the effective list: a child may override a parent's system-path mount with copy.
+        for (var hr : result.values()) requireAllowedMountTarget(hr);
         return new ArrayList<>(result.values());
+    }
+
+    /**
+     * Top-level directories a {@code readonly} or {@code overlay} host resource must not be
+     * mounted into. Devices are attached before the instance first boots (#828), so a mount there
+     * would shadow the files the package manager, user creation, and boot-time services write:
+     * the package-managed trees plus {@code /var}, {@code /run} and {@code /tmp}, and the kernel's
+     * virtual filesystems. {@code copy} writes files rather than mounting, so it is not limited.
+     */
+    static final Set<String> FORBIDDEN_MOUNT_ROOTS = Set.of(
+            "etc", "usr", "bin", "sbin", "lib", "lib64", "boot",
+            "var", "run", "tmp", "proc", "sys", "dev");
+
+    /** A {@code readonly}/{@code overlay} host resource targets a system directory. */
+    public static final class ForbiddenMountTargetException extends IllegalStateException {
+        ForbiddenMountTargetException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Refuses a mount target inside {@link #FORBIDDEN_MOUNT_ROOTS} or {@code /} itself. Enforced
+     * where a template is built, validated, or branched; not when an existing instance starts,
+     * since it has been working with that mount and there is no rebuild on that path.
+     */
+    public static void requireAllowedMountTarget(ImageDef.HostResource hr) {
+        if ("copy".equals(hr.getMode())) return;
+        var target = Path.of(resolveContainerPath(hr.getSource(), hr.getPath())).normalize();
+        var forbidden = target.getNameCount() == 0
+                || FORBIDDEN_MOUNT_ROOTS.contains(target.getName(0).toString());
+        if (!forbidden) return;
+        throw new ForbiddenMountTargetException("Host-resource '" + hr.getSource() + "' would be mounted ("
+                + hr.getMode() + ") at " + target + ", a system directory.\n"
+                + "  Host resources are attached before the instance boots, so a mount there hides files\n"
+                + "  the package manager, user setup and boot services need. Mount it elsewhere (e.g. under\n"
+                + "  /home/agentuser, /opt or /srv), or use 'mode: copy' to place files there instead.");
     }
 
     /**
@@ -347,8 +386,30 @@ public final class HostResourceSetup {
         }
     }
 
+    /**
+     * Refuses to branch from a template whose stored host resources include a mount target that
+     * is no longer allowed, before anything is copied. Such a template predates the rule, so the
+     * error says a rebuild is what fixes it.
+     */
+    public static void requireBranchableTemplate(IncusClient incus, String template) {
+        try {
+            deserialize(incus.configGet(template, Metadata.HOST_RESOURCES))
+                    .forEach(HostResourceSetup::requireAllowedMountTarget);
+        } catch (ForbiddenMountTargetException e) {
+            throw new ForbiddenMountTargetException("Cannot branch from '" + template + "': "
+                    + e.getMessage() + "\n  Fix the template definition, then rebuild it with 'isx build "
+                    + template + "'.");
+        }
+    }
+
+    /**
+     * Re-attach a template's host resources to a new branch, while it is still stopped. A mount
+     * target that is no longer allowed ({@link #requireAllowedMountTarget}) fails the branch: the
+     * template was built before the rule existed, and a rebuild reports how to fix it.
+     */
     public static void applyForInstance(IncusClient incus, String container, List<ImageDef.HostResource> resources,
                                         boolean isVm) {
+        resources.forEach(HostResourceSetup::requireAllowedMountTarget);
         for (var hr : resources) {
             if (!"copy".equals(hr.getMode())) {
                 try {

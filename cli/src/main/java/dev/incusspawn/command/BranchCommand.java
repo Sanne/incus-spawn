@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
@@ -125,6 +126,13 @@ public class BranchCommand extends BaseCommand {
                     return CommandResult.valueOf(1);
                 }
             }
+        }
+
+        try {
+            HostResourceSetup.requireBranchableTemplate(incus, resolvedSource);
+        } catch (HostResourceSetup.ForbiddenMountTargetException e) {
+            System.err.println("Error: " + e.getMessage());
+            return CommandResult.valueOf(1);
         }
 
         BuildOutput.branchHeader(name, resolvedSource);

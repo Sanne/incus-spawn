@@ -166,6 +166,25 @@ class TemplateValidatorTest {
     }
 
     @Test
+    void mountIntoASystemDirectoryIsAnError(@TempDir Path dir) throws Exception {
+        var file = dir.resolve("test.yaml");
+        Files.writeString(file, """
+                name: tpl-test
+                parent: tpl-dev
+                host-resources:
+                  - source: ~/.config/containers
+                    path: /etc/containers
+                  - source: ~/storage.conf
+                    path: /etc/containers/storage.conf
+                    mode: copy
+                """);
+        var result = TemplateValidator.validate(file, knownTemplates());
+        assertEquals(1, result.errors().size(), result.errors().toString());
+        assertTrue(result.errors().get(0).contains("/etc/containers, a system directory"),
+                result.errors().get(0));
+    }
+
+    @Test
     void duplicateToolsWarning(@TempDir Path dir) throws Exception {
         var file = dir.resolve("test.yaml");
         Files.writeString(file, """

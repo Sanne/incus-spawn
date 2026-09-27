@@ -116,7 +116,9 @@ class ProjectLocalHostResourceTest {
 
         assertEquals(project.resolve("README").toString(), collect("./README", "readonly").getSource());
         assertEquals(project.toString(), collect(".", "readonly").getSource());
-        assertEquals(data.toString(), collect(project.resolve("data").toString(), "overlay").getSource());
+        // copy: with no explicit path an absolute source is also the mount target, which under
+        // the temp dir would be a (rejected) mount into /tmp.
+        assertEquals(data.toString(), collect(project.resolve("data").toString(), "copy").getSource());
     }
 
     @Test

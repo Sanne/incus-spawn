@@ -4949,6 +4949,7 @@ public class ListCommand extends BaseCommand {
         if (incus.exists(name)) {
             throw new RuntimeException("an instance named '" + name + "' already exists.");
         }
+        HostResourceSetup.requireBranchableTemplate(incus, source);
 
         BuildOutput.branchHeader(name, source);
 

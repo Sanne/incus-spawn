@@ -48,7 +48,7 @@ public class TemplateValidator {
             warnings.add("Root template (no parent) should specify an 'image' field");
         }
 
-        validateHostResources(def, warnings);
+        validateHostResources(def, warnings, errors);
         validateProjectLocalHostResources(file, def, errors);
         validateDuplicateTools(def, warnings);
 
@@ -57,11 +57,16 @@ public class TemplateValidator {
 
     private static final Set<String> VALID_HR_MODES = Set.of("readonly", "overlay", "copy");
 
-    private static void validateHostResources(ImageDef def, List<String> warnings) {
+    private static void validateHostResources(ImageDef def, List<String> warnings, List<String> errors) {
         for (var hr : def.getHostResources()) {
             if (hr.getMode() != null && !VALID_HR_MODES.contains(hr.getMode())) {
                 warnings.add("host-resource mode '" + hr.getMode()
                         + "' is not valid — must be one of: readonly, overlay, copy");
+            }
+            try {
+                HostResourceSetup.requireAllowedMountTarget(hr);
+            } catch (HostResourceSetup.ForbiddenMountTargetException | IllegalArgumentException e) {
+                errors.add(e.getMessage());
             }
         }
     }

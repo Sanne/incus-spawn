@@ -593,7 +593,8 @@ public class BuildCommand extends BaseCommand {
         try {
             HostResourceSetup.collectEffective(imageDef, defs);
             requireConfinedBaseImages(imageDef, defs);
-        } catch (HostResourceSetup.HostPathOutsideProjectException e) {
+        } catch (HostResourceSetup.HostPathOutsideProjectException
+                 | HostResourceSetup.ForbiddenMountTargetException e) {
             System.err.println(e.getMessage());
             throw new BuildFailedException(canonicalName);
         }

@@ -201,6 +201,73 @@ class HostResourceSetupTest {
         assertTrue(HostResourceSetup.deserialize("not json").isEmpty());
     }
 
+    // --- Mount targets: devices attach before first boot, so none may shadow a system directory ---
+
+    @Test
+    void mountIntoSystemDirectoriesIsRejected() {
+        for (var target : List.of("/etc/containers", "/usr/local/share", "/var/lib/rpm", "/var/lib/foo",
+                "/run/x", "/tmp/x", "/boot", "/lib64/x", "/proc/x", "/", "/opt/../etc/x")) {
+            for (var mode : List.of("readonly", "overlay")) {
+                var hr = new ImageDef.HostResource("~/src", target, mode);
+                assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
+                        () -> HostResourceSetup.requireAllowedMountTarget(hr), target + " " + mode);
+            }
+        }
+    }
+
+    @Test
+    void mountOutsideSystemDirectoriesAndCopyAnywhereAreAllowed() {
+        for (var target : List.of("~/.m2", "/home/agentuser/x", "/opt/cache", "/srv/data",
+                "/mnt/podman-host-storage", "/etcetera", "/variable")) {
+            assertDoesNotThrow(() -> HostResourceSetup.requireAllowedMountTarget(
+                    new ImageDef.HostResource("~/src", target, "readonly")), target);
+        }
+        // copy writes files rather than mounting: placing a config file under /etc is fine.
+        assertDoesNotThrow(() -> HostResourceSetup.requireAllowedMountTarget(
+                new ImageDef.HostResource("~/storage.conf", "/etc/containers/storage.conf", "copy")));
+    }
+
+    @Test
+    void collectEffectiveRejectsASystemMountUnlessAChildOverridesItWithCopy() {
+        var defs = new LinkedHashMap<String, ImageDef>();
+        var parent = makeImageDef("tpl-parent", null, List.of(
+                new ImageDef.HostResource("~/storage.conf", "/etc/containers/storage.conf", "readonly")));
+        var child = makeImageDef("tpl-child", "tpl-parent", List.of(
+                new ImageDef.HostResource("~/storage.conf", "/etc/containers/storage.conf", "copy")));
+        defs.put("tpl-parent", parent);
+        defs.put("tpl-child", child);
+
+        assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
+                () -> HostResourceSetup.collectEffective(parent, defs));
+        assertEquals("copy", HostResourceSetup.collectEffective(child, defs).get(0).getMode());
+    }
+
+    @Test
+    void branchingFromATemplateBuiltWithASystemMountFailsBeforeCopying() {
+        var incus = org.mockito.Mockito.mock(dev.incusspawn.incus.IncusClient.class);
+        org.mockito.Mockito.when(incus.configGet("tpl-old", dev.incusspawn.incus.Metadata.HOST_RESOURCES))
+                .thenReturn(HostResourceSetup.serialize(List.of(
+                        new ImageDef.HostResource("~/src", "/var/lib/foo", "readonly"))));
+        org.mockito.Mockito.when(incus.configGet("tpl-ok", dev.incusspawn.incus.Metadata.HOST_RESOURCES))
+                .thenReturn(HostResourceSetup.serialize(List.of(
+                        new ImageDef.HostResource("~/src", "/opt/foo", "readonly"))));
+
+        var e = assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
+                () -> HostResourceSetup.requireBranchableTemplate(incus, "tpl-old"));
+        assertTrue(e.getMessage().contains("isx build tpl-old"), e.getMessage());
+        assertDoesNotThrow(() -> HostResourceSetup.requireBranchableTemplate(incus, "tpl-ok"));
+    }
+
+    @Test
+    void applyForInstanceRefusesASystemMountBeforeAttachingAnything() {
+        var incus = org.mockito.Mockito.mock(dev.incusspawn.incus.IncusClient.class);
+        assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
+                () -> HostResourceSetup.applyForInstance(incus, "b", List.of(
+                        new ImageDef.HostResource(System.getProperty("java.io.tmpdir"), "/opt/ok", "readonly"),
+                        new ImageDef.HostResource("~/src", "/etc/x", "overlay")), false));
+        org.mockito.Mockito.verifyNoInteractions(incus);
+    }
+
     private static ImageDef makeImageDef(String name, String parent, List<ImageDef.HostResource> hostResources) {
         var def = new ImageDef();
         def.setName(name);
