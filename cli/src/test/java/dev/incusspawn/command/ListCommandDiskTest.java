@@ -226,7 +226,7 @@ class ListCommandDiskTest {
 
     // A template row with just the fields the gate reads (name, buildStatus, parent, referencedBytes).
     private static ListCommand.TemplateInfo tpl(String name, String parent, String buildStatus, long rfer) {
-        return new ListCommand.TemplateInfo(name, "", buildStatus, "", "", "", "", parent, -1, rfer);
+        return new ListCommand.TemplateInfo(name, "", buildStatus, "", "", "", "", parent, -1, rfer, "");
     }
 
     private static final String BUILT = "2026-08-29T10:00:00Z";   // any non-"not built" status

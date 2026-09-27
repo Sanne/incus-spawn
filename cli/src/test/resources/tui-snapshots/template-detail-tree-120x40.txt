@@ -1,0 +1,40 @@
+╔ tpl-kvm — Tree ══════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ tpl-root  fedora-44-base  tag f44-20260915  (pinned)                                                                 ║
+║   unknown                                                                                                            ║
+║   Base OS only                                                                                                       ║
+║   Image: https://example.com/f44-20260915/fedora-44.tar.xz                                                           ║
+║   Packages: git                                                                                                      ║
+║                                                                                                                      ║
+║   └ tpl-kvm                                                                                                          ║
+║     unknown                                                                                                          ║
+║     Nests VMs, so it needs KVM passthrough inside the container                                                      ║
+║     Type: container with KVM passthrough                                                                             ║
+║     GUI: on by default for branches                                                                                  ║
+║     Shell command: tmux new -A -s main                                                                               ║
+║     Default action: claude                                                                                           ║
+║     Packages: qemu-kvm                                                                                               ║
+║     Removes: nano                                                                                                    ║
+║     Package repos: copr:acme/tools                                                                                   ║
+║     Masks: dnf-makecache.timer                                                                                       ║
+║     Tools: claude  (+node)                                                                                           ║
+║     Skills: review                                                                                                   ║
+║     Repo: https://github.com/acme/app.git → ~/app                                                                    ║
+║       No matching host checkout found                                                                                ║
+║     Accounts: claude=work                                                                                            ║
+║     Env: MAVEN_OPTS=-Xmx2g                                                                                           ║
+║     Env: API_TOKEN=••••••                                                                                            ║
+║     Env: PATH=/opt/tools/bin:$PATH                                                                                   ║
+║     Agent note:                                                                                                      ║
+║       Nested guests share this container's memory limit, so size them before starting several.                       ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║                                                                                                                      ║
+║  Tab Compact view   ↑↓/PgUp/PgDn Scroll   F4 Edit   n New child…   F3/Esc Close                                      ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝

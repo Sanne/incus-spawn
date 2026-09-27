@@ -1,0 +1,50 @@
+╔ tpl-kvm — Compact ═══════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ Nests VMs, so it needs KVM passthrough inside the container                                                        █ ║
+║                                                                                                                    █ ║
+║ Type:           container with KVM passthrough                                                                     █ ║
+║ GUI:            on by default for branches                                                                         █ ║
+║ Workdir:        /home/agentuser/app                                                                                █ ║
+║ Shell command:  tmux new -A -s main                                                                                █ ║
+║ Default action: claude                                                                                             █ ║
+║                                                                                                                    █ ║
+║ Status:         not built                                                                                          █ ║
+║                                                                                                                    █ ║
+║ Source:         unknown                                                                                            █ ║
+║ Base image:     fedora-44-base  tag f44-20260915  (pinned)                                                         █ ║
+║                 from https://example.com/f44-20260915/fedora-44.tar.xz                                             █ ║
+║ Inherits:       tpl-root → tpl-kvm                                                                                 █ ║
+║                                                                                                                    █ ║
+║ Packages:                                                                                                          █ ║
+║   git                                                                                                              █ ║
+║   qemu-kvm                                                                                                         █ ║
+║                                                                                                                    █ ║
+║ Tools:                                                                                                             █ ║
+║   claude                                                                                                           █ ║
+║                                                                                                                    █ ║
+║ Dependencies (auto):                                                                                               █ ║
+║   node                                                                                                             █ ║
+║                                                                                                                    █ ║
+║ Repos:                                                                                                             █ ║
+║   https://github.com/acme/app.git → ~/app                                                                          █ ║
+║     No matching host checkout found                                                                                █ ║
+║                                                                                                                    █ ║
+║ Host Resources: (none)                                                                                             █ ║
+║                                                                                                                    █ ║
+║ Accounts:                                                                                                          █ ║
+║   claude = work                                                                                                    █ ║
+║                                                                                                                    █ ║
+║ Environment:                                                                                                       █ ║
+║   MAVEN_OPTS=-Xmx2g  (tpl-kvm)                                                                                     █ ║
+║   API_TOKEN=••••••  (tpl-kvm)                                                                                      █ ║
+║   PATH=/opt/tools/bin:$PATH  (tpl-kvm)                                                                             █ ║
+║                                                                                                                    █ ║
+║ Skills:                                                                                                            █ ║
+║   review                                                                                                           █ ║
+║                                                                                                                    █ ║
+║ Package repos:                                                                                                     │ ║
+║   copr:acme/tools                                                                                                  │ ║
+║                                                                                                                    │ ║
+║ Removed packages:                                                                                                  │ ║
+║   nano                                                                                                             │ ║
+║  Tab Tree view   ↑↓/PgUp/PgDn Scroll   F4 Edit   n New child…   F3/Esc Close                                         ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝

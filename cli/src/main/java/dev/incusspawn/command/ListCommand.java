@@ -114,6 +114,17 @@ public class ListCommand extends BaseCommand {
 
     private final TuiTheme theme = TerminalThemeDetector.detect();
     private final ModalRenderer modal = new ModalRenderer(theme);
+    private final TemplateDetailView templateDetail = new TemplateDetailView(modal, theme,
+            new TemplateDetailView.Source() {
+                @Override public Map<String, dev.incusspawn.config.ImageDef> imageDefs() { return imageDefs; }
+                @Override public List<String> autoDeps(List<String> explicitTools) { return collectAutoDeps(explicitTools); }
+                @Override public java.nio.file.Path hostRepoMatch(String cloneUrl) {
+                    return resolveHostRepoMatch(cloneUrl, SpawnConfig.load());
+                }
+                @Override public boolean definitionChanged(String template) { return templatesDefChanged.contains(template); }
+                @Override public boolean parentRebuilt(String template) { return templatesParentRebuilt.contains(template); }
+                @Override public String currentVersion() { return BuildInfo.instance().version(); }
+            }, java.time.LocalDateTime::now);
 
     // Background operation state
     private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
@@ -212,8 +223,6 @@ public class ListCommand extends BaseCommand {
     private List<TemplateInfo> allTemplateEntries;
     private List<InstanceInfo> allEntries;
     // Template detail modal state
-    private boolean detailViewCompact = true;
-    private int detailScrollOffset;
     // Instance detail modal state
     private int instanceDetailScrollOffset;
     // Info modal state
@@ -666,7 +675,8 @@ public class ListCommand extends BaseCommand {
                                     inst.limitsMemory, inst.rootSize, inst.ipv4, inst.networkMode,
                                     inst.architecture, inst.buildVersion, inst.definitionSha,
                                     inst.type, inst.buildSourceJson, "", inst.defaultAction,
-                                    inst.diskUsage, inst.referencedBytes)
+                                    inst.diskUsage, inst.referencedBytes, inst.instanceMode,
+                                    inst.kvmEnabled)
                             : inst)
                     .toList();
         }
@@ -693,10 +703,10 @@ public class ListCommand extends BaseCommand {
                 templateEntries.add(new TemplateInfo(name, def.getDescription(),
                         match.created.isEmpty() ? "built" : match.created, match.runtime,
                         match.buildVersion, match.definitionSha, match.pendingOp,
-                        match.parent, match.diskUsage, match.referencedBytes));
+                        match.parent, match.diskUsage, match.referencedBytes, match.instanceMode));
                 templateNames.add(name);
             } else {
-                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1));
+                templateEntries.add(new TemplateInfo(name, def.getDescription(), "not built", "", "", "", "", "", -1, -1, ""));
             }
         }
         // Add out-of-scope templates (built but not in current definition scope)
@@ -717,7 +727,7 @@ public class ListCommand extends BaseCommand {
             templateEntries.add(new TemplateInfo(inst.name, buildSource.descriptionFor(inst.name),
                     inst.created.isEmpty() ? "built" : inst.created, inst.runtime,
                     inst.buildVersion, inst.definitionSha, inst.pendingOp, inst.parent, inst.diskUsage,
-                    inst.referencedBytes));
+                    inst.referencedBytes, inst.instanceMode));
             templateNames.add(inst.name);
             storedNames.add(inst.name);
         }
@@ -1316,8 +1326,7 @@ public class ListCommand extends BaseCommand {
 
         // F3: Show template details
         if (key.isKey(KeyCode.F3)) {
-            detailViewCompact = true;
-            detailScrollOffset = 0;
+            templateDetail.open();
             mode = Mode.TEMPLATE_DETAIL;
             return true;
         }
@@ -2865,7 +2874,10 @@ public class ListCommand extends BaseCommand {
             case RENAME -> modal.renderInputModal(frame, screen,
                     "Rename '" + renameSourceName + "'", "New name:", renameSourceName, renameInput);
             case NEW_TEMPLATE -> renderNewTemplateModal(frame, screen);
-            case TEMPLATE_DETAIL -> renderTemplateDetailModal(frame, screen);
+            case TEMPLATE_DETAIL -> {
+                var template = selectedTemplate();
+                if (template != null) templateDetail.render(frame, screen, template);
+            }
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
@@ -3065,29 +3077,7 @@ public class ListCommand extends BaseCommand {
             }
             return true;
         }
-        // Tab or Shift+Tab: toggle view mode
-        if (key.isKey(KeyCode.TAB) || ShiftTabBindings.isShiftTab(key)) {
-            detailViewCompact = !detailViewCompact;
-            detailScrollOffset = 0;
-            return true;
-        }
-        if (key.isKey(KeyCode.DOWN) || key.isChar('j')) {
-            detailScrollOffset++;
-            return true;
-        }
-        if (key.isKey(KeyCode.UP) || key.isChar('k')) {
-            if (detailScrollOffset > 0) detailScrollOffset--;
-            return true;
-        }
-        if (key.isKey(KeyCode.HOME) || key.isChar('g')) {
-            detailScrollOffset = 0;
-            return true;
-        }
-        if (key.isKey(KeyCode.END) || key.isChar('G')) {
-            detailScrollOffset = Integer.MAX_VALUE; // capped during render
-            return true;
-        }
-        return false;
+        return templateDetail.handleKey(key);
     }
 
     // --- Instance detail modal ---
@@ -3632,49 +3622,6 @@ public class ListCommand extends BaseCommand {
         return Line.from(spans);
     }
 
-    private void renderTemplateDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        var template = selectedTemplate();
-        if (template == null) return;
-
-        var contentLines = detailViewCompact
-                ? buildCompactDetailLines(template.name)
-                : buildTreeDetailLines(template.name);
-
-        int maxLineWidth = 0;
-        for (var line : contentLines) {
-            int w = line.spans().stream().mapToInt(s -> s.content().length()).sum();
-            if (w > maxLineWidth) maxLineWidth = w;
-        }
-        int modalWidth = Math.min(maxLineWidth + 4, screen.width() - 4); // +2 border +2 padding
-        int maxHeight = screen.height() - 2;
-        int modalHeight = Math.min(contentLines.size() + 4, maxHeight); // +2 border +1 spacer +1 hints
-
-        var viewLabel = detailViewCompact ? "Compact" : "Tree";
-        var modalArea = ModalRenderer.centerRect(screen, modalWidth, modalHeight);
-        var block = Block.builder()
-                .borders(Borders.ALL).borderType(BorderType.DOUBLE)
-                .title(modal.styledTitle(" " + template.name + " \u2014 " + viewLabel + " ", modal.border()))
-                .borderStyle(Style.EMPTY.fg(modal.border()))
-                .style(Style.EMPTY.bg(modal.bg()))
-                .padding(dev.tamboui.layout.Padding.horizontal(1))
-                .build();
-        modal.renderBlock(frame, block, modalArea);
-        var inner = block.inner(modalArea);
-
-        var rows = Layout.vertical()
-                .constraints(Constraint.fill(), Constraint.length(1))
-                .split(inner);
-
-        detailScrollOffset = modal.renderScrollableContent(frame, rows.get(0), contentLines, detailScrollOffset);
-
-        var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Tab", detailViewCompact ? "Tree view" : "Compact view");
-        modal.addKey(hintSpans, "F4", "Edit");
-        modal.addKey(hintSpans, "n", "New child…");
-        modal.addKey(hintSpans, "F3/Esc", "Close");
-        frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
-    }
-
     private void renderInstanceDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var selected = selectedEntry(instanceTableState);
         if (selected == null) return;
@@ -3727,6 +3674,12 @@ public class ListCommand extends BaseCommand {
         lines.add(Line.from(List.of(
                 Span.styled("Type:           ", labelStyle),
                 Span.styled(info.runtime, lineStyle))));
+
+        if (!"virtual-machine".equals(info.runtime)) {
+            lines.add(Line.from(List.of(
+                    Span.styled("KVM:            ", labelStyle),
+                    Span.styled(info.kvmEnabled ? "enabled (/dev/kvm passed through)" : "disabled", lineStyle))));
+        }
 
         if (!info.architecture.isEmpty()) {
             lines.add(Line.from(List.of(
@@ -3830,118 +3783,6 @@ public class ListCommand extends BaseCommand {
         return chain;
     }
 
-    private List<Line> buildCompactDetailLines(String templateName) {
-        var chain = getInheritanceChain(templateName);
-        if (chain.isEmpty()) return List.of();
-
-        var lines = new ArrayList<Line>();
-        var current = chain.get(chain.size() - 1);
-        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
-        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-
-        // Description
-        if (!current.getDescription().isEmpty()) {
-            lines.add(Line.styled(current.getDescription(), lineStyle));
-        }
-        lines.add(Line.styled("", lineStyle));
-
-        // Source
-        lines.add(Line.from(List.of(
-                Span.styled("Source:     ", labelStyle),
-                Span.styled(current.getSource(), dimStyle))));
-
-        // Base image
-        var root = chain.get(0);
-        lines.add(Line.from(List.of(
-                Span.styled("Base image: ", labelStyle),
-                Span.styled(root.getImage(), lineStyle))));
-
-        // Inheritance chain
-        if (chain.size() > 1) {
-            var names = new ArrayList<String>();
-            for (var def : chain) names.add(def.getName());
-            lines.add(Line.from(List.of(
-                    Span.styled("Inherits:   ", labelStyle),
-                    Span.styled(String.join(" \u2192 ", names), lineStyle))));
-        }
-        lines.add(Line.styled("", lineStyle));
-
-        // Collect all packages
-        var allPackages = new ArrayList<String>();
-        for (var def : chain) allPackages.addAll(def.getPackages());
-        addDetailSection(lines, "Packages", allPackages, labelStyle, lineStyle, dimStyle);
-
-        // Collect all tools
-        var allToolsFormatted = new ArrayList<String>();
-        var allToolNames = new ArrayList<String>();
-        for (var def : chain) {
-            for (var toolRef : def.getTools()) {
-                allToolsFormatted.add(formatToolWithParams(toolRef));
-                allToolNames.add(toolRef.getName());
-            }
-        }
-        addDetailSection(lines, "Tools", allToolsFormatted, labelStyle, lineStyle, dimStyle);
-
-        // Collect auto-added dependencies (transitive requires not already in explicit list)
-        var autoDeps = collectAutoDeps(allToolNames);
-        if (!autoDeps.isEmpty()) {
-            addDetailSection(lines, "Dependencies (auto)", autoDeps, labelStyle, lineStyle, dimStyle);
-        }
-
-        // Collect all repos
-        var spawnConfig = SpawnConfig.load();
-        var allRepos = new ArrayList<dev.incusspawn.config.ImageDef.RepoEntry>();
-        for (var def : chain) allRepos.addAll(def.getRepos());
-        if (allRepos.isEmpty()) {
-            lines.add(Line.from(List.of(
-                    Span.styled("Repos: ", labelStyle),
-                    Span.styled("(none)", dimStyle))));
-        } else {
-            lines.add(Line.styled("Repos:", labelStyle));
-            for (var repo : allRepos) {
-                lines.add(Line.styled("  " + repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle));
-                if (repo.hasPrime()) {
-                    lines.add(Line.from(List.of(
-                            Span.styled("    prime: ", labelStyle),
-                            Span.styled(repo.getPrime(), lineStyle))));
-                }
-                var hostMatch = resolveHostRepoMatch(repo.getUrl(), spawnConfig);
-                lines.add(Line.styled(hostMatch != null
-                        ? "    Linked to host repository at " + hostMatch
-                        : "    No matching host checkout found", dimStyle));
-            }
-        }
-        lines.add(Line.styled("", lineStyle));
-
-        // Collect all host-resources
-        var allHostResources = new ArrayList<String>();
-        for (var def : chain) {
-            for (var hr : def.getHostResources()) {
-                var containerPath = HostResourceSetup.resolveContainerPath(hr.getSource(), hr.getPath());
-                allHostResources.add(hr.getSource() + " → " + containerPath + "  (" + hr.getMode() + ")");
-            }
-        }
-        addDetailSection(lines, "Host Resources", allHostResources, labelStyle, lineStyle, dimStyle);
-
-        return lines;
-    }
-
-    private void addDetailSection(List<Line> lines, String label, List<String> items,
-                                   Style labelStyle, Style lineStyle, Style dimStyle) {
-        if (items.isEmpty()) {
-            lines.add(Line.from(List.of(
-                    Span.styled(label + ": ", labelStyle),
-                    Span.styled("(none)", dimStyle))));
-        } else {
-            lines.add(Line.styled(label + ":", labelStyle));
-            for (var item : items) {
-                lines.add(Line.styled("  " + item, lineStyle));
-            }
-        }
-        lines.add(Line.styled("", lineStyle));
-    }
-
     private List<String> collectAutoDeps(List<String> explicitTools) {
         var explicit = new java.util.LinkedHashSet<>(explicitTools);
         var allDeps = new java.util.LinkedHashSet<String>();
@@ -3950,17 +3791,6 @@ public class ListCommand extends BaseCommand {
         }
         allDeps.removeAll(explicit);
         return new ArrayList<>(allDeps);
-    }
-
-    private String formatToolWithParams(dev.incusspawn.tool.ToolDef.ToolRef toolRef) {
-        if (toolRef.getParams().isEmpty()) {
-            return toolRef.getName();
-        }
-        var paramStr = toolRef.getParams().entrySet().stream()
-            .sorted(java.util.Map.Entry.comparingByKey())
-            .map(e -> e.getKey() + ": " + e.getValue())
-            .collect(java.util.stream.Collectors.joining(", "));
-        return toolRef.getName() + " (" + paramStr + ")";
     }
 
     private static java.nio.file.Path resolveHostRepoMatch(String cloneUrl, SpawnConfig config) {
@@ -4341,104 +4171,6 @@ public class ListCommand extends BaseCommand {
         return new ActionContext(
                 instance.name, instance.ipv4, instance.status,
                 instance.parent, tools, instance.networkMode, repos);
-    }
-
-    private List<Line> buildTreeDetailLines(String templateName) {
-        var chain = getInheritanceChain(templateName);
-        if (chain.isEmpty()) return List.of();
-
-        var lines = new ArrayList<Line>();
-        var lineStyle = Style.EMPTY.fg(modal.fg()).bg(modal.bg());
-        var labelStyle = Style.EMPTY.fg(modal.accent()).bg(modal.bg());
-        var nameStyle = Style.EMPTY.bold().fg(modal.accent()).bg(modal.bg());
-        var dimStyle = Style.EMPTY.fg(theme.textDim()).bg(modal.bg());
-        var spawnConfig = SpawnConfig.load();
-
-        for (int i = 0; i < chain.size(); i++) {
-            var def = chain.get(i);
-            var indent = "  ".repeat(i);
-            var connector = i == 0 ? "" : "\u2514 ";
-            var contentIndent = i == 0 ? "  " : "  ".repeat(i) + "  ";
-
-            // Name line
-            var nameSpans = new ArrayList<Span>();
-            if (!indent.isEmpty() || !connector.isEmpty()) {
-                nameSpans.add(Span.styled(indent + connector, dimStyle));
-            }
-            nameSpans.add(Span.styled(def.getName(), nameStyle));
-            if (def.isRoot()) {
-                nameSpans.add(Span.styled("  " + def.getImage(), dimStyle));
-            }
-            lines.add(Line.from(nameSpans));
-
-            // Source
-            lines.add(Line.styled(contentIndent + def.getSource(), dimStyle));
-
-            // Description
-            if (!def.getDescription().isEmpty()) {
-                lines.add(Line.styled(contentIndent + def.getDescription(), lineStyle));
-            }
-
-            // Packages
-            if (!def.getPackages().isEmpty()) {
-                lines.add(Line.from(List.of(
-                        Span.styled(contentIndent + "Packages: ", labelStyle),
-                        Span.styled(String.join(", ", def.getPackages()), lineStyle))));
-            }
-
-            // Tools
-            if (!def.getTools().isEmpty()) {
-                var toolSpans = new ArrayList<Span>();
-                toolSpans.add(Span.styled(contentIndent + "Tools: ", labelStyle));
-                var toolNames = def.getTools().stream()
-                    .map(dev.incusspawn.tool.ToolDef.ToolRef::getName)
-                    .collect(java.util.stream.Collectors.toList());
-                var toolDisplay = def.getTools().stream()
-                    .map(this::formatToolWithParams)
-                    .collect(java.util.stream.Collectors.toList());
-                toolSpans.add(Span.styled(String.join(", ", toolDisplay), lineStyle));
-                var levelAutoDeps = collectAutoDeps(toolNames);
-                if (!levelAutoDeps.isEmpty()) {
-                    toolSpans.add(Span.styled("  (+" + String.join(", ", levelAutoDeps) + ")", dimStyle));
-                }
-                lines.add(Line.from(toolSpans));
-            }
-
-            // Repos
-            if (!def.getRepos().isEmpty()) {
-                for (var repo : def.getRepos()) {
-                    lines.add(Line.from(List.of(
-                            Span.styled(contentIndent + "Repo: ", labelStyle),
-                            Span.styled(repo.getUrl() + " \u2192 " + repo.getPath(), lineStyle))));
-                    if (repo.hasPrime()) {
-                        lines.add(Line.from(List.of(
-                                Span.styled(contentIndent + "  prime: ", labelStyle),
-                                Span.styled(repo.getPrime(), lineStyle))));
-                    }
-                    var hostMatch = resolveHostRepoMatch(repo.getUrl(), spawnConfig);
-                    lines.add(Line.styled(contentIndent + (hostMatch != null
-                            ? "  Linked to host repository at " + hostMatch
-                            : "  No matching host checkout found"), dimStyle));
-                }
-            }
-
-            // Host Resources
-            if (!def.getHostResources().isEmpty()) {
-                for (var hr : def.getHostResources()) {
-                    var containerPath = HostResourceSetup.resolveContainerPath(hr.getSource(), hr.getPath());
-                    lines.add(Line.from(List.of(
-                            Span.styled(contentIndent + "Host: ", labelStyle),
-                            Span.styled(hr.getSource() + " \u2192 " + containerPath, lineStyle),
-                            Span.styled("  (" + hr.getMode() + ")", dimStyle))));
-                }
-            }
-
-            if (i < chain.size() - 1) {
-                lines.add(Line.styled("", lineStyle));
-            }
-        }
-
-        return lines;
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5162,7 +4894,7 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private static java.time.LocalDateTime parseTimestamp(String ts) {
+    static java.time.LocalDateTime parseTimestamp(String ts) {
         try {
             if (ts.contains("T")) {
                 return java.time.LocalDateTime.parse(ts, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
@@ -5522,7 +5254,9 @@ public class ListCommand extends BaseCommand {
                         configVal(config, Metadata.BUILD_SOURCE, ""),
                         configVal(config, Metadata.PENDING_OP, ""),
                         configVal(config, Metadata.DEFAULT_ACTION, ""),
-                        diskUsage, referencedBytes));
+                        diskUsage, referencedBytes,
+                        configVal(config, Metadata.INSTANCE_MODE, ""),
+                        config.has(Metadata.KVM_ENABLED)));
             }
             return entryList;
         } catch (IncusException e) {
@@ -5578,7 +5312,7 @@ public class ListCommand extends BaseCommand {
     record TemplateInfo(String name, String description,
                                 String buildStatus, String runtime, String buildVersion,
                                 String definitionSha, String pendingOp, String parent, long diskUsage,
-                                long referencedBytes) {
+                                long referencedBytes, String instanceMode) {
         static final String NOT_BUILT = "not built";
 
         /** Whether this template has been built (has a subvolume/stamp), vs. definition-only. */
@@ -5594,13 +5328,13 @@ public class ListCommand extends BaseCommand {
         /** Copy with a substituted disk weight — used by the two disk-attribution models. */
         TemplateInfo withDiskUsage(long newDiskUsage) {
             return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
-                    definitionSha, pendingOp, parent, newDiskUsage, referencedBytes);
+                    definitionSha, pendingOp, parent, newDiskUsage, referencedBytes, instanceMode);
         }
 
         /** Copy with a substituted referenced size — used to backfill a missing stamp live. */
         TemplateInfo withReferencedBytes(long newReferencedBytes) {
             return new TemplateInfo(name, description, buildStatus, runtime, buildVersion,
-                    definitionSha, pendingOp, parent, diskUsage, newReferencedBytes);
+                    definitionSha, pendingOp, parent, diskUsage, newReferencedBytes, instanceMode);
         }
     }
 
@@ -5611,5 +5345,6 @@ public class ListCommand extends BaseCommand {
                                 String ipv4, String networkMode, String architecture,
                                 String buildVersion, String definitionSha,
                                 String type, String buildSourceJson, String pendingOp,
-                                String defaultAction, long diskUsage, long referencedBytes) {}
+                                String defaultAction, long diskUsage, long referencedBytes,
+                                String instanceMode, boolean kvmEnabled) {}
 }

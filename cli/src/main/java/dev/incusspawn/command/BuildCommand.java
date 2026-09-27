@@ -1390,7 +1390,7 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    private static String resolveImageUrl(String imageUrl, String tag) {
+    static String resolveImageUrl(String imageUrl, String tag) {
         var resolved = imageUrl.replace("{arch}", normalizeHostArch());
         return tag != null ? resolved.replace("{tag}", tag) : resolved;
     }
