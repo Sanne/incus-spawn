@@ -219,4 +219,51 @@ class ProxyHealthCheckTest {
         assertEquals(-1, ProxyHealthCheck.parseProxyInfo("{\"status\":\"ok\",\"version\":\"1.0\"}").pid());
         assertEquals(-1, ProxyHealthCheck.parseProxyInfo("not json").pid());
     }
+
+    private static final DriftRestartRecord.Stamp TRIED =
+            new DriftRestartRecord.Stamp("0.0.2", "cli7654321", "/opt/isx-proxy", 1000L, 42L);
+
+    private static ProxyHealthCheck.ProxyInfo running(String version, String sha, boolean configDrifted) {
+        return new ProxyHealthCheck.ProxyInfo(version, sha, "JVM", "fp", configDrifted, true, "");
+    }
+
+    @Test
+    void versionDriftRestartsOnceOntoAnInstalledBinary() {
+        var report = ProxyHealthCheck.assessDrift(running("0.0.1", "old1234567", false), () -> null);
+        assertFalse(report.isEmpty());
+        assertNull(report.futileReason());
+        assertTrue(report.restartHelps());
+    }
+
+    @Test
+    void versionDriftThatSurvivedARestartOntoTheSameBinaryDoesNotRestartAgain() {
+        // The #798 loop: the installed proxy is not this CLI's build, so every restart
+        // brought the same drift straight back.
+        var report = ProxyHealthCheck.assessDrift(running("0.0.1", "old1234567", false), () -> TRIED);
+        assertFalse(report.restartHelps());
+        assertTrue(report.futileReason().contains("/opt/isx-proxy"));
+    }
+
+    @Test
+    void configDriftAlwaysRestartsWithoutReadingTheRecord() {
+        var report = ProxyHealthCheck.assessDrift(running("0.0.1", "old1234567", true),
+                () -> fail("config drift must not read the record"));
+        assertTrue(report.restartHelps());
+    }
+
+    @Test
+    void aLegacyProxyAlwaysRestarts() {
+        var report = ProxyHealthCheck.assessDrift(running("", "", false), () -> TRIED);
+        assertTrue(report.restartHelps());
+    }
+
+    @Test
+    void noDriftNeverReadsTheRecord() {
+        var cli = BuildInfo.instance();
+        var report = ProxyHealthCheck.assessDrift(running(cli.version(), cli.gitSha(), false),
+                () -> fail("no drift must not read the record"));
+        assertTrue(report.isEmpty());
+        assertFalse(report.restartHelps());
+        assertTrue(ProxyHealthCheck.assessDrift(null, () -> TRIED).isEmpty());
+    }
 }

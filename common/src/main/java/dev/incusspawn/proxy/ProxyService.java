@@ -194,7 +194,12 @@ public final class ProxyService {
 
     public static boolean install() {
         try (var ignored = acquireProxyLock()) {
-            return installLocked();
+            // Starting a service that is already running is a no-op, so only a service that was
+            // down is known to be running the binary just written into its files.
+            var wasActive = isActive();
+            var installed = installLocked();
+            if (installed && !wasActive) DriftRestartRecord.write(resolveProxyBinaryPath());
+            return installed;
         }
     }
 
@@ -380,31 +385,41 @@ public final class ProxyService {
     /**
      * Check whether the installed service needs updating (binary path or version)
      * and restart if so. Returns true if a restart was performed.
+     * <p>
+     * Drift is judged from {@code info}, which the caller has just fetched, rather than by
+     * fetching {@code /health} again: a second fetch that failed would read as "no drift", and a
+     * caller that had already announced drift would then do nothing. Null means "unknown".
      */
-    public static boolean reinstallIfChanged(IncusClient incus) {
+    public static boolean reinstallIfChanged(IncusClient incus, ProxyHealthCheck.ProxyInfo info) {
         try (var ignored = acquireProxyLock()) {
+            var proxyBin = resolveProxyBinaryPath();
             boolean needsReinstall;
             if (Platform.isMacOS()) {
                 // A plist whose binary has gone cannot be brought into line, and restarting it
                 // below would just hand it back to KeepAlive. Take it out of service instead.
-                if (resolveProxyBinaryPath() == null && haltUnusableMacOsServiceLocked()) {
+                if (proxyBin == null && haltUnusableMacOsServiceLocked()) {
                     return false;
                 }
                 needsReinstall = needsMacOsPlistUpdate();
             } else {
-                needsReinstall = regenerateServiceFiles();
+                needsReinstall = regenerateServiceFiles(proxyBin);
             }
 
-            if (!needsReinstall) {
-                var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
-                needsReinstall = !ProxyHealthCheck.checkDrift(info).isEmpty();
-            }
+            // Assessed again under the lock: another isx process may have made this very restart
+            // while we waited for it, and a second one would only cut every instance's
+            // connection again.
+            if (!needsReinstall) needsReinstall = ProxyHealthCheck.assessDrift(info).restartHelps();
 
             if (needsReinstall) {
                 if (Platform.isMacOS()) {
                     updateMacOsProxyPlist();
                 }
-                return restartLocked();
+                var restarted = restartLocked();
+                // The service files now exec proxyBin, so this records the binary the service
+                // really restarted onto. A bare restart() may still exec a binary from a previous
+                // installation, which says nothing about this one, so it records nothing.
+                if (restarted) DriftRestartRecord.write(proxyBin);
+                return restarted;
             }
             return false;
         }
@@ -435,7 +450,7 @@ public final class ProxyService {
      * supported customization mechanism is a drop-in ({@code <unit>.d/override.conf}), a separate
      * file this never touches.
      */
-    private static boolean regenerateServiceFiles() {
+    private static boolean regenerateServiceFiles(String proxyBin) {
         if (Platform.isMacOS() || !Files.exists(Environment.proxyServiceFile())) return false;
         try {
             var changed = false;
@@ -445,7 +460,6 @@ public final class ProxyService {
             // needs `RestartPreventExitStatus` — without it a unit from an older build retries the
             // EXIT_CONFIG failure every five seconds forever, which is the loop this all exists to
             // end.
-            var proxyBin = resolveProxyBinaryPath();
             var script = proxyStartScript();
             if (proxyBin != null && startScriptIsStale(script, proxyBin)) {
                 writeProxyStartScript(script, proxyBin);
@@ -496,13 +510,15 @@ public final class ProxyService {
                 }
                 if (needsMacOsPlistUpdate()) {
                     updateMacOsProxyPlist();
-                    restartLocked();
+                    if (restartLocked()) DriftRestartRecord.write(resolveProxyBinaryPath());
                 }
                 return;
             }
-            if (regenerateServiceFiles()) {
+            var proxyBin = resolveProxyBinaryPath();
+            if (regenerateServiceFiles(proxyBin)) {
                 System.out.println("Updated proxy service configuration.");
                 runQuiet("systemctl", "--user", "restart", SERVICE_NAME);
+                if (isActive()) DriftRestartRecord.write(proxyBin);
             }
         }
     }

@@ -227,6 +227,44 @@ public final class ProxyHealthCheck {
         return "";
     }
 
+    /**
+     * The drift {@code proxyInfo} shows, and why restarting the proxy service cannot clear it
+     * ({@code futileReason}), or null when it can. Every consumer reads this one report, so
+     * none can forget to ask whether a restart would help.
+     */
+    public record DriftReport(java.util.List<String> drifts, String futileReason) {
+        public boolean isEmpty() { return drifts.isEmpty(); }
+        public boolean restartHelps() { return !drifts.isEmpty() && futileReason == null; }
+    }
+
+    /**
+     * Assess {@code proxyInfo}'s drift, including whether a restart would clear it.
+     * <p>
+     * The service runs the <em>installed</em> {@code isx-proxy}, not a build matching the CLI.
+     * Once the service has been restarted onto that binary for this CLI and the version still
+     * differs, restarting again changes nothing but cuts every instance's connection; without
+     * this check every command did exactly that (#798). See {@link DriftRestartRecord}.
+     * Config drift is always cleared by a restart, so it is never futile, and only pure version
+     * drift reads the record.
+     */
+    public static DriftReport assessDrift(ProxyInfo proxyInfo) {
+        return assessDrift(proxyInfo, DriftRestartRecord::restartAlreadyTried);
+    }
+
+    static DriftReport assessDrift(ProxyInfo proxyInfo,
+                                   java.util.function.Supplier<DriftRestartRecord.Stamp> restartAlreadyTried) {
+        var drifts = checkDrift(proxyInfo);
+        if (drifts.isEmpty() || proxyInfo.isLegacy() || proxyInfo.configDrifted()) {
+            return new DriftReport(drifts, null);
+        }
+        var tried = restartAlreadyTried.get();
+        if (tried == null) return new DriftReport(drifts, null);
+        return new DriftReport(drifts, "The proxy was already restarted onto the installed "
+                + tried.proxyBin() + ", which is still a different build, so restarting again"
+                + " cannot help. Install isx and isx-proxy from the same build; the next command"
+                + " then restarts the proxy onto it.");
+    }
+
     static String checkToolProxyDrift(ProxyInfo proxyInfo) {
         if (proxyInfo == null || proxyInfo.isLegacy()) return "";
         if (!proxyInfo.configDrifted()) return "";
@@ -364,22 +402,30 @@ public final class ProxyHealthCheck {
     static void warnIfDrifted(IncusClient incus) {
         try {
             var info = fetchProxyInfo(healthAddress(incus));
-            var drifts = checkDrift(info);
-            if (drifts.isEmpty()) return;
-            var drift = String.join(" ", drifts);
+            var report = assessDrift(info);
+            if (report.isEmpty()) return;
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
+            System.err.println(sep);
+            System.err.println("\033[1;33mProxy drift detected:\033[0m " + String.join(" ", report.drifts()));
             if (ProxyService.isActive()) {
-                System.err.println(sep);
-                System.err.println("\033[1;33mProxy drift detected:\033[0m " + drift);
-                ProxyService.restart();
-                System.err.println(sep);
+                if (report.futileReason() != null) {
+                    System.err.println(report.futileReason());
+                } else {
+                    // Not a bare restart: the service files may still exec a binary from a
+                    // previous installation, and restarting that would leave the drift in place.
+                    ProxyService.reinstallIfChanged(incus, info);
+                }
             } else {
-                System.err.println(sep);
-                System.err.println("\033[1;33mProxy drift detected:\033[0m " + drift);
                 System.err.println("Restart the proxy to pick up changes:");
                 System.err.println("  \033[1misx proxy stop && isx proxy start\033[0m");
-                System.err.println(sep);
+                if (!info.configDrifted()) {
+                    // A foreground proxy leaves no record of what it runs, so this cannot tell
+                    // whether a restart would help; say what to do if it does not.
+                    System.err.println("If the drift remains afterwards, install isx and isx-proxy"
+                            + " from the same build.");
+                }
             }
+            System.err.println(sep);
         } catch (Exception ignored) {}
     }
 

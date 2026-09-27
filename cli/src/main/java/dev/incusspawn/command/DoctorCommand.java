@@ -978,16 +978,21 @@ public class DoctorCommand extends BaseCommand {
         try {
             var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
             if (info == null) return List.of(Finding.ok("Proxy version", "(proxy not reachable, skipped)"));
-            var drifts = ProxyHealthCheck.checkDrift(info);
-            if (drifts.isEmpty()) {
+            var report = ProxyHealthCheck.assessDrift(info);
+            if (report.isEmpty()) {
                 return List.of(Finding.ok("Proxy version", "matches CLI"));
             }
-            Remediation restart = ProxyService.isActive()
-                    ? new Remediation("Restart proxy service to update", false,
-                            () -> ProxyService.reinstallIfChanged(incus))
-                    : new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null);
+            Remediation restart;
+            if (report.futileReason() != null) {
+                restart = new Remediation(report.futileReason(), false, null);
+            } else if (ProxyService.isActive()) {
+                restart = new Remediation("Restart proxy service to update", false,
+                        () -> ProxyService.reinstallIfChanged(incus, info));
+            } else {
+                restart = new Remediation("Restart proxy: isx proxy stop && isx proxy start", false, null);
+            }
             var findings = new ArrayList<Finding>();
-            for (var drift : drifts) {
+            for (var drift : report.drifts()) {
                 findings.add(Finding.warn("Proxy drift", drift,
                         findings.isEmpty() ? restart : null));
             }

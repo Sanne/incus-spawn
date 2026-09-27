@@ -150,6 +150,11 @@ public final class Environment {
         return home().resolve(".local/state/incus-spawn/proxy-lifecycle.log");
     }
 
+    /** Which installed {@code isx-proxy} the service was last restarted onto, and for which CLI. */
+    public static Path proxyDriftRestartFile() {
+        return home().resolve(".local/state/incus-spawn/proxy-drift-restart.properties");
+    }
+
     /**
      * Client-side diagnostic log. Written to a file only (never stdout/stderr) so it is safe
      * to emit from inside the TUI, which owns the terminal.

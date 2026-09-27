@@ -79,9 +79,11 @@ public class ProxyCommand extends BaseCommand {
                             }
                         }
                         System.out.println("  DNS overrides:   " + (proxyInfo.dnsConfigured() ? "active" : "pending"));
-                        for (var drift : ProxyHealthCheck.checkDrift(proxyInfo)) {
-                            System.out.println("  \033[1;33m>>> " + drift + "\033[0m");
+                        var drift = ProxyHealthCheck.assessDrift(proxyInfo);
+                        for (var d : drift.drifts()) {
+                            System.out.println("  \033[1;33m>>> " + d + "\033[0m");
                         }
+                        if (drift.futileReason() != null) System.out.println("      " + drift.futileReason());
                     }
                     if (proxyInfo != null && proxyInfo.hasAuthError()) {
                         System.out.println("  \033[1;31m>>> Auth error: " + proxyInfo.authError() + "\033[0m");
@@ -157,10 +159,14 @@ public class ProxyCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             if (ProxyService.isActive()) {
                 ProxyService.upgradeIfNeeded();
-                if (ProxyService.reinstallIfChanged(incus)) {
+                var info = ProxyHealthCheck.fetchProxyInfo(ProxyHealthCheck.healthAddress(incus));
+                if (ProxyService.reinstallIfChanged(incus, info)) {
                     BuildOutput.success("Proxy service restarted with updated binary.");
                 } else {
                     BuildOutput.note("Proxy service is already installed and running.");
+                    // Drift it declined to restart for would otherwise go unexplained here.
+                    var futile = ProxyHealthCheck.assessDrift(info).futileReason();
+                    if (futile != null) BuildOutput.note(futile);
                 }
                 if (!ProxyHealthCheck.awaitHealthy(5)) {
                     System.err.println("Warning: proxy service is registered but not responding.");
