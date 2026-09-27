@@ -10,6 +10,9 @@ import java.util.Map;
 
 public class CodexSetup implements ToolSetup {
 
+    static final NpmGlobalInstall.PlatformSplitCli NPM_CLI = new NpmGlobalInstall.PlatformSplitCli(
+            "Codex CLI", "@openai/codex", "codex", "@openai/codex-");
+
     @Override
     public String name() {
         return "codex";
@@ -106,7 +109,7 @@ public class CodexSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         BuildOutput.stepStart("Installing Codex CLI...");
-        NpmGlobalInstall.install(c, "Codex CLI", "@openai/codex", "codex");
+        NpmGlobalInstall.install(c, NPM_CLI);
         BuildOutput.stepDone();
     }
 

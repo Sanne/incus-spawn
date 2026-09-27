@@ -64,32 +64,37 @@ class CodexSetupTest {
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
         verify(incus).shellExec(eq(CONTAINER),
-                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@openai/codex"));
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
     }
 
     @Test
-    void installVerifiesCodexRunsAsAgentuser() {
+    void installChecksThePlatformPackageAfterNpmInstall() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
-        verify(incus).execInContainer(CONTAINER, "agentuser", "codex --version");
+        var order = inOrder(incus);
+        order.verify(incus).shellExec(eq(CONTAINER),
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
+        order.verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                argThat(arg -> arg.contains("npm root -g") && arg.contains("'@openai/codex-'")));
+        order.verify(incus).execInContainer(CONTAINER, "agentuser", "command -v codex");
     }
 
     @Test
-    void installFailsWhenNpmSkippedThePlatformBinary() {
+    void installFailsBeforeConfiguringWhenThePlatformPackageStaysMissing() {
         // npm exits 0 when an optional platform package fails to download, leaving only the
         // JS launcher: the build must fail rather than stamp an unusable template (#808).
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(
-                new IncusClient.ExecResult(1, "", "Error: Missing optional dependency @openai/codex-linux-x64."));
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg -> arg.contains("npm root -g"))))
+                .thenReturn(new IncusClient.ExecResult(3, "@openai/codex-linux-x64\n", ""));
 
         var e = assertThrows(dev.incusspawn.incus.IncusException.class,
                 () -> new CodexSetup().install(new Container(incus, CONTAINER), Map.of()));
-        assertTrue(e.getMessage().contains("codex --version"), e.getMessage());
+        assertTrue(e.getMessage().contains("@openai/codex-linux-x64"), e.getMessage());
         verify(incus, never()).shellExec(eq(CONTAINER),
                 eq("sh"), eq("-c"), argThat(arg -> arg.contains(CodexSetup.CONFIG_PATH)));
     }
@@ -167,7 +172,6 @@ class CodexSetupTest {
     void reconfigureOnlyWritesSettingsNotBinary() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().reconfigure(new Container(incus, CONTAINER),
                 Map.of("model", "gpt-5.3-codex", "effort", "xhigh"));
@@ -178,7 +182,9 @@ class CodexSetupTest {
                         arg.contains("model = \"gpt-5.3-codex\"") &&
                         arg.contains("model_reasoning_effort = \"xhigh\"")));
         verify(incus, never()).shellExec(eq(CONTAINER),
-                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@openai/codex"));
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@openai/codex"));
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg -> arg.contains("npm root -g")));
+        verifyNoMoreInteractions(ignoreStubs(incus));
     }
 
     @Test

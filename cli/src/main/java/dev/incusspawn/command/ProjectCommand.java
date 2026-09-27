@@ -155,11 +155,7 @@ public class ProjectCommand extends BaseCommand {
             BuildOutput.stepDone();
 
             // Update globally installed npm packages (coding tools, etc.)
-            if (incus.shellExec(name, "which", "npm").success()) {
-                BuildOutput.stepStart("Updating npm packages...");
-                incus.shellExec(name, "npm", "update", "-g");
-                BuildOutput.stepDone();
-            }
+            boolean npmFailed = !NpmUpdate.run(incus, name);
 
             // Git fetch in all repos
             BuildOutput.stepStart("Updating git repositories...");
@@ -185,6 +181,10 @@ public class ProjectCommand extends BaseCommand {
             incus.stop(name);
             BuildOutput.stepDone();
 
+            if (npmFailed) {
+                BuildOutput.warn("npm update failed; re-run 'isx project update " + name + "' to retry it.");
+                return CommandResult.valueOf(1);
+            }
             BuildOutput.success("Project template " + name + " updated.");
             return CommandResult.SUCCESS;
         }

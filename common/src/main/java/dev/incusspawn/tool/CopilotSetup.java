@@ -11,6 +11,9 @@ public class CopilotSetup implements ToolSetup {
 
     private static final String PLACEHOLDER_TOKEN = "gho_placeholder";
 
+    static final NpmGlobalInstall.PlatformSplitCli NPM_CLI = new NpmGlobalInstall.PlatformSplitCli(
+            "GitHub Copilot CLI", "@github/copilot", "copilot", "@github/copilot-");
+
     @Override
     public String name() {
         return "copilot";
@@ -81,7 +84,7 @@ public class CopilotSetup implements ToolSetup {
         // stdin isn't a real TTY regardless of GH_PROMPT_DISABLED). Installing the npm package
         // directly, as CodexSetup does for @openai/codex, sidesteps that prompt entirely.
         // The real binary is an optional platform package, which NpmGlobalInstall verifies.
-        NpmGlobalInstall.install(c, "GitHub Copilot CLI", "@github/copilot", "copilot");
+        NpmGlobalInstall.install(c, NPM_CLI);
     }
 
     private static final String COPILOT_CONFIG_PATH = "/home/agentuser/.copilot/config.json";

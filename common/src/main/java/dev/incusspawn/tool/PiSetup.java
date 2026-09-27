@@ -114,8 +114,7 @@ public class PiSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         BuildOutput.stepStart("Installing Pi coding agent...");
-        c.runQuiet("Failed to install Pi coding agent",
-                "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@earendil-works/pi-coding-agent");
+        NpmGlobalInstall.install(c, "Pi coding agent", "@earendil-works/pi-coding-agent");
         BuildOutput.stepDone();
     }
 

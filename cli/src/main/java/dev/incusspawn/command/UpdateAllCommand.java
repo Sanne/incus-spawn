@@ -66,15 +66,22 @@ public class UpdateAllCommand extends BaseCommand {
 
         boolean primesSkipped = false;
         boolean primesFailed = false;
+        boolean npmFailed = false;
         for (var name : templates) {
             BuildOutput.header("Updating " + name);
             var result = updateImage(incus, name, resolved.get(name));
-            primesSkipped |= result.skipped;
-            primesFailed |= result.failed;
+            primesSkipped |= result.primesSkipped();
+            primesFailed |= result.primesFailed();
+            npmFailed |= result.npmFailed();
         }
 
+        if (npmFailed) {
+            BuildOutput.warn("Some npm updates failed; re-run 'isx update-all' to retry them.");
+        }
         if (primesFailed) {
             BuildOutput.warn("Some prime commands failed.");
+        }
+        if (npmFailed || primesFailed) {
             return CommandResult.valueOf(1);
         }
         BuildOutput.success("All templates updated.");
@@ -103,7 +110,9 @@ public class UpdateAllCommand extends BaseCommand {
         static final PrimeResult NONE = new PrimeResult(false, false);
     }
 
-    private PrimeResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
+    private record UpdateResult(boolean primesSkipped, boolean primesFailed, boolean npmFailed) {}
+
+    private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         incus.start(name);
         incus.waitForReady(name);
 
@@ -113,11 +122,7 @@ public class UpdateAllCommand extends BaseCommand {
         BuildOutput.stepDone();
 
         // Update globally installed npm packages (coding tools, etc.)
-        if (incus.shellExec(name, "which", "npm").success()) {
-            BuildOutput.stepStart("Updating npm packages...");
-            incus.shellExec(name, "npm", "update", "-g");
-            BuildOutput.stepDone();
-        }
+        boolean npmFailed = !NpmUpdate.run(incus, name);
 
         // Git fetch in all repos (for project images)
         BuildOutput.stepStart("Updating git repositories...");
@@ -128,7 +133,7 @@ public class UpdateAllCommand extends BaseCommand {
         var primeResult = handlePrimeCommands(incus, name, imageDef);
 
         incus.stop(name);
-        return primeResult;
+        return new UpdateResult(primeResult.skipped, primeResult.failed, npmFailed);
     }
 
     private PrimeResult handlePrimeCommands(IncusClient incus, String name, ImageDef imageDef) {

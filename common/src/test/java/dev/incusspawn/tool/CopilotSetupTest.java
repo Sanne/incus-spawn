@@ -17,7 +17,7 @@ class CopilotSetupTest {
     private static final String CONTAINER = "test-container";
 
     @Test
-    void installRunsNpmInstallGlobalThenVerifiesTheBinary() {
+    void installChecksThePlatformPackageAfterNpmInstall() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
         when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
@@ -26,21 +26,25 @@ class CopilotSetupTest {
 
         var order = inOrder(incus);
         order.verify(incus).shellExec(eq(CONTAINER),
-                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=error"), eq("@github/copilot"));
-        order.verify(incus).execInContainer(CONTAINER, "agentuser", "copilot --version");
+                eq("npm"), eq("install"), eq("-g"), eq("--ignore-scripts"), eq("--loglevel=verbose"), eq("@github/copilot"));
+        order.verify(incus).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                argThat(arg -> arg.contains("npm root -g") && arg.contains("'@github/copilot-'")));
+        order.verify(incus).execInContainer(CONTAINER, "agentuser", "command -v copilot");
     }
 
     @Test
-    void installFailsWhenNpmSkippedThePlatformBinary() {
+    void installFailsBeforeConfiguringWhenThePlatformPackageStaysMissing() {
         // @github/copilot's loader exits 1 when its optional platform package is missing,
         // which npm install -g does not report as a failure (#808).
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
-        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(
-                new IncusClient.ExecResult(1, "", "GitHub Copilot CLI: no platform package found."));
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), argThat(arg -> arg.contains("npm root -g"))))
+                .thenReturn(new IncusClient.ExecResult(3, "@github/copilot-linux-x64\n", ""));
 
         var e = assertThrows(IncusException.class,
                 () -> new CopilotSetup().install(new Container(incus, CONTAINER), Map.of()));
-        assertTrue(e.getMessage().contains("copilot --version"), e.getMessage());
+        assertTrue(e.getMessage().contains("@github/copilot-linux-x64"), e.getMessage());
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                argThat(arg -> arg.contains("/home/agentuser/.copilot/config.json")));
     }
 }
