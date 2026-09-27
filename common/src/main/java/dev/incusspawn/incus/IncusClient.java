@@ -1218,42 +1218,6 @@ public class IncusClient {
     }
 
     /**
-     * Detach the named network from an instance by finding and removing the matching NIC device.
-     * If the NIC is inherited from a profile (not in instance devices), it is first overridden
-     * into the instance's own devices so it can be removed.
-     */
-    public void networkDetach(String instance, String networkName) {
-        var resp = http().get("/1.0/instances/" + instance);
-        if (!resp.isSuccess()) {
-            throw new IncusException("Failed to get instance " + instance + " for network detach");
-        }
-        var metadata = resp.body().path("metadata");
-        var instanceDevices = metadata.path("devices");
-        var expandedDevices = metadata.path("expanded_devices");
-        for (var it = expandedDevices.fields(); it.hasNext(); ) {
-            var entry = it.next();
-            var dev = entry.getValue();
-            if ("nic".equals(dev.path("type").asText()) &&
-                (networkName.equals(dev.path("network").asText()) ||
-                 networkName.equals(dev.path("parent").asText()))) {
-                var devName = entry.getKey();
-                if (instanceDevices.path(devName).isMissingNode()) {
-                    var override = new LinkedHashMap<String, String>();
-                    dev.fields().forEachRemaining(e -> override.put(e.getKey(), e.getValue().asText()));
-                    var overrideResp = http().requestAndWait("PATCH", "/1.0/instances/" + instance,
-                            Map.of("devices", Map.of(devName, override)));
-                    if (!overrideResp.isSuccess()) {
-                        throw new IncusException("Failed to override profile device " + devName
-                                + " on " + instance + " for network detach");
-                    }
-                }
-                deviceRemove(instance, devName);
-                return;
-            }
-        }
-    }
-
-    /**
      * Launch a new container or VM from an image.
      * The image may be a local alias ("my-image") or a remote reference
      * ("images:fedora/44"). Remote references are resolved by reading the

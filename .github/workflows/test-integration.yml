@@ -561,6 +561,9 @@ jobs:
       - name: Test CoW branching
         run: sg incus-admin -c "bash .github/scripts/test-cow-branching.sh"
 
+      - name: Test airgapped branches
+        run: sg incus-admin -c "bash .github/scripts/test-airgap.sh"
+
       - name: Test container
         run: |
           sg incus-admin -c "isx branch test-container --from tpl-minimal --no-start"

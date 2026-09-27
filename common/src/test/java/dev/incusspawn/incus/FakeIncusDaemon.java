@@ -27,6 +27,12 @@ public final class FakeIncusDaemon implements IncusTransport {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final Map<String, ObjectNode> instances = new LinkedHashMap<>();
+    /**
+     * Devices the instance's profiles provide. {@code expanded_devices} is always these with the
+     * instance's own devices on top, as Incus computes it: removing an instance device that
+     * shadows a profile device brings the profile's back.
+     */
+    private final Map<String, ObjectNode> profileDevices = new LinkedHashMap<>();
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
@@ -39,7 +45,9 @@ public final class FakeIncusDaemon implements IncusTransport {
 
     /** Add a device to an existing instance, as if it had been configured or copied over. */
     public FakeIncusDaemon device(String instanceName, String deviceName, Map<String, String> config) {
-        ((ObjectNode) instances.get(instanceName).get("devices")).set(deviceName, JSON.valueToTree(config));
+        var instance = instances.get(instanceName);
+        ((ObjectNode) instance.get("devices")).set(deviceName, JSON.valueToTree(config));
+        expand(instanceName);
         return this;
     }
 
@@ -55,19 +63,29 @@ public final class FakeIncusDaemon implements IncusTransport {
         node.put("status", status);
         node.put("architecture", "x86_64");
         node.set("config", JSON.valueToTree(config));
+        node.putArray("profiles").add("default");
         node.putObject("devices");
         // As the default profile provides them.
-        var expanded = node.putObject("expanded_devices");
-        var nic = expanded.putObject("eth0");
+        var profile = JSON.createObjectNode();
+        var nic = profile.putObject("eth0");
         nic.put("type", "nic");
         nic.put("network", "incusbr0");
         nic.put("name", "eth0");
-        var root = expanded.putObject("root");
+        var root = profile.putObject("root");
         root.put("type", "disk");
         root.put("path", "/");
         root.put("pool", "default");
+        profileDevices.put(name, profile);
         instances.put(name, node);
+        expand(name);
         return this;
+    }
+
+    private void expand(String instanceName) {
+        var instance = instances.get(instanceName);
+        var expanded = profileDevices.get(instanceName).deepCopy();
+        instance.path("devices").properties().forEach(e -> expanded.set(e.getKey(), e.getValue()));
+        instance.set("expanded_devices", expanded);
     }
 
     /**
@@ -168,14 +186,13 @@ public final class FakeIncusDaemon implements IncusTransport {
             // A full replacement: how Incus removes devices (PATCH cannot).
             var replacement = JSON.readTree(body);
             instance.set("config", replacement.path("config").deepCopy());
-            var expanded = (ObjectNode) instance.get("expanded_devices");
-            instance.path("devices").properties().forEach(e -> expanded.remove(e.getKey()));
             instance.set("devices", replacement.path("devices").deepCopy());
-            replacement.path("devices").properties().forEach(e -> expanded.set(e.getKey(), e.getValue()));
+            expand(name);
             return sync(JSON.createObjectNode());
         }
         if (rest.isEmpty() && method.equals("PATCH")) {
             applyPatch(instance, JSON.readTree(body));
+            expand(name);
             return sync(JSON.createObjectNode());
         }
         if (rest.equals("/state") && method.equals("PUT")) {
@@ -192,12 +209,9 @@ public final class FakeIncusDaemon implements IncusTransport {
             if (e.getValue().isNull()) config.remove(e.getKey());
             else config.set(e.getKey(), e.getValue());
         });
+        // Each device in a PATCH replaces the instance's device of that name whole
         var devices = (ObjectNode) instance.get("devices");
-        var expanded = (ObjectNode) instance.get("expanded_devices");
-        patch.path("devices").properties().forEach(e -> {
-            devices.set(e.getKey(), e.getValue());
-            expanded.set(e.getKey(), e.getValue());
-        });
+        patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
     }
 
     /** The instance a {@code /1.0/instances/<name>[/...][?...]} path addresses, or null. */

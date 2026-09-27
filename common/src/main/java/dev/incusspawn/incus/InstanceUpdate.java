@@ -19,6 +19,7 @@ public final class InstanceUpdate {
 
     private final Map<String, String> config = new LinkedHashMap<>();
     private final Map<String, Map<String, String>> deviceProperties = new LinkedHashMap<>();
+    private final Map<String, Map<String, String>> replacedDevices = new LinkedHashMap<>();
     private final Set<String> removedDevices = new LinkedHashSet<>();
 
     /** Set a config key; {@code null} removes it. */
@@ -45,6 +46,16 @@ public final class InstanceUpdate {
         return this;
     }
 
+    /**
+     * Set a device to exactly this config, discarding what it had. Replacing a profile device
+     * with {@code type: none} is how Incus masks it on one instance: removing an instance device
+     * of the same name only drops the override, and the profile's device applies again.
+     */
+    public InstanceUpdate replaceDevice(String deviceName, Map<String, String> deviceConfig) {
+        replacedDevices.put(deviceName, new LinkedHashMap<>(deviceConfig));
+        return this;
+    }
+
     /** Drop the device, if the instance itself declares it. Profile-inherited devices stay. */
     public InstanceUpdate removeDevice(String deviceName) {
         removedDevices.add(deviceName);
@@ -62,7 +73,8 @@ public final class InstanceUpdate {
     }
 
     public boolean isEmpty() {
-        return config.isEmpty() && deviceProperties.isEmpty() && removedDevices.isEmpty();
+        return config.isEmpty() && deviceProperties.isEmpty() && replacedDevices.isEmpty()
+                && removedDevices.isEmpty();
     }
 
     /** Config changes, a {@code null} value meaning "remove". */
@@ -72,6 +84,10 @@ public final class InstanceUpdate {
 
     Map<String, Map<String, String>> deviceProperties() {
         return Collections.unmodifiableMap(deviceProperties);
+    }
+
+    Map<String, Map<String, String>> replacedDevices() {
+        return Collections.unmodifiableMap(replacedDevices);
     }
 
     Set<String> removedDevices() {

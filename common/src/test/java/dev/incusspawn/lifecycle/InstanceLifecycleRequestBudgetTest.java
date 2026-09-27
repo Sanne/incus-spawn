@@ -223,6 +223,89 @@ class InstanceLifecycleRequestBudgetTest {
                 .path(Metadata.accountKey("github")).asText());
     }
 
+    /** Every NIC Incus would attach at start, whatever it comes from. */
+    private static List<String> attachedNics(FakeIncusDaemon daemon) {
+        var nics = new java.util.ArrayList<String>();
+        daemon.instance(NAME).path("expanded_devices").properties().forEach(e -> {
+            if ("nic".equals(e.getValue().path("type").asText())) nics.add(e.getKey());
+        });
+        return nics;
+    }
+
+    @Test
+    void theFakeBringsBackAProfileDeviceWhoseOverrideIsRemoved() {
+        // #813 went unnoticed because the fake dropped a removed override from expanded_devices
+        // instead of letting the profile's device apply again, as Incus does.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of())
+                .device(NAME, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0"));
+        daemon.client().deviceRemove(NAME, "eth0");
+        assertEquals(List.of("eth0"), attachedNics(daemon));
+    }
+
+    @Test
+    void anAirgappedBranchHasNoNicInOneWrite() {
+        // #813: override-then-remove only dropped the override, and the default profile's eth0
+        // came back. A type: none device of the same name is what masks it.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of());
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        assertBudget(2, daemon, "configureBranch (airgap)");
+        assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
+
+        assertEquals(List.of(), attachedNics(daemon));
+        var after = daemon.instance(NAME);
+        assertEquals("none", after.path("devices").path("eth0").path("type").asText());
+        assertEquals(NetworkMode.AIRGAP.name(), after.path("config").path(Metadata.NETWORK_MODE).asText());
+    }
+
+    @Test
+    void airgappingACopyOfAClone() {
+        // A clone overrides the profile's NIC with its static IP, and carries the address in its
+        // metadata: removing that override would bring the profile's NIC back, and the stale
+        // address would make the proxy take this instance for its source.
+        var daemon = new FakeIncusDaemon()
+                .container(NAME, Map.of(Metadata.STATIC_IP, "10.166.11.7",
+                        Metadata.STATIC_GATEWAY, "10.166.11.1",
+                        Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(),
+                        Metadata.PROXY_GATEWAY, "10.166.11.1"))
+                .device(NAME, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0",
+                        "ipv4.address", "10.166.11.7", "security.ipv4_filtering", "true"))
+                .device(NAME, "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+
+        assertEquals(List.of(), attachedNics(daemon));
+        var config = daemon.instance(NAME).path("config");
+        assertEquals(NetworkMode.AIRGAP.name(), config.path(Metadata.NETWORK_MODE).asText());
+        assertFalse(config.has(Metadata.STATIC_IP));
+        assertFalse(config.has(Metadata.STATIC_GATEWAY));
+        assertFalse(config.has(Metadata.PROXY_GATEWAY));
+    }
+
+    @Test
+    void branchingWithNetworkFromAnAirgappedInstanceReconnects() {
+        var daemon = new FakeIncusDaemon()
+                .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
+                .device(NAME, "eth0", Map.of("type", "none"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+
+        assertEquals(List.of("eth0"), attachedNics(daemon));
+        var after = daemon.instance(NAME);
+        assertEquals("10.166.11.2", after.path("devices").path("eth0").path("ipv4.address").asText());
+        assertEquals("incusbr0", after.path("devices").path("eth0").path("network").asText());
+        assertFalse(after.path("config").has(Metadata.NETWORK_MODE),
+                "full internet is the absence of a mode, not the airgap the source had");
+    }
+
+    @Test
+    void aFullBranchOfAProxyOnlyInstanceDropsTheMode() {
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(),
+                Metadata.PROXY_GATEWAY, "10.166.11.1"));
+        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        var config = daemon.instance(NAME).path("config");
+        assertFalse(config.has(Metadata.NETWORK_MODE));
+        assertFalse(config.has(Metadata.PROXY_GATEWAY));
+    }
+
     @Test
     void refusedIpFilteringStillPinsTheAddress() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())

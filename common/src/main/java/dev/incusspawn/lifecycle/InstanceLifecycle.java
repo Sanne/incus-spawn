@@ -62,19 +62,16 @@ public final class InstanceLifecycle {
      * {@link InstanceUpdate} against a single read of the instance instead: one PATCH, or one PUT
      * when an inherited KVM device has to go.
      *
-     * <p>Airgap mode still detaches the NIC separately first; it is rare, and the detach has
-     * to override a profile device before it can remove it.
+     * <p>Airgap masks every NIC with {@code type: none} in that same write, which is the only way
+     * to take a profile's NIC away from one instance (#813).
      */
     public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
         var mode = settings.networkMode();
-        if (mode == NetworkMode.AIRGAP) {
-            BuildOutput.stepStart("Enabling network airgap...");
-            incus.networkDetach(name, "incusbr0");
-            BuildOutput.stepDone();
-        }
-
         var instance = incus.instanceMetadata(name);
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        if (mode != NetworkMode.AIRGAP && isAirgapped(instance)) {
+            instance = unmaskNics(incus, name, instance);
+        }
         var update = new InstanceUpdate();
 
         var cpu = settings.cpu();
@@ -85,12 +82,25 @@ public final class InstanceLifecycle {
         String ip = null;
         String gateway = null;
         String nicDevice = null;
-        if (mode != NetworkMode.AIRGAP) {
+        if (mode == NetworkMode.AIRGAP) {
+            BuildOutput.step("Enabling network airgap.");
+            maskNics(instance, update);
+            update.config(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name());
+            // A copy of a networked instance carries its address: the proxy must not take this
+            // one for its source.
+            update.unset(Metadata.PROXY_GATEWAY);
+            update.unset(Metadata.STATIC_IP);
+            update.unset(Metadata.STATIC_GATEWAY);
+        } else {
             gateway = ProxyConfig.resolveGatewayIp(incus);
             if (mode == NetworkMode.PROXY_ONLY) {
                 BuildOutput.step("Configuring proxy-only network.");
                 update.config(Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name());
                 update.config(Metadata.PROXY_GATEWAY, gateway);
+            } else {
+                // Full internet is the absence of a mode, not what the source was copied with
+                update.unset(Metadata.NETWORK_MODE);
+                update.unset(Metadata.PROXY_GATEWAY);
             }
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
@@ -139,6 +149,46 @@ public final class InstanceLifecycle {
                     update.withoutDeviceProperty(nicDevice, "security.ipv4_filtering"));
             applyIpFiltering(incus, name, nicDevice);
         }
+    }
+
+    private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
+
+    private static boolean isAirgapped(JsonNode instance) {
+        return NetworkMode.AIRGAP.name().equals(
+                instance.path("config").path(Metadata.NETWORK_MODE).asText(""));
+    }
+
+    /**
+     * Take every NIC away from the instance, whichever network it is on and wherever it comes
+     * from. Removing an instance device only drops the instance's own copy: a NIC the {@code
+     * default} profile provides, or one the instance overrides from it (a clone's static IP),
+     * applies again. A {@code type: none} device of the same name masks it.
+     */
+    static void maskNics(JsonNode instance, InstanceUpdate update) {
+        for (var it = instance.path("expanded_devices").properties().iterator(); it.hasNext(); ) {
+            var device = it.next();
+            if ("nic".equals(device.getValue().path("type").asText())) {
+                update.replaceDevice(device.getKey(), MASKED_DEVICE);
+            }
+        }
+    }
+
+    /**
+     * Branching with network from an airgapped instance: drop the masks {@link #maskNics} left,
+     * so the profile's NIC applies again. Its own write, since which NIC comes back is only known
+     * from the instance Incus expands afterwards; rare enough not to fold into the main one.
+     */
+    private static JsonNode unmaskNics(IncusClient incus, String name, JsonNode instance) {
+        var masks = new ArrayList<String>();
+        instance.path("devices").properties().forEach(e -> {
+            if ("none".equals(e.getValue().path("type").asText())) masks.add(e.getKey());
+        });
+        if (masks.isEmpty()) return instance;
+        BuildOutput.step("Reconnecting the network the source was airgapped from.");
+        incus.devicesRemoveAll(name, masks);
+        var reread = incus.instanceMetadata(name);
+        if (reread.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        return reread;
     }
 
     static final String RAW_QEMU_CONF = "raw.qemu.conf";

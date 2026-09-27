@@ -294,7 +294,8 @@ class IncusApi {
      *
      * <p>A changed device is sent complete: its current config (expanded, so a profile device
      * is overridden rather than replaced by a fragment Incus rejects as "Missing device type")
-     * with the new properties merged in.
+     * with the new properties merged in. A replaced device is sent as given: PATCH replaces a
+     * device whole, so it needs no PUT either.
      */
     ApiResponse update(String instanceName, JsonNode metadata, InstanceUpdate update) {
         var instanceDevices = metadata.path("devices");
@@ -306,6 +307,13 @@ class IncusApi {
             current.properties().forEach(e -> merged.set(e.getKey(), e.getValue()));
             props.forEach(merged::put);
             changedDevices.put(deviceName, merged);
+        });
+        update.replacedDevices().forEach((deviceName, deviceConfig) -> {
+            var replacement = JSON.createObjectNode();
+            deviceConfig.forEach(replacement::put);
+            var props = update.deviceProperties().get(deviceName);
+            if (props != null) props.forEach(replacement::put);
+            changedDevices.put(deviceName, replacement);
         });
         var removing = update.removedDevices().stream().anyMatch(instanceDevices::has);
 
