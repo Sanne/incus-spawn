@@ -30,8 +30,9 @@ final class Tasks {
     }
 
     /**
-     * One look at a task. {@code state} is {@code running}, {@code finished}, or {@code lost}
-     * (its unit is gone without recording an exit: the instance restarted, or it was killed).
+     * One look at a task. {@code state} is {@code running}, {@code finished}, {@code lost} (its
+     * unit is gone without recording an exit: the instance restarted, or it was killed), or
+     * {@code unknown} when systemd could not be asked.
      */
     record Status(String state, String kind, int run, Integer exit, long outputBytes,
                   long stderrBytes, String output, String stderr) {
@@ -205,6 +206,8 @@ final class Tasks {
         String state;
         if (exit != null) state = "finished";
         else if (unit.equals("active") || unit.equals("activating")) state = "running";
+        // No answer at all is not evidence the task died: say so rather than call it lost.
+        else if (unit.isBlank()) state = "unknown";
         else state = "lost";
         var kind = header.getOrDefault("kind", "");
         long outputBytes = parseLong(header.getOrDefault(AGENT.equals(kind) ? "events_bytes" : "stdout_bytes", "0"));

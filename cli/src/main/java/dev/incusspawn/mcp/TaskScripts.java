@@ -122,7 +122,9 @@ final class TaskScripts {
         var d = dir(taskId);
         return "D=" + d + "; [ -d \"$D\" ] || { echo state=missing; exit 0; }; "
                 + "n=$(cat \"$D/current\"); k=$(cat \"$D/kind\"); echo run=$n; echo kind=$k; "
-                + "echo unit=$(systemctl is-active isx-task-" + taskId + "-$n 2>/dev/null); "
+                // Through sudo: an unprivileged login session in a container may not reach
+                // systemd's system bus, and would report every running task as gone.
+                + "echo unit=$(sudo -n systemctl is-active isx-task-" + taskId + "-$n 2>/dev/null); "
                 + "[ -f \"$D/exit-$n\" ] && echo exit=$(cat \"$D/exit-$n\"); "
                 + "if [ \"$k\" = agent ]; then "
                 + "echo events_bytes=$(stat -c %s \"$D/events-$n.jsonl\" 2>/dev/null || echo 0); echo ---; "
@@ -131,7 +133,9 @@ final class TaskScripts {
                 + "else echo stdout_bytes=$(stat -c %s \"$D/stdout\" 2>/dev/null || echo 0); "
                 + "echo stderr_bytes=$(stat -c %s \"$D/stderr\" 2>/dev/null || echo 0); echo ---; "
                 + "tail -c " + tailBytes + " \"$D/stdout\" 2>/dev/null; echo; echo ---stderr; "
-                + "tail -c " + tailBytes + " \"$D/stderr\" 2>/dev/null; fi";
+                + "tail -c " + tailBytes + " \"$D/stderr\" 2>/dev/null; fi; "
+                // A run that just started has no output files yet: that is not a failure.
+                + "exit 0";
     }
 
     /** Stop the task's current run, and everything it started. */

@@ -180,6 +180,20 @@ class TaskScriptsTest {
     }
 
     @Test
+    void aUnitStateNobodyCouldReadIsUnknownNotLost() {
+        assertEquals("unknown", Tasks.parse("run=1\nkind=command\nunit=\n---\n\n---stderr\n").state());
+        assertEquals("lost", Tasks.parse("run=1\nkind=command\nunit=inactive\n---\n\n---stderr\n").state());
+    }
+
+    @Test
+    void aTaskThatHasWrittenNothingYetStillHasAStatus() throws Exception {
+        var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/t5-abc"));
+        Files.writeString(d.resolve("current"), "1\n");
+        Files.writeString(d.resolve("kind"), "agent\n");
+        assertEquals(1, Tasks.parse(sh(TaskScripts.status("t5-abc", 1000), "")).run());
+    }
+
+    @Test
     void anUnknownTaskIsLost() throws Exception {
         assertEquals("lost", Tasks.parse(sh(TaskScripts.status("t9-zzz", 1000), "")).state());
     }
