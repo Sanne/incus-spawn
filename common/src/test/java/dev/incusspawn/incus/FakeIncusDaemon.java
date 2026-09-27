@@ -178,6 +178,15 @@ public final class FakeIncusDaemon implements IncusTransport {
             instances.values().forEach(list::add);
             return sync(list);
         }
+        if (path.startsWith("/1.0/storage-pools?") && method.equals("GET")) {
+            var pool = JSON.createObjectNode();
+            pool.put("name", "default");
+            pool.put("driver", "btrfs");
+            return sync(JSON.createArrayNode().add(pool));
+        }
+        if (path.equals("/1.0/instances") && method.equals("POST")) {
+            return copy(JSON.readTree(body));
+        }
         if (path.startsWith("/1.0/profiles/") && method.equals("GET")) {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));
             return profile == null ? notFound() : sync(profile.deepCopy());
@@ -219,6 +228,30 @@ public final class FakeIncusDaemon implements IncusTransport {
             return async();
         }
         return notFound();
+    }
+
+    /**
+     * Create an instance as a copy, as Incus does: the source's config and own devices, where
+     * a device in the request replaces the source's whole and an empty config value unsets.
+     */
+    private RawResponse copy(JsonNode request) {
+        var source = request.path("source");
+        var original = instances.get(source.path("source").asText());
+        if (!"copy".equals(source.path("type").asText()) || original == null) return notFound();
+        var name = request.path("name").asText();
+        var copy = original.deepCopy();
+        copy.put("name", name);
+        copy.put("status", "Stopped");
+        var config = (ObjectNode) copy.get("config");
+        request.path("config").properties().forEach(e -> {
+            if (e.getValue().asText().isEmpty()) config.remove(e.getKey());
+            else config.set(e.getKey(), e.getValue());
+        });
+        var devices = (ObjectNode) copy.get("devices");
+        request.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
+        instances.put(name, copy);
+        expand(name);
+        return async();
     }
 
     private static void applyPatch(ObjectNode instance, JsonNode patch) {

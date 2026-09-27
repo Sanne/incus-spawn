@@ -646,12 +646,6 @@ public class IncusClient {
         return resp.isSuccess();
     }
 
-    public String rootDiskPool(String instance) {
-        var resp = http().get("/1.0/instances/" + instance);
-        if (!resp.isSuccess()) return null;
-        return rootDiskPoolFromDevices(resp.body().path("metadata").path("expanded_devices"));
-    }
-
     public Map<String, String> instanceRootPools() {
         var resp = http().get("/1.0/instances?recursion=1");
         if (!resp.isSuccess()) return Map.of();
@@ -666,7 +660,13 @@ public class IncusClient {
         return result;
     }
 
-    public record CopyPlan(String sourcePool, String sourceDriver, String targetPool, boolean cow) {
+    /**
+     * @param addressedNics the source's own NICs that pin an {@code ipv4.address}, as the copy
+     *                      should have them: without it. Only {@code StaticIpAllocator.claim}
+     *                      gives an instance an address (#815).
+     */
+    public record CopyPlan(String sourcePool, String sourceDriver, String targetPool, boolean cow,
+                           Map<String, Map<String, String>> addressedNics) {
         public String fullCopyReason() {
             if (cow) return null;
             if (sourcePool == null) return "source has no root disk pool";
@@ -675,7 +675,9 @@ public class IncusClient {
     }
 
     public CopyPlan planCopy(String source) {
-        var sourcePool = rootDiskPool(source);
+        var sourceInstance = instanceMetadata(source);
+        var sourcePool = rootDiskPoolFromDevices(sourceInstance.path("expanded_devices"));
+        var addressedNics = withoutStaticAddress(sourceInstance.path("devices"));
         var pools = listPools();
         if (pools.isEmpty()) {
             throw new IncusException(
@@ -683,7 +685,7 @@ public class IncusClient {
         }
         var sourceDriver = sourcePool != null ? pools.getOrDefault(sourcePool, "") : null;
         if (sourcePool != null && isCowDriver(sourceDriver)) {
-            return new CopyPlan(sourcePool, sourceDriver, sourcePool, true);
+            return new CopyPlan(sourcePool, sourceDriver, sourcePool, true, addressedNics);
         }
         String cowPool = null;
         for (var entry : pools.entrySet()) {
@@ -695,7 +697,26 @@ public class IncusClient {
         if (cowPool == null) {
             throw new IncusException(noCowPoolMsg());
         }
-        return new CopyPlan(sourcePool, sourceDriver, cowPool, false);
+        return new CopyPlan(sourcePool, sourceDriver, cowPool, false, addressedNics);
+    }
+
+    /**
+     * The NICs among an instance's own devices that pin an {@code ipv4.address}, each without it.
+     * A branch of a branch would otherwise start with its source's address: Incus accepts a copy
+     * whose NIC conflicts with another (it only logs it), and the proxy would map that address to
+     * whichever of the two it lists last.
+     */
+    static Map<String, Map<String, String>> withoutStaticAddress(JsonNode devices) {
+        var result = new LinkedHashMap<String, Map<String, String>>();
+        devices.properties().forEach(e -> {
+            var device = e.getValue();
+            if (!isNic(device) || device.path("ipv4.address").asText("").isEmpty()) return;
+            var config = new LinkedHashMap<String, String>();
+            device.properties().forEach(p -> config.put(p.getKey(), p.getValue().asText()));
+            config.remove("ipv4.address");
+            result.put(e.getKey(), config);
+        });
+        return result;
     }
 
     /**
@@ -1340,6 +1361,10 @@ public class IncusClient {
         body.put("name", target);
         body.put("source", Map.of("type", "copy", "source", source));
         body.put("storage", plan.targetPool());
+        // A device in the request replaces the source's whole; an empty config value unsets.
+        // The copy keeps no address, on its NIC or in the metadata the proxy identifies it by.
+        if (!plan.addressedNics().isEmpty()) body.put("devices", plan.addressedNics());
+        body.put("config", Map.of(Metadata.STATIC_IP, "", Metadata.STATIC_GATEWAY, ""));
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
         if (!resp.isSuccess()) throw new IncusException("Failed to copy " + source + " to " + target);
     }
