@@ -4,7 +4,6 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
 import dev.incusspawn.Platform;
-import dev.incusspawn.incus.IncusClient;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -359,8 +358,8 @@ public class MitmProxy {
     private dev.incusspawn.config.SpawnConfig configSnapshot() {
         var snapshot = configSnapshot;
         if (snapshot == null) {
-            // Only reachable if a request arrives before the first reload on a proxy
-            // constructed directly rather than through fromConfig().
+            // The constructors take no config, so until the first reload the first
+            // per-instance request reads it here.
             snapshot = dev.incusspawn.config.SpawnConfig.load();
             configSnapshot = snapshot;
         }
@@ -504,30 +503,6 @@ public class MitmProxy {
         var routing = toolRouting;
         return ProxyConfig.isInterceptedDomain(domain,
                 routing.exactDomain().keySet(), routing.suffixes());
-    }
-
-    /** Create a MitmProxy using credentials from SpawnConfig and the Incus bridge gateway IP. */
-    public static MitmProxy fromConfig(Vertx vertx, IncusClient incus) {
-        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var loaded = ConfigFingerprint.load();
-        var config = loaded.config();
-        // Discovering tool setups scans every tool YAML, so do it once here and thread it
-        // through: ProxyCredentials.fromConfig would otherwise load its own copy and throw it
-        // away. The same map is kept on the proxy so resolving a per-instance selection later
-        // never reads the file or scans from the event loop.
-        var setups = ToolProxyResolver.proxyToolSetups(config);
-        var proxy = new MitmProxy(
-                vertx,
-                gatewayIp,
-                ProxyConfig.DEFAULT_MITM_PORT,
-                ProxyConfig.DEFAULT_HEALTH_PORT,
-                gatewayIp,
-                ProxyCredentials.forAccounts(config, Map.of(), setups),
-                ToolProxyResolver.resolveAcrossAccounts(config, setups),
-                loaded.fingerprint());
-        proxy.configSnapshot = config;
-        proxy.toolSetupsSnapshot = setups;
-        return proxy;
     }
 
     // --- Lifecycle ---
