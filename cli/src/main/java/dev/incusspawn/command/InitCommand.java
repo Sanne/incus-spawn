@@ -704,7 +704,7 @@ public class InitCommand extends BaseCommand {
             tempFile = Files.createTempFile("isx-nm-veth-", ".conf");
             Files.writeString(tempFile,
                     "[keyfile]\nunmanaged-devices=interface-name:veth*\n");
-            if (runHostQuiet("sudo", "cp", tempFile.toString(), confFile.toString()) != 0) return;
+            if (installHostFile(tempFile, confFile.toString()) != 0) return;
             runHostQuiet("sudo", "nmcli", "general", "reload");
             System.out.println("  Configured NetworkManager to ignore veth devices.");
         } catch (IOException e) {
@@ -713,6 +713,28 @@ public class InitCommand extends BaseCommand {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             }
+        }
+    }
+
+    /**
+     * Put a config file in place as root, world-readable like the rest of {@code /etc}. Not
+     * {@code cp}: the source is a {@code 0600} temp file, and {@code cp} gives a new file the
+     * source's mode, so the next run could not read it back to see whether it changed (#821).
+     */
+    private int installHostFile(Path source, String destination) {
+        return runHostQuiet("sudo", "install", "-m", "0644", source.toString(), destination);
+    }
+
+    /**
+     * The file's content, or {@code null} when it is missing or unreadable -- either way it needs
+     * (re)writing. Files earlier releases wrote {@code 0600 root} fall in the second case, so
+     * re-running {@code isx init} repairs them.
+     */
+    static String readIfReadable(Path path) {
+        try {
+            return Files.readString(path);
+        } catch (IOException e) {
+            return null;
         }
     }
 
@@ -736,15 +758,12 @@ public class InitCommand extends BaseCommand {
                 kernel.perf_event_paranoid=-1
                 """;
         try {
-            if (Files.exists(sysctlPath)) {
-                var existing = Files.readString(sysctlPath);
-                if (content.equals(existing)) {
-                    return;
-                }
+            if (content.equals(readIfReadable(sysctlPath))) {
+                return;
             }
             var tempFile = Files.createTempFile("isx-sysctl-", ".conf");
             Files.writeString(tempFile, content);
-            if (runHostQuiet("sudo", "cp", tempFile.toString(), SYSCTL_CONF) == 0) {
+            if (installHostFile(tempFile, SYSCTL_CONF) == 0) {
                 runHostQuiet("sudo", "sysctl", "-p", SYSCTL_CONF);
                 System.out.println("  Configured host sysctls (inotify, perf_event_paranoid).");
             }
@@ -779,13 +798,13 @@ public class InitCommand extends BaseCommand {
         Path tempFile = null;
         try {
             // Also check the live value: a written config whose apply failed must be retried
-            if (Files.exists(confPath) && content.equals(Files.readString(confPath))
+            if (content.equals(readIfReadable(confPath))
                     && "1".equals(Files.readString(Path.of(KSM_RUN)).strip())) {
                 return;
             }
             tempFile = Files.createTempFile("isx-ksm-", ".conf");
             Files.writeString(tempFile, content);
-            if (runHostQuiet("sudo", "cp", tempFile.toString(), KSM_TMPFILES) != 0) {
+            if (installHostFile(tempFile, KSM_TMPFILES) != 0) {
                 System.err.println("  Warning: could not write " + KSM_TMPFILES + "; KSM stays off.");
             } else if (runHostQuiet("sudo", "systemd-tmpfiles", "--create", KSM_TMPFILES) != 0) {
                 System.err.println("  Warning: could not enable KSM now; it will be on after a reboot.");

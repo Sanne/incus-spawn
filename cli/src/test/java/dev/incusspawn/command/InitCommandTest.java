@@ -14,6 +14,20 @@ import static org.junit.jupiter.api.Assertions.*;
 class InitCommandTest {
 
     @Test
+    void readIfReadableTreatsMissingAndUnreadableFilesAsNeedingAWrite(@TempDir Path dir) throws IOException {
+        var file = dir.resolve("99-incus-spawn.conf");
+        assertNull(InitCommand.readIfReadable(file));
+
+        Files.writeString(file, "fs.inotify.max_user_instances=8192\n");
+        assertEquals("fs.inotify.max_user_instances=8192\n", InitCommand.readIfReadable(file));
+
+        // What an earlier release left behind: 0600 root, unreadable to the user running init (#821)
+        Files.setPosixFilePermissions(file, java.util.Set.of());
+        org.junit.jupiter.api.Assumptions.assumeFalse(Files.isReadable(file), "running as root");
+        assertNull(InitCommand.readIfReadable(file));
+    }
+
+    @Test
     void verificationFailureActionParsesAllSupportedResponses() {
         assertEquals(InitCommand.VerificationFailureAction.RETRY,
                 InitCommand.parseVerificationFailureAction(" y "));
