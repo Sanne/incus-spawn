@@ -1845,7 +1845,7 @@ public class BuildCommand extends BaseCommand {
                                List<ResolvedTool> allTools, String canonicalName) {
         var resolver = new EnvResolver();
 
-        resolver.add(EnvEntry.raw("export ISX_CONTAINER=\"${HOSTNAME}\""), "built-in");
+        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
         resolver.add(EnvEntry.set("ISX_TEMPLATE", canonicalName), "built-in");
         resolver.add(EnvEntry.set("ISX_VERSION", BuildInfo.instance().version()), "built-in");
         for (var layer : ImageDef.chain(imageDef, defs)) {

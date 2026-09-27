@@ -106,22 +106,50 @@ class EnvResolverTest {
     }
 
     @Test
-    void rawEntriesAppendedVerbatim() {
+    void expandAtLoginLeavesDollarLive() {
         var resolver = new EnvResolver();
-        resolver.add(EnvEntry.raw("export CUSTOM=value"), "built-in");
+        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
+        resolver.add(EnvEntry.prepend("PATH", "$HOME/.local/bin", ":").expandingAtLogin(), "tool claude");
         var script = resolver.resolve();
-        assertTrue(script.contains("export CUSTOM=value"));
+        assertTrue(script.contains("export ISX_CONTAINER=\"${HOSTNAME}\"\n"), script);
+        assertTrue(script.contains("export PATH=\"$HOME/.local/bin${PATH:+:$PATH}\"\n"), script);
     }
 
     @Test
-    void rawEntriesAppearAfterStructured() {
+    void expandAtLoginStillEscapesQuotesBackslashesAndBackticks() {
         var resolver = new EnvResolver();
-        resolver.add(EnvEntry.raw("export RAW=1"), "built-in");
-        resolver.add(EnvEntry.set("STRUCTURED", "2"), "modern");
+        resolver.add(EnvEntry.set("X", "a\"b\\c`d`$E").expandingAtLogin(), "built-in");
         var script = resolver.resolve();
-        int structuredIdx = script.indexOf("export STRUCTURED=");
-        int rawIdx = script.indexOf("export RAW=1");
-        assertTrue(structuredIdx < rawIdx, "Structured should come before raw");
+        assertTrue(script.contains("export X=\"a\\\"b\\\\c\\`d\\`$E\"\n"), script);
+    }
+
+    @Test
+    void expandAtLoginEntryConflictsWithDifferentSet() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.set("ISX_CONTAINER", "${HOSTNAME}").expandingAtLogin(), "built-in");
+        resolver.add(EnvEntry.set("ISX_CONTAINER", "fixed"), "template t");
+        var ex = assertThrows(EnvResolver.EnvConflictException.class, resolver::resolve);
+        assertTrue(ex.getMessage().contains("built-in"));
+        assertTrue(ex.getMessage().contains("template t"));
+    }
+
+    @Test
+    void expandAtLoginDiffersFromSameLiteralValue() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.set("V", "$HOME").expandingAtLogin(), "built-in");
+        resolver.add(EnvEntry.set("V", "$HOME"), "template t");
+        var ex = assertThrows(EnvResolver.EnvConflictException.class, resolver::resolve);
+        assertTrue(ex.getMessage().contains("(expanded at login)"), ex.getMessage());
+    }
+
+    @Test
+    void expandAtLoginPrependOrderedWithOtherPrepends() {
+        var resolver = new EnvResolver();
+        resolver.add(EnvEntry.prepend("PATH", "$HOME/.local/bin", ":").expandingAtLogin(), "tool claude");
+        resolver.add(EnvEntry.prepend("PATH", "/opt/skara/bin", ":"), "tool skara");
+        var script = resolver.resolve();
+        assertTrue(script.indexOf("$HOME/.local/bin") < script.indexOf("/opt/skara/bin"),
+                "prepends apply in declaration order, expanded or not");
     }
 
     @Test

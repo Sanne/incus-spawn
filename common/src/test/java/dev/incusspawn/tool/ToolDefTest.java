@@ -916,7 +916,6 @@ class ToolDefTest {
             assertNotNull(def.getReady());
 
             var envNames = def.getEnv().stream()
-                    .filter(e -> !e.isRaw())
                     .map(e -> e.getName())
                     .toList();
             assertTrue(envNames.contains("ANTHROPIC_BASE_URL"),

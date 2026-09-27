@@ -16,7 +16,9 @@ import java.util.List;
  *   <li>{@code set-if-unset + set-if-unset}, different value → first wins</li>
  *   <li>{@code prepend / append} → always accumulated</li>
  *   <li>{@code set + prepend/append} → OK: base then modify</li>
- *   <li>Raw entries (built-in code only) → appended verbatim, no conflict detection</li>
+ *   <li>Entries {@linkplain EnvEntry#expandsAtLogin() expanded at login} follow the same
+ *       rules; a {@code set} of {@code $HOME} and a literal {@code set} of {@code $HOME}
+ *       are different values</li>
  * </ul>
  *
  * Shell output uses one export line per operation so that each prepend/append
@@ -51,24 +53,20 @@ public class EnvResolver {
      */
     public String resolve() {
         var structured = new LinkedHashMap<String, VarState>();
-        var rawLines = new ArrayList<String>();
 
         for (var sourced : entries) {
             var entry = sourced.entry();
-            if (entry.isRaw()) {
-                rawLines.add(entry.getRaw());
-                continue;
-            }
-
             var state = structured.computeIfAbsent(entry.getName(), k -> new VarState());
 
             switch (entry.getStrategy()) {
                 case SET -> {
                     if (state.base != null && state.base.entry().getStrategy() == EnvEntry.Strategy.SET) {
-                        if (!state.base.entry().getValue().equals(entry.getValue())) {
+                        var existing = state.base.entry();
+                        if (!existing.getValue().equals(entry.getValue())
+                                || existing.expandsAtLogin() != entry.expandsAtLogin()) {
                             throw new EnvConflictException(entry.getName(),
-                                    state.base.entry().getValue(), state.base.source(),
-                                    entry.getValue(), sourced.source());
+                                    describe(existing), state.base.source(),
+                                    describe(entry), sourced.source());
                         }
                     } else {
                         state.base = sourced;
@@ -93,10 +91,6 @@ public class EnvResolver {
             generateLines(sb, name, state);
         }
 
-        for (var raw : rawLines) {
-            sb.append(raw).append('\n');
-        }
-
         return sb.toString();
     }
 
@@ -104,11 +98,11 @@ public class EnvResolver {
         if (state.base != null) {
             var baseEntry = state.base.entry();
             switch (baseEntry.getStrategy()) {
-                case SET -> sb.append("export ").append(name).append('=')
-                        .append(shellQuote(baseEntry.getValue())).append('\n');
+                case SET -> sb.append("export ").append(name).append("=\"")
+                        .append(valueText(baseEntry)).append("\"\n");
                 case SET_IF_UNSET -> sb.append("export ").append(name).append("=\"${")
                         .append(name).append(":-")
-                        .append(shellEscape(baseEntry.getValue())).append("}\"\n");
+                        .append(valueText(baseEntry)).append("}\"\n");
                 default -> {}
             }
         }
@@ -117,7 +111,7 @@ public class EnvResolver {
             var entry = prepend.entry();
             var sep = entry.getSeparator();
             sb.append("export ").append(name).append("=\"")
-                    .append(shellEscape(entry.getValue()))
+                    .append(valueText(entry))
                     .append("${").append(name).append(":+")
                     .append(shellEscape(sep))
                     .append("$").append(name).append("}\"\n");
@@ -129,22 +123,37 @@ public class EnvResolver {
             sb.append("export ").append(name).append("=\"${")
                     .append(name).append(":+$").append(name)
                     .append(shellEscape(sep)).append("}")
-                    .append(shellEscape(entry.getValue())).append("\"\n");
+                    .append(valueText(entry)).append("\"\n");
         }
     }
 
-    static String shellQuote(String value) {
-        return "\"" + shellEscape(value) + "\"";
+    private static String describe(EnvEntry entry) {
+        return entry.expandsAtLogin()
+                ? entry.getValue() + " (expanded at login)"
+                : entry.getValue();
+    }
+
+    /**
+     * The value as it goes between double quotes: fully escaped, or with {@code $} left
+     * live for an entry the shell expands at login. Quotes, backslashes and backticks are
+     * escaped either way, so no value can end the string or run a command.
+     */
+    private static String valueText(EnvEntry entry) {
+        return shellEscape(entry.getValue(), entry.expandsAtLogin());
     }
 
     static String shellEscape(String value) {
+        return shellEscape(value, false);
+    }
+
+    private static String shellEscape(String value, boolean keepExpansions) {
         var sb = new StringBuilder(value.length());
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             switch (c) {
                 case '\\' -> sb.append("\\\\");
                 case '"'  -> sb.append("\\\"");
-                case '$'  -> sb.append("\\$");
+                case '$'  -> sb.append(keepExpansions ? "$" : "\\$");
                 case '`'  -> sb.append("\\`");
                 case '\n', '\r' -> throw new IllegalArgumentException(
                         "Env var value must not contain newline or carriage return characters");

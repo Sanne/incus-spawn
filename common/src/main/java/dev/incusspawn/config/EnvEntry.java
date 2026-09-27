@@ -22,10 +22,10 @@ import java.util.Map;
  *   <li>{@code append} — append to the existing value (with a separator)</li>
  * </ul>
  *
- * Definitions ({@code env:} in tool and template YAML) accept only the structured
- * form. Built-in Java code can additionally create a {@linkplain #raw raw} entry for
- * a line whose value must be expanded by the shell at login ({@code $HOME},
- * {@code $HOSTNAME}), which the structured form deliberately escapes.
+ * Values are written literally: {@code $} and friends are escaped. Built-in Java code
+ * that needs a value the shell fills in at login ({@code $HOME}, {@code $HOSTNAME}) marks
+ * the entry {@link #expandingAtLogin()}; it keeps its name and strategy, so it is still
+ * subject to conflict detection. YAML definitions cannot set that flag.
  */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -42,7 +42,7 @@ public class EnvEntry {
     private String value;
     private Strategy strategy = Strategy.SET;
     private String separator = " ";
-    private String raw;
+    private boolean expandAtLogin;
 
     public EnvEntry() {}
 
@@ -51,10 +51,6 @@ public class EnvEntry {
         this.value = value;
         this.strategy = strategy;
         this.separator = separator;
-    }
-
-    private EnvEntry(String raw) {
-        this.raw = raw;
     }
 
     public static EnvEntry set(String name, String value) {
@@ -74,20 +70,17 @@ public class EnvEntry {
     }
 
     /**
-     * A shell line written verbatim, after all structured entries and with no conflict
-     * detection. Code-only: YAML definitions cannot produce one.
+     * A copy of this entry whose value the shell expands at login ({@code $VAR},
+     * {@code ${VAR}}) rather than taking literally. Code-only: there is deliberately no
+     * setter, so YAML definitions cannot reach it.
      */
-    public static EnvEntry raw(String line) {
-        return new EnvEntry(line);
+    public EnvEntry expandingAtLogin() {
+        var copy = new EnvEntry(name, value, strategy, separator);
+        copy.expandAtLogin = true;
+        return copy;
     }
 
-    public boolean isRaw() {
-        return raw != null;
-    }
-
-    public boolean isStructured() {
-        return raw == null;
-    }
+    public boolean expandsAtLogin() { return expandAtLogin; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -97,24 +90,19 @@ public class EnvEntry {
     public void setStrategy(Strategy strategy) { this.strategy = strategy; }
     public String getSeparator() { return separator; }
     public void setSeparator(String separator) { this.separator = separator; }
-    public String getRaw() { return raw; }
 
     /**
      * Return a copy of this entry with parameter substitution applied.
      */
     public EnvEntry withSubstitution(java.util.function.UnaryOperator<String> substitutor) {
-        if (isRaw()) {
-            return EnvEntry.raw(substitutor.apply(raw));
-        }
         var copy = new EnvEntry(name, substitutor.apply(value), strategy, separator);
+        copy.expandAtLogin = expandAtLogin;
         return copy;
     }
 
     public String fingerprintString() {
-        if (isRaw()) {
-            return "raw=" + raw;
-        }
-        return "env=" + name + "," + value + "," + strategy + "," + separator;
+        return "env=" + name + "," + value + "," + strategy + "," + separator
+                + (expandAtLogin ? ",expand" : "");
     }
 
     /**

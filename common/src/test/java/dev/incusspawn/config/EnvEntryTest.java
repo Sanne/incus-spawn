@@ -16,8 +16,7 @@ class EnvEntryTest {
         assertEquals("FOO", entry.getName());
         assertEquals("bar", entry.getValue());
         assertEquals(EnvEntry.Strategy.SET, entry.getStrategy());
-        assertTrue(entry.isStructured());
-        assertFalse(entry.isRaw());
+        assertFalse(entry.expandsAtLogin());
     }
 
     @Test
@@ -41,13 +40,15 @@ class EnvEntryTest {
     }
 
     @Test
-    void rawFactoryMethod() {
-        var entry = EnvEntry.raw("export FOO=bar");
-        assertTrue(entry.isRaw());
-        assertFalse(entry.isStructured());
-        assertEquals("export FOO=bar", entry.getRaw());
-        assertNull(entry.getName());
-        assertNull(entry.getValue());
+    void expandingAtLoginKeepsNameAndStrategy() {
+        var base = EnvEntry.prepend("PATH", "$HOME/bin", ":");
+        var entry = base.expandingAtLogin();
+        assertTrue(entry.expandsAtLogin());
+        assertFalse(base.expandsAtLogin(), "must return a copy");
+        assertEquals("PATH", entry.getName());
+        assertEquals("$HOME/bin", entry.getValue());
+        assertEquals(EnvEntry.Strategy.PREPEND, entry.getStrategy());
+        assertEquals(":", entry.getSeparator());
     }
 
     @Test
@@ -56,15 +57,15 @@ class EnvEntryTest {
         var substituted = entry.withSubstitution(s -> s.replace("${user_home}", "/home/agentuser"));
         assertEquals("HOME", substituted.getName());
         assertEquals("/home/agentuser", substituted.getValue());
-        assertTrue(substituted.isStructured());
+        assertFalse(substituted.expandsAtLogin());
     }
 
     @Test
-    void withSubstitutionOnRawEntry() {
-        var entry = EnvEntry.raw("export HOME=${user_home}");
+    void withSubstitutionKeepsExpandAtLogin() {
+        var entry = EnvEntry.set("DIR", "${user_home}/$SUB").expandingAtLogin();
         var substituted = entry.withSubstitution(s -> s.replace("${user_home}", "/home/agentuser"));
-        assertTrue(substituted.isRaw());
-        assertEquals("export HOME=/home/agentuser", substituted.getRaw());
+        assertTrue(substituted.expandsAtLogin());
+        assertEquals("/home/agentuser/$SUB", substituted.getValue());
     }
 
     @Test
@@ -74,9 +75,9 @@ class EnvEntryTest {
     }
 
     @Test
-    void fingerprintStringRaw() {
-        var entry = EnvEntry.raw("export FOO=bar");
-        assertEquals("raw=export FOO=bar", entry.fingerprintString());
+    void fingerprintStringDistinguishesExpandAtLogin() {
+        var entry = EnvEntry.set("FOO", "$BAR").expandingAtLogin();
+        assertEquals("env=FOO,$BAR,SET, ,expand", entry.fingerprintString());
     }
 
     @Test
@@ -109,7 +110,6 @@ class EnvEntryTest {
                 """;
         var parsed = parseEnvList(yaml);
         assertEquals(1, parsed.size());
-        assertTrue(parsed.get(0).isStructured());
         assertEquals("MAVEN_HOME", parsed.get(0).getName());
         assertEquals("/opt/maven", parsed.get(0).getValue());
         assertEquals(EnvEntry.Strategy.SET, parsed.get(0).getStrategy());

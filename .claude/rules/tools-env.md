@@ -28,7 +28,7 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 
 # Environment Variable System
 
-`EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`. YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error. `EnvEntry.raw()` is code-only, for built-in lines the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH, `$HOSTNAME` for `ISX_CONTAINER`). Both `ToolDef.env` and `ImageDef.env` use this model.
+`EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`. YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error. There is no raw/verbatim entry: built-in code declares env vars through the same factories, so everything is conflict-checked. For a value the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH prepend, `$HOSTNAME` for `ISX_CONTAINER` in `BuildCommand.writeEnvFile()`), call `.expandingAtLogin()` -- code-only (no setter, not parsed from YAML); `$` stays live, quotes/backslashes/backticks are still escaped. Both `ToolDef.env` and `ImageDef.env` use this model.
 
 `EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values -> `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
 

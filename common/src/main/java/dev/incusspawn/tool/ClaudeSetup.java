@@ -162,7 +162,7 @@ public class ClaudeSetup implements ToolSetup {
                 .accountNamed(accountSelection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
         var type = account == null ? null : account.effectiveType();
         var entries = new ArrayList<EnvEntry>();
-        entries.add(EnvEntry.raw("export PATH=\"$HOME/.local/bin${PATH:+:$PATH}\""));
+        entries.add(EnvEntry.prepend("PATH", "$HOME/.local/bin", ":").expandingAtLogin());
         if (type == SpawnConfig.ClaudeAccountType.VERTEX) {
             entries.add(EnvEntry.set("CLAUDE_CODE_USE_VERTEX", "1"));
             entries.add(EnvEntry.set("CLAUDE_CODE_SKIP_VERTEX_AUTH", "1"));

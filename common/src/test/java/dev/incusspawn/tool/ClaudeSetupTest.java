@@ -64,11 +64,13 @@ class ClaudeSetupTest {
     }
 
     @Test
-    void envEntriesAlwaysIncludesPathRawEntry() {
+    void envEntriesAlwaysPrependsLocalBinToPath() {
         var entries = new ClaudeSetup().envEntries(Map.of());
 
-        assertTrue(entries.stream().anyMatch(e ->
-                e.isRaw() && e.getRaw().contains("$HOME/.local/bin")));
+        assertTrue(entries.stream().anyMatch(e -> "PATH".equals(e.getName())
+                && e.getStrategy() == EnvEntry.Strategy.PREPEND
+                && "$HOME/.local/bin".equals(e.getValue())
+                && e.expandsAtLogin()));
     }
 
     @Test
