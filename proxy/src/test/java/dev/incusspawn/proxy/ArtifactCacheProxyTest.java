@@ -243,6 +243,18 @@ class ArtifactCacheProxyTest {
         fail("Expected " + file + " to hold " + content);
     }
 
+    /**
+     * A checksum sidecar lands just after its artifact (VerifiedArtifactStore commits it last,
+     * for crash safety), so seeing the artifact does not mean the sidecar is there yet.
+     */
+    static void awaitSidecar(Path file) throws Exception {
+        for (int i = 0; i < 200; i++) {
+            if (Files.isRegularFile(file)) return;
+            Thread.sleep(25);
+        }
+        fail("Expected " + file + " to exist");
+    }
+
     static void assertStaysPresent(Path file, String content) throws Exception {
         Thread.sleep(300);
         assertEquals(content, Files.readString(file), file + " should have stayed cached");
@@ -262,7 +274,7 @@ class ArtifactCacheProxyTest {
         assertEquals("v1", miss.text());
         assertEquals(hex("SHA-1", "v1".getBytes()), miss.checksumHeader(), "upstream's header is passed on");
         awaitFile(cached(CENTRAL, JAR), "v1");
-        assertTrue(Files.exists(Sidecar.SHA1.storedFile(cached(CENTRAL, JAR))));
+        awaitSidecar(Sidecar.SHA1.storedFile(cached(CENTRAL, JAR)));
         assertEquals(1, hitsOn(CENTRAL, JAR));
         assertEquals(0, headsOn(CENTRAL, JAR), "no HEAD when nothing is cached");
         assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"));
@@ -638,7 +650,7 @@ class ArtifactCacheProxyTest {
         assertEquals("gradle-zip", get(GRADLE, DIST).text());
         var cached = Environment.gradleCacheDir().resolve("gradle-9.0-bin.zip");
         awaitFile(cached, "gradle-zip");
-        assertTrue(Files.exists(Sidecar.SHA256.storedFile(cached)));
+        awaitSidecar(Sidecar.SHA256.storedFile(cached));
 
         hits.clear();
         assertEquals("gradle-zip", get(GRADLE, DIST).text());
