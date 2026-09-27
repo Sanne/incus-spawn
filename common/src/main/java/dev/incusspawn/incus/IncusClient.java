@@ -315,17 +315,9 @@ public class IncusClient {
                     + waited + " seconds");
         }
         var lines = agentFailureLines(name);
-        if (!lines.isEmpty()) throw new IncusException(agentFailedMessage(name, lines));
+        if (!lines.isEmpty()) throw new IncusException(VmAgentFailure.report(name, lines));
         throw new IncusException("VM " + name + " is running, but its incus-agent did not come up within "
                 + waited + " seconds.\nIts boot log may say why: incus console " + name + " --show-log");
-    }
-
-    private static String agentFailedMessage(String name, List<String> lines) {
-        var msg = new StringBuilder("The incus-agent in VM ").append(name)
-                .append(" failed to start. Its console log says:\n");
-        lines.forEach(l -> msg.append("  ").append(l).append('\n'));
-        msg.append("Full boot log: incus console ").append(name).append(" --show-log");
-        return msg.toString();
     }
 
     /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */
@@ -338,12 +330,16 @@ public class IncusClient {
         }
         var msg = "VM " + name + " died during startup (status: " + status + ")";
         var lines = agentFailureLines(name);
-        if (!lines.isEmpty()) msg += "\n" + agentFailedMessage(name, lines);
+        if (!lines.isEmpty()) msg += "\n" + VmAgentFailure.report(name, lines);
         throw new IncusException(msg);
     }
 
-    private List<String> agentFailureLines(String name) {
-        return VmAgentFailure.matchingLines(consoleLog(name));
+    /**
+     * The lines of VM {@code name}'s console log, so of its current boot, reporting its agent
+     * failing -- none once systemd has since started it ({@link VmAgentFailure#unrecoveredLines}).
+     */
+    public List<String> agentFailureLines(String name) {
+        return VmAgentFailure.unrecoveredLines(consoleLog(name));
     }
 
     /** The instance's metadata, or null when the daemon cannot say (retry rather than crash). */
@@ -1063,6 +1059,20 @@ public class IncusClient {
     }
 
     /**
+     * The pid of a running instance's init process -- a VM's QEMU -- or 0 when it is stopped or
+     * the daemon cannot say. It changes at every start, so it tells one boot from the next.
+     */
+    public long pid(String name) {
+        try {
+            var resp = http().get("/1.0/instances/" + name + "/state");
+            if (!resp.isSuccess()) return 0;
+            return Math.max(0, resp.body().path("metadata").path("pid").asLong(0));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
      * Get the IPv4 address for a running container, or null if unavailable.
      */
     public String getContainerIpv4(String name) {
@@ -1524,8 +1534,16 @@ public class IncusClient {
      * Stop a running container/VM.
      */
     public void stop(String name) {
+        stop(name, 30);
+    }
+
+    /**
+     * Stop a running container/VM, giving its guest {@code timeoutSeconds} to shut down. A VM is
+     * asked through ACPI, which needs no incus-agent; the stop fails if the guest ignores it.
+     */
+    public void stop(String name, int timeoutSeconds) {
         var resp = http().requestAndWait("PUT", "/1.0/instances/" + name + "/state",
-                Map.of("action", "stop", "timeout", 30, "force", false));
+                Map.of("action", "stop", "timeout", timeoutSeconds, "force", false));
         if (!resp.isSuccess()) throw new IncusException("Failed to stop " + name);
     }
 

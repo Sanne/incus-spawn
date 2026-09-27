@@ -33,6 +33,12 @@ public final class Metadata {
     public static final String PENDING_OP = PREFIX + "pending-op";
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
+    /**
+     * The {@link IncusClient#pid} of the boot isx last restarted a VM into because its agent did
+     * not answer. Unresponsive again on that same boot, the VM is reported rather than restarted
+     * a second time (#843).
+     */
+    public static final String AGENT_RESTART_BOOT = PREFIX + "agent-restart-boot";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
     /** Prefix of what the build derived from each namespace's account; see {@link #accountIdentityKey}. */

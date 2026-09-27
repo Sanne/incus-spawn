@@ -41,8 +41,13 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> apiExtensions = new ArrayList<>();
     private final Map<String, String> pushedModes = new LinkedHashMap<>();
     private final Map<String, String> consoleLogs = new LinkedHashMap<>();
+    /** Running instances' init pids; every start gets a fresh one, as a new QEMU process would. */
+    private final Map<String, Long> pids = new LinkedHashMap<>();
+    private final List<String> shutdownIgnored = new ArrayList<>();
+    private final List<String> stateActions = new ArrayList<>();
     private boolean refuseNextWrite;
     private int nextOperation = 1;
+    private long nextPid = 1000;
 
     public FakeIncusDaemon() {
         network("incusbr0", Map.of("ipv4.address", "10.166.11.1/24"));
@@ -82,8 +87,20 @@ public final class FakeIncusDaemon implements IncusTransport {
         node.putArray("profiles").add("default");
         node.putObject("devices");
         instances.put(name, node);
+        if (status.equals("Running")) pids.put(name, nextPid++);
         expand(name);
         return this;
+    }
+
+    /** Have the guest ignore a graceful stop, as a wedged one does: only a forced stop works. */
+    public FakeIncusDaemon ignoreShutdown(String instanceName) {
+        shutdownIgnored.add(instanceName);
+        return this;
+    }
+
+    /** Each {@code PUT /state} so far, as {@code "<instance> <action>"} plus {@code " force"} if forced. */
+    public List<String> stateActions() {
+        return stateActions;
     }
 
     private void expand(String instanceName) {
@@ -249,9 +266,25 @@ public final class FakeIncusDaemon implements IncusTransport {
             var log = consoleLogs.getOrDefault(name, "");
             return new RawResponse(200, log.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
+        if (rest.equals("/state") && method.equals("GET")) {
+            var state = JSON.createObjectNode();
+            state.put("status", instance.path("status").asText());
+            state.put("pid", pids.getOrDefault(name, 0L));
+            return sync(state);
+        }
         if (rest.equals("/state") && method.equals("PUT")) {
-            var action = JSON.readTree(body).path("action").asText();
-            instance.put("status", action.equals("start") ? "Running" : "Stopped");
+            var request = JSON.readTree(body);
+            var action = request.path("action").asText();
+            boolean force = request.path("force").asBoolean(false);
+            stateActions.add(name + " " + action + (force ? " force" : ""));
+            if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
+            if (action.equals("start")) {
+                instance.put("status", "Running");
+                pids.put(name, nextPid++);
+            } else {
+                instance.put("status", "Stopped");
+                pids.remove(name);
+            }
             return async();
         }
         return notFound();

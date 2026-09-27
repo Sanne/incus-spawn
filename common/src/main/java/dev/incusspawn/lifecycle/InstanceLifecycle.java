@@ -330,6 +330,37 @@ public final class InstanceLifecycle {
     }
 
     /**
+     * Make {@code name}, currently in {@code status}, answer exec before a shell or command runs
+     * in it: start it if stopped, or recover a VM whose agent does not answer
+     * ({@link VmAgentRecovery}). With {@code pushNetworkConfig}, then push the VM's deferred
+     * {@code .network} file, which could not be written while it was stopped.
+     *
+     * <p>Progress and warnings go to {@code say}, never straight to stdout or stderr, so a caller
+     * that owns the terminal (the TUI) can route them.
+     */
+    public static void ensureReady(IncusClient incus, String name, String status, boolean pushNetworkConfig,
+                                   Consumer<String> say) {
+        if ("Stopped".equalsIgnoreCase(status)) {
+            say.accept("Starting " + name + "...");
+            prepareHostDevicesForStart(incus, name, say);
+            startInstance(incus, name);
+            incus.waitForReady(name);
+        } else if (incus.isVm(name) && !agentAnswers(incus, name)) {
+            VmAgentRecovery.restartForAgent(incus, name, say);
+        }
+        if (pushNetworkConfig) pushDeferredNetworkConfig(incus, name);
+    }
+
+    /** Whether a running VM's agent answers exec; Incus refuses the exec outright when it is down. */
+    private static boolean agentAnswers(IncusClient incus, String name) {
+        try {
+            return incus.shellExec(name, "echo", "ready").success();
+        } catch (RuntimeException agentDown) {
+            return false;
+        }
+    }
+
+    /**
      * Start an instance, falling back once if IP spoofing protection is what stops it.
      *
      * <p>Setting {@code security.ipv4_filtering} <em>succeeds</em> on a host that cannot enforce
@@ -616,7 +647,12 @@ public final class InstanceLifecycle {
     public static void prepareHostDevicesForStart(IncusClient incus, String name, Consumer<String> warn) {
         // All repairs read the same instance, so fetch it once: start has to
         // stay as cheap as it was before the repairs existed.
-        var instance = incus.instanceMetadata(name);
+        prepareHostDevicesForStart(incus, name, incus.instanceMetadata(name), warn);
+    }
+
+    /** {@link #prepareHostDevicesForStart(IncusClient, String, Consumer)} with the instance already read. */
+    public static void prepareHostDevicesForStart(IncusClient incus, String name, JsonNode instance,
+                                                  Consumer<String> warn) {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);

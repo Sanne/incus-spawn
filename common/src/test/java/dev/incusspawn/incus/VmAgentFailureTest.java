@@ -63,4 +63,16 @@ class VmAgentFailureTest {
         assertEquals(List.of(), VmAgentFailure.matchingLines(""));
         assertEquals(List.of(), VmAgentFailure.matchingLines(null));
     }
+
+    @Test
+    void aFailureSystemdRecoveredFromIsNotCurrent() {
+        var failed = "[FAILED] Failed to start incus-agent.service - Incus - agent.";
+        var started = "[  OK  ] Started incus-agent.service - Incus - agent.";
+
+        assertEquals(List.of(), VmAgentFailure.unrecoveredLines(failed + "\n" + started + "\n"));
+        assertEquals(List.of(failed), VmAgentFailure.unrecoveredLines(failed + "\n"));
+        assertEquals(List.of(failed), VmAgentFailure.unrecoveredLines(started + "\n" + failed + "\n"),
+                "a failure after a start is current again");
+        assertEquals(List.of(), VmAgentFailure.unrecoveredLines(null));
+    }
 }

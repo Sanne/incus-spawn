@@ -35,6 +35,34 @@ public final class VmAgentFailure {
                 .toList();
     }
 
+    /**
+     * {@link #matchingLines}, or none when systemd started the agent after its last failure:
+     * a failure the agent recovered from says nothing about why it is unresponsive now.
+     * systemd reports both on the console only during boot, so their order is comparable.
+     */
+    public static List<String> unrecoveredLines(String consoleLog) {
+        if (consoleLog == null || consoleLog.isEmpty()) return List.of();
+        int lastFailure = -1;
+        int lastStart = -1;
+        var lines = consoleLog.lines().toList();
+        for (int i = 0; i < lines.size(); i++) {
+            var line = lines.get(i);
+            if (!line.contains("incus-agent")) continue;
+            if (line.contains("Started incus-agent")) lastStart = i;
+            else if (isFailure(line)) lastFailure = i;
+        }
+        return lastFailure > lastStart ? matchingLines(consoleLog) : List.of();
+    }
+
+    /** Say that {@code name}'s agent failed to start, quoting {@code lines} from its console log. */
+    public static String report(String name, List<String> lines) {
+        var msg = new StringBuilder("The incus-agent in VM ").append(name)
+                .append(" failed to start. Its console log says:\n");
+        lines.forEach(l -> msg.append("  ").append(l).append('\n'));
+        msg.append("Full boot log: incus console ").append(name).append(" --show-log");
+        return msg.toString();
+    }
+
     static boolean isFailure(String line) {
         if (line.contains("Failed to start incus-agent")) return true;
         return line.contains("avc:") && line.contains("denied") && line.contains("comm=\"incus-agent\"");

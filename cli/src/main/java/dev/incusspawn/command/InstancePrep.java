@@ -58,29 +58,8 @@ public class InstancePrep {
             fixResolvConfMismatch(incus, name);
         }
 
-        // Start if stopped, or restart VMs with unresponsive agent
-        if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) {
-            System.out.println("Starting " + name + "...");
-            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            InstanceLifecycle.startInstance(incus, name);
-            incus.waitForReady(name);
-            if (ipFixed && incus.isVm(name)) {
-                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-            }
-        } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
-            System.out.println("VM agent not responding, restarting " + name + "...");
-            incus.forceStop(name);
-            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            InstanceLifecycle.startInstance(incus, name);
-            incus.waitForReady(name);
-            if (ipFixed) {
-                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-            }
-        } else if (ipFixed && incus.isVm(name)) {
-            // fixCaMismatch started the VM before the block above — still need
-            // to push the .network file that couldn't be written while stopped
-            InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-        }
+        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name), ipFixed && incus.isVm(name),
+                System.out::println);
 
         GuiPassthrough.checkGuiHealth(incus, name);
         InstanceLifecycle.reconcileAccountIdentities(incus, name);

@@ -5195,28 +5195,8 @@ public class ListCommand extends BaseCommand {
             statusMessage = name + " no longer exists";
             return;
         }
-        if ("Stopped".equalsIgnoreCase(status)) {
-            System.out.println("Starting " + name + "...");
-            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            incus.start(name);
-            incus.waitForReady(name);
-            if (vmIpFixApplied) {
-                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-            }
-        } else if (incus.isVm(name) && !incus.shellExec(name, "echo", "ready").success()) {
-            System.out.println("VM agent not responding, restarting " + name + "...");
-            incus.forceStop(name);
-            InstanceLifecycle.prepareHostDevicesForStart(incus, name);
-            incus.start(name);
-            incus.waitForReady(name);
-            if (vmIpFixApplied) {
-                InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-            }
-        } else if (vmIpFixApplied) {
-            // fixCaMismatchIfNeeded started the VM before this block —
-            // still need to push the .network file
-            InstanceLifecycle.pushDeferredNetworkConfig(incus, name);
-        }
+        // Runs after the TUI has released the terminal, so plain stdout is safe here.
+        InstanceLifecycle.ensureReady(incus, name, status, vmIpFixApplied, System.out::println);
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
