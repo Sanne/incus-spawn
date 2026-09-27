@@ -16,7 +16,7 @@ import java.util.List;
  *   <li>{@code set-if-unset + set-if-unset}, different value → first wins</li>
  *   <li>{@code prepend / append} → always accumulated</li>
  *   <li>{@code set + prepend/append} → OK: base then modify</li>
- *   <li>Raw entries → appended verbatim, no conflict detection</li>
+ *   <li>Raw entries (built-in code only) → appended verbatim, no conflict detection</li>
  * </ul>
  *
  * Shell output uses one export line per operation so that each prepend/append

@@ -80,18 +80,24 @@ class EnvEntryTest {
     }
 
     @Test
-    void deserializeRawStringFromYaml() throws Exception {
+    void deserializeRejectsShellStringNamingStructuredForm() {
         var yaml = """
                 env:
-                  - export FOO=bar
-                  - export BAZ=qux
+                  - export FOO=/opt/foo
                 """;
-        var parsed = parseEnvList(yaml);
-        assertEquals(2, parsed.size());
-        assertTrue(parsed.get(0).isRaw());
-        assertEquals("export FOO=bar", parsed.get(0).getRaw());
-        assertTrue(parsed.get(1).isRaw());
-        assertEquals("export BAZ=qux", parsed.get(1).getRaw());
+        var e = assertThrows(Exception.class, () -> parseEnvList(yaml));
+        assertTrue(e.getMessage().contains("- name: FOO"), e.getMessage());
+        assertTrue(e.getMessage().contains("value: /opt/foo"), e.getMessage());
+    }
+
+    @Test
+    void deserializeRejectsUnparseableShellString() {
+        var yaml = """
+                env:
+                  - source /etc/foo.sh
+                """;
+        var e = assertThrows(Exception.class, () -> parseEnvList(yaml));
+        assertTrue(e.getMessage().contains("structured entry"), e.getMessage());
     }
 
     @Test
@@ -125,17 +131,14 @@ class EnvEntryTest {
     }
 
     @Test
-    void deserializeMixedList() throws Exception {
+    void deserializeRejectsMixedList() {
         var yaml = """
                 env:
-                  - export OLD_STYLE=true
                   - name: NEW_STYLE
                     value: "true"
+                  - export OLD_STYLE=true
                 """;
-        var parsed = parseEnvList(yaml);
-        assertEquals(2, parsed.size());
-        assertTrue(parsed.get(0).isRaw());
-        assertTrue(parsed.get(1).isStructured());
+        assertThrows(Exception.class, () -> parseEnvList(yaml));
     }
 
     @Test

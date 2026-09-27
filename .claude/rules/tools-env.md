@@ -28,7 +28,7 @@ Action resolution logic is centralized in `ActionResolver`, shared by both `List
 
 # Environment Variable System
 
-`EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`. Supports backward-compatible raw shell strings via a custom `ListDeserializer` that handles mixed-type YAML lists (strings and maps). Both `ToolDef.env` and `ImageDef.env` use this model.
+`EnvEntry` (`config/EnvEntry.java`) models a declarative env var with four strategies: `SET`, `SET_IF_UNSET`, `PREPEND`, `APPEND`. YAML is parsed by a custom `ListDeserializer` that accepts only structured maps and rejects shell strings (`- export FOO=bar`) with the structured equivalent in the error. `EnvEntry.raw()` is code-only, for built-in lines the shell must expand at login (`$HOME` in `ClaudeSetup`'s PATH, `$HOSTNAME` for `ISX_CONTAINER`). Both `ToolDef.env` and `ImageDef.env` use this model.
 
 `EnvResolver` (`config/EnvResolver.java`) collects sourced entries from the template parent chain and all tools, validates consistency (set+set with different values -> `EnvConflictException` naming both sources), and generates the shell script for `/etc/profile.d/isx-env.sh`.
 

@@ -694,7 +694,7 @@ env:
     separator: ":"
 ```
 
-All env entries from the template chain and installed tools are collected by the build system and written to `/etc/profile.d/isx-env.sh`. **Conflicting definitions are caught at build time**: if two tools both `set` the same variable to different values, the build fails with a descriptive error naming both sources. Backward-compatible raw shell strings (`- export FOO=bar`) are still accepted but bypass conflict detection.
+All env entries from the template chain and installed tools are collected by the build system and written to `/etc/profile.d/isx-env.sh`. **Conflicting definitions are caught at build time**: if two tools both `set` the same variable to different values, the build fails with a descriptive error naming both sources. Every entry must use the structured `name`/`value` form; a shell string such as `- export FOO=bar` is rejected when the definition is loaded.
 
 Templates can also declare environment variables directly:
 

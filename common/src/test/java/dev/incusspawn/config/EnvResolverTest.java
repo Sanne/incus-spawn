@@ -108,7 +108,7 @@ class EnvResolverTest {
     @Test
     void rawEntriesAppendedVerbatim() {
         var resolver = new EnvResolver();
-        resolver.add(EnvEntry.raw("export CUSTOM=value"), "legacy");
+        resolver.add(EnvEntry.raw("export CUSTOM=value"), "built-in");
         var script = resolver.resolve();
         assertTrue(script.contains("export CUSTOM=value"));
     }
@@ -116,7 +116,7 @@ class EnvResolverTest {
     @Test
     void rawEntriesAppearAfterStructured() {
         var resolver = new EnvResolver();
-        resolver.add(EnvEntry.raw("export RAW=1"), "legacy");
+        resolver.add(EnvEntry.raw("export RAW=1"), "built-in");
         resolver.add(EnvEntry.set("STRUCTURED", "2"), "modern");
         var script = resolver.resolve();
         int structuredIdx = script.indexOf("export STRUCTURED=");

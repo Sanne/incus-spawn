@@ -31,7 +31,8 @@ class ToolDefTest {
                       key=value
                     owner: testuser:testuser
                 env:
-                  - export FOO=bar
+                  - name: FOO
+                    value: bar
                 verify: test-tool --version
                 """;
         var def = ToolDef.loadFromStream(toStream(yaml));
@@ -50,8 +51,8 @@ class ToolDefTest {
         assertEquals("key=value\n", def.getFiles().get(0).getContent());
         assertEquals("testuser:testuser", def.getFiles().get(0).getOwner());
         assertEquals(1, def.getEnv().size());
-        assertTrue(def.getEnv().get(0).isRaw());
-        assertEquals("export FOO=bar", def.getEnv().get(0).getRaw());
+        assertEquals("FOO", def.getEnv().get(0).getName());
+        assertEquals("bar", def.getEnv().get(0).getValue());
         assertEquals("test-tool --version", def.getVerify());
     }
 
@@ -239,8 +240,10 @@ class ToolDefTest {
                   - alpha
                   - beta
                 env:
-                  - FOO=1
-                  - BAR=2
+                  - name: FOO
+                    value: "1"
+                  - name: BAR
+                    value: "2"
                 """;
         var def1 = ToolDef.loadFromStream(toStream(yaml));
         var def2 = ToolDef.loadFromStream(toStream(yaml));
@@ -269,14 +272,18 @@ class ToolDefTest {
         var a = ToolDef.loadFromStream(toStream("""
                 name: test
                 env:
-                  - FOO=1
-                  - BAR=2
+                  - name: FOO
+                    value: "1"
+                  - name: BAR
+                    value: "2"
                 """));
         var b = ToolDef.loadFromStream(toStream("""
                 name: test
                 env:
-                  - BAR=2
-                  - FOO=1
+                  - name: BAR
+                    value: "2"
+                  - name: FOO
+                    value: "1"
                 """));
         assertEquals(a.contentFingerprint(), b.contentFingerprint());
     }

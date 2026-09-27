@@ -22,8 +22,10 @@ import java.util.Map;
  *   <li>{@code append} — append to the existing value (with a separator)</li>
  * </ul>
  *
- * Also supports a "raw" mode for backward compatibility: a plain string like
- * {@code export FOO=bar} is written verbatim with no conflict detection.
+ * Definitions ({@code env:} in tool and template YAML) accept only the structured
+ * form. Built-in Java code can additionally create a {@linkplain #raw raw} entry for
+ * a line whose value must be expanded by the shell at login ({@code $HOME},
+ * {@code $HOSTNAME}), which the structured form deliberately escapes.
  */
 @RegisterForReflection
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -71,6 +73,10 @@ public class EnvEntry {
         return new EnvEntry(name, value, Strategy.APPEND, separator);
     }
 
+    /**
+     * A shell line written verbatim, after all structured entries and with no conflict
+     * detection. Code-only: YAML definitions cannot produce one.
+     */
     public static EnvEntry raw(String line) {
         return new EnvEntry(line);
     }
@@ -92,7 +98,6 @@ public class EnvEntry {
     public String getSeparator() { return separator; }
     public void setSeparator(String separator) { this.separator = separator; }
     public String getRaw() { return raw; }
-    public void setRaw(String raw) { this.raw = raw; }
 
     /**
      * Return a copy of this entry with parameter substitution applied.
@@ -113,11 +118,9 @@ public class EnvEntry {
     }
 
     /**
-     * Deserializes a YAML/JSON list of env entries. Each element can be:
-     * <ul>
-     *   <li>A plain string: backward-compatible raw shell line</li>
-     *   <li>A map with name/value/strategy/separator fields: structured entry</li>
-     * </ul>
+     * Deserializes a YAML/JSON list of structured env entries (maps with
+     * name/value/strategy/separator fields). A plain string such as
+     * {@code export FOO=bar} is rejected, naming the structured equivalent.
      */
     public static class ListDeserializer extends StdDeserializer<List<EnvEntry>> {
         public ListDeserializer() { super(List.class); }
@@ -136,7 +139,7 @@ public class EnvEntry {
 
             while (p.nextToken() != JsonToken.END_ARRAY) {
                 if (p.currentToken() == JsonToken.VALUE_STRING) {
-                    result.add(EnvEntry.raw(p.getText()));
+                    throw new IOException(rawStringError(p.getText()));
                 } else if (p.currentToken() == JsonToken.START_OBJECT) {
                     result.add(parseStructuredEntry(p));
                 } else {
@@ -144,6 +147,22 @@ public class EnvEntry {
                 }
             }
             return result;
+        }
+
+        private static final java.util.regex.Pattern EXPORT_LINE =
+                java.util.regex.Pattern.compile("\\s*(?:export\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)=(.*)");
+
+        static String rawStringError(String line) {
+            var msg = new StringBuilder("Env entry '").append(line)
+                    .append("' is a shell string, which is not supported; use a structured entry");
+            var m = EXPORT_LINE.matcher(line);
+            if (m.matches()) {
+                msg.append(":\n  - name: ").append(m.group(1))
+                        .append("\n    value: ").append(m.group(2));
+            } else {
+                msg.append(" with 'name' and 'value' (and optionally 'strategy': set, set-if-unset, prepend, append)");
+            }
+            return msg.toString();
         }
 
         private static final Map<String, Strategy> STRATEGY_MAP = Map.of(
