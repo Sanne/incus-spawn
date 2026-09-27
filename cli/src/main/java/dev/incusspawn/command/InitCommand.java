@@ -1235,6 +1235,45 @@ public class InitCommand extends BaseCommand {
         }
     }
 
+    /**
+     * The Incus API extension that added {@code btrfs.create_options} (Incus 7.1). Older daemons,
+     * such as the 6.x in Fedora's and Ubuntu's repositories, reject the whole pool creation over
+     * the unknown key (#820).
+     */
+    static final String STORAGE_CREATE_OPTIONS_EXTENSION = "storage_create_options";
+
+    /**
+     * @param skipTrim pass {@code -K} to mkfs.btrfs, skipping the whole-device TRIM that takes
+     *                 minutes on a loop device backed by a sparse file on ext4. Only when the
+     *                 daemon supports {@code btrfs.create_options}.
+     */
+    static String[] cowPoolCreateCommand(boolean skipTrim) {
+        var cmd = new ArrayList<>(List.of("sudo", "incus", "storage", "create", "cow", "btrfs",
+                "size=100GiB"));
+        if (skipTrim) cmd.add("btrfs.create_options=-K");
+        return cmd.toArray(String[]::new);
+    }
+
+    /**
+     * Why creating the CoW pool failed, worded after Incus's own error rather than a guess:
+     * missing loop device support is only one cause, and naming it for any other sends the user
+     * after the wrong fix.
+     */
+    static List<String> cowPoolFailureExplanation(String incusError) {
+        var lines = new ArrayList<String>();
+        var error = incusError == null ? "" : incusError.strip();
+        error.lines().map(String::strip).filter(l -> !l.isEmpty()).forEach(lines::add);
+        var lower = error.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("loop")) {
+            lines.add("This is expected inside containers or VMs without loop device");
+            lines.add("support. On bare metal, ensure the 'loop' kernel module is");
+            lines.add("loaded (sudo modprobe loop) and try again.");
+        } else if (lower.contains("mkfs.btrfs") || lower.contains("btrfs-progs")) {
+            lines.add("Install btrfs-progs on the host and try again.");
+        }
+        return lines;
+    }
+
     private void checkStorageDriver() {
         var cowProbe = incus.probeCowPool();
         // Guard against transient/permission/daemon errors: if we can't list pools, don't
@@ -1245,10 +1284,9 @@ public class InitCommand extends BaseCommand {
         if (!anyCow) {
             System.out.println("  No copy-on-write storage pool detected. Creating one...");
             runHostQuiet("sudo", "mkdir", "-p", "/var/lib/incus/disks");
-            // -K: skip initial whole-device TRIM, which takes minutes on loopback/ext4.
-            var createResult = runHost("sudo", "incus", "storage", "create", "cow", "btrfs",
-                    "size=100GiB", "btrfs.create_options=-K");
-            if (createResult == 0) {
+            var create = runHostCapturingStderr(cowPoolCreateCommand(
+                    incus.hasApiExtension(STORAGE_CREATE_OPTIONS_EXTENSION)));
+            if (create.exitCode() == 0) {
                 System.out.println("  Created btrfs storage pool 'cow' (100 GiB, thin-provisioned).");
                 System.out.println("  Resize with: sudo incus storage set cow size=200GiB");
                 System.out.println("  All new instances will use it automatically.");
@@ -1258,9 +1296,9 @@ public class InitCommand extends BaseCommand {
                 System.err.println("  ║  WARNING: Failed to create btrfs storage pool!             ║");
                 System.err.println("  ╚══════════════════════════════════════════════════════════════╝\u001B[0m");
                 System.err.println();
-                System.err.println("  \u001B[33mThis is expected inside containers or VMs without loop device");
-                System.err.println("  support. On bare metal, ensure the 'loop' kernel module is");
-                System.err.println("  loaded (sudo modprobe loop) and try again.\u001B[0m");
+                for (var line : cowPoolFailureExplanation(create.stderr())) {
+                    System.err.println("  \u001B[33m" + line + "\u001B[0m");
+                }
                 System.err.println();
                 System.err.println("  \u001B[33mWithout a CoW pool, clones and branches will be FULL COPIES,");
                 System.err.println("  using significantly more disk space and taking longer to create.\u001B[0m");
@@ -3092,6 +3130,22 @@ public class InitCommand extends BaseCommand {
         } catch (IOException | InterruptedException e) {
             System.err.println("  Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
             return 1;
+        }
+    }
+
+    private record HostResult(int exitCode, String stderr) {}
+
+    /** Run a host command with stdout shown, returning stderr so the caller can word the failure. */
+    private HostResult runHostCapturingStderr(String... command) {
+        try {
+            var pb = new ProcessBuilder(command);
+            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            pb.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+            var process = pb.start();
+            var stderr = new String(process.getErrorStream().readAllBytes());
+            return new HostResult(process.waitFor(), stderr);
+        } catch (IOException | InterruptedException e) {
+            return new HostResult(1, "Failed to run: " + String.join(" ", command) + ": " + e.getMessage());
         }
     }
 

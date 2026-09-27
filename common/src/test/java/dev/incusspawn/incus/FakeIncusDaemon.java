@@ -18,9 +18,9 @@ import java.util.Map;
  * deterministic where wall-clock timing on shared CI runners is not. Tests pin the count for a
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
- * <p>Serves the subset of the API those flows use: instance GET/PUT/PATCH/state, instance listing,
- * network and profile GET, file push and async-operation waits. Anything else answers 404, so an
- * unexpected request still shows up in {@link #requests()}.
+ * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
+ * instance listing, network and profile GET, file push and async-operation waits. Anything else
+ * answers 404, so an unexpected request still shows up in {@link #requests()}.
  */
 public final class FakeIncusDaemon implements IncusTransport {
 
@@ -36,6 +36,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
+    private final List<String> apiExtensions = new ArrayList<>();
     private boolean refuseNextWrite;
     private int nextOperation = 1;
 
@@ -154,7 +155,19 @@ public final class FakeIncusDaemon implements IncusTransport {
         throw new IOException("FakeIncusDaemon does not serve WebSockets");
     }
 
+    /** Advertise these in {@code GET /1.0}'s {@code api_extensions}. */
+    public FakeIncusDaemon apiExtensions(String... extensions) {
+        apiExtensions.clear();
+        apiExtensions.addAll(List.of(extensions));
+        return this;
+    }
+
     private RawResponse handle(String method, String path, byte[] body) throws IOException {
+        if (path.equals("/1.0") && method.equals("GET")) {
+            var server = JSON.createObjectNode();
+            server.set("api_extensions", JSON.valueToTree(apiExtensions));
+            return sync(server);
+        }
         if (path.startsWith("/1.0/operations/") && method.equals("GET")) {
             var metadata = JSON.createObjectNode();
             metadata.put("status", "Success");

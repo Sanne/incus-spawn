@@ -124,4 +124,13 @@ class IncusClientTest {
         assertFalse(IncusClient.isCowDriver(null));
         assertFalse(IncusClient.isCowDriver(""));
     }
+
+    @Test
+    void hasApiExtensionReadsServerInfo() {
+        var daemon = new FakeIncusDaemon().apiExtensions("storage", "storage_create_options");
+        assertTrue(daemon.client().hasApiExtension("storage_create_options"));
+        // Incus 6.x, as Fedora and Ubuntu package it, predates the extension (#820)
+        var older = new FakeIncusDaemon().apiExtensions("storage");
+        assertFalse(older.client().hasApiExtension("storage_create_options"));
+    }
 }

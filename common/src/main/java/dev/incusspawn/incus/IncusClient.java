@@ -526,6 +526,21 @@ public class IncusClient {
         return resp.body().path("metadata").size() > 0;
     }
 
+    /**
+     * @return {@code true} if the daemon advertises {@code extension} in its {@code api_extensions}.
+     *         Incus rejects a whole request carrying a config key it does not know, so a key
+     *         newer than the distro-packaged daemon must be gated on its extension, not assumed
+     *         (#820). {@code false} when the daemon cannot be asked.
+     */
+    public boolean hasApiExtension(String extension) {
+        var resp = http().get("/1.0");
+        if (!resp.isSuccess()) return false;
+        for (var ext : resp.body().path("metadata").path("api_extensions")) {
+            if (extension.equals(ext.asText())) return true;
+        }
+        return false;
+    }
+
     public CowPoolProbe probeCowPool() {
         var resp = http().get("/1.0/storage-pools?recursion=1");
         if (!resp.isSuccess()) return new CowPoolProbe(false, null, null);
