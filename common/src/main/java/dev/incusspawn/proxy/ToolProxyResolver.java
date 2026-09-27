@@ -115,8 +115,15 @@ public final class ToolProxyResolver {
         return result;
     }
 
+    /**
+     * The tool domains the proxy intercepts: those any configured account makes resolvable,
+     * as {@link #resolveAcrossAccounts} decides for the proxy itself. Anything that rewrites
+     * bridge DNS from this set (the TUI's auto-heal, {@code isx doctor}) must not use the
+     * default account's narrower set, or it drops a domain only a named account can serve
+     * and its requests go upstream without credentials until the proxy reloads.
+     */
     public static Set<String> resolvedDomains(SpawnConfig config) {
-        return resolve(config).stream()
+        return resolveAcrossAccounts(config, proxyToolSetups(config)).stream()
                 .map(ResolvedToolProxy::domain)
                 .collect(Collectors.toUnmodifiableSet());
     }

@@ -110,6 +110,13 @@ assert "repo1.maven.org resolves to proxy gateway" \
     bash -c "getent ahostsv4 repo1.maven.org | grep -q '$gateway'"
 assert "github.com resolves to proxy gateway" \
     bash -c "getent ahostsv4 github.com | grep -q '$gateway'"
+# AAAA must get no answer: not '::', which clients treat as loopback so a nested isx
+# refused every intercepted domain (#814), and not the real IPv6 addresses, which would
+# bypass the proxy. With no AAAA, glibc maps the A answer, so only ::ffff:<gateway> is left.
+for host in repo1.maven.org github.com; do
+    assert "$host has no IPv6 answer besides the mapped gateway" \
+        bash -c "! getent ahostsv6 $host | cut -d' ' -f1 | grep -qvx '::ffff:$gateway'"
+done
 echo ""
 
 # --- 6. Login shell environment ---

@@ -12,7 +12,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Proxy configuration constants and bridge DNS management shared between
@@ -138,21 +137,10 @@ public final class ProxyConfig {
         writeBridgeDns(incus, BUILTIN_INTERCEPTED_DOMAINS);
     }
 
+    /** Rewrite isx's block of bridge DNS overrides; see {@link BridgeDns} for the layout. */
     public static void writeBridgeDns(IncusClient incus, Set<String> allDomains) {
-        var gatewayIp = resolveGatewayIp(incus);
-        var overrides = allDomains.stream()
-                .sorted()
-                .flatMap(d -> Stream.of(
-                        "address=/" + d + "/" + gatewayIp,
-                        "address=/" + d + "/::"))
-                .collect(Collectors.joining("\n"));
-
         var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        var preserved = existing.lines()
-                .filter(l -> !l.startsWith("address="))
-                .collect(Collectors.joining("\n"));
-        var dnsmasqConfig = preserved.isEmpty() ? overrides : preserved + "\n" + overrides;
-
+        var dnsmasqConfig = BridgeDns.render(existing, allDomains, resolveGatewayIp(incus));
         if (dnsmasqConfig.equals(existing)) {
             return;
         }
@@ -202,10 +190,10 @@ public final class ProxyConfig {
     public static void clearBridgeDns(IncusClient incus) {
         try {
             var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-            var servers = existing.lines()
-                    .filter(l -> l.startsWith("server="))
-                    .collect(Collectors.joining("\n"));
-            incus.networkConfigSet("incusbr0", "raw.dnsmasq", servers);
+            var cleared = BridgeDns.withoutOverrides(existing);
+            if (!cleared.equals(existing)) {
+                incus.networkConfigSet("incusbr0", "raw.dnsmasq", cleared);
+            }
         } catch (Exception e) {
             System.err.println("Warning: could not clear bridge DNS overrides: " + e.getMessage());
         }
@@ -370,7 +358,6 @@ public final class ProxyConfig {
         var overrides = getDnsOverrides(incus);
         if (overrides.isEmpty()) return true;
         var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        return domains.stream()
-                .allMatch(d -> overrides.contains("address=/" + d + "/"));
+        return BridgeDns.status(overrides, domains).complete();
     }
 }

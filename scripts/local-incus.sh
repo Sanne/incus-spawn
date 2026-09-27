@@ -72,11 +72,12 @@ if sg incus-admin -c "incus storage show cow" >/dev/null 2>&1 \
     sg incus-admin -c "incus profile device set default root pool=cow"
 fi
 
-# Inside an isx instance the outer isx's DNS answers AAAA for the domains it intercepts with
-# '::', which isx's download guard refuses as a local address (#814) -- so `isx build` cannot
-# fetch its base image. Pin those hosts to their IPv4 answer, and stop the bridge's dnsmasq from
-# serving /etc/hosts to the nested instances, where it would shadow the proxy's own overrides
-# (CI does the same for its echo-server entries). Remove this block once #814 is fixed.
+# Inside an isx instance whose *outer* isx predates the fix for #814, the outer DNS answers AAAA
+# for the domains it intercepts with '::', which isx's download guard refuses as a local address
+# -- so `isx build` cannot fetch its base image. Pin those hosts to their IPv4 answer, and stop the
+# bridge's dnsmasq from serving /etc/hosts to the nested instances, where it would shadow the
+# proxy's own overrides (CI does the same for its echo-server entries). Under a fixed outer isx no
+# host answers '::', so nothing is pinned; the block can go once no outer host runs such a release.
 pinned=false
 for host in github.com release-assets.githubusercontent.com objects.githubusercontent.com; do
     [ "$(getent ahostsv6 "$host" | awk 'NR==1{print $1}')" = "::" ] || continue

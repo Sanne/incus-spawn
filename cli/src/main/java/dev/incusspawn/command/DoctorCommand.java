@@ -15,6 +15,7 @@ import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
+import dev.incusspawn.proxy.BridgeDns;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1041,22 +1042,14 @@ public class DoctorCommand extends BaseCommand {
         try {
             var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
             var allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
-            if (ProxyConfig.isBridgeDnsComplete(incus, allDomains)) {
+            var overrides = ProxyConfig.getDnsOverrides(incus);
+            var status = BridgeDns.status(overrides, allDomains);
+            // No overrides at all reads as complete, as in ProxyConfig.isBridgeDnsComplete().
+            if (overrides.isEmpty() || status.complete()) {
                 return Finding.ok("Bridge DNS overrides",
                         "all " + allDomains.size() + " domains configured");
             }
-            var overrides = ProxyConfig.getDnsOverrides(incus);
-            if (overrides.isEmpty()) {
-                return Finding.fail("Bridge DNS overrides", "not configured",
-                        new Remediation("Configure bridge DNS", false,
-                                () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains)));
-            }
-            var missing = allDomains.stream()
-                    .filter(d -> !overrides.contains("address=/" + d + "/"))
-                    .sorted()
-                    .toList();
-            return Finding.warn("Bridge DNS overrides incomplete",
-                    "missing: " + String.join(", ", missing),
+            return Finding.warn("Bridge DNS overrides incomplete", status.describe(),
                     new Remediation("Reconfigure bridge DNS", false,
                             () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains)));
         } catch (Exception e) {
