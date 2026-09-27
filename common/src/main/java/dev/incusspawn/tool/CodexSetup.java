@@ -106,8 +106,7 @@ public class CodexSetup implements ToolSetup {
 
     private void installBinary(Container c) {
         BuildOutput.stepStart("Installing Codex CLI...");
-        c.runQuiet("Failed to install Codex CLI",
-                "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
+        NpmGlobalInstall.install(c, "Codex CLI", "@openai/codex", "codex");
         BuildOutput.stepDone();
     }
 

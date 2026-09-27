@@ -80,8 +80,8 @@ public class CopilotSetup implements ToolSetup {
         // flag or env var -- confirmed against gh 2.97.0's confirm prompt, which declines when
         // stdin isn't a real TTY regardless of GH_PROMPT_DISABLED). Installing the npm package
         // directly, as CodexSetup does for @openai/codex, sidesteps that prompt entirely.
-        c.runQuiet("Failed to install GitHub Copilot CLI",
-                "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@github/copilot");
+        // The real binary is an optional platform package, which NpmGlobalInstall verifies.
+        NpmGlobalInstall.install(c, "GitHub Copilot CLI", "@github/copilot", "copilot");
     }
 
     private static final String COPILOT_CONFIG_PATH = "/home/agentuser/.copilot/config.json";

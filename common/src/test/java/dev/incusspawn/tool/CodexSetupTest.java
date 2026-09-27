@@ -59,6 +59,7 @@ class CodexSetupTest {
     void installRunsNpmInstallGlobal() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -67,9 +68,37 @@ class CodexSetupTest {
     }
 
     @Test
+    void installVerifiesCodexRunsAsAgentuser() {
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
+
+        new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
+
+        verify(incus).execInContainer(CONTAINER, "agentuser", "codex --version");
+    }
+
+    @Test
+    void installFailsWhenNpmSkippedThePlatformBinary() {
+        // npm exits 0 when an optional platform package fails to download, leaving only the
+        // JS launcher: the build must fail rather than stamp an unusable template (#808).
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(
+                new IncusClient.ExecResult(1, "", "Error: Missing optional dependency @openai/codex-linux-x64."));
+
+        var e = assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> new CodexSetup().install(new Container(incus, CONTAINER), Map.of()));
+        assertTrue(e.getMessage().contains("codex --version"), e.getMessage());
+        verify(incus, never()).shellExec(eq(CONTAINER),
+                eq("sh"), eq("-c"), argThat(arg -> arg.contains(CodexSetup.CONFIG_PATH)));
+    }
+
+    @Test
     void installWritesConfigToml() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -91,6 +120,7 @@ class CodexSetupTest {
         // a default baked in here would override that and age the way o4-mini did.
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 
@@ -105,6 +135,7 @@ class CodexSetupTest {
     void installWritesModelToConfigWhenProvided() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER),
                 Map.of("model", "gpt-5.3-codex"));
@@ -120,6 +151,7 @@ class CodexSetupTest {
     void installWritesEffortToConfigWhenProvided() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER),
                 Map.of("effort", "low"));
@@ -135,6 +167,7 @@ class CodexSetupTest {
     void reconfigureOnlyWritesSettingsNotBinary() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().reconfigure(new Container(incus, CONTAINER),
                 Map.of("model", "gpt-5.3-codex", "effort", "xhigh"));
@@ -199,6 +232,7 @@ class CodexSetupTest {
     void installWritesAuthJson() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.execInContainer(anyString(), anyString(), any(String[].class))).thenReturn(OK);
 
         new CodexSetup().install(new Container(incus, CONTAINER), Map.of());
 

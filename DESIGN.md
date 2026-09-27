@@ -193,6 +193,7 @@ Execution order: packages → downloads → run → run_as_user → files → ve
 - Implement `ToolSetup` interface (`name()` + `install(Container, Map<String, String>)` + `envEntries(Map<String, String>)`)
 - Discovered via CDI (`@Dependent`)
 - Currently used by: `claude` (binary install + settings), `codex` (npm install + settings), `gh` (dnf install), `pi` (npm install + settings), `bob` (npm install)
+- npm-distributed CLIs whose real binary is an *optional* per-platform package (`codex`, `copilot`) install through `NpmGlobalInstall`, which runs `<binary> --version` as agentuser after `npm install -g`. npm treats a failed optional dependency as skippable and still exits 0, so without the check a transient download failure leaves only the JS launcher and the template is stamped as built anyway (#808).
 
 **Resolution order** (later overrides earlier): built-in YAML (`resources/tools/`) → user-defined YAML (`~/.config/incus-spawn/tools/`) → search paths → project-local (`.incus-spawn/tools/`). A YAML tool with the same name replaces any earlier definition. Two tool files declaring the same `name:` within one directory are a same-directory conflict, reported by `ToolDefLoader.conflicts()` and treated exactly like image conflicts (see the images section above). Java CDI implementations (`@Dependent` beans) are used as fallback when no YAML tool matches.
 
