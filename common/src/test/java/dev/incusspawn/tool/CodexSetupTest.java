@@ -67,6 +67,23 @@ class CodexSetupTest {
     }
 
     @Test
+    void installFailsWhenTheBinaryDoesNotRun() {
+        // npm installs the wrapper even when the per-platform optional dependency that
+        // holds the binary failed to download, so npm's own exit code proves nothing.
+        var incus = mock(IncusClient.class);
+        when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
+        when(incus.shellExec(CONTAINER, "codex", "--version"))
+                .thenReturn(new IncusClient.ExecResult(1, "", "Missing optional dependency"));
+
+        var e = assertThrows(dev.incusspawn.incus.IncusException.class,
+                () -> new CodexSetup().install(new Container(incus, CONTAINER), Map.of()));
+        assertTrue(e.getMessage().contains("without its platform binary"));
+        // Config is not written for an install that cannot run.
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"),
+                argThat(arg -> arg.contains(CodexSetup.CONFIG_PATH)));
+    }
+
+    @Test
     void installWritesConfigToml() {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);

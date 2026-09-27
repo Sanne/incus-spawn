@@ -108,6 +108,12 @@ public class CodexSetup implements ToolSetup {
         BuildOutput.stepStart("Installing Codex CLI...");
         c.runQuiet("Failed to install Codex CLI",
                 "npm", "install", "-g", "--ignore-scripts", "--loglevel=error", "@openai/codex");
+        // The binary ships in a per-platform optional dependency (~150 MB), and npm
+        // treats a failed optional download as a warning: without this check the build
+        // succeeds and every branch gets a `codex` that cannot start.
+        c.runQuiet("Codex CLI was installed without its platform binary "
+                        + "(npm skips a failed optional dependency); rebuild to retry",
+                "codex", "--version");
         BuildOutput.stepDone();
     }
 
