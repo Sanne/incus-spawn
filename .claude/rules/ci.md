@@ -21,7 +21,7 @@ paths:
 - **`isx-integration-tests-native`**: installs Incus on Ubuntu 24.04, uses native binaries from the build-native jobs, runs `isx init`, starts the MITM proxy, builds templates (`tpl-minimal`, `tpl-test-podman`, `tpl-test-vm`, `tpl-test-codex`), then runs test scripts inside branched instances
 - **`fresh-daemon-init`**: verifies `isx init` on a daemon that has never been initialized
 
-`scripts/local-incus.sh` reproduces the `isx-integration-tests-native` setup (packages, `sg incus-admin -c "isx init </dev/null"`, the default profile on the `cow` pool) on a local host, for the `validate-on-real-incus` skill. A change to how that job prepares Incus belongs in the script too.
+`scripts/local-incus.sh` reproduces the `isx-integration-tests-native` setup (packages, `sg incus-admin -c "isx init </dev/null"`, the default profile on the `cow` pool) on a local host, for the `validate-on-real-incus` skill. A change to how that job prepares Incus belongs in the script too. Nested inside an isx instance it also works around what a user namespace refuses (Incus's bridge firewall rules, the unmapped subordinate-ID range, the iptables redirect); the skill says what it cannot fix there.
 
 Each job runs on its own freshly-provisioned runner, so jobs never inherit each other's Incus state.
 

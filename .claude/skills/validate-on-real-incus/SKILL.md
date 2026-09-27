@@ -45,6 +45,33 @@ sg incus-admin -c "isx build tpl-minimal --yes"
 Never chain anything after `isx proxy start`: a command queued behind it runs later, whenever the
 proxy stops, e.g. a build that starts while you are tearing things down.
 
+### Inside an isx instance
+
+The script detects a nested instance (a user namespace that maps only part of the ID space) and
+works around what the kernel refuses there, saying so as it goes:
+
+- **The bridge:** it creates `incusbr0` without Incus's firewall rules, which nftables refuses in
+  a user namespace, and on a free `10.166.N.0/24`, since isx's default is the outer isx's subnet.
+- **Container IDs:** it gives Incus the top 65536 IDs this namespace maps, since the usual range is
+  not mapped and every container would fail with "Failed to handle idmapped storage".
+- **The 443 redirect:** it adds the redirect with nftables where `isx init` could not (no legacy
+  iptables `nat` table).
+
+What it cannot fix:
+
+- **Templates do not build.** They add a `tun` device with `mode`, which Incus refuses in a
+  nested container. Test on a plain container instead:
+  `incus launch images:fedora/43 <n>`, then push `~/.config/incus-spawn/ca.crt` to
+  `/etc/pki/ca-trust/source/anchors/` and run `update-ca-trust`. Its traffic takes the same
+  bridge DNS -> redirect -> proxy path as a branch. The proxy does not know its address, so it
+  gets the default accounts.
+- **The outer proxy sits between this one and the real upstream.** It intercepts the same
+  domains and speaks only HTTP/1.1. To reach the real host, run the proxy binary directly with
+  the benchmark override: `ISX_BENCH_UPSTREAM=<host>=<ip>:443 isx-proxy --gateway-ip <gw>`,
+  under `sg incus-admin` so it can read the Incus socket. Local DNS answers with the outer
+  gateway, so resolve `<ip>` elsewhere, e.g.
+  `curl -s -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=<host>&type=A'`.
+
 ## 3. Exercise the change
 
 Branch with `--no-start`, then `incus start` it. A branch that starts also attaches a shell, and
@@ -97,6 +124,9 @@ Compare the writes before `PUT .../state`, the time of the start request, and an
 - `mvn verify -DskipITs=false` is not this: it runs `isx init` against the host and its template
   build IT has no definition to build. Use the CLI as above.
 - `pkill -f <pattern>` also kills the shell whose command line contains the pattern. Kill by pid.
+- Killing `isx proxy start` leaves the `isx-proxy` it started running, still holding the ports, so
+  the next proxy fails with "Address already in use". Find it with
+  `sudo ss -ltnp | grep 18443` and kill that pid.
 - Inside an isx instance, the outer isx's DNS and MITM proxy sit behind this one. A certificate
   issued by "incus-spawn MITM CA" might be the *outer* one: check which domains the inner proxy
   actually overrides (`incus network get incusbr0 raw.dnsmasq`) before reading a result.

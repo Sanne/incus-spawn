@@ -23,6 +23,10 @@ set -euo pipefail
 die() { echo "Error: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
 
+# Inside a user namespace that maps only part of the ID space: a nested isx instance, or any
+# unprivileged container. The kernel then refuses some of what Incus and isx init do on a host.
+limited_userns() { ! awk '$1 == 0 && $2 == 0 && $3 == 4294967295 { full = 1 } END { exit !full }' /proc/self/uid_map; }
+
 [ "$(uname -s)" = "Linux" ] || die "Linux only (on macOS isx runs Incus in its own appliance)"
 sudo -n true 2>/dev/null || die "needs passwordless sudo"
 command -v isx >/dev/null || die "isx is not on PATH; run ./install.sh first"
@@ -53,10 +57,63 @@ fi
 getent group incus-admin | grep -qw "$USER" || sudo usermod -aG incus-admin "$USER"
 sudo systemctl enable --now incus.socket >/dev/null
 
+# Nested, isx init's bridge cannot come up: Incus's own firewall rules for it use 'udp checksum
+# set', which nftables refuses in a user namespace, and its fixed 10.166.11.1/24 is the subnet the
+# outer isx gave this instance. Create it here, as isx init would but without those rules and on a
+# free subnet; isx init then finds it and reads its gateway from Incus.
+if limited_userns && ! sg incus-admin -c "incus network show incusbr0" >/dev/null 2>&1; then
+    routes=$(ip -4 route)
+    for n in $(seq 11 254); do
+        grep -q "^10\.166\.$n\." <<<"$routes" || break
+    done
+    step "Nested: creating incusbr0 on 10.166.$n.1/24 without Incus's firewall rules"
+    sg incus-admin -c "incus network create incusbr0 ipv4.address=10.166.$n.1/24 ipv4.nat=true \
+        ipv6.address=none ipv4.firewall=false ipv6.firewall=false"
+fi
+
 step "Running isx init"
 sg incus-admin -c "isx init </dev/null"
 # isx init runs 'sudo incus admin init', which can leave ~/.config/incus owned by root.
 [ -d "$HOME/.config/incus" ] && sudo chown -R "$USER:$USER" "$HOME/.config/incus"
+
+# isx init gives Incus root:1000000:1000000000 in /etc/subuid and /etc/subgid, which a nested
+# instance's namespace does not map, so every container fails with "Failed to handle idmapped
+# storage". Hand Incus the top 65536 IDs of the largest range that is mapped instead. isx init
+# adds its entry back on every run, so drop it again when ours is already there.
+if limited_userns && grep -qx "root:1000000:1000000000" /etc/subuid /etc/subgid; then
+    base=$(awk '$3 > max { max = $3; top = $1 + $3 } END { if (max >= 65536) print top - 65536 }' /proc/self/uid_map)
+    [ -n "$base" ] || die "this namespace maps no range of 65536 IDs for containers"
+    step "Nested: giving Incus root:$base:65536 in /etc/subuid and /etc/subgid"
+    for f in /etc/subuid /etc/subgid; do
+        if grep -qx "root:$base:65536" "$f"; then
+            sudo sed -i '/^root:1000000:1000000000$/d' "$f"
+        else
+            sudo sed -i "s/^root:1000000:1000000000\$/root:$base:65536/" "$f"
+        fi
+    done
+    sudo systemctl restart incus
+fi
+
+# isx init adds the 443 -> proxy redirect through firewalld's direct rules or UFW, both of which
+# need legacy iptables' nat table. Where that is missing (nested instances on Fedora, whose
+# kernel has no ip_tables module) the step fails quietly and containers reach the real hosts
+# instead of the proxy. Add the same redirect with nftables.
+# (Rules are read into variables first: under pipefail, 'grep -q' closing the pipe early would
+# fail the pipeline and read as "missing".)
+gateway=$(sg incus-admin -c "incus network get incusbr0 ipv4.address"); gateway=${gateway%/*}
+nft_rules=$(sudo nft list ruleset 2>/dev/null || true)
+ipt_rules=$(sudo iptables -t nat -S PREROUTING 2>/dev/null || true)
+if ! grep -q "dport 443 .*redirect to :18443" <<<"$nft_rules" && ! grep -q "to-ports 18443" <<<"$ipt_rules"; then
+    step "Adding the $gateway:443 -> 18443 redirect with nftables (isx init could not)"
+    sudo nft -f - <<EOF
+table ip isx_redirect {
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+        iifname "incusbr0" ip daddr $gateway tcp dport 443 redirect to :18443
+    }
+}
+EOF
+fi
 
 # isx init adds a 'cow' btrfs pool when the default one cannot copy-on-write, but on Incus 6.x
 # that fails on an option only newer Incus knows (#820): create it without. Remove once fixed.
