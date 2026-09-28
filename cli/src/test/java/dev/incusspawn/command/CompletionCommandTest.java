@@ -98,15 +98,17 @@ class CompletionCommandTest {
         }
     }
 
-    // --- macOS scripts keep vm (and the new resize subcommand) ---
+    // --- macOS scripts keep vm (and its resize and reset subcommands) ---
 
     @Test
-    void macScriptsRetainVmAndResize() {
-        assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.zsh)
-                .contains("'resize:grow the VM data disk that backs the storage pool'"));
+    void macScriptsRetainVmResizeAndReset() {
+        var zsh = CompletionCommand.rawScript(CompletionCommand.Shell.zsh);
+        assertTrue(zsh.contains("'resize:grow the VM data disk that backs the storage pool'"));
+        assertTrue(zsh.contains("'reset:wipe the VM data disk"));
         assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.bash)
-                .contains("start stop restart status resize console"));
-        assertTrue(CompletionCommand.rawScript(CompletionCommand.Shell.fish)
-                .contains("-a resize"));
+                .contains("start stop restart status resize reset console"));
+        var fish = CompletionCommand.rawScript(CompletionCommand.Shell.fish);
+        assertTrue(fish.contains("-a resize"));
+        assertTrue(fish.contains("-a reset"));
     }
 }

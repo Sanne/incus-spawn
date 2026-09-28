@@ -8,6 +8,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -24,6 +25,9 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -320,6 +324,101 @@ class BuildCommandTest {
             assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("file exists"),
                     "the report should carry the swap's real error");
             verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal-failed-build");
+        });
+    }
+
+    private static InstanceSubvolumes.Scan scan(Set<String> orphans, Set<String> dangling) {
+        var kind = InstanceSubvolumes.Kind.CONTAINER;
+        return new InstanceSubvolumes.Scan("cow",
+                orphans.stream().map(n -> new InstanceSubvolumes.Ref(kind, n)).collect(Collectors.toSet()),
+                dangling.stream().map(n -> new InstanceSubvolumes.Ref(kind, n)).collect(Collectors.toSet()));
+    }
+
+    /** A build whose swap cannot succeed fails before building, not after (#717). */
+    @Test
+    void strandedStorageUnderEitherNameStopsTheBuildBeforeItStarts(@TempDir Path tmp) {
+        var cases = List.of(
+                scan(Set.of("tpl-minimal"), Set.of()),
+                scan(Set.of("tpl-minimal-rebuilding"), Set.of()),
+                scan(Set.of(), Set.of("tpl-minimal")),
+                scan(Set.of(), Set.of("tpl-minimal-rebuilding")));
+        for (var stranded : cases) {
+            InitCommandTest.withHome(tmp, () -> {
+                var incus = mock(IncusClient.class);
+                when(incus.scanSubvolumes()).thenReturn(Optional.of(stranded));
+                var cmd = spy(new BuildCommand());
+                cmd.incus = incus;
+                cmd.yes = true;
+                var imageDef = new ImageDef();
+                imageDef.setName("tpl-minimal");
+
+                assertThrows(BuildCommand.BuildFailedException.class,
+                        () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)), stranded.toString());
+
+                verify(cmd, never()).buildInto(any(), any(), anyString());
+                verify(incus, never()).deleteIfExists(anyString());
+            });
+        }
+    }
+
+    @Test
+    void anUnrelatedOrphanDoesNotStopTheBuild(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.scanSubvolumes()).thenReturn(Optional.of(scan(Set.of("dev-old"), Set.of())));
+            when(incus.exists("tpl-minimal")).thenReturn(true);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef));
+
+            verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
+        });
+    }
+
+    /** A rename Incus calls successful that left the subvolume behind is a failed build. */
+    @Test
+    void aSwapThatLeftItsStorageBehindFailsTheBuild(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.exists("tpl-minimal")).thenReturn(true);
+            when(incus.storageOnDisk("tpl-minimal")).thenReturn(Optional.of(false));
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            var log = Environment.buildFailureLogFile("tpl-minimal");
+            assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("left its storage behind"));
+        });
+    }
+
+    @Test
+    void aSwapIncusDoesNotReflectFailsTheBuild(@TempDir Path tmp) {
+        InitCommandTest.withHome(tmp, () -> {
+            var incus = mock(IncusClient.class);
+            when(incus.exists(anyString())).thenReturn(false);
+            var cmd = spy(new BuildCommand());
+            cmd.incus = incus;
+            cmd.yes = true;
+            doNothing().when(cmd).buildInto(any(), any(), anyString());
+            var imageDef = new ImageDef();
+            imageDef.setName("tpl-minimal");
+
+            assertThrows(BuildCommand.BuildFailedException.class,
+                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
+
+            var log = Environment.buildFailureLogFile("tpl-minimal");
+            assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("under the new name"));
         });
     }
 

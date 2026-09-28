@@ -755,6 +755,46 @@ A missing stamp also self-heals on reload without a rebuild: `fillMissingReferen
 
 Reclaiming isn't always enough: on the macOS appliance the pool is capped by the VM's data disk, so once real usage approaches the ceiling the fix is to *grow the disk*, not delete work. `isx vm resize <size>` does this (macOS only — on native Linux the pool grows with the host filesystem, so the command isn't registered there at all). The data disk is a sparse raw image on the host; resizing extends the file (`RandomAccessFile.setLength`, grow-only) while the VM is stopped, then the guest expands the btrfs filesystem to fill the larger device on the next boot — a one-line `btrfs filesystem resize max /var/lib/incus` in the appliance init that mirrors the root disk's existing auto-resize. The data disk is deliberately separate from the root disk and survives root-disk upgrades, so growth persists across appliance version bumps. The resize verifies the pool total actually grew after reboot and warns if the running appliance predates the auto-resize step (the image grew but the filesystem didn't). The critical-fill TUI warning names both remedies — `C` to reclaim, `isx vm resize` to expand.
 
+#### Orphaned subvolumes and dangling records
+
+A pool's instance subvolumes and Incus's records can drift apart (#717). A rename that moves the subvolume while
+the record (and its `backup.yaml`) keeps the old name, followed by a delete of that record, leaves data on disk with
+nothing pointing at it: an *orphan*. Incus cannot see it, so neither can isx, until something creates an instance of
+that name and fails with "file exists". For a template rebuild, which creates `<name>-rebuilding` and renames it to
+`<name>`, that failure used to come after the whole build. The stage before is a *dangling record*: an instance whose
+subvolume is not at its path. Whether Incus then deletes such a record may depend on its version: 6.23 refuses ("Not a
+Btrfs subvolume"), while the orphans found on the #717 appliance (Incus 6.21) fit a delete that went through.
+
+`InstanceSubvolumes` compares the two sides. The disk side is a names-only parse of `btrfs subvolume list`
+(`BtrfsUsage.subvolumeList`, the same sudoers entry and agent verb as the rfer read). `BtrfsUsage.parse` cannot be
+reused, because it drops every subvolume without a qgroup row, which would hide orphans and invent dangling records.
+Only top-level `containers/<name>` and `virtual-machines/<name>` count, anchored at the pool (the filesystem root, or
+`…/storage-pools/<pool>` with no instance or pool directory above it): a guest running its own Incus nests a pool of
+the same name inside its rootfs. The records side is the pool's volumes across all projects, which live on disk as
+`<project>_<name>` outside `default`, plus the default-project instances whose root disk is on the pool. An empty
+listing while Incus has instances there is treated as "unknown", not as every instance being dangling, because the
+agent answers an empty section when `btrfs` fails.
+
+Three consumers use it, and each **fails open** when the pool cannot be listed (not btrfs, no sudoers rule, an
+unprivileged host): refusing every delete there would be worse than the rare orphan.
+
+- `IncusClient.delete` throws `DanglingRecordException` before sending the DELETE when the instance's subvolume is
+  missing, because that delete is what strands the data.
+- `BuildCommand.buildSingleImage` refuses up front when either `<name>` or `<name>-rebuilding` is an orphan or a
+  dangling record. After the rename it checks that Incus lists the new name and the subvolume moved with it
+  (`verifySwap`), which turns a half-completed rename into a build failure, not a latent orphan.
+- `isx doctor` reports orphans (FAIL when the name is a template's or its `-rebuilding` name, since that build cannot
+  succeed; WARN otherwise, with referenced sizes when qgroups have them) and dangling records (WARN). It offers no
+  automatic removal yet. On Linux it prints the `sudo btrfs subvolume delete -R` command instead of widening the
+  read-only sudoers rule. On macOS it points at `isx vm reset`.
+
+`isx vm reset` (`VmManager.resetDataDisk`) is the macOS last resort for a pool with nothing worth keeping. It lists
+what will be lost, then, holding the VM lifecycle lock, stops the VM and waits for the hypervisor process to exit.
+It replaces the data disk with a blank sparse one **of the same size**, so a disk grown with `isx vm resize` stays
+grown, and boots. The appliance's `rcS` formats the blank disk and `incus-spawn-vm-init` recreates the bridge, the
+`cow` pool and the default profile. The command then removes the host integration of every instance it listed,
+signals the proxy, and checks that Incus answers with an empty CoW pool.
+
 ### Repo Cloning and Reference Optimization
 
 Repos declared in an image definition are cloned into the container during build as `agentuser`. Clones use `--single-branch` to fetch only the target branch (or the default branch when none is specified), avoiding the download of hundreds of release/PR branches and thousands of tags that are present on large upstream repos but rarely needed in a dev container. After cloning, `git remote set-branches origin '*'` immediately widens the fetch refspec — this is a pure metadata write with no network traffic — so the clone is indistinguishable from a regular one. Other branches populate lazily on first `git fetch` or `git checkout`.

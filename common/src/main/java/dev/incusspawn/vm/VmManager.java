@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
 import java.util.function.Supplier;
@@ -963,19 +964,70 @@ public final class VmManager {
     }
 
     static void ensureDataDisk() {
-        var dataImage = Environment.vmDataImage();
-        if (Files.exists(dataImage)) return;
+        if (Files.exists(Environment.vmDataImage())) return;
+        createDataDisk(parseDiskSize(diskSize()));
+    }
 
-        BuildOutput.stepStart("Creating data disk (" + diskSize() + " sparse)...");
+    /** A blank sparse data disk; the appliance's rcS formats it on the next boot. */
+    private static void createDataDisk(long bytes) {
+        BuildOutput.stepStart("Creating data disk (" + humanSize(bytes) + " sparse)...");
         try {
             Files.createDirectories(Environment.vmStateDir());
-            try (var raf = new RandomAccessFile(dataImage.toFile(), "rw")) {
-                raf.setLength(parseDiskSize(diskSize()));
+            try (var raf = new RandomAccessFile(Environment.vmDataImage().toFile(), "rw")) {
+                raf.setLength(bytes);
             }
             BuildOutput.stepDone();
         } catch (IOException e) {
             BuildOutput.stepBreak();
             throw new VmException("Failed to create data disk: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Wipe everything Incus knows -- its database, the {@code cow} pool with every instance,
+     * template and image, the dnf cache -- by replacing the data disk with a blank one, then boot
+     * so the appliance formats it and recreates the bridge, pool and default profile. The root
+     * disk, swap and appliance artifacts are kept. The last resort for a pool Incus cannot account
+     * for, such as orphaned subvolumes (#717), when nothing on it is worth keeping.
+     *
+     * <p>The new disk keeps the old one's size, so a disk grown with {@code isx vm resize} stays
+     * grown. Holds the VM lifecycle lock throughout, so no other command can start the VM on the
+     * old disk halfway through.
+     *
+     * @return whether the VM came back with Incus answering
+     */
+    public static boolean resetDataDisk() {
+        try (var ignored = acquireVmLock()) {
+            long size = dataDiskSizeBytes();
+            if (size <= 0) size = parseDiskSize(diskSize());
+            if (isRunning()) {
+                var vm = ProcessHandle.of(readPid());
+                stopLocked();
+                // stopLocked() ends with a SIGKILL it does not wait for: the hypervisor must be
+                // gone before the disk it writes to is replaced.
+                if (vm.isPresent()) {
+                    try {
+                        vm.get().onExit().get(10, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        throw new VmException("VM process " + vm.get().pid()
+                                + " did not exit; the data disk was left untouched.");
+                    }
+                }
+            }
+            BuildOutput.stepStart("Deleting data disk...");
+            try {
+                Files.deleteIfExists(Environment.vmDataImage());
+            } catch (IOException e) {
+                BuildOutput.stepBreak();
+                throw new VmException("Failed to delete data disk: " + e.getMessage());
+            }
+            BuildOutput.stepDone();
+            createDataDisk(size);
+            if (startLocked() != StartResult.LAUNCHED) return false;
+            return awaitReady();
+        } catch (VmException e) {
+            System.err.println("Error: " + e.getMessage());
+            return false;
         }
     }
 

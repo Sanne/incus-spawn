@@ -2,6 +2,10 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.Metadata;
+import dev.incusspawn.lifecycle.InstanceDestroyer;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
@@ -11,6 +15,8 @@ import org.aesh.command.option.Option;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 
 // Registered only on macOS (see IncusSpawn): the appliance VM hosts the Incus daemon there,
 // whereas on Linux Incus runs natively and there is no VM to manage — so `isx vm` does not
@@ -25,6 +31,7 @@ import java.nio.file.Files;
                 VmCommand.Restart.class,
                 VmCommand.Status.class,
                 VmCommand.Resize.class,
+                VmCommand.Reset.class,
                 VmCommand.Console.class,
                 VmCommand.CheckVersion.class
         }
@@ -221,6 +228,131 @@ public class VmCommand extends BaseCommand {
                                 + "). The resize succeeded; stop it manually with 'isx vm stop'.");
                     }
                 }
+            }
+        }
+    }
+
+    @CommandDefinition(
+            name = "reset",
+            description = "Wipe the VM data disk: deletes every instance, template and cached image",
+            generateHelp = true
+    )
+    public static class Reset extends BaseCommand {
+        @Option(name = "yes", shortName = 'y', hasValue = false,
+                description = "Skip the confirmation prompt")
+        boolean yes;
+
+        @Override
+        protected CommandResult doExecute() throws Exception {
+            var incus = RuntimeServices.incus();
+            var lost = survey(incus);
+
+            System.out.println("This deletes the VM's data disk (" + Environment.vmDataImage() + "),");
+            System.out.println("which holds everything Incus knows: its database, the storage pool and all it contains.");
+            System.out.println("The appliance itself is kept, so nothing needs to be downloaded again.");
+            System.out.println();
+            if (lost == null) {
+                System.out.println("Incus is not reachable, so what is on the disk cannot be listed.");
+            } else {
+                lost.print();
+            }
+            System.out.println();
+            if (!CleanCommand.confirm("Wipe the data disk?", yes)) {
+                return CommandResult.SUCCESS;
+            }
+
+            BuildOutput.header("Resetting VM data disk");
+            boolean up = VmManager.resetDataDisk();
+            // Whatever the outcome, the instances are gone once the disk is: drop what the host
+            // keeps for them (SSH config, git remotes, ...) and let the proxy forget their addresses.
+            if (lost != null) {
+                for (var name : lost.all()) {
+                    try {
+                        InstanceLifecycle.removeHostIntegration(name);
+                    } catch (Exception e) {
+                        System.err.println("Note: could not remove host integration for " + name + ": " + e.getMessage());
+                    }
+                }
+                if (!lost.all().isEmpty()) InstanceDestroyer.refreshProxy();
+            }
+            if (!up) {
+                System.err.println("The data disk was reset, but the VM did not come back. Check 'isx vm console'.");
+                return CommandResult.valueOf(1);
+            }
+
+            var problem = verifyEmpty(incus);
+            if (problem != null) {
+                System.err.println("The VM restarted, but " + problem + ". Check 'isx vm status'.");
+                return CommandResult.valueOf(1);
+            }
+            BuildOutput.success("Data disk reset: Incus is up and pool '" + incus.findCowPool() + "' is empty.");
+            System.out.println("Recreate your templates with: isx build --all");
+            return CommandResult.SUCCESS;
+        }
+
+        record Survey(List<String> instances, List<String> templates, List<String> others,
+                      int images, String poolUsage) {
+            List<String> all() {
+                var all = new ArrayList<String>(instances);
+                all.addAll(templates);
+                all.addAll(others);
+                return all;
+            }
+
+            void print() {
+                printGroup("instance(s), which cannot be rebuilt", instances);
+                printGroup("template(s), which 'isx build' can recreate", templates);
+                printGroup("other instance(s), such as failed builds", others);
+                System.out.println("  " + images + " cached image(s)");
+                if (poolUsage != null) System.out.println("  Storage pool: " + poolUsage);
+            }
+
+            private static void printGroup(String what, List<String> names) {
+                if (names.isEmpty()) return;
+                System.out.println("  " + names.size() + " " + what + ":");
+                names.forEach(n -> System.out.println("    " + n));
+            }
+        }
+
+        /** What the reset will delete, or null when Incus cannot be asked. */
+        static Survey survey(IncusClient incus) {
+            if (!VmManager.isRunning() || incus.checkConnectivity() != null) return null;
+            try {
+                var instances = new ArrayList<String>();
+                var templates = new ArrayList<String>();
+                var others = new ArrayList<String>();
+                for (var inst : incus.list()) {
+                    var name = inst.get("name");
+                    switch (Metadata.getType(incus, name)) {
+                        case Metadata.TYPE_CLONE -> instances.add(name);
+                        case Metadata.TYPE_BASE -> templates.add(name);
+                        default -> others.add(name);
+                    }
+                }
+                String usage = null;
+                var pool = incus.findCowPool();
+                var bytes = pool == null ? null : incus.getPoolUsageBytes(pool);
+                if (bytes != null && bytes.totalBytes() > 0) {
+                    usage = VmManager.humanSize(bytes.usedBytes()) + " used of "
+                            + VmManager.humanSize(bytes.totalBytes());
+                }
+                return new Survey(instances, templates, others, incus.listImages().size(), usage);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        /** Null when Incus answers with a CoW pool and nothing in it, else what is wrong. */
+        static String verifyEmpty(IncusClient incus) {
+            try {
+                var connError = incus.checkConnectivity();
+                if (connError != null) return "Incus is not reachable (" + connError + ")";
+                if (incus.findCowPool() == null) return "Incus has no copy-on-write storage pool";
+                if (!incus.list().isEmpty()) return "Incus still lists instances";
+                if (!incus.listImages().isEmpty()) return "Incus still lists images";
+                return null;
+            } catch (Exception e) {
+                return "Incus could not be checked (" + e.getMessage() + ")";
             }
         }
     }

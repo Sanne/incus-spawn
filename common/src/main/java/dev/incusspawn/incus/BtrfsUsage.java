@@ -323,6 +323,28 @@ public final class BtrfsUsage {
     }
 
     /**
+     * Raw {@code btrfs subvolume list} output for the pool, or null if it can't be read. Unlike
+     * {@link #probe}, this does not depend on qgroups: it still answers with quotas off or
+     * inconsistent, which is what {@link InstanceSubvolumes} needs to see every subvolume. On macOS
+     * the agent's {@code btrfs-usage} reply carries the listing after the marker; an agent whose
+     * listing failed answers with an empty section, which callers must not read as "no subvolumes".
+     */
+    static String subvolumeList(String poolName) {
+        if (poolName == null || !isSafePoolName(poolName)) return null;
+        try {
+            if (Platform.isMacOS()) {
+                var resp = VmAgentClient.btrfsUsage(poolName, false);
+                if (resp.isEmpty()) return null;
+                var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
+                return parts.length == 2 ? parts[1] : null;
+            }
+            return runBtrfs("subvolume", "list", POOL_MOUNT_PREFIX + poolName);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
      * Join {@code btrfs qgroup show -re --raw} output (Qgroupid / Referenced / Exclusive columns)
      * with {@code btrfs subvolume list} output (ID … path …) to map each instance/template name to
      * its referenced bytes. Only top-level instance and VM subvolumes are considered — snapshots,

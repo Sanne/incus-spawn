@@ -326,6 +326,7 @@ public class CompletionCommand extends BaseCommand {
                 'restart:stop and restart the VM (applies pending appliance updates)'
                 'status:show VM status and system diagnostics'
                 'resize:grow the VM data disk that backs the storage pool'
+                'reset:wipe the VM data disk (deletes every instance, template and cached image)'
                 'console:follow VM serial console output'
               )
 
@@ -665,12 +666,12 @@ public class CompletionCommand extends BaseCommand {
                   fi
                   ;;
                 vm)
-                  local vm_subcmds="start stop restart status resize console"
+                  local vm_subcmds="start stop restart status resize reset console"
                   local vm_cmd=""
                   local j
                   for (( j=i+1; j < cword; j++ )); do
                     case "${words[j]}" in
-                      start|stop|restart|status|resize|console) vm_cmd="${words[j]}"; break ;;
+                      start|stop|restart|status|resize|reset|console) vm_cmd="${words[j]}"; break ;;
                     esac
                   done
                   if [[ -z "$vm_cmd" ]]; then
@@ -870,12 +871,13 @@ public class CompletionCommand extends BaseCommand {
 
             # ── vm ──────────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (applies pending appliance updates)'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
-            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a start   -d 'Start the VM (creates disk image on first run)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a stop    -d 'Stop the VM (graceful shutdown)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a restart -d 'Stop and restart the VM (applies pending appliance updates)'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a status  -d 'Show VM status and system diagnostics'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a resize  -d 'Grow the VM data disk that backs the storage pool'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a reset   -d 'Wipe the VM data disk: deletes every instance, template and cached image'
+            complete -c isx -f -n '__isx_using_subcommand vm; and not string match -qr -- "\\b(start|stop|restart|status|resize|reset|console)\\b" (commandline -opc)' -a console -d 'Follow VM serial console output'
 
             # ── update-base ─────────────────────────────────────────────────────────────
 

@@ -13,6 +13,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.BridgeDns;
@@ -461,6 +462,7 @@ public class DoctorCommand extends BaseCommand {
             findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
             findings.addAll(checkDiskAccounting(pool, pools.get(pool)));
+            findings.addAll(checkSubvolumes(incus));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
                 findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
@@ -531,6 +533,66 @@ public class DoctorCommand extends BaseCommand {
                             })));
         }
         return List.of(Finding.ok("Disk accounting", "consistent " + detail));
+    }
+
+    /**
+     * Orphaned subvolumes and dangling records on the btrfs CoW pool (#717): the pool's instance
+     * subvolumes and Incus's records disagree. Silent when the pool cannot be inspected.
+     */
+    private List<Finding> checkSubvolumes(IncusClient incus) {
+        var scan = incus.scanSubvolumes();
+        if (scan.isEmpty()) return List.of();
+        var sizes = scan.get().orphans().isEmpty() ? Map.<String, Long>of()
+                : dev.incusspawn.incus.BtrfsUsage.probe(scan.get().pool(), false);
+        var loaded = loadImageDefs().loaded();
+        Set<String> templates = loaded == null ? Set.of() : loaded.defs().keySet();
+        return subvolumeFindings(scan.get(), templates, sizes, Platform.isMacOS());
+    }
+
+    static List<Finding> subvolumeFindings(InstanceSubvolumes.Scan scan, Set<String> templates,
+                                           Map<String, Long> referencedBytes, boolean macOS) {
+        if (scan.isClean()) {
+            return List.of(Finding.ok("Pool subvolumes", "match Incus's records"));
+        }
+        var findings = new ArrayList<Finding>();
+        var mount = "/var/lib/incus/storage-pools/" + scan.pool() + "/";
+        if (!scan.orphans().isEmpty()) {
+            // A template's build creates <name>-rebuilding and renames it to <name>: either one
+            // already on disk makes that build fail at the end with "file exists".
+            var blocked = new ArrayList<String>();
+            var listed = new ArrayList<String>();
+            for (var ref : scan.orphans()) {
+                var name = ref.name();
+                var template = name.endsWith(BuildCommand.REBUILDING_SUFFIX)
+                        ? name.substring(0, name.length() - BuildCommand.REBUILDING_SUFFIX.length()) : name;
+                if (templates.contains(template)) blocked.add(template);
+                var size = referencedBytes.get(name);
+                listed.add(ref.path() + (size == null ? "" : " (" + VmManager.humanSize(size) + " referenced)"));
+            }
+            var detail = "Incus has no record of " + String.join(", ", listed)
+                    + " — the data is unreachable, still takes space, and blocks creating an instance of the same name"
+                    + (blocked.isEmpty() ? "" : "; builds of " + String.join(", ", blocked.stream().distinct().toList())
+                            + " will fail with \"file exists\"");
+            var remediation = macOS
+                    ? new Remediation("If nothing on the pool is worth keeping, wipe it with 'isx vm reset'"
+                            + " (instances are lost; rebuild templates with 'isx build --all')", true, null)
+                    : new Remediation("Check nothing there is worth keeping, then remove them: sudo btrfs subvolume delete -R "
+                            + String.join(" ", scan.orphans().stream().map(r -> mount + r.path()).toList()),
+                            true, null);
+            var label = scan.orphans().size() + " orphaned subvolume(s) on pool '" + scan.pool() + "'";
+            findings.add(blocked.isEmpty() ? Finding.warn(label, detail, remediation)
+                    : Finding.fail(label, detail, remediation));
+        }
+        if (!scan.dangling().isEmpty()) {
+            var names = scan.dangling().stream().map(InstanceSubvolumes.Ref::name).toList();
+            findings.add(Finding.warn(
+                    scan.dangling().size() + " instance record(s) without storage on pool '" + scan.pool() + "'",
+                    String.join(", ", names) + " — Incus lists them, but the pool has no subvolume at their path"
+                            + " (if a build or branch is running, re-check once it finishes). isx refuses to delete"
+                            + " them: their data may be under another name, and deleting the record would orphan it",
+                    null));
+        }
+        return findings;
     }
 
     private List<Finding> checkInstancesOffCowPool(IncusClient incus, String cowPool,

@@ -19,7 +19,7 @@ Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), p
 
 ## Quick Start
 
-Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize`. Windows is not yet supported.
+Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not yet supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
@@ -1471,6 +1471,7 @@ Manage the incus-spawn VM appliance. macOS only.
 | `restart` | Stop and restart the VM (applies pending appliance updates) |
 | `status` | Show VM status and system diagnostics |
 | `resize` | Grow the VM data disk that backs the storage pool |
+| `reset` | Wipe the VM data disk: deletes every instance, template and cached image |
 | `console` | Follow VM serial console output |
 | `check-version` | Check whether the running appliance matches the installed version |
 
@@ -1489,6 +1490,21 @@ Stops and restarts the VM, applying any pending appliance updates. Running conta
     isx vm resize <size>
 
 Size must be larger than the current disk (grow-only), e.g. `100G`.
+
+| Option | Description |
+|--------|-------------|
+| `-y`, `--yes` | Skip the confirmation prompt |
+
+#### `isx vm reset`
+
+    isx vm reset [options]
+
+The last resort for a storage pool Incus cannot account for, such as the orphaned subvolumes `isx doctor`
+reports, when nothing on it is worth keeping. It lists what will be lost (instances, which cannot be
+rebuilt; templates, which can; cached images; the pool's usage) and asks first. It then stops the VM, replaces
+the data disk with a blank one of the same size, and starts the VM again. The appliance recreates the bridge,
+the `cow` pool and the default profile. The root disk and the downloaded appliance are kept. Recreate your
+templates afterwards with `isx build --all`.
 
 | Option | Description |
 |--------|-------------|

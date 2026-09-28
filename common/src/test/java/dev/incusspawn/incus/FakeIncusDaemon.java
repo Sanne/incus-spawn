@@ -19,8 +19,8 @@ import java.util.Map;
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
  * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
- * instance listing, console log GET, network and profile GET, file push and async-operation
- * waits. Anything else answers 404, so an unexpected request still shows up in
+ * instance listing and DELETE, the {@code default} pool's volume listing, console log GET,
+ * network and profile GET, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers.
  */
@@ -36,6 +36,7 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     private final Map<String, ObjectNode> profiles = new LinkedHashMap<>();
     private final Map<String, ObjectNode> networks = new LinkedHashMap<>();
+    private final List<ObjectNode> extraVolumes = new ArrayList<>();
     private final List<String> requests = new ArrayList<>();
     private final List<String> refusedWrites = new ArrayList<>();
     private final List<String> apiExtensions = new ArrayList<>();
@@ -100,6 +101,19 @@ public final class FakeIncusDaemon implements IncusTransport {
      */
     public FakeIncusDaemon refuseWritesContaining(String needle) {
         refusedWrites.add(needle);
+        return this;
+    }
+
+    /**
+     * A volume on the {@code default} pool with no instance of this daemon behind it, as another
+     * Incus project's instance has.
+     */
+    public FakeIncusDaemon volume(String project, String name, String type) {
+        var vol = JSON.createObjectNode();
+        vol.put("name", name);
+        vol.put("type", type);
+        vol.put("project", project);
+        extraVolumes.add(vol);
         return this;
     }
 
@@ -214,6 +228,18 @@ public final class FakeIncusDaemon implements IncusTransport {
             var profile = profiles.get(path.substring("/1.0/profiles/".length()));
             return profile == null ? notFound() : sync(profile.deepCopy());
         }
+        if (path.startsWith("/1.0/storage-pools/default/volumes?") && method.equals("GET")) {
+            // Incus keeps a volume per instance, named after it, on the instance's pool.
+            var list = JSON.createArrayNode();
+            instances.values().forEach(i -> {
+                var vol = list.addObject();
+                vol.put("name", i.path("name").asText());
+                vol.put("type", i.path("type").asText());
+                vol.put("project", "default");
+            });
+            list.addAll(extraVolumes);
+            return sync(list);
+        }
         if (path.startsWith("/1.0/networks/") && method.equals("GET")) {
             var network = networks.get(path.substring("/1.0/networks/".length()));
             return network == null ? notFound() : sync(network);
@@ -224,6 +250,10 @@ public final class FakeIncusDaemon implements IncusTransport {
 
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && method.equals("DELETE")) {
+            instances.remove(name);
+            return async();
+        }
         if (rest.isEmpty() && (method.equals("PUT") || method.equals("PATCH")) && body != null) {
             if (refuseNextWrite) {
                 refuseNextWrite = false;

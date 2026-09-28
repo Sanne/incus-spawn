@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.vm.VmManager;
@@ -15,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -621,5 +623,67 @@ class DoctorCommandTest {
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.detail().contains("missing: api.anthropic.com"), f.detail());
         assertNotNull(f.remediation());
+    }
+
+    // ---- Pool subvolumes vs Incus records (#717) ----
+
+    private static InstanceSubvolumes.Scan subvolScan(List<String> orphans, List<String> dangling) {
+        var kind = InstanceSubvolumes.Kind.CONTAINER;
+        return new InstanceSubvolumes.Scan("cow",
+                new java.util.TreeSet<>(orphans.stream().map(n -> new InstanceSubvolumes.Ref(kind, n)).toList()),
+                new java.util.TreeSet<>(dangling.stream().map(n -> new InstanceSubvolumes.Ref(kind, n)).toList()));
+    }
+
+    @Test
+    void matchingSubvolumesAreOk() {
+        var findings = DoctorCommand.subvolumeFindings(subvolScan(List.of(), List.of()), Set.of(), Map.of(), false);
+        assertEquals(1, findings.size());
+        assertEquals(DoctorCommand.Status.OK, findings.getFirst().status());
+    }
+
+    @Test
+    void anOrphanNamedAfterATemplateFailsBecauseItBlocksTheBuild() {
+        for (var orphan : List.of("tpl-minimal", "tpl-minimal-rebuilding")) {
+            var f = DoctorCommand.subvolumeFindings(subvolScan(List.of(orphan), List.of()),
+                    Set.of("tpl-minimal"), Map.of(orphan, 5L * DoctorCommand.GIB), false).getFirst();
+            assertEquals(DoctorCommand.Status.FAIL, f.status(), orphan);
+            assertTrue(f.detail().contains("containers/" + orphan + " (5.0G referenced)"), f.detail());
+            assertTrue(f.detail().contains("builds of tpl-minimal will fail"), f.detail());
+        }
+    }
+
+    @Test
+    void anOrphanNoTemplateNeedsOnlyWarns() {
+        var f = DoctorCommand.subvolumeFindings(subvolScan(List.of("isx-old-branch"), List.of()),
+                Set.of("tpl-minimal"), Map.of(), false).getFirst();
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertFalse(f.detail().contains("will fail"));
+    }
+
+    @Test
+    void orphanRemediationIsASuggestionNeverAnAction() {
+        var linux = DoctorCommand.subvolumeFindings(subvolScan(List.of("a", "b"), List.of()),
+                Set.of(), Map.of(), false).getFirst().remediation();
+        assertNull(linux.action(), "doctor must not delete data on its own");
+        assertTrue(linux.destructive());
+        assertTrue(linux.description().contains("sudo btrfs subvolume delete -R "
+                + "/var/lib/incus/storage-pools/cow/containers/a /var/lib/incus/storage-pools/cow/containers/b"),
+                linux.description());
+
+        var mac = DoctorCommand.subvolumeFindings(subvolScan(List.of("a"), List.of()),
+                Set.of(), Map.of(), true).getFirst().remediation();
+        assertNull(mac.action());
+        assertTrue(mac.description().contains("isx vm reset"), mac.description());
+    }
+
+    @Test
+    void aDanglingRecordWarnsWithoutOfferingToDeleteIt() {
+        var findings = DoctorCommand.subvolumeFindings(subvolScan(List.of(), List.of("tpl-isx-rebuilding")),
+                Set.of("tpl-isx"), Map.of(), false);
+        assertEquals(1, findings.size());
+        var f = findings.getFirst();
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.detail().contains("tpl-isx-rebuilding"));
+        assertNull(f.remediation());
     }
 }

@@ -16,10 +16,13 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Manages Incus container/VM lifecycle operations.
@@ -1561,6 +1564,7 @@ public class IncusClient {
                 // May already be stopped — proceed to delete.
             }
         }
+        requireStorageOnDisk(name);
         var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
         if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
         cleanupStaleVolumes(name);
@@ -1623,6 +1627,120 @@ public class IncusClient {
         var resp = http().requestAndWait("POST", "/1.0/instances/" + oldName,
                 Map.of("name", newName, "migration", false));
         if (!resp.isSuccess()) throw new IncusException("Failed to rename " + oldName + " to " + newName);
+    }
+
+    /** Where the btrfs subvolume listing comes from; tests substitute canned output. */
+    Function<String, String> subvolumeLister = BtrfsUsage::subvolumeList;
+
+    /**
+     * An instance record whose subvolume is not at its path: deleting it would leave its data
+     * wherever it actually is, with nothing pointing at it (#717).
+     */
+    public static final class DanglingRecordException extends IncusException {
+        public DanglingRecordException(String name, String pool, String path) {
+            super("Refusing to delete " + name + ": Incus has a record of it, but pool '" + pool
+                    + "' has no subvolume at " + path + ". Deleting the record could strand its data"
+                    + " under another name. Run 'isx doctor' to inspect the pool.");
+        }
+    }
+
+    /**
+     * Throw {@link DanglingRecordException} when {@code name} is on a btrfs pool whose listing lacks
+     * its subvolume. Fails open: anything that stops the check from being conclusive (another
+     * driver, no listing, a listing that came back empty) lets the delete proceed, since refusing
+     * every delete on a host without the sudoers rule would be worse than the rare orphan.
+     */
+    private void requireStorageOnDisk(String name) {
+        var where = storageLocation(name);
+        if (where != null && Boolean.FALSE.equals(where.onDisk())) {
+            throw new DanglingRecordException(name, where.pool(), where.ref().path());
+        }
+    }
+
+    /**
+     * Whether {@code name}'s subvolume is on disk under that name; empty when the btrfs listing
+     * cannot say (not btrfs, no listing, no such instance).
+     */
+    public Optional<Boolean> storageOnDisk(String name) {
+        var where = storageLocation(name);
+        return where == null ? Optional.empty() : Optional.ofNullable(where.onDisk());
+    }
+
+    private record StorageLocation(String pool, InstanceSubvolumes.Ref ref, Boolean onDisk) {}
+
+    /** Null when {@code name} is not a btrfs-backed instance; {@code onDisk} null when unknown. */
+    private StorageLocation storageLocation(String name) {
+        InstanceSubvolumes.Ref ref;
+        String pool;
+        try {
+            var resp = http().get("/1.0/instances/" + name);
+            if (!resp.isSuccess()) return null;
+            var meta = resp.body().path("metadata");
+            var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
+            pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
+            if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
+            ref = new InstanceSubvolumes.Ref(kind, name);
+        } catch (Exception e) {
+            return null;
+        }
+        var listing = subvolumeLister.apply(pool);
+        var onDisk = listing == null ? Set.<InstanceSubvolumes.Ref>of() : InstanceSubvolumes.parse(listing, pool);
+        return new StorageLocation(pool, ref, onDisk.isEmpty() ? null : onDisk.contains(ref));
+    }
+
+    /**
+     * Compare the CoW pool's instance subvolumes with Incus's records (see {@link InstanceSubvolumes}).
+     * Empty when the pool is not btrfs or the comparison cannot be trusted.
+     */
+    public Optional<InstanceSubvolumes.Scan> scanSubvolumes() {
+        var probe = probeCowPool();
+        if (!probe.isBtrfs()) return Optional.empty();
+        var pool = probe.poolName();
+        var listing = subvolumeLister.apply(pool);
+        if (listing == null) return Optional.empty();
+        var volumes = instanceVolumes(pool);
+        var instances = instancesOnPool(pool);
+        if (volumes == null || instances == null) return Optional.empty();
+        return Optional.ofNullable(InstanceSubvolumes.compare(
+                pool, InstanceSubvolumes.parse(listing, pool), volumes, instances));
+    }
+
+    /**
+     * The pool's container and VM volumes in every project, by on-disk name; null if they cannot be
+     * listed. A volume in a project other than {@code default} lives at {@code <project>_<name>}, so
+     * a user's own Incus projects on a Linux host are not mistaken for orphans.
+     */
+    private Set<InstanceSubvolumes.Ref> instanceVolumes(String pool) {
+        var base = "/1.0/storage-pools/" + pool + "/volumes?recursion=1";
+        var resp = http().get(base + "&all-projects=true");
+        if (!resp.isSuccess()) resp = http().get(base);
+        if (!resp.isSuccess()) return null;
+        var refs = new HashSet<InstanceSubvolumes.Ref>();
+        for (var vol : resp.body().path("metadata")) {
+            var kind = InstanceSubvolumes.Kind.fromApiType(vol.path("type").asText(""));
+            var name = vol.path("name").asText("");
+            if (kind == null || name.isEmpty() || name.contains("/")) continue;   // snapshots are "inst/snap"
+            var project = vol.path("project").asText("default");
+            refs.add(new InstanceSubvolumes.Ref(kind,
+                    project.isEmpty() || project.equals("default") ? name : project + "_" + name));
+        }
+        return refs;
+    }
+
+    /** Default-project instances whose root disk is on {@code pool}; null if they cannot be listed. */
+    private Set<InstanceSubvolumes.Ref> instancesOnPool(String pool) {
+        var resp = http().get("/1.0/instances?recursion=1");
+        if (!resp.isSuccess()) return null;
+        var refs = new HashSet<InstanceSubvolumes.Ref>();
+        for (var inst : resp.body().path("metadata")) {
+            var kind = InstanceSubvolumes.Kind.fromApiType(inst.path("type").asText(""));
+            var name = inst.path("name").asText("");
+            if (kind != null && !name.isEmpty()
+                    && pool.equals(rootDiskPoolFromDevices(inst.path("expanded_devices")))) {
+                refs.add(new InstanceSubvolumes.Ref(kind, name));
+            }
+        }
+        return refs;
     }
 
     /**

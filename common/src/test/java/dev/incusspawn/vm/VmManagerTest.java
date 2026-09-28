@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 class VmManagerTest {
 
@@ -174,6 +175,26 @@ class VmManagerTest {
         long result = VmManager.resizeDataDisk(targetGiB + "G");
         assertEquals(targetGiB * 1024 * 1024 * 1024, result);
         assertEquals(result, VmManager.dataDiskSizeBytes());
+    }
+
+    @Test
+    void resetDataDiskKeepsAGrownSizeButNotTheContents() throws Exception {
+        // No appliance artifacts here, so the VM cannot start: the reset still has to leave a
+        // blank disk of the same size behind.
+        assumeFalse(Files.exists(Environment.applianceKernel()), "appliance artifacts present");
+        VmManager.ensureDataDisk();
+        long grown = VmManager.dataDiskSizeBytes() * 2;
+        VmManager.resizeDataDisk(grown / (1024L * 1024 * 1024) + "G");
+        try (var raf = new RandomAccessFile(Environment.vmDataImage().toFile(), "rw")) {
+            raf.write("_BHRfS_M".getBytes(StandardCharsets.US_ASCII));
+        }
+
+        assertFalse(VmManager.resetDataDisk(), "the VM cannot start without artifacts");
+
+        assertEquals(grown, VmManager.dataDiskSizeBytes());
+        try (var in = Files.newInputStream(Environment.vmDataImage())) {
+            assertArrayEquals(new byte[8], in.readNBytes(8), "the old contents must be gone");
+        }
     }
 
     @Test
