@@ -1113,6 +1113,11 @@ public class BuildCommand extends BaseCommand {
         return imageDef.isVm();
     }
 
+    /** The local alias a template's prebaked {@code vm_image_url} is imported under. */
+    static String vmImageAlias(String image) {
+        return image + "-vm";
+    }
+
     private String effectiveType(ImageDef imageDef) {
         if (type != null) return type.name();
         if (imageDef.getType() != null) return imageDef.getType();
@@ -1130,7 +1135,7 @@ public class BuildCommand extends BaseCommand {
 
         if (effectiveVm && rootDef.getVmImageUrl() != null) {
             // Prebaked VM disk image available — use it directly
-            var vmAlias = rootDef.getImage() + "-vm";
+            var vmAlias = vmImageAlias(rootDef.getImage());
             ensureBaseImage(imageDef);
             downloadAndAliasImage(vmAlias, rootDef.getVmImageUrl(),
                     rootDef.getVmImageSha256(), rootDef.getImageTag(), rootDef);
@@ -1504,39 +1509,189 @@ public class BuildCommand extends BaseCommand {
         }
         var resolvedUrl = resolveImageUrl(imageUrl, tag);
 
-        BuildOutput.stepStart("Downloading base image...");
+        var cached = downloadBaseImage(localAlias, resolvedUrl, expectedSha256);
+        var fingerprint = importBaseImage(localAlias, cached);
 
+        // Stamped before the alias exists, and verified: setImageProperty fails silently, and
+        // a project's import that lost its stamp would pass for a trusted one.
+        incus.setImageProperty(fingerprint, IMAGE_PROJECT_PROPERTY, ownerProject);
+        // The resulting value is what matters, not whether this particular write landed: a
+        // tarball that already carried the expected value is stamped correctly either way.
+        boolean stamped;
         try {
-            var cached = newDownloadCache().downloadAllowingLocalFile(resolvedUrl, expectedSha256);
-
-            var fingerprint = incus.importImage(cached);
-
-            // Stamped before the alias exists, and verified: setImageProperty fails silently, and
-            // a project's import that lost its stamp would pass for a trusted one.
-            incus.setImageProperty(fingerprint, IMAGE_PROJECT_PROPERTY, ownerProject);
-            // The resulting value is what matters, not whether this particular write landed: a
-            // tarball that already carried the expected value is stamped correctly either way.
-            boolean stamped;
-            try {
-                stamped = ownerProject.equals(importingProject(fingerprint));
-            } catch (IncusException e) {
-                stamped = false;
-            }
-            if (!stamped) {
-                incus.deleteImage(fingerprint);
-                throw new IllegalStateException("Could not record which project imported base image '"
-                        + localAlias + "'; the imported image was deleted.");
-            }
-            if (tag != null) {
-                incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
-            }
-            incus.createImageAlias(localAlias, fingerprint);
-
-            BuildOutput.stepDone();
-        } catch (IOException e) {
-            throw new RuntimeException(
-                    "Failed to download base image from " + resolvedUrl + ": " + e.getMessage(), e);
+            stamped = ownerProject.equals(importingProject(fingerprint));
+        } catch (IncusException e) {
+            stamped = false;
         }
+        if (!stamped) {
+            incus.deleteImage(fingerprint);
+            throw new IllegalStateException("Could not record which project imported base image '"
+                    + localAlias + "'; the imported image was deleted.");
+        }
+        if (tag != null) {
+            incus.setImageProperty(fingerprint, "incus-spawn.tag", tag);
+        }
+        incus.createImageAlias(localAlias, fingerprint);
+    }
+
+    /**
+     * Fetch a base image tarball into the host download cache, or reuse the cached copy when
+     * its checksum still matches. Base images run to gigabytes, so the spinner line shows the
+     * percentage, size, rate and time left while the body arrives.
+     */
+    private Path downloadBaseImage(String alias, String url, String sha256) {
+        var progress = new TransferProgress();
+        var result = new java.util.concurrent.atomic.AtomicReference<Path>();
+        runLiveStep("Downloading base image " + alias, progress::detail,
+                "Failed to download base image from " + url, state -> {
+                    try {
+                        result.set(newDownloadCache().downloadAllowingLocalFile(url, sha256, progress));
+                        state.set(0, StepProgress.done(progress.fetched()
+                                ? "Downloaded base image " + alias + " (" + progress.summary() + ")."
+                                : "Using cached download of base image " + alias + "."));
+                    } catch (IOException e) {
+                        state.set(0, StepProgress.failed(e.getMessage(), null));
+                    }
+                });
+        return result.get();
+    }
+
+    /**
+     * Import a downloaded tarball into Incus. For a VM disk image this is minutes of unpacking
+     * on the Incus side that reports no progress, so the line shows the time spent instead.
+     */
+    private String importBaseImage(String alias, Path tarball) {
+        var start = System.nanoTime();
+        var result = new java.util.concurrent.atomic.AtomicReference<String>();
+        runLiveStep("Importing base image " + alias + " into Incus",
+                () -> formatDuration(System.nanoTime() - start),
+                "Failed to import base image " + alias, state -> {
+                    try {
+                        result.set(incus.importImage(tarball));
+                        state.set(0, StepProgress.done("Imported base image " + alias + " into Incus ("
+                                + formatDuration(System.nanoTime() - start) + ")."));
+                    } catch (RuntimeException e) {
+                        state.set(0, StepProgress.failed(e.getMessage(), null));
+                    }
+                });
+        return result.get();
+    }
+
+    /**
+     * Run {@code work} behind a one-line spinner whose dim detail is re-read from
+     * {@code detail} on every frame, for steps that report their own progress. {@code work}
+     * records the outcome in {@code state[0]}; a DONE note is the whole completion line. On a
+     * plain (non-ANSI) terminal the label is printed up front, since nothing animates there.
+     */
+    private static void runLiveStep(String label, java.util.function.Supplier<String> detail,
+                                    String failureMessage,
+                                    Consumer<AtomicReferenceArray<StepProgress>> work) {
+        var state = new AtomicReferenceArray<StepProgress>(1);
+        state.set(0, StepProgress.running(""));
+        if (!TerminalProgress.isAnsiTerminal()) BuildOutput.step(label + "...");
+        TerminalProgress.run(1, 1,
+                idx -> runSpinnerWork(work, state),
+                (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
+                idx -> state.get(0).state() == StepState.DONE
+                        ? BuildOutput.STEP_INDENT + state.get(0).note() : null,
+                System.out::println);
+        finishSpinner(label, failureMessage, state);
+    }
+
+    static String formatLiveStepLine(String label, StepProgress p, java.util.function.Supplier<String> detail,
+                                     int frame) {
+        return switch (p.state()) {
+            case RUNNING -> {
+                var line = BuildOutput.STEP_INDENT
+                        + TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length] + " " + label;
+                var d = detail.get();
+                yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m";
+            }
+            case DONE -> BuildOutput.STEP_INDENT + p.note();
+            case FAILED -> formatDnfLine(label, p, frame);
+        };
+    }
+
+    /**
+     * What a download is doing, recorded by {@link DownloadCache} as it happens and turned
+     * into text only when the spinner redraws, so a chunk costs a few field writes.
+     */
+    static final class TransferProgress implements DownloadCache.Listener {
+        // Set when the body starts, so re-hashing a stale cached copy and connecting do not
+        // count against the rate, the time left or the reported duration.
+        private volatile long start;
+        private volatile String phase = "connecting";
+        private volatile long bytes;
+        private volatile long total = -1;
+        private volatile boolean fetched;
+        private volatile long end;
+
+        @Override
+        public void verifyingCached() {
+            phase = "verifying cached copy";
+        }
+
+        @Override
+        public void received(long bytes, long total) {
+            if (start == 0) start = System.nanoTime();
+            this.bytes = bytes;
+            this.total = total;
+            fetched = true;
+            phase = null;
+        }
+
+        @Override
+        public void verifying() {
+            end = System.nanoTime();
+            phase = "verifying checksum";
+        }
+
+        /** Whether the body was fetched (or copied from a {@code file://} URL) rather than reused from the cache. */
+        boolean fetched() {
+            return fetched;
+        }
+
+        String detail() {
+            var p = phase;
+            return p != null ? p : describeTransfer(bytes, total, System.nanoTime() - start);
+        }
+
+        /** Size and duration of a finished download, e.g. {@code 1.9 GB in 5m 12s}. */
+        String summary() {
+            var finished = end != 0 ? end : System.nanoTime();
+            return CleanCommand.formatSize(bytes) + " in " + formatDuration(finished - start);
+        }
+    }
+
+    /**
+     * {@code 42%  812.0 MB / 1.9 GB  3.1 MB/s  4m 30s left}, or just the size and rate when the
+     * server sent no length. The rate waits for a full second of data, since the first chunks
+     * alone would project a wildly wrong one.
+     */
+    static String describeTransfer(long bytes, long total, long elapsedNanos) {
+        var sb = new StringBuilder();
+        if (total > 0) {
+            sb.append(Math.min(100, bytes * 100 / total)).append("%  ")
+                    .append(CleanCommand.formatSize(bytes)).append(" / ").append(CleanCommand.formatSize(total));
+        } else {
+            sb.append(CleanCommand.formatSize(bytes));
+        }
+        if (elapsedNanos >= 1_000_000_000L && bytes > 0) {
+            double perSecond = bytes / (elapsedNanos / 1e9);
+            sb.append("  ").append(CleanCommand.formatSize((long) perSecond)).append("/s");
+            if (total > bytes) {
+                sb.append("  ").append(formatDuration((long) ((total - bytes) / perSecond * 1e9))).append(" left");
+            }
+        }
+        return sb.toString();
+    }
+
+    /** {@code 42s}, {@code 5m 12s} or {@code 1h 03m}. */
+    static String formatDuration(long nanos) {
+        long seconds = nanos / 1_000_000_000L;
+        if (seconds < 60) return seconds + "s";
+        if (seconds < 3600) return (seconds / 60) + "m " + String.format("%02ds", seconds % 60);
+        return (seconds / 3600) + "h " + String.format("%02dm", (seconds % 3600) / 60);
     }
 
     DownloadCache newDownloadCache() {

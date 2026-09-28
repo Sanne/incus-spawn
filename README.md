@@ -1500,7 +1500,7 @@ Remove cached data, state, or configuration.
 | `cache` | Remove cached downloads, registry blobs, and build caches |
 | `state` | Remove VM state, logs, and appliance artifacts |
 | `config` | Remove configuration, SSH keys, and CA certificate |
-| `pool` | Reclaim space from the storage pool (failed builds, unused images) |
+| `pool` | Reclaim space from the storage pool (failed builds, unused images, DNF cache); `--base-images` also removes the downloaded base images, which the next build downloads again |
 | `all` | Remove cache, state, and configuration (does not touch Incus templates or instances) |
 
 All subcommands accept these options:
@@ -1518,7 +1518,7 @@ shows a detailed plan of what will be removed, and asks for confirmation before 
 It removes everything incus-spawn manages:
 
 - **Containers and templates** — all instances (branches) and built templates in the
-  Incus storage pool, plus any failed builds, unused images, and the DNF cache volume.
+  Incus storage pool, plus any failed builds, unused and cached base images, and the DNF cache volume.
 - **Proxy service** — stops and uninstalls the systemd/launchd proxy service, clears the
   bridge DNS overrides, and removes the iptables/UFW PREROUTING redirect rule (443 → 18443).
 - **VM appliance** (macOS) — stops the VM and deletes its disk images (`disk.img`, `data.img`).

@@ -43,7 +43,8 @@ public class ResetCommand extends BaseCommand {
             builtTemplates = DestroyCommand.listBuiltTemplates(incus);
             var poolScan = CleanCommand.scanPool(incus);
             hasPoolArtifacts = poolScan != null &&
-                    (!poolScan.failedBuilds().isEmpty() || !poolScan.unusedImages().isEmpty() || poolScan.dnfCacheExists());
+                    (!poolScan.failedBuilds().isEmpty() || !poolScan.unusedImages().isEmpty()
+                            || !poolScan.baseImages().isEmpty() || poolScan.dnfCacheExists());
         } catch (Exception e) {
             incusReachable = false;
             System.err.println("Warning: could not reach Incus daemon: " + e.getMessage());
@@ -91,7 +92,7 @@ public class ResetCommand extends BaseCommand {
         }
 
         if (hasPoolArtifacts) {
-            System.out.println("  Clean storage pool artifacts (failed builds, unused images, DNF cache)");
+            System.out.println("  Clean storage pool artifacts (failed builds, unused and cached base images, DNF cache)");
         }
 
         if (proxyInstalled) {
@@ -159,6 +160,8 @@ public class ResetCommand extends BaseCommand {
                     System.out.println("  Removed " + result.failedBuildsDeleted() + " failed build(s)");
                 if (result.unusedImagesDeleted() > 0)
                     System.out.println("  Removed " + result.unusedImagesDeleted() + " unused image(s)");
+                if (result.baseImagesDeleted() > 0)
+                    System.out.println("  Removed " + result.baseImagesDeleted() + " cached base image(s)");
                 if (result.dnfCacheDeleted())
                     System.out.println("  Removed DNF cache volume");
                 for (var w : result.warnings()) System.err.println("  Warning: " + w);

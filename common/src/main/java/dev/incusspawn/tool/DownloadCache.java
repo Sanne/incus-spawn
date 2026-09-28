@@ -8,6 +8,7 @@ import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -15,6 +16,9 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
 import java.util.function.Predicate;
 
 /**
@@ -27,6 +31,27 @@ import java.util.function.Predicate;
 public class DownloadCache {
 
     private static final int MAX_REDIRECTS = 10;
+
+    /**
+     * Observes a download as it runs, so a caller can show progress for a large file. Methods
+     * are called on the downloading thread; {@link #received} once per chunk, so keep it cheap.
+     */
+    public interface Listener {
+        Listener NONE = new Listener() {};
+
+        /** A cached copy exists and its checksum is being verified before it is reused. */
+        default void verifyingCached() {}
+
+        /**
+         * Bytes of the body written so far; a {@code file://} copy reports only its start and end.
+         *
+         * @param total the {@code Content-Length}, or {@code -1} when the server sent none
+         */
+        default void received(long bytes, long total) {}
+
+        /** The download finished and its checksum is being verified. */
+        default void verifying() {}
+    }
 
     private final Path cacheDir;
     private final Predicate<URI> hostLocal;
@@ -67,10 +92,19 @@ public class DownloadCache {
      * the URL comes from a project-local definition.
      */
     public Path downloadAllowingLocalFile(String url, String sha256) throws IOException {
-        return download(url, sha256, true);
+        return downloadAllowingLocalFile(url, sha256, Listener.NONE);
+    }
+
+    /** As {@link #downloadAllowingLocalFile(String, String)}, reporting progress to {@code listener}. */
+    public Path downloadAllowingLocalFile(String url, String sha256, Listener listener) throws IOException {
+        return download(url, sha256, true, listener);
     }
 
     private Path download(String url, String sha256, boolean allowLocalFile) throws IOException {
+        return download(url, sha256, allowLocalFile, Listener.NONE);
+    }
+
+    private Path download(String url, String sha256, boolean allowLocalFile, Listener listener) throws IOException {
         var uri = parse(url);
         var localFile = allowLocalFile && "file".equalsIgnoreCase(uri.getScheme());
         if (!localFile) requireRemote(uri, url);
@@ -87,6 +121,7 @@ public class DownloadCache {
 
         // Cache hit: file exists and sha256 matches
         if (sha256 != null && Files.exists(cached)) {
+            listener.verifyingCached();
             if (sha256.equalsIgnoreCase(computeSha256(cached))) {
                 return cached;
             }
@@ -95,12 +130,17 @@ public class DownloadCache {
         var tmp = Files.createTempFile(cacheDir, "download-", ".tmp");
         try {
             if (localFile) {
-                Files.copy(Path.of(uri), tmp, StandardCopyOption.REPLACE_EXISTING);
+                var source = Path.of(uri);
+                var size = Files.size(source);
+                listener.received(0, size);
+                Files.copy(source, tmp, StandardCopyOption.REPLACE_EXISTING);
+                listener.received(size, size);
             } else {
-                fetch(uri, url, tmp);
+                fetch(uri, url, tmp, listener);
             }
 
             if (sha256 != null) {
+                listener.verifying();
                 var actual = computeSha256(tmp);
                 if (!sha256.equalsIgnoreCase(actual)) {
                     throw new IOException("SHA-256 mismatch for " + url
@@ -118,7 +158,7 @@ public class DownloadCache {
         }
     }
 
-    private void fetch(URI uri, String url, Path tmp) throws IOException, InterruptedException {
+    private void fetch(URI uri, String url, Path tmp, Listener listener) throws IOException, InterruptedException {
         var client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -128,8 +168,9 @@ public class DownloadCache {
             // Only a 200 body reaches the disk: a redirect or error body is discarded unread, so a
             // server cannot fill the host's disk through responses that never become the download.
             var response = client.send(request, info -> info.statusCode() == 200
-                    ? HttpResponse.BodySubscribers.ofFile(tmp,
-                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)
+                    ? new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                            info.headers().firstValueAsLong("Content-Length").orElse(-1), listener)
                     : HttpResponse.BodySubscribers.replacing(tmp));
             var status = response.statusCode();
             if (status == 200) return;
@@ -154,6 +195,49 @@ public class DownloadCache {
             }
             requireRemote(next, url);
             current = next;
+        }
+    }
+
+    /** Passes the body through to {@code delegate}, reporting the running byte count. */
+    static final class CountingSubscriber<T> implements HttpResponse.BodySubscriber<T> {
+        private final HttpResponse.BodySubscriber<T> delegate;
+        private final long total;
+        private final Listener listener;
+        private long received;
+
+        CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long total, Listener listener) {
+            this.delegate = delegate;
+            this.total = total;
+            this.listener = listener;
+        }
+
+        @Override
+        public CompletionStage<T> getBody() {
+            return delegate.getBody();
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            listener.received(0, total);
+            delegate.onSubscribe(subscription);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> items) {
+            // Counted before the delegate consumes the buffers and leaves them with nothing remaining.
+            for (var item : items) received += item.remaining();
+            delegate.onNext(items);
+            listener.received(received, total);
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            delegate.onError(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            delegate.onComplete();
         }
     }
 

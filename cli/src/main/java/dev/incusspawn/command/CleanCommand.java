@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 
@@ -330,10 +331,15 @@ public class CleanCommand extends BaseCommand {
             IncusClient.PoolUsage usage,
             List<String> failedBuilds,
             List<IncusClient.ImageInfo> unusedImages,
+            List<IncusClient.ImageInfo> baseImages,
             boolean dnfCacheExists
     ) {
         long unusedImagesBytes() {
-            return unusedImages.stream().mapToLong(IncusClient.ImageInfo::size).sum();
+            return totalSize(unusedImages);
+        }
+
+        long baseImagesBytes() {
+            return totalSize(baseImages);
         }
     }
 
@@ -343,12 +349,17 @@ public class CleanCommand extends BaseCommand {
             IncusClient.PoolUsage afterUsage,
             int failedBuildsDeleted,
             int unusedImagesDeleted,
+            int baseImagesDeleted,
             boolean dnfCacheDeleted,
             List<String> warnings
     ) {
         boolean found() {
-            return failedBuildsDeleted > 0 || unusedImagesDeleted > 0 || dnfCacheDeleted;
+            return failedBuildsDeleted > 0 || unusedImagesDeleted > 0 || baseImagesDeleted > 0 || dnfCacheDeleted;
         }
+    }
+
+    static long totalSize(List<IncusClient.ImageInfo> images) {
+        return images.stream().mapToLong(IncusClient.ImageInfo::size).sum();
     }
 
     static List<String> findFailedBuilds(IncusClient incus) {
@@ -360,17 +371,43 @@ public class CleanCommand extends BaseCommand {
         return result;
     }
 
-    static List<IncusClient.ImageInfo> findUnusedImages(IncusClient incus) {
+    /**
+     * Local images split by what deleting them costs. {@code unused} match no template at all.
+     * {@code base} are the base images a template downloads from its {@code image_url} or
+     * {@code vm_image_url}: deleting one is safe, but the next build of that template has to
+     * download it again, so, like the DNF cache, they are only removed on request. An image
+     * behind a template's alias that has no URL to fetch it again is in neither list.
+     */
+    record ImageScan(List<IncusClient.ImageInfo> unused, List<IncusClient.ImageInfo> base) {}
+
+    static ImageScan classifyImages(List<IncusClient.ImageInfo> images, Collection<ImageDef> defs) {
         var knownAliases = new HashSet<String>();
-        for (var def : ImageDef.loadAll().values()) {
+        var downloadedAliases = new HashSet<String>();
+        for (var def : defs) {
             var img = def.getImage();
-            if (img != null && !img.contains(":")) knownAliases.add(img);
+            if (img == null || img.contains(":")) continue;
+            knownAliases.add(img);
+            if (def.getImageUrl() != null) downloadedAliases.add(img);
+            if (def.getVmImageUrl() != null) {
+                knownAliases.add(BuildCommand.vmImageAlias(img));
+                downloadedAliases.add(BuildCommand.vmImageAlias(img));
+            }
         }
         var unused = new ArrayList<IncusClient.ImageInfo>();
-        for (var image : incus.listImages()) {
-            if (image.aliases().stream().noneMatch(knownAliases::contains)) unused.add(image);
+        var base = new ArrayList<IncusClient.ImageInfo>();
+        for (var image : images) {
+            if (image.aliases().stream().anyMatch(downloadedAliases::contains)) base.add(image);
+            else if (image.aliases().stream().noneMatch(knownAliases::contains)) unused.add(image);
         }
-        return unused;
+        return new ImageScan(unused, base);
+    }
+
+    static ImageScan scanImages(IncusClient incus) {
+        return classifyImages(incus.listImages(), ImageDef.loadAll().values());
+    }
+
+    static List<IncusClient.ImageInfo> findUnusedImages(IncusClient incus) {
+        return scanImages(incus).unused();
     }
 
     static CleanScan scanPool(IncusClient incus) {
@@ -379,21 +416,23 @@ public class CleanCommand extends BaseCommand {
 
         var usage = incus.getPoolUsageBytes(pool);
         var failedBuilds = findFailedBuilds(incus);
-        var unusedImages = findUnusedImages(incus);
+        var images = scanImages(incus);
         boolean dnfExists = false;
         try {
             dnfExists = incus.storageVolumeExists(pool, BuildCommand.DNF_CACHE_VOLUME);
         } catch (Exception ignored) {}
-        return new CleanScan(pool, usage, failedBuilds, unusedImages, dnfExists);
+        return new CleanScan(pool, usage, failedBuilds, images.unused(), images.base(), dnfExists);
     }
 
+    /** Remove everything reclaimable, cached base images included. */
     static CleanResult cleanPool(IncusClient incus) {
-        return cleanPool(incus, true, true, true);
+        return cleanPool(incus, true, true, true, true);
     }
 
     static CleanResult cleanPool(IncusClient incus,
                                  boolean deleteFailedBuilds,
                                  boolean deleteUnusedImages,
+                                 boolean deleteBaseImages,
                                  boolean deleteDnfCache) {
         var pool = incus.findCowPool();
         if (pool == null) return null;
@@ -414,18 +453,11 @@ public class CleanCommand extends BaseCommand {
         }
 
         int imagesDeleted = 0;
-        if (deleteUnusedImages) {
-            for (var image : findUnusedImages(incus)) {
-                try {
-                    for (var alias : image.aliases()) {
-                        incus.deleteImageAlias(alias);
-                    }
-                    incus.deleteImage(image.fingerprint());
-                    imagesDeleted++;
-                } catch (Exception e) {
-                    warnings.add("Could not delete image: " + e.getMessage());
-                }
-            }
+        int baseImagesDeleted = 0;
+        if (deleteUnusedImages || deleteBaseImages) {
+            var images = scanImages(incus);
+            if (deleteUnusedImages) imagesDeleted = deleteImages(incus, images.unused(), warnings);
+            if (deleteBaseImages) baseImagesDeleted = deleteImages(incus, images.base(), warnings);
         }
 
         boolean dnfDeleted = false;
@@ -446,10 +478,30 @@ public class CleanCommand extends BaseCommand {
             }
         }
 
-        boolean anyDeleted = failedDeleted > 0 || imagesDeleted > 0 || dnfDeleted;
+        boolean anyDeleted = failedDeleted > 0 || imagesDeleted > 0 || baseImagesDeleted > 0 || dnfDeleted;
         var afterUsage = anyDeleted ? incus.getPoolUsageBytes(pool) : beforeUsage;
         return new CleanResult(pool, beforeUsage, afterUsage,
-                failedDeleted, imagesDeleted, dnfDeleted, warnings);
+                failedDeleted, imagesDeleted, baseImagesDeleted, dnfDeleted, warnings);
+    }
+
+    private static int deleteImages(IncusClient incus, List<IncusClient.ImageInfo> images, List<String> warnings) {
+        int deleted = 0;
+        for (var image : images) {
+            try {
+                deleteImage(incus, image);
+                deleted++;
+            } catch (Exception e) {
+                warnings.add("Could not delete image: " + e.getMessage());
+            }
+        }
+        return deleted;
+    }
+
+    static void deleteImage(IncusClient incus, IncusClient.ImageInfo image) {
+        for (var alias : image.aliases()) {
+            incus.deleteImageAlias(alias);
+        }
+        incus.deleteImage(image.fingerprint());
     }
 
     @CommandDefinition(
@@ -458,6 +510,10 @@ public class CleanCommand extends BaseCommand {
             generateHelp = true
     )
     public static class Pool extends BaseCommand {
+
+        @Option(name = "base-images", hasValue = false,
+                description = "Also remove downloaded base images; the next build of their templates downloads them again")
+        boolean baseImages;
 
         @Option(name = "dry-run", hasValue = false, description = "Show what would be deleted without deleting")
         boolean dryRun;
@@ -481,11 +537,22 @@ public class CleanCommand extends BaseCommand {
             boolean found = false;
 
             found |= cleanFailedBuilds(incus, dryRun, skipConfirmation);
-            found |= cleanUnusedImages(incus, dryRun, skipConfirmation);
+            var images = scanImages(incus);
+            found |= cleanImages(incus, images.unused(), "Unused images", "unused image(s)", dryRun, skipConfirmation);
+            if (baseImages) {
+                found |= cleanImages(incus, images.base(), "Cached base images", "cached base image(s)",
+                        dryRun, skipConfirmation);
+            }
             found |= cleanDnfCacheFromPool(incus, pool, dryRun);
 
             if (!found) {
                 BuildOutput.step("Nothing to clean — no reclaimable artifacts found.");
+            }
+            if (!baseImages && !images.base().isEmpty()) {
+                System.out.println();
+                BuildOutput.note("Kept " + images.base().size() + " cached base image(s) (~"
+                        + formatSize(totalSize(images.base())) + "); pass --base-images to remove them"
+                        + " (the next build downloads them again).");
             }
 
             if (found && !dryRun) {
@@ -526,32 +593,28 @@ public class CleanCommand extends BaseCommand {
             return true;
         }
 
-        private boolean cleanUnusedImages(IncusClient incus, boolean dryRun, boolean skip) {
-            var unused = findUnusedImages(incus);
-            if (unused.isEmpty()) return false;
+        private boolean cleanImages(IncusClient incus, List<IncusClient.ImageInfo> images, String title,
+                                    String noun, boolean dryRun, boolean skip) {
+            if (images.isEmpty()) return false;
 
-            long totalSize = unused.stream().mapToLong(IncusClient.ImageInfo::size).sum();
             System.out.println();
-            BuildOutput.step("Unused images (" + unused.size() + ", ~" + formatSize(totalSize) + "):");
-            for (var image : unused) {
+            BuildOutput.step(title + " (" + images.size() + ", ~" + formatSize(totalSize(images)) + "):");
+            for (var image : images) {
                 BuildOutput.step("  " + image.label() + " (" + formatSize(image.size()) + ")");
             }
 
             if (dryRun) {
-                BuildOutput.note("Would delete " + unused.size() + " unused image(s).");
+                BuildOutput.note("Would delete " + images.size() + " " + noun + ".");
                 return true;
             }
 
-            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + unused.size() + " unused image(s)?", skip, "--skip-confirmation")) {
+            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + images.size() + " " + noun + "?", skip, "--skip-confirmation")) {
                 return true;
             }
 
-            for (var image : unused) {
+            for (var image : images) {
                 try {
-                    for (var alias : image.aliases()) {
-                        incus.deleteImageAlias(alias);
-                    }
-                    incus.deleteImage(image.fingerprint());
+                    deleteImage(incus, image);
                     BuildOutput.step("  Deleted " + image.label());
                 } catch (Exception e) {
                     System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete image: " + e.getMessage());

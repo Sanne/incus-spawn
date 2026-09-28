@@ -759,12 +759,8 @@ public class DoctorCommand extends BaseCommand {
             for (var image : CleanCommand.findUnusedImages(incus)) {
                 findings.add(Finding.warn("Unused image: " + image.label(),
                         CleanCommand.formatSize(image.size()),
-                        new Remediation("Delete image " + image.label(), true, () -> {
-                            for (var alias : image.aliases()) {
-                                incus.deleteImageAlias(alias);
-                            }
-                            incus.deleteImage(image.fingerprint());
-                        })));
+                        new Remediation("Delete image " + image.label(), true,
+                                () -> CleanCommand.deleteImage(incus, image))));
             }
         } catch (Exception ignored) {}
         return findings;

@@ -204,6 +204,7 @@ public class ListCommand extends BaseCommand {
     private CleanCommand.CleanScan cleanScan;
     private CheckboxState cleanBuildsCheck;
     private CheckboxState cleanImagesCheck;
+    private CheckboxState cleanBaseImagesCheck;
     private CheckboxState cleanDnfCheck;
     private int cleanFieldIndex;
     private CleanCommand.CleanResult cleanResult;
@@ -1329,6 +1330,7 @@ public class ListCommand extends BaseCommand {
             } else {
                 cleanBuildsCheck = new CheckboxState(!cleanScan.failedBuilds().isEmpty());
                 cleanImagesCheck = new CheckboxState(!cleanScan.unusedImages().isEmpty());
+                cleanBaseImagesCheck = new CheckboxState(false);
                 cleanDnfCheck = new CheckboxState(false);
                 cleanFieldIndex = cleanConfirmFirstActionableIndex();
                 mode = Mode.CLEAN_CONFIRM;
@@ -3434,14 +3436,16 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            if (!cleanBuildsCheck.isChecked() && !cleanImagesCheck.isChecked() && !cleanDnfCheck.isChecked()) {
+            if (!cleanBuildsCheck.isChecked() && !cleanImagesCheck.isChecked()
+                    && !cleanBaseImagesCheck.isChecked() && !cleanDnfCheck.isChecked()) {
                 mode = Mode.BROWSE;
                 return true;
             }
             progressMessage = "Cleaning pool...";
             tui.draw(frame -> render(frame, tableState));
             try {
-                cleanResult = CleanCommand.cleanPool(incus, cleanBuildsCheck.isChecked(), cleanImagesCheck.isChecked(), cleanDnfCheck.isChecked());
+                cleanResult = CleanCommand.cleanPool(incus, cleanBuildsCheck.isChecked(), cleanImagesCheck.isChecked(),
+                        cleanBaseImagesCheck.isChecked(), cleanDnfCheck.isChecked());
             } catch (Exception e) {
                 progressMessage = null;
                 statusMessage = "Clean failed: " + e.getMessage();
@@ -3460,29 +3464,33 @@ public class ListCommand extends BaseCommand {
         return true;
     }
 
+    /** Rows of the pool-cleanup modal: failed builds, unused images, cached base images, DNF cache. */
+    private static final int CLEAN_CATEGORIES = 4;
+
     private boolean cleanConfirmIsActionable(int index) {
         return switch (index) {
             case 0 -> !cleanScan.failedBuilds().isEmpty();
             case 1 -> !cleanScan.unusedImages().isEmpty();
-            case 2 -> cleanScan.dnfCacheExists();
+            case 2 -> !cleanScan.baseImages().isEmpty();
+            case 3 -> cleanScan.dnfCacheExists();
             default -> false;
         };
     }
 
     private int cleanConfirmActionableCount() {
         int count = 0;
-        for (int i = 0; i < 3; i++) if (cleanConfirmIsActionable(i)) count++;
+        for (int i = 0; i < CLEAN_CATEGORIES; i++) if (cleanConfirmIsActionable(i)) count++;
         return count;
     }
 
     private int cleanConfirmFirstActionableIndex() {
-        for (int i = 0; i < 3; i++) if (cleanConfirmIsActionable(i)) return i;
+        for (int i = 0; i < CLEAN_CATEGORIES; i++) if (cleanConfirmIsActionable(i)) return i;
         return -1;
     }
 
     private int cleanConfirmNextActionable(int current, int direction) {
-        for (int step = 1; step <= 3; step++) {
-            int next = (current + direction * step % 3 + 3) % 3;
+        for (int step = 1; step <= CLEAN_CATEGORIES; step++) {
+            int next = (current + direction * step % CLEAN_CATEGORIES + CLEAN_CATEGORIES) % CLEAN_CATEGORIES;
             if (cleanConfirmIsActionable(next)) return next;
         }
         return current;
@@ -3493,7 +3501,8 @@ public class ListCommand extends BaseCommand {
         return switch (index) {
             case 0 -> () -> cleanBuildsCheck.toggle();
             case 1 -> () -> cleanImagesCheck.toggle();
-            case 2 -> () -> cleanDnfCheck.toggle();
+            case 2 -> () -> cleanBaseImagesCheck.toggle();
+            case 3 -> () -> cleanDnfCheck.toggle();
             default -> null;
         };
     }
@@ -3511,9 +3520,7 @@ public class ListCommand extends BaseCommand {
             constraints.add(Constraint.length(1));
             constraints.add(Constraint.length(1));
         }
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
-        constraints.add(Constraint.length(1));
+        for (int i = 0; i < CLEAN_CATEGORIES; i++) constraints.add(Constraint.length(1));
         if (nothingActionable) {
             constraints.add(Constraint.length(1));
             constraints.add(Constraint.length(1));
@@ -3562,9 +3569,17 @@ public class ListCommand extends BaseCommand {
         } else {
             modal.renderDisabledLine(frame, rows.get(row++), "Unused images", "all match a template");
         }
+        if (!cleanScan.baseImages().isEmpty()) {
+            var n = cleanScan.baseImages().size();
+            var size = CleanCommand.formatSize(cleanScan.baseImagesBytes());
+            modal.renderToggle(frame, rows.get(row++), "Cached base images (" + n + ", ~" + size + ")",
+                    cleanBaseImagesCheck, cleanFieldIndex == 2);
+        } else {
+            modal.renderDisabledLine(frame, rows.get(row++), "Cached base images", "none downloaded");
+        }
         if (cleanScan.dnfCacheExists()) {
             modal.renderToggle(frame, rows.get(row++), "DNF build cache",
-                    cleanDnfCheck, cleanFieldIndex == 2);
+                    cleanDnfCheck, cleanFieldIndex == 3);
         } else {
             modal.renderDisabledLine(frame, rows.get(row++), "DNF build cache", "no cache volume");
         }
@@ -3617,6 +3632,10 @@ public class ListCommand extends BaseCommand {
             if (cleanResult.unusedImagesDeleted() > 0) {
                 lines.add(cleanCheckLine("Deleted " + cleanResult.unusedImagesDeleted()
                         + " unused image" + (cleanResult.unusedImagesDeleted() > 1 ? "s" : "")));
+            }
+            if (cleanResult.baseImagesDeleted() > 0) {
+                lines.add(cleanCheckLine("Deleted " + cleanResult.baseImagesDeleted()
+                        + " cached base image" + (cleanResult.baseImagesDeleted() > 1 ? "s" : "")));
             }
             if (cleanResult.dnfCacheDeleted()) {
                 lines.add(cleanCheckLine("Deleted DNF cache volume"));

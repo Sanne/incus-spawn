@@ -11,6 +11,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -93,8 +94,13 @@ class DownloadCacheTest {
     void baseImagesMayUseLocalFiles(@TempDir Path tempDir) throws IOException {
         var image = Files.writeString(tempDir.resolve("image.tar.xz"), "image");
         var cache = new DownloadCache(tempDir.resolve("cache"));
-        var result = cache.downloadAllowingLocalFile(image.toUri().toString(), DownloadCache.computeSha256(image));
+        var listener = new RecordingListener();
+        var result = cache.downloadAllowingLocalFile(image.toUri().toString(), DownloadCache.computeSha256(image),
+                listener);
         assertEquals("image", Files.readString(result));
+        // A fresh copy is reported like a download, so it is not announced as a cache hit.
+        assertEquals(List.of("received", "verifying"), listener.events);
+        assertEquals(5, listener.lastBytes);
     }
 
     @Test
@@ -164,6 +170,71 @@ class DownloadCacheTest {
 
             e = assertThrows(IOException.class, () -> cache.download(base + "/loop", null));
             assertTrue(e.getMessage().contains("redirects"), e.getMessage());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** Records what a download reported, in order. */
+    private static final class RecordingListener implements DownloadCache.Listener {
+        final List<String> events = new ArrayList<>();
+        long lastBytes = -1;
+        long lastTotal;
+
+        @Override
+        public void verifyingCached() {
+            events.add("verifyingCached");
+        }
+
+        @Override
+        public void received(long bytes, long total) {
+            if (events.isEmpty() || !events.get(events.size() - 1).equals("received")) events.add("received");
+            lastBytes = bytes;
+            lastTotal = total;
+        }
+
+        @Override
+        public void verifying() {
+            events.add("verifying");
+        }
+    }
+
+    @Test
+    void progressReportsBytesAgainstContentLength(@TempDir Path cacheDir) throws IOException {
+        var body = "y".repeat(200_000).getBytes(StandardCharsets.UTF_8);
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/sized", ex -> {
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        server.createContext("/chunked", ex -> {
+            ex.sendResponseHeaders(200, 0); // no Content-Length
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        server.start();
+        try {
+            var base = "http://127.0.0.1:" + server.getAddress().getPort();
+            var cache = new DownloadCache(cacheDir, uri -> false);
+            var sha256 = DownloadCache.computeSha256(Files.write(cacheDir.resolveSibling("expected"), body));
+
+            var sized = new RecordingListener();
+            cache.downloadAllowingLocalFile(base + "/sized", sha256, sized);
+            assertEquals(List.of("received", "verifying"), sized.events);
+            assertEquals(body.length, sized.lastBytes);
+            assertEquals(body.length, sized.lastTotal);
+
+            var chunked = new RecordingListener();
+            cache.downloadAllowingLocalFile(base + "/chunked", null, chunked);
+            assertEquals(List.of("received"), chunked.events, "no checksum, so nothing to verify");
+            assertEquals(body.length, chunked.lastBytes);
+            assertEquals(-1, chunked.lastTotal);
+
+            // The checksum matches the cached copy now: verified, never fetched.
+            var hit = new RecordingListener();
+            cache.downloadAllowingLocalFile(base + "/sized", sha256, hit);
+            assertEquals(List.of("verifyingCached"), hit.events);
         } finally {
             server.stop(0);
         }

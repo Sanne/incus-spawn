@@ -2480,7 +2480,7 @@ class BuildCommandTest {
         when(incus.importImage(tarball)).thenReturn("genuine");
         when(incus.imagePropertyOrThrow("genuine", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn("");
         var cache = mock(dev.incusspawn.tool.DownloadCache.class);
-        when(cache.downloadAllowingLocalFile(anyString(), any())).thenReturn(tarball);
+        when(cache.downloadAllowingLocalFile(anyString(), any(), any())).thenReturn(tarball);
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         doReturn(cache).when(cmd).newDownloadCache();
@@ -2503,7 +2503,7 @@ class BuildCommandTest {
         // setImageProperty fails silently; the read-back shows no stamp.
         when(incus.imagePropertyOrThrow("fp", BuildCommand.IMAGE_PROJECT_PROPERTY)).thenReturn(null);
         var cache = mock(dev.incusspawn.tool.DownloadCache.class);
-        when(cache.downloadAllowingLocalFile(anyString(), any())).thenReturn(tarball);
+        when(cache.downloadAllowingLocalFile(anyString(), any(), any())).thenReturn(tarball);
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         doReturn(cache).when(cmd).newDownloadCache();
@@ -2512,6 +2512,57 @@ class BuildCommandTest {
                 "https://example.com/img.tar.xz", null, "v1", projectLocal("tpl-proj", Path.of("/work/repo"))));
         verify(incus).deleteImage("fp");
         verify(incus, never()).createImageAlias(any(), any());
+    }
+
+    @Test
+    void baseImageDownloadFailureNamesTheUrl() throws Exception {
+        var incus = mock(IncusClient.class);
+        var cache = mock(dev.incusspawn.tool.DownloadCache.class);
+        when(cache.downloadAllowingLocalFile(anyString(), any(), any()))
+                .thenThrow(new java.io.IOException("Connection reset"));
+        var cmd = spy(new BuildCommand());
+        cmd.incus = incus;
+        doReturn(cache).when(cmd).newDownloadCache();
+
+        var e = assertThrows(RuntimeException.class, () -> cmd.downloadAndAliasImage("fedora-44-base",
+                "https://example.com/fedora.tar.xz", null, "v1", trusted("tpl-minimal")));
+        assertTrue(e.getMessage().contains("https://example.com/fedora.tar.xz"), e.getMessage());
+        assertTrue(e.getMessage().contains("Connection reset"), e.getMessage());
+        verify(incus, never()).importImage(any());
+    }
+
+    @Test
+    void transferShowsPercentRateAndTimeLeft() {
+        long mb = 1024 * 1024;
+        assertEquals("25%  100.0 MB / 400.0 MB  10.0 MB/s  30s left",
+                BuildCommand.describeTransfer(100 * mb, 400 * mb, 10_000_000_000L));
+        // Without a Content-Length there is no percentage or estimate.
+        assertEquals("100.0 MB  10.0 MB/s", BuildCommand.describeTransfer(100 * mb, -1, 10_000_000_000L));
+        // Within the first second the rate is not yet meaningful.
+        assertEquals("0%  64.0 KB / 400.0 MB", BuildCommand.describeTransfer(64 * 1024, 400 * mb, 200_000_000L));
+    }
+
+    @Test
+    void durationsReadAtAGlance() {
+        assertEquals("42s", BuildCommand.formatDuration(42_000_000_000L));
+        assertEquals("5m 07s", BuildCommand.formatDuration(307_000_000_000L));
+        assertEquals("1h 03m", BuildCommand.formatDuration(3_780_000_000_000L));
+    }
+
+    @Test
+    void transferProgressDescribesEachPhase() {
+        var progress = new BuildCommand.TransferProgress();
+        assertEquals("connecting", progress.detail());
+        progress.received(1024, 4096);
+        assertTrue(progress.detail().startsWith("25%  1.0 KB / 4.0 KB"), progress.detail());
+        assertTrue(progress.fetched());
+        progress.verifying();
+        assertEquals("verifying checksum", progress.detail());
+
+        var cached = new BuildCommand.TransferProgress();
+        cached.verifyingCached();
+        assertEquals("verifying cached copy", cached.detail());
+        assertFalse(cached.fetched());
     }
 
     @Test
