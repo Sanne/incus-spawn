@@ -95,12 +95,12 @@ The proxy also caches container image layers and build artifacts on the host —
 
 ### Git Configuration
 
-Containers need a git identity (`user.name` and `user.email`) for commits. When a GitHub PAT is configured, the `gh` tool automatically generates a functional `.gitconfig` -- it queries the GitHub API for `user.name` and `user.email` (preferring the account's `@users.noreply.github.com` noreply address) and sets sensible defaults (`push.default`, `pull.ff`, common aliases). This works out of the box with no extra configuration. You choose whose PAT to use:
+With a GitHub PAT configured, containers get a ready-made `.gitconfig` with your GitHub name and email (the private `@users.noreply.github.com` address when there is one) and sensible defaults.
 
-- **Dedicated agent account (recommended)** -- create a separate GitHub account for your agents and provide its PAT during `isx init`. This keeps agent commits clearly attributed, gives the agent its own identity for PR authorship and review workflows, and lets you scope repository permissions independently from your personal account.
-- **Your personal account** -- provide your own PAT. If you also want your aliases and other settings, mount `~/.gitconfig` as a [host resource](#host-resources) -- it takes precedence over the auto-generated config.
+- **Dedicated agent account (recommended)**: give `isx init` the PAT of a separate GitHub account, so the agent's commits and PRs are clearly its own.
+- **Your personal account**: use your own PAT. To bring your aliases and settings along, mount `~/.gitconfig` as a [host resource](#host-resources); it takes precedence over the generated config.
 
-**Commit signing.** Containers do not currently support signing commits. To produce signed commits, fetch the changes to your host via [git remotes](#git-remotes) and rebase there -- the host's signing configuration (GPG or SSH) applies automatically during the rebase. Native container-side signing is tracked in [#271](https://github.com/Sanne/incus-spawn/issues/271).
+**Commit signing** isn't supported inside containers yet. To sign, fetch the changes to your host through [git remotes](#git-remotes) and rebase there ([#271](https://github.com/Sanne/incus-spawn/issues/271)).
 
 ## Branching
 
@@ -237,10 +237,10 @@ You can also define a custom root image (no `parent`) by specifying `image`, `im
 
 Image schema fields (all optional except `name`):
 - `image` -- base OS image, only for root images (default: `images:fedora/44`)
-- `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders). `file://` is accepted here for testing locally built images, but a project-local template may only point inside its project. Loopback and link-local hosts are refused, as for tool downloads
+- `image_url` -- download URL for the base image tarball (supports `{arch}` and `{tag}` placeholders; `file://` works for testing a locally built image)
 - `image_tag` -- release tag identifying the base image version
 - `image_sha256` -- per-architecture SHA256 checksums for integrity verification
-- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is not a VM: it is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (branches get the passthrough unless created with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
+- `type` -- instance type: `container` (default), `vm`, or `kvm`. VMs use a separate kernel for hardware-level isolation. `kvm` is a container with the host's `/dev/kvm` passed through, so it can run VMs of its own (skip it per branch with `--no-kvm`). Inherits from parent -- a child without `type` inherits its parent's type
 - `vm_image_url` -- download URL for the VM base image (qcow2 tarball). Only used when `type` is `vm`. Supports `{arch}` and `{tag}` placeholders
 - `vm_image_sha256` -- per-architecture SHA256 checksums for the VM base image
 - `parent` -- parent image name (omit for root images)
@@ -371,11 +371,11 @@ tools:
 default-action: codex
 ```
 
-Codex requires an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts). Run `isx init` to configure it — the real key stays on the host and the [MITM proxy](#credential-isolation) injects it into requests to `api.openai.com`. The container only ever holds a `sk-placeholder` value in `OPENAI_API_KEY` and `~/.codex/auth.json`.
+Codex needs an OpenAI API key ([create one here](https://platform.openai.com/api-keys); API usage needs billing credits, even on free accounts). Run `isx init` to configure it: the key stays on the host and the [MITM proxy](#credential-isolation) injects it.
 
-The build configures Codex for unattended use (`approval_policy = "never"`, full filesystem access, API login, no update checks) and marks the template's repo directories as trusted. The default action resumes the most recent session in its original working directory, falling back to a fresh session.
+The build configures Codex for unattended use and trusts the template's repos. The default action resumes your most recent session.
 
-To pick a model and reasoning effort:
+To pin a model or reasoning effort (by default Codex picks both):
 
 ```yaml
 tools:
@@ -384,9 +384,7 @@ tools:
       effort: high
 ```
 
-Both are optional, and omitting them is the normal case: isx leaves the corresponding keys out of `~/.codex/config.toml` entirely, so Codex uses whatever model and effort it picks for your account. Set them when you want something specific pinned to a template.
-
-`model` takes any slug Codex accepts — the Codex-tuned `gpt-5.3-codex`, its low-latency `gpt-5.3-codex-spark` variant, or a general-purpose model. Which ones you can actually use depends on what your OpenAI account has access to ([model list](https://platform.openai.com/docs/models)); isx passes the name through without validating it beyond its shape. `effort` maps to `model_reasoning_effort` and accepts `minimal`, `low`, `medium`, `high`, and `xhigh`, though which of them a given model honours is up to the model. Both parameters are reconfigurable: changing them in a child template rewrites the config without reinstalling Codex.
+`model` is any model your OpenAI account can use ([model list](https://platform.openai.com/docs/models)); `effort` is `minimal`, `low`, `medium`, `high` or `xhigh`.
 
 ### Pi Coding Agent
 
@@ -416,7 +414,7 @@ tools:
       model: gpt-5.3
 ```
 
-`provider` defaults to `anthropic` and also accepts `vertex`/`google`; `model` defaults to `claude-sonnet-4-6`. Both are reconfigurable, and the credential check follows the provider — a template with `provider: openai` asks for an OpenAI key rather than an Anthropic one.
+`provider` defaults to `anthropic` and also accepts `vertex`/`google`; `model` defaults to `claude-sonnet-4-6`.
 
 ### Bob Shell
 
@@ -491,13 +489,9 @@ To find available skills, browse [skills.sh](https://skills.sh).
 
 ### Agent Environment Context
 
-Every build writes a short primer to `/etc/claude-code/CLAUDE.md` inside the image. Claude Code loads it at the start of every session, so an agent begins already aware of the environment it is running in. The file is regenerated on each build from the fully resolved template, so it stays in step with what was actually installed.
+Every build writes a short primer to `/etc/claude-code/CLAUDE.md`, so Claude Code starts each session knowing where it is: the box is disposable, `sudo` needs no password, credentials are handled by the proxy, and outward-facing actions such as opening a PR wait until asked. It also lists the tools and repositories the template provides. Your own `~/.claude/CLAUDE.md` and project `CLAUDE.md` files load as usual.
 
-The primer covers the facts that hold in any instance: the box is disposable, `sudo` needs no password, credentials for proxied services are held by the MITM proxy rather than stored in the box, and outward-facing actions such as opening a pull request are not taken unless asked for. It also lists the tools and repositories the template already provides, so an agent does not reinstall or re-clone them.
-
-This is the managed policy layer, which Claude Code reads in addition to `~/.claude/CLAUDE.md` and any project `CLAUDE.md`. All layers load together, and `isx` never reads, modifies, or overwrites the other two.
-
-Templates and tools can contribute their own content with `agent_note`:
+Templates and tools can add their own lines with `agent_note`:
 
 ```yaml
 name: tpl-openjdk
@@ -507,17 +501,7 @@ agent_note: |
   deliberately omits 25.
 ```
 
-A tool's note travels with the tool, so any template installing it inherits the note:
-
-```yaml
-name: jtreg
-description: OpenJDK regression test harness
-agent_note: |
-  configure has no env auto-detect for jtreg -- `--with-jtreg=/opt/jtreg` is the
-  only way to wire it in.
-```
-
-Tools can also ship `skills`, installed with the tool and inherited the same way. Use the two together when a tool is worth reaching for but non-obvious to drive: the note is the one line that gets it picked up, the skill carries the procedure and loads only when it is relevant.
+A tool's note, and any `skills` it ships, come along to every template that installs the tool. Bare skill names in a tool resolve against the tool's own `skills.repo`:
 
 ```yaml
 name: mvnd
@@ -531,11 +515,9 @@ skills:
     - mvnd-builds
 ```
 
-Bare skill names in a tool resolve against that tool's own `skills.repo`, not the image's -- the tool travels into templates that have never heard of its catalog. Most tools need neither field; `zmx` and `starship` are not things an agent has to know about.
-
 #### When to write a note
 
-A note costs tokens in every session, and the agent follows it in every session -- including tasks it was not written for. Add one only when leaving it out would cause a wrong action: a flag that must be set, a version that must not be used, an action that must not be taken, or a failure whose obvious fix is the wrong one.
+Notes are read in every session, so save them for things an agent would otherwise get wrong: a required flag, a version to avoid, an "obvious" fix that isn't. Be specific:
 
 ```yaml
 agent_note: |
@@ -543,8 +525,6 @@ agent_note: |
   /usr/lib64/ccache/gcc being a symlink; dropping --enable-ccache "fixes" it and
   silently costs every later rebuild.
 ```
-
-Write them after seeing an agent get something wrong -- the examples above all come from real failures. A guessed note wastes context, and a wrong one is still obeyed.
 
 Some content is better placed elsewhere:
 
@@ -556,9 +536,7 @@ Some content is better placed elsewhere:
 | `agent_note: Be careful when editing the parser` | A specific constraint, or nothing at all |
 | `agent_note: Follow the Quarkus code style` | The repository's own `CLAUDE.md`, which applies only to work in that repo |
 
-Be specific: "Run configure with `CC=/usr/bin/gcc`" rather than "watch out for compiler wrappers".
-
-Editing an `agent_note` changes the fingerprint and triggers a rebuild, so a stale note never stays baked into an image. Editing a tool's note marks every template installing that tool as out of sync, so all of them rebuild.
+Changing a note marks the templates that use it as out of sync (`△` in the TUI); rebuild them with `isx build --out-of-sync`.
 
 ### Host Resources
 
@@ -585,13 +563,13 @@ Three modes are available:
 | `overlay` | No | Read-only lower layer from host + ephemeral writable upper in the container. Tools see a normal read-write directory. Host is fully protected. **Linux only** — not yet supported on macOS. |
 | `copy` | No | Copied into the container at build time. Becomes part of the template. Also supports URL sources. |
 
-`readonly` and `overlay` resources are attached before the instance boots, so they may not be mounted into system directories: `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/boot`, `/var`, `/run`, `/tmp`, `/proc`, `/sys` and `/dev` are rejected at build time (use `/home/agentuser`, `/opt`, `/srv` or `/mnt`, or `mode: copy` to place a file there). Templates built before this rule can no longer be branched until they are fixed and rebuilt.
+`readonly` and `overlay` resources can't be mounted into system directories such as `/`, `/etc`, `/usr`, `/var` or `/tmp`. Use `/home/agentuser`, `/opt`, `/srv` or `/mnt` instead, or `mode: copy`.
 
 If `path` is omitted, it defaults to the same relative path under `/home/agentuser/`. Missing host paths are skipped with a warning, so templates remain portable. Host resources compose across the parent chain, with child entries overriding parent entries matched by container path.
 
-**Project-local templates** (`.incus-spawn/images/`) arrive with whatever repository you cloned, so their host-resources may only reference paths inside that project directory (relative paths resolve against it). `~/…`, absolute paths elsewhere, `..`, and symlinks leading out of the project are rejected at build time. The same applies to a `file://` `image_url`/`vm_image_url`. A project-local template also cannot replace a local base image it did not import itself (so it cannot swap the image your own templates build on), and its `repos` are always cloned from the network: host checkouts are never mounted into its build, and it never triggers host-side clones. For `copy` mode this also covers symlinks inside a copied directory. To give a template you trust access to other host paths, move it to `~/.config/incus-spawn/images/` or a configured search path.
+**Project-local templates** (`.incus-spawn/images/`) come from whatever repository you cloned, so they can't reach outside it: host resources and `file://` images must point inside the project directory, and their `repos` are always cloned from the network, never from your host checkouts. To give a template you trust wider access, move it to `~/.config/incus-spawn/images/`.
 
-**VM note:** VMs mount disk devices via virtiofs. isx attaches host resources before the instance boots, so they are mounted by the time anything runs inside and don't use up the VM's 8 hot-plug slots. File-level host resources (single files rather than directories) automatically fall back to `copy` mode on VMs, since Incus disk devices only support directory mounts for VMs.
+**VMs** mount host resources via virtiofs. Single-file resources fall back to `copy` mode, since VMs only mount directories.
 
 ## Built-in Tools
 
@@ -658,7 +636,7 @@ Tool schema fields (all optional except `name`):
 - `proxy` -- credential injection rules for the MITM proxy (see [Proxy Credentials](#proxy-credentials))
 
 Download entry fields:
-- `url` (required) -- `http://` or `https://` download URL. Downloads run on the host, so `file://` URLs and hosts that resolve to loopback or link-local addresses (`localhost`, `127.0.0.1`, `169.254.169.254`, ...) are refused, including when a redirect leads to one
+- `url` (required) -- `http://` or `https://` download URL (local addresses such as `localhost` are refused)
 - `sha256` (recommended) -- SHA-256 checksum; enables cache reuse and verifies integrity
 - `extract` (optional) -- directory in the container to extract into
 - `destination_file` (optional) -- exact path at which to expose the downloaded file in the container; `~/` resolves to `/home/agentuser/`
@@ -921,7 +899,7 @@ actions:
 
 ## Caching
 
-The proxy and build system cache artifacts on the host, shared across all templates and branches. Only content that can be checked is cached, and only from public repositories — repository metadata, Maven SNAPSHOTs and version listings always pass through uncached. Every artifact is verified against its content digest or upstream checksum before being committed to the cache; mismatches are discarded and re-fetched.
+The proxy and build system cache downloads on the host, shared by all templates and branches. Only content that can be verified is cached; everything is checked against its digest or upstream checksum before it's stored.
 
 Proxy caches (from container traffic):
 
@@ -934,15 +912,17 @@ How recently a cached Maven or Gradle artifact must have been confirmed with ups
 ```yaml
 artifact-cache:
   fresh: 2h        # durations: 30m, 2h, 7d ...
-  max-stale: 7d    # set both to 0 to confirm every hit before serving it
+  max-stale: 7d
 ```
+
+Setting both to `0` confirms every hit before serving it. This is not recommended: Maven Central does not allow published artifacts to change, so it only adds latency.
 
 Build-time caches:
 
-- **DNF packages** — host-side cache mounted during builds so child images reuse parent downloads
-- **Tool downloads** — cached on the host by SHA256; rebuilds reuse unchanged artifacts
+- **DNF packages**, shared by every build, so builds reuse each other's downloads
+- **Tool downloads**, reused by rebuilds
 
-All caches live under `~/.cache/incus-spawn/`. Nothing is evicted for age or size. Content-addressed entries (image layers, tool downloads) are correct forever. A Maven or Gradle artifact is evicted as soon as a confirmation finds that upstream has a different checksum or has withdrawn it.
+All caches live under `~/.cache/incus-spawn/`. Nothing expires by age or size; an artifact is dropped only when upstream changes or withdraws it.
 
 ## Roadmap
 
@@ -995,11 +975,7 @@ jbang app install isx@Sanne/incus-spawn
 jbang app install isx-proxy@Sanne/incus-spawn
 ```
 
-Both aliases are required: the proxy runs as its own process and the CLI cannot serve it in-process,
-so an `isx`-only install fails at `isx init` with instructions to add the second alias. JBang puts
-both wrappers in `~/.jbang/bin/`, where `isx` finds `isx-proxy` as a sibling. Requires `jbang` to
-stay on your PATH — the proxy service inherits the PATH it was installed with, and the wrapper
-re-resolves its alias through `jbang` on every run. To update, re-run both commands.
+Both are needed, and `jbang` must stay on your PATH. To update, re-run both commands.
 
 <!-- tabs:end -->
 
@@ -1014,9 +990,7 @@ re-resolves its alias through `jbang` on every run. To update, re-run both comma
 
 ### Credential accounts
 
-A credential can be configured several times under different names, and different instances can
-use different ones -- useful when the subscription or identity you should be spending depends on
-which client the work is for.
+You can configure a credential more than once under different names, for example a personal and a client Claude subscription, or two GitHub identities, and choose which one each instance uses. You can even switch a running instance to another account, with no restart.
 
 ```yaml
 claude:
@@ -1039,15 +1013,13 @@ github:
   default: personal
 ```
 
-You don't need to write this by hand: `isx init` adds, replaces, renames and removes accounts, and
-chooses the default, for Claude, GitHub and any credential a tool declares. A credential configured
-before accounts existed appears as the account `default`.
+You don't need to write this by hand: `isx init` adds, renames and removes accounts and sets the default. Re-run it any time to change them.
 
-Which account an instance uses is decided in three layers, the most specific winning:
+An instance uses, most specific first:
 
-1. the credential's `default` in `config.yaml`;
-2. the template's `accounts:`, merged key by key down its parent chain;
-3. the instance's own choice: `isx branch --account`, `isx account set`, or **a** in the TUI.
+1. its own choice: `isx branch --account`, `isx account set`, or **a** in the TUI;
+2. its template's `accounts:`;
+3. the credential's `default`.
 
 ```yaml
 name: tpl-acme
@@ -1057,14 +1029,9 @@ accounts:
   github: acme-bot
 ```
 
-A template's choice is copied onto each instance when it is branched. Editing `accounts:` later
-changes future branches, not existing ones -- running work is never re-pointed behind your back --
-and `isx account show` points out an instance that no longer matches its template. A template
-itself picks up the change when it is rebuilt.
+When you branch from a template, the new instance takes the template's account choices and keeps them. Editing `accounts:` later only affects instances branched after that.
 
 #### Example: keeping a client's work on the client's accounts
-
-With the configuration and template above:
 
 ```shell
 isx build tpl-acme
@@ -1082,72 +1049,22 @@ acme-42 (branched from tpl-acme):
           Pinned by template tpl-acme's accounts: setting, copied onto this instance when it was branched.
 ```
 
-Everything in `acme-42` -- Claude Code, `gh`, `git push`, commits -- now runs as Acme's accounts,
-while instances branched from other templates keep using your own. For a one-off, override a
-single instance instead: `isx branch review-1 --account github=acme-bot`.
+Everything in `acme-42` now runs as Acme's accounts. For a one-off, choose per branch: `isx branch review-1 --account github=acme-bot`.
 
-#### Inspecting and changing an instance's accounts
+#### Managing an instance's accounts
 
 ```shell
-isx account list                        # accounts per credential, and which instances pin each
+isx account list                        # accounts, and which instances use each
 isx account show review-1               # what review-1 uses, and why
 isx account set review-1 github=acme-bot
 isx account unset review-1 github       # follow the default again
 ```
 
-In the TUI, **F3** on an instance shows the same as `isx account show`, and **a** changes it. The
-branch dialog (**F4**) has a dropdown per credential the template uses, when there is more than one
-account to choose from: its first entry, *inherit*, is what the branch gets with no override -- the
-template's choice, or the global default, which the branch then keeps following -- and every account
-below it pins the branch to that account, the default included.
+In the TUI, **F3** on an instance shows its accounts and **a** changes them. The branch dialog (**F4**) lets you pick accounts too.
 
-`show` says in words where each account comes from. An instance is either *pinned* to an account,
-and keeps it whatever the global default becomes, or *not pinned*, in which case it uses the global
-default (`<ns>.default` in `config.yaml`) and changes account when that default is changed. A pin is
-always stored on the instance, and isx records who chose it: the template's `accounts:` (copied when
-the instance was branched), an explicit choice for the instance (`--account`, `isx account set`, the
-TUI), or an explicit choice on the instance it was branched from. Pinning the account that happens to
-be the default is therefore not the same as following it, which is why `unset` exists.
+Changes take effect on the instance's next request, with no restart, and switching GitHub accounts also updates its git identity. The exception is switching between Claude auth modes (Pro/Max, API key, Vertex), which needs a template built for that mode ([#866](https://github.com/Sanne/incus-spawn/issues/866)).
 
-Selections are always written `<namespace>=<account>`, where the namespace is the credential's
-section in `config.yaml` (`claude`, `github`, and any namespace a tool declares). Pass `--account`
-more than once to set several.
-
-Because credentials live in the proxy and never inside the container, re-pointing a running
-instance takes effect on its next request -- nothing inside needs restarting. Re-pointing a
-GitHub account also refreshes the container's git identity (`user.name`, `user.email`), so commits
-are authored by the account whose token pushes them.
-
-Moving *between Claude auth modes* (Pro/Max OAuth, API key, Vertex) is the one exception: the
-mode is written into the container's environment when the template is built and a running agent
-has already read it, so isx refuses that swap and tells you which kind of template to branch from
-instead. Keep one template per mode you use, as `tpl-acme` above does for Vertex
-([#866](https://github.com/Sanne/incus-spawn/issues/866) tracks lifting this).
-
-#### Changing the global default
-
-Every instance that is not pinned for a credential follows its global default, so changing the
-default moves all of them to the new account on their next request. `isx init` names those
-instances before it changes anything, and lets you switch them (Enter), keep them on the account
-they use now by pinning it for them (`k`), or cancel (`c`). Running instances that switch get
-their git identity updated straight away. `isx account list` shows which instances follow each
-default.
-
-When `config.yaml` is edited by hand, nothing can ask first: the proxy logs which instances
-moved. An instance that follows a default of another Claude auth mode than it was built for is
-refused its Claude requests -- with a message naming an account to pin it to -- rather than
-served a credential its environment does not match; its other credentials keep working.
-`isx doctor` and `isx account show` report instances in that state.
-
-#### Removing and renaming accounts
-
-If an instance is pinned to an account that has since been renamed or removed, its requests fail
-with a message saying so -- isx will not quietly spend a different account. To avoid getting there,
-`isx init` lists the instances pinned to an account, and the templates naming it, before removing
-it, and asks first. Renaming an account in `isx init` re-points the instances pinned to it; the
-templates that name it are listed for you to update, since their YAML is yours. `isx account list`,
-`isx account show` and `isx doctor` all report instances left pinned to a missing account; fix one
-with `isx account set` or `isx account unset`.
+Changing a default moves every instance that follows it; `isx init` lists them first and lets you keep them where they are. Renaming an account in `isx init` updates the instances using it, and removing one tells you what still uses it. An instance left pointing at a missing account stops working rather than using another one; `isx doctor` and `isx account show` point these out.
 
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
@@ -1171,7 +1088,7 @@ Resolution order (later sources override earlier ones with the same name):
 3. Search paths (in listed order)
 4. Project-local (`.incus-spawn/`)
 
-The TUI keeps itself current by following Incus's event stream, so instances started, stopped, created or deleted elsewhere show up without pressing `r`. If the stream can't be kept open it falls back to refreshing every 60 seconds. To turn automatic refreshing off entirely:
+The TUI updates live as instances are started, stopped, created or deleted elsewhere. To turn this off:
 
 ```yaml
 tui-live-refresh: false
@@ -1488,21 +1405,9 @@ Diagnose host, proxy, VM, and tunnel health; offers to fix problems found.
 | `--deep` | Run per-instance checks (DNS, TLS, resolv.conf) |
 | `--bundle` | Collect findings and logs into a support archive (.tar.gz); implies `--deep` |
 
-Findings are marked `✓` (healthy), `⚠` (worth a look), `✗` (broken), or `·` — a neutral note
-about your setup that nothing is waiting on. Credentials you have not configured are reported
-as a note when no template of yours uses the tool, and as a warning when one does. Notes never
-affect the exit code, so `isx doctor` still exits 0 when the only findings are notes.
+Findings are marked `✓` healthy, `⚠` worth a look, `✗` broken, or `·` for a note. Notes don't affect the exit code.
 
-The bundle is meant to be attached to a GitHub issue. Credentials are removed before
-anything is written: values in `config.yaml` are replaced by a marker naming the key
-(`<isx:redacted:github.token>`), and the logs are scrubbed for those same values plus
-well-known token shapes. A key that is genuinely unset stays empty, so an empty value and a
-removed one remain distinguishable. `REDACTIONS.txt` inside the archive lists what was
-withheld, and `README.txt` explains each file.
-
-Which keys count as secrets is not a list in the code: every tool declares its own
-credentials in its proxy definition (`secret: true`), and redaction follows those
-declarations — including tools you define yourself under `~/.config/incus-spawn/tools/`.
+`--bundle` creates an archive to attach to a GitHub issue. Credentials are redacted before anything is written, and `REDACTIONS.txt` in the archive lists what was removed.
 
 ### `isx clean`
 
@@ -1527,22 +1432,7 @@ All subcommands accept these options:
 
 ### `isx reset`
 
-Return incus-spawn to a freshly-installed state. The command surveys your system,
-shows a detailed plan of what will be removed, and asks for confirmation before proceeding.
-
-It removes everything incus-spawn manages:
-
-- **Containers and templates** — all instances (branches) and built templates in the
-  Incus storage pool, plus any failed builds, unused and cached base images, and the DNF cache volume.
-- **Proxy service** — stops and uninstalls the systemd/launchd proxy service, clears the
-  bridge DNS overrides, and removes the iptables/UFW PREROUTING redirect rule (443 → 18443).
-- **VM appliance** (macOS) — stops the VM and deletes its disk images (`disk.img`, `data.img`).
-- **Host data** — cached downloads, registry blobs, build caches (`~/.cache/incus-spawn/`),
-  VM state and logs (`~/.local/state/incus-spawn/`), appliance artifacts
-  (`~/.local/share/incus-spawn/`), and configuration including SSH keys and the CA certificate
-  (`~/.config/incus-spawn/`).
-
-Run `isx init` afterwards to set up again.
+Return isx to a freshly installed state. Removes all instances and templates, cached images and downloads, the proxy service, the VM (macOS) and all configuration, including SSH keys and the CA certificate. It shows what will be removed and asks first. Run `isx init` afterwards to set up again.
 
     isx reset
 
@@ -1591,13 +1481,7 @@ Size must be larger than the current disk (grow-only), e.g. `100G`.
 
     isx vm reset [options]
 
-The last resort for a storage pool Incus cannot account for, such as the orphaned subvolumes `isx doctor`
-reports, when nothing on it is worth keeping. It lists what will be lost (instances, which cannot be
-rebuilt; templates, which can; cached images; the pool's usage) and asks first. Without a terminal to ask on, it
-refuses unless given `--yes`. It then stops the VM, replaces
-the data disk with a blank one of the same size, and starts the VM again. The appliance recreates the bridge,
-the `cow` pool and the default profile. The root disk and the downloaded appliance are kept. Recreate your
-templates afterwards with `isx build --all`.
+Wipes the VM's storage pool, for when it's beyond repair (for example, orphaned subvolumes reported by `isx doctor`). Every instance, template and cached image is deleted; isx lists them and asks first, or needs `--yes` without a terminal. Rebuild your templates afterwards with `isx build --all`.
 
 | Option | Description |
 |--------|-------------|
