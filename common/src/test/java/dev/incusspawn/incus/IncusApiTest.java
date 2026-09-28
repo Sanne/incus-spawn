@@ -326,6 +326,20 @@ class IncusApiTest {
         assertNotNull(env.get("TERM"), "default TERM must be present even with null env");
     }
 
+    // --- windowResizeMessage format ---
+
+    @Test
+    void windowResizeMessageUsesStringValues() throws Exception {
+        var msg = IncusApi.windowResizeMessage(120, 40);
+        var json = JSON.readTree(msg);
+        assertEquals("window-resize", json.path("command").asText());
+        var args = json.path("args");
+        assertTrue(args.path("width").isTextual(), "width must be a JSON string, not a number");
+        assertTrue(args.path("height").isTextual(), "height must be a JSON string, not a number");
+        assertEquals("120", args.path("width").asText());
+        assertEquals("40", args.path("height").asText());
+    }
+
     // --- LOGIN_PATH_PREFIX for su - ---
 
     @Test

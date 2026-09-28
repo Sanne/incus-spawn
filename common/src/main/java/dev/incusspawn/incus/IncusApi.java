@@ -623,7 +623,7 @@ class IncusApi {
                                 lastWidth = size[0];
                                 lastHeight = size[1];
                                 try {
-                                    controlWs.sendText("{\"command\":\"window-resize\",\"args\":{\"width\":" + lastWidth + ",\"height\":" + lastHeight + "}}");
+                                    controlWs.sendText(windowResizeMessage(lastWidth, lastHeight));
                                 } catch (IOException ignored) { break; }
                             }
                         }
@@ -647,6 +647,8 @@ class IncusApi {
                         }
                     } catch (IOException ignored) {}
                 });
+                var terminalHook = new Thread(IncusApi::restoreTerminal);
+                Runtime.getRuntime().addShutdownHook(terminalHook);
                 setRawTerminal();
                 try {
                     // Main: WebSocket → System.out (exits when watcher closes the connection).
@@ -666,6 +668,7 @@ class IncusApi {
                     keepaliveThread.interrupt();
                     resizeThread.interrupt();
                     restoreTerminal();
+                    try { Runtime.getRuntime().removeShutdownHook(terminalHook); } catch (IllegalStateException ignored) {}
                 }
             } catch (IOException e) {
                 throw new IncusException("PTY exec failed", e);
@@ -1053,6 +1056,12 @@ class IncusApi {
         } catch (IOException e) {
             // EOF or closed — normal when the git pack exchange completes.
         }
+    }
+
+    // ---- Incus control channel messages ----
+
+    static String windowResizeMessage(int width, int height) {
+        return "{\"command\":\"window-resize\",\"args\":{\"width\":\"" + width + "\",\"height\":\"" + height + "\"}}";
     }
 
     // ---- Terminal raw mode (for interactive PTY shell) ----
