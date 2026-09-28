@@ -263,8 +263,9 @@ public class VmCommand extends BaseCommand {
                 lost.print();
             }
             System.out.println();
-            if (!CleanCommand.confirm("Wipe the data disk?", yes)) {
-                return CommandResult.SUCCESS;
+            if (!confirmDestructive("Wipe the data disk?", yes)) {
+                // Declining is a success; being unable to ask is not.
+                return System.console() == null ? CommandResult.valueOf(1) : CommandResult.SUCCESS;
             }
 
             BuildOutput.header("Resetting VM data disk");

@@ -1501,7 +1501,8 @@ Size must be larger than the current disk (grow-only), e.g. `100G`.
 
 The last resort for a storage pool Incus cannot account for, such as the orphaned subvolumes `isx doctor`
 reports, when nothing on it is worth keeping. It lists what will be lost (instances, which cannot be
-rebuilt; templates, which can; cached images; the pool's usage) and asks first. It then stops the VM, replaces
+rebuilt; templates, which can; cached images; the pool's usage) and asks first. Without a terminal to ask on, it
+refuses unless given `--yes`. It then stops the VM, replaces
 the data disk with a blank one of the same size, and starts the VM again. The appliance recreates the bridge,
 the `cow` pool and the default profile. The root disk and the downloaded appliance are kept. Recreate your
 templates afterwards with `isx build --all`.

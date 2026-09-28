@@ -86,6 +86,28 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         return true;
     }
 
+    /**
+     * {@link #confirm} for an action that destroys data: with no terminal to ask, it refuses
+     * instead of proceeding, so piped input or a script never wipes anything without the explicit
+     * skip flag. ({@code confirm} proceeds there, and ignores whatever is on stdin.)
+     */
+    protected static boolean confirmDestructive(String prompt, boolean skipConfirmation) {
+        return confirmDestructive(prompt, skipConfirmation, System.console());
+    }
+
+    static boolean confirmDestructive(String prompt, boolean skipConfirmation, java.io.Console console) {
+        if (skipConfirmation) return true;
+        if (console == null) {
+            System.err.println("No terminal to confirm this on. Re-run with --yes to proceed without asking.");
+            return false;
+        }
+        if (!askConfirmation(console, prompt, false)) {
+            System.out.println("Aborted.");
+            return false;
+        }
+        return true;
+    }
+
     static Boolean parseConfirmation(String answer, boolean defaultValue) {
         if (answer == null) return null;
         var normalized = answer.strip();
