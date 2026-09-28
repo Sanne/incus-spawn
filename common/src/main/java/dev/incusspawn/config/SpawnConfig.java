@@ -770,68 +770,49 @@ public class SpawnConfig {
         }
         var tools = toolRefs.keySet();
 
-        // Account-aware: a credential may live under the template's account rather than the flat
-        // field, and AccountResolver.value falls back to the flat one either way. Every check
-        // below answers for the account the template pins, never just the namespace default
-        // (#793). A pin to an account that does not exist is reported below, so it does not
-        // also count as missing.
+        // A template naming an account that is not configured is a configuration problem and
+        // should read as one here, rather than surfacing later as an exception mid-build.
+        // Reported on its own because it already explains itself, and because the fix is to
+        // correct the template or add the account, not simply to run 'isx init'. Checked first,
+        // so every pin resolves below.
         var selection = ImageDef.resolveAccounts(imageDef, allDefs);
+        try {
+            AccountSelection.validate(config, selection);
+        } catch (AccountResolver.UnknownAccountException e) {
+            return e.getMessage();
+        }
+
+        // Account-aware: every check answers for the account the template pins, not just the
+        // namespace default (#793). A credential may live under that account rather than the
+        // flat field, and AccountResolver.value falls back to the flat one either way.
         java.util.function.BiPredicate<String, String> configured = (namespace, key) -> {
-            try {
-                var account = AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
-                return !AccountResolver.value(config, namespace, account, key).isBlank();
-            } catch (AccountResolver.UnknownAccountException e) {
-                return true;
-            }
+            var account = AccountResolver.effectiveAccount(config, namespace, selection.get(namespace));
+            return !AccountResolver.value(config, namespace, account, key).isBlank();
         };
         // Claude's credential is a typed account rather than one key, and pi's Vertex provider
-        // needs to know which kind it is, so it is asked of the account itself.
-        java.util.function.Predicate<java.util.function.Predicate<ClaudeAccount>> claudeAccount = usable -> {
-            try {
-                var account = config.getClaude().accountNamed(selection.get(ClaudeConfig.NAMESPACE));
-                return account != null && usable.test(account);
-            } catch (AccountResolver.UnknownAccountException e) {
-                return true;
-            }
-        };
+        // needs to know which kind it is, so it is resolved as the account itself.
+        var claude = config.getClaude().accountNamed(selection.get(ClaudeConfig.NAMESPACE));
 
-        if (tools.contains("claude") && !claudeAccount.test(a -> true)) {
+        // pi's provider picks the credential it needs; anything unrecognised runs on Anthropic.
+        var piProvider = tools.contains("pi")
+                ? toolRefs.get("pi").getParams().getOrDefault("provider", "anthropic") : "";
+        var piOpenai = "openai".equals(piProvider);
+        var piVertex = "vertex".equals(piProvider) || "google".equals(piProvider);
+        var piAnthropic = tools.contains("pi") && !piOpenai && !piVertex;
+        if ((tools.contains("claude") || piAnthropic) && claude == null) {
             missing.add("Anthropic API key, OAuth token, or Vertex AI");
         }
-        if (tools.contains("pi")) {
-            var piProvider = toolRefs.get("pi").getParams().getOrDefault("provider", "anthropic");
-            if ("openai".equals(piProvider)) {
-                if (!configured.test("openai", "apiKey")) {
-                    missing.add("OpenAI API key");
-                }
-            } else if ("vertex".equals(piProvider) || "google".equals(piProvider)) {
-                if (!claudeAccount.test(a -> a.effectiveType() == ClaudeAccountType.VERTEX)) {
-                    missing.add("Vertex AI configuration");
-                }
-            } else {
-                if (!claudeAccount.test(a -> true)) {
-                    missing.add("Anthropic API key, OAuth token, or Vertex AI");
-                }
-            }
+        if (piVertex && (claude == null || claude.effectiveType() != ClaudeAccountType.VERTEX)) {
+            missing.add("Vertex AI configuration");
+        }
+        if ((piOpenai || tools.contains("codex")) && !configured.test("openai", "apiKey")) {
+            missing.add("OpenAI API key");
         }
         if (tools.contains("gh") && !configured.test("github", "token")) {
             missing.add("GitHub token");
         }
         if (tools.contains("bob") && !configured.test("bob", "apiKey")) {
             missing.add("Bob API key");
-        }
-        if (tools.contains("codex") && !configured.test("openai", "apiKey")) {
-            missing.add("OpenAI API key");
-        }
-
-        // A template naming an account that is not configured is a configuration problem and
-        // should read as one here, rather than surfacing later as an exception mid-build.
-        // Reported on its own because it already explains itself, and because the fix is to
-        // correct the template or add the account, not simply to run 'isx init'.
-        try {
-            AccountSelection.validate(config, selection);
-        } catch (AccountResolver.UnknownAccountException e) {
-            return e.getMessage();
         }
 
         if (missing.isEmpty()) return "";
