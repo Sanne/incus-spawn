@@ -2556,6 +2556,10 @@ class BuildCommandTest {
         progress.received(1024, 4096);
         assertTrue(progress.detail().startsWith("25%  1.0 KB / 4.0 KB"), progress.detail());
         assertTrue(progress.fetched());
+        progress.retrying("HTTP 500 from example.com", 2, 3);
+        assertEquals("HTTP 500 from example.com, retrying (attempt 2 of 3)", progress.detail());
+        progress.received(0, 4096);
+        assertTrue(progress.detail().startsWith("0%  0 B / 4.0 KB"), progress.detail());
         progress.verifying();
         assertEquals("verifying checksum", progress.detail());
 

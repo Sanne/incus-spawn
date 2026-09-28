@@ -1641,6 +1641,16 @@ public class BuildCommand extends BaseCommand {
         }
 
         @Override
+        public void retrying(String reason, int attempt, int attempts) {
+            // The next attempt starts from byte 0, so its rate and time left must not count the
+            // failed one or the pause.
+            start = 0;
+            bytes = 0;
+            total = -1;
+            phase = reason + ", retrying (attempt " + attempt + " of " + attempts + ")";
+        }
+
+        @Override
         public void verifying() {
             end = System.nanoTime();
             phase = "verifying checksum";

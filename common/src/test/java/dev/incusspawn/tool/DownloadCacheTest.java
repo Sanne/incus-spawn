@@ -177,6 +177,13 @@ class DownloadCacheTest {
         }
     }
 
+    private static final List<Duration> DELAYS = List.of(Duration.ofSeconds(2), Duration.ofSeconds(8));
+
+    /** A cache that records its retry pauses instead of sleeping through them. */
+    private static DownloadCache retrying(Path cacheDir, List<Duration> paused) {
+        return new DownloadCache(cacheDir, uri -> false, DELAYS, paused::add);
+    }
+
     @Test
     void transientFailuresAreRetriedFromTheOriginalUrl(@TempDir Path cacheDir) throws IOException {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -202,30 +209,35 @@ class DownloadCacheTest {
         server.start();
         try {
             var base = "http://127.0.0.1:" + server.getAddress().getPort();
-            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
-            assertEquals("content", Files.readString(cache.download(base + "/release", null)));
+            var paused = new ArrayList<Duration>();
+            var listener = new RecordingListener();
+            var cache = retrying(cacheDir, paused);
+            assertEquals("content", Files.readString(cache.downloadAllowingLocalFile(base + "/release", null, listener)));
             assertEquals(3, fileRequests.get());
             assertEquals(3, redirects.get(), "each attempt restarts at the original URL");
+            assertEquals(DELAYS, paused);
+            assertEquals(List.of("retrying HTTP 500 from 127.0.0.1 2/3", "retrying HTTP 500 from 127.0.0.1 3/3",
+                    "received"), listener.events);
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    void persistentServerErrorsGiveUpNamingTheFailingHost(@TempDir Path cacheDir) throws IOException {
+    void persistentServerErrorsGiveUpNamingEveryFailure(@TempDir Path cacheDir) throws IOException {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var requests = new AtomicInteger();
         server.createContext("/broken", ex -> {
-            requests.incrementAndGet();
-            ex.sendResponseHeaders(503, -1);
+            ex.sendResponseHeaders(requests.incrementAndGet() == 1 ? 502 : 503, -1);
             ex.close();
         });
         server.start();
         try {
             var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/broken";
-            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
-            var e = assertThrows(IOException.class, () -> cache.download(url, null));
-            assertEquals("Download failed: HTTP 503 from 127.0.0.1 for " + url + " (after 3 attempts)", e.getMessage());
+            var e = assertThrows(IOException.class, () -> retrying(cacheDir, new ArrayList<>()).download(url, null));
+            assertEquals("Download failed: HTTP 502 from 127.0.0.1; then HTTP 503 from 127.0.0.1 for " + url
+                    + " (after 3 attempts)", e.getMessage());
+            assertEquals(2, e.getSuppressed().length);
             assertEquals(3, requests.get());
         } finally {
             server.stop(0);
@@ -233,7 +245,34 @@ class DownloadCacheTest {
     }
 
     @Test
-    void clientErrorsAreNotRetried(@TempDir Path cacheDir) throws IOException {
+    void retryAfterIsHonouredUpToACap(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/busy", ex -> {
+            var n = requests.incrementAndGet();
+            if (n < 3) {
+                ex.getResponseHeaders().add("Retry-After", n == 1 ? "5" : "3600");
+                ex.sendResponseHeaders(n == 1 ? 429 : 503, -1);
+            } else {
+                ex.sendResponseHeaders(200, 2);
+                ex.getResponseBody().write("ok".getBytes(StandardCharsets.UTF_8));
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            var paused = new ArrayList<Duration>();
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/busy";
+            assertEquals("ok", Files.readString(retrying(cacheDir, paused).download(url, null)));
+            // Longer than the 2s schedule, so honoured; an hour is capped at 30s.
+            assertEquals(List.of(Duration.ofSeconds(5), Duration.ofSeconds(30)), paused);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void finalStatusesAreNotRetried(@TempDir Path cacheDir) throws IOException {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var requests = new AtomicInteger();
         server.createContext("/missing", ex -> {
@@ -241,12 +280,67 @@ class DownloadCacheTest {
             ex.sendResponseHeaders(404, -1);
             ex.close();
         });
+        server.createContext("/unsupported", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(501, -1);
+            ex.close();
+        });
         server.start();
         try {
-            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/missing";
-            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
+            var base = "http://127.0.0.1:" + server.getAddress().getPort();
+            var paused = new ArrayList<Duration>();
+            var cache = retrying(cacheDir, paused);
+            var e = assertThrows(IOException.class, () -> cache.download(base + "/missing", null));
+            assertEquals("Download failed: HTTP 404 from 127.0.0.1 for " + base + "/missing", e.getMessage());
+            assertThrows(IOException.class, () -> cache.download(base + "/unsupported", null));
+            assertEquals(2, requests.get());
+            assertEquals(List.of(), paused);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aBodyCutShortIsRetried(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        var body = "z".repeat(100).getBytes(StandardCharsets.UTF_8);
+        server.createContext("/flaky", ex -> {
+            ex.sendResponseHeaders(200, body.length);
+            // The first response promises 100 bytes and drops the connection after 10.
+            ex.getResponseBody().write(body, 0, requests.incrementAndGet() == 1 ? 10 : body.length);
+            // Flushed, or the connection closes before the headers and the JDK client retries on its own.
+            ex.getResponseBody().flush();
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/flaky";
+            var paused = new ArrayList<Duration>();
+            assertEquals(100, Files.size(retrying(cacheDir, paused).download(url, null)));
+            assertEquals(2, requests.get());
+            assertEquals(1, paused.size());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void theHostLocalCheckRunsAgainBeforeEachAttempt(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/rebind", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(500, -1);
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/rebind";
+            // Stands in for a rebinding domain: public until the first request, host-local after.
+            var cache = new DownloadCache(cacheDir, uri -> requests.get() > 0, DELAYS, d -> {});
             var e = assertThrows(IOException.class, () -> cache.download(url, null));
-            assertEquals("Download failed: HTTP 404 from 127.0.0.1 for " + url, e.getMessage());
+            assertTrue(e.getMessage().contains("loopback or link-local"), e.getMessage());
             assertEquals(1, requests.get());
         } finally {
             server.stop(0);
@@ -254,16 +348,42 @@ class DownloadCacheTest {
     }
 
     @Test
-    void refusedConnectionsAreRetried(@TempDir Path cacheDir) throws IOException {
-        int port;
-        try (var socket = new java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())) {
-            port = socket.getLocalPort();
+    void unresolvableHostsAreNotRetried(@TempDir Path cacheDir) {
+        var paused = new ArrayList<Duration>();
+        var url = "http://isx-download-test.invalid/tool.tar.gz";
+        var e = assertThrows(IOException.class, () -> retrying(cacheDir, paused).download(url, null));
+        assertEquals("Download failed: cannot resolve isx-download-test.invalid for " + url, e.getMessage());
+        assertEquals(List.of(), paused);
+    }
+
+    @Test
+    void aFailingListenerIsNotRetriedOrBlamedOnTheHost(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/file", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(200, 7);
+            ex.getResponseBody().write("content".getBytes(StandardCharsets.UTF_8));
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/file";
+            var paused = new ArrayList<Duration>();
+            var listener = new DownloadCache.Listener() {
+                @Override
+                public void received(long bytes, long total) {
+                    throw new ArithmeticException("progress bug");
+                }
+            };
+            var e = assertThrows(RuntimeException.class,
+                    () -> retrying(cacheDir, paused).downloadAllowingLocalFile(url, null, listener));
+            assertEquals("progress bug", e.getMessage());
+            assertEquals(1, requests.get());
+            assertEquals(List.of(), paused);
+        } finally {
+            server.stop(0);
         }
-        var url = "http://127.0.0.1:" + port + "/gone";
-        var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO));
-        var e = assertThrows(IOException.class, () -> cache.download(url, null));
-        assertTrue(e.getMessage().startsWith("Download failed: "), e.getMessage());
-        assertTrue(e.getMessage().endsWith(" from 127.0.0.1 for " + url + " (after 2 attempts)"), e.getMessage());
     }
 
     /** Records what a download reported, in order. */
@@ -282,6 +402,11 @@ class DownloadCacheTest {
             if (events.isEmpty() || !events.get(events.size() - 1).equals("received")) events.add("received");
             lastBytes = bytes;
             lastTotal = total;
+        }
+
+        @Override
+        public void retrying(String reason, int attempt, int attempts) {
+            events.add("retrying " + reason + " " + attempt + "/" + attempts);
         }
 
         @Override

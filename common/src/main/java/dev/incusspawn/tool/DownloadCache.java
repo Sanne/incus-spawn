@@ -3,12 +3,14 @@ package dev.incusspawn.tool;
 import dev.incusspawn.RuntimeConstants;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.ProtocolException;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
+import java.nio.channels.UnresolvedAddressException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -16,11 +18,17 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLPeerUnverifiedException;
 
 /**
  * Host-side download manager with a persistent file cache.
@@ -40,6 +48,19 @@ public class DownloadCache {
      */
     private static final List<Duration> RETRY_DELAYS = List.of(Duration.ofSeconds(2), Duration.ofSeconds(8));
 
+    /** Statuses a later attempt may not get; other errors (501, 505, every other 4xx) are final. */
+    private static final Set<Integer> RETRIED_STATUSES = Set.of(429, 500, 502, 503, 504);
+
+    /** The longest {@code Retry-After} honoured, so a server cannot park a build. */
+    private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(30);
+
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
+
+    /** Waits before a retry; a seam so tests neither sleep nor lose what was asked for. */
+    interface Pause {
+        void sleep(Duration duration) throws InterruptedException;
+    }
+
     /**
      * Observes a download as it runs, so a caller can show progress for a large file. Methods
      * are called on the downloading thread; {@link #received} once per chunk, so keep it cheap.
@@ -57,6 +78,14 @@ public class DownloadCache {
          */
         default void received(long bytes, long total) {}
 
+        /**
+         * An attempt failed transiently and the download starts over from byte 0 after a pause;
+         * {@link #received} then counts from zero again.
+         *
+         * @param reason why the previous attempt failed, e.g. {@code HTTP 500 from example.com}
+         */
+        default void retrying(String reason, int attempt, int attempts) {}
+
         /** The download finished and its checksum is being verified. */
         default void verifying() {}
     }
@@ -64,6 +93,7 @@ public class DownloadCache {
     private final Path cacheDir;
     private final Predicate<URI> hostLocal;
     private final List<Duration> retryDelays;
+    private final Pause pause;
 
     public DownloadCache() {
         this(RuntimeConstants.DOWNLOAD_CACHE_DIR);
@@ -76,14 +106,15 @@ public class DownloadCache {
 
     /** Constructor for testing which addresses count as local to this machine. */
     DownloadCache(Path cacheDir, Predicate<URI> hostLocal) {
-        this(cacheDir, hostLocal, RETRY_DELAYS);
+        this(cacheDir, hostLocal, RETRY_DELAYS, Thread::sleep);
     }
 
-    /** Constructor for testing how long to wait before each retry. */
-    DownloadCache(Path cacheDir, Predicate<URI> hostLocal, List<Duration> retryDelays) {
+    /** Constructor for testing the waits before each retry. */
+    DownloadCache(Path cacheDir, Predicate<URI> hostLocal, List<Duration> retryDelays, Pause pause) {
         this.cacheDir = cacheDir;
         this.hostLocal = hostLocal;
         this.retryDelays = retryDelays;
+        this.pause = pause;
     }
 
     /**
@@ -174,57 +205,107 @@ public class DownloadCache {
     }
 
     private void fetch(URI uri, String url, Path tmp, Listener listener) throws IOException, InterruptedException {
-        var client = HttpClient.newBuilder()
+        try (var client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
-        for (int attempt = 0; ; attempt++) {
-            try {
-                // Each attempt starts again from the original URL: a redirect target is often a
-                // short-lived signed URL, and the failing hop may be the redirector itself.
-                fetchOnce(client, uri, url, tmp, listener);
-                return;
-            } catch (TransientDownloadException e) {
-                if (attempt == retryDelays.size()) {
-                    throw attempt == 0 ? e
-                            : new IOException(e.getMessage() + " (after " + (attempt + 1) + " attempts)", e.getCause());
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build()) {
+            var failures = new ArrayList<TransientDownloadException>();
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    // Each attempt starts again from the original URL: a redirect target is often
+                    // a short-lived signed URL, and the failing hop may be the redirector itself.
+                    fetchOnce(client, uri, url, tmp, listener);
+                    return;
+                } catch (TransientDownloadException e) {
+                    failures.add(e);
+                    if (attempt == retryDelays.size()) throw exhausted(url, failures);
+                    var delay = e.retryAfter != null && e.retryAfter.compareTo(retryDelays.get(attempt)) > 0
+                            ? e.retryAfter : retryDelays.get(attempt);
+                    listener.retrying(e.reason, attempt + 2, retryDelays.size() + 1);
+                    pause.sleep(delay);
                 }
-                Thread.sleep(retryDelays.get(attempt));
             }
         }
     }
 
-    /** A failure worth retrying: the server or the connection, not the request or our own policy. */
+    /**
+     * The error for a download that failed on every attempt. Earlier attempts may have failed
+     * differently, on another hop, so they are named too rather than only attached.
+     */
+    private static IOException exhausted(String url, List<TransientDownloadException> failures) {
+        var last = failures.getLast();
+        var reasons = new LinkedHashSet<String>();
+        for (var f : failures) reasons.add(f.reason);
+        var message = "Download failed: " + String.join("; then ", reasons) + " for " + url;
+        if (failures.size() > 1) message += " (after " + failures.size() + " attempts)";
+        var e = new IOException(message, last.getCause());
+        for (var f : failures.subList(0, failures.size() - 1)) e.addSuppressed(f);
+        return e;
+    }
+
+    /**
+     * A failure worth retrying: the server or the connection broke, not the request, our own
+     * policy or the local disk. {@code reason} is short and names the host, as a status line
+     * can show it: behind a redirect, the URL the user sees is not the one that failed.
+     */
     private static final class TransientDownloadException extends IOException {
-        TransientDownloadException(String message, Throwable cause) {
-            super(message, cause);
+        final String reason;
+        final Duration retryAfter;
+
+        TransientDownloadException(String reason, String url, Throwable cause, Duration retryAfter) {
+            super("Download failed: " + reason + " for " + url, cause);
+            this.reason = reason;
+            this.retryAfter = retryAfter;
         }
     }
 
     private void fetchOnce(HttpClient client, URI uri, String url, Path tmp, Listener listener)
             throws IOException, InterruptedException {
+        // Checked again on every attempt, just before connecting: a retry comes seconds after the
+        // first check, by when the JDK's address cache may have let a rebinding domain move to
+        // 127.0.0.1.
+        requireRemote(uri, url);
         var current = uri;
         for (int hops = 0; ; hops++) {
             var request = HttpRequest.newBuilder(current).GET().build();
+            var body = new AtomicReference<CountingSubscriber<Path>>();
             // Only a 200 body reaches the disk: a redirect or error body is discarded unread, so a
             // server cannot fill the host's disk through responses that never become the download.
             HttpResponse<Path> response;
             try {
-                response = client.send(request, info -> info.statusCode() == 200
-                        ? new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
-                                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
-                                info.headers().firstValueAsLong("Content-Length").orElse(-1), listener)
-                        : HttpResponse.BodySubscribers.replacing(tmp));
+                response = client.send(request, info -> {
+                    if (info.statusCode() != 200) return HttpResponse.BodySubscribers.replacing(tmp);
+                    body.set(new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
+                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                            info.headers().firstValueAsLong("Content-Length").orElse(-1), listener));
+                    return body.get();
+                });
             } catch (IOException e) {
-                throw new TransientDownloadException("Download failed: " + describe(e) + " from "
-                        + current.getHost() + " for " + url, e);
+                var counting = body.get();
+                if (counting != null && counting.localFailure != null) {
+                    // The listener threw: a bug here, not a network error, so neither retried nor
+                    // blamed on the host.
+                    throw counting.localFailure;
+                }
+                // Once the body has started, only a failure the connection delivered is worth
+                // retrying: anything else came from writing the file (a full disk, say), which
+                // is neither the host's fault nor one another attempt would fix.
+                if (counting != null && !counting.networkFailure) {
+                    throw new IOException("Download failed writing to " + tmp.getParent() + ": "
+                            + e.getMessage() + " (" + url + ")", e);
+                }
+                var reason = describe(e, current.getHost());
+                if (counting != null || !isPermanent(e)) throw new TransientDownloadException(reason, url, e, null);
+                throw new IOException("Download failed: " + reason + " for " + url, e);
             }
             var status = response.statusCode();
             if (status == 200) return;
             if (!isRedirect(status)) {
-                // Name the host: behind a redirect, the URL the user sees is not the one that failed.
-                var message = "Download failed: HTTP " + status + " from " + current.getHost() + " for " + url;
-                if (status >= 500 || status == 429) throw new TransientDownloadException(message, null);
-                throw new IOException(message);
+                var reason = "HTTP " + status + " from " + current.getHost();
+                if (RETRIED_STATUSES.contains(status)) {
+                    throw new TransientDownloadException(reason, url, null, retryAfter(response));
+                }
+                throw new IOException("Download failed: " + reason + " for " + url);
             }
             if (hops == MAX_REDIRECTS) {
                 throw new IOException("Download failed: more than " + MAX_REDIRECTS + " redirects for " + url);
@@ -247,12 +328,48 @@ public class DownloadCache {
         }
     }
 
-    /** Passes the body through to {@code delegate}, reporting the running byte count. */
+    /**
+     * A {@code Retry-After} given in seconds, capped at {@link #MAX_RETRY_AFTER}; the HTTP-date
+     * form is ignored, since the servers isx downloads from send seconds.
+     */
+    private static Duration retryAfter(HttpResponse<?> response) {
+        var value = response.headers().firstValue("Retry-After").orElse(null);
+        if (value == null) return null;
+        try {
+            var seconds = Long.parseLong(value.trim());
+            return seconds < 0 ? null : Duration.ofSeconds(Math.min(seconds, MAX_RETRY_AFTER.toSeconds()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Failures before the response that another attempt cannot fix: a name that does not
+     * resolve, a TLS certificate or handshake the host fails, a response that breaks HTTP.
+     */
+    private static boolean isPermanent(IOException e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof UnresolvedAddressException || t instanceof UnknownHostException
+                    || t instanceof SSLHandshakeException || t instanceof SSLPeerUnverifiedException
+                    || t instanceof ProtocolException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Passes the body through to {@code delegate}, reporting the running byte count, and records
+     * where a failure came from: the connection ({@link #onError}) or this side of it.
+     */
     static final class CountingSubscriber<T> implements HttpResponse.BodySubscriber<T> {
         private final HttpResponse.BodySubscriber<T> delegate;
         private final long total;
         private final Listener listener;
+        private Flow.Subscription subscription;
         private long received;
+        volatile boolean networkFailure;
+        volatile RuntimeException localFailure;
 
         CountingSubscriber(HttpResponse.BodySubscriber<T> delegate, long total, Listener listener) {
             this.delegate = delegate;
@@ -267,8 +384,8 @@ public class DownloadCache {
 
         @Override
         public void onSubscribe(Flow.Subscription subscription) {
-            listener.received(0, total);
-            delegate.onSubscribe(subscription);
+            this.subscription = subscription;
+            if (report(0)) delegate.onSubscribe(subscription);
         }
 
         @Override
@@ -276,11 +393,26 @@ public class DownloadCache {
             // Counted before the delegate consumes the buffers and leaves them with nothing remaining.
             for (var item : items) received += item.remaining();
             delegate.onNext(items);
-            listener.received(received, total);
+            report(received);
+        }
+
+        private boolean report(long bytes) {
+            try {
+                listener.received(bytes, total);
+                return true;
+            } catch (RuntimeException e) {
+                localFailure = e;
+                subscription.cancel();
+                delegate.onError(e);
+                return false;
+            }
         }
 
         @Override
         public void onError(Throwable throwable) {
+            // A file write that failed has already completed the body; an error signalled after
+            // that is the connection being torn down in response, not a network failure.
+            if (!delegate.getBody().toCompletableFuture().isDone()) networkFailure = true;
             delegate.onError(throwable);
         }
 
@@ -290,8 +422,19 @@ public class DownloadCache {
         }
     }
 
-    private static String describe(IOException e) {
-        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    /**
+     * What went wrong, and where: the innermost cause usually says it best ("Connection reset"),
+     * and an unresolvable name surfaces as a {@link java.net.ConnectException} with no message.
+     */
+    private static String describe(IOException e, String host) {
+        String message = null;
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof UnresolvedAddressException || t instanceof UnknownHostException) {
+                return "cannot resolve " + host;
+            }
+            if (t.getMessage() != null) message = t.getMessage();
+        }
+        return (message != null ? message : e.getClass().getSimpleName()) + " from " + host;
     }
 
     private static boolean isRedirect(int status) {
