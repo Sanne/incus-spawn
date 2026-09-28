@@ -136,7 +136,7 @@ public class CleanCommand extends BaseCommand {
         printSummary(infos);
         System.out.println();
 
-        if (!confirm("Proceed?", skipConfirmation)) return CommandResult.SUCCESS;
+        if (!confirmDestructive("Proceed?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
         for (var info : infos) {
             FileTrees.delete(info.path);
@@ -254,7 +254,7 @@ public class CleanCommand extends BaseCommand {
             System.out.println("and configuration. You will need to run 'isx init' again and rebuild");
             System.out.println("all templates.");
 
-            if (!confirm("Delete configuration?", skipConfirmation)) return CommandResult.SUCCESS;
+            if (!confirmDestructive("Delete configuration?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
             for (var info : infos) {
                 FileTrees.delete(info.path);
@@ -312,7 +312,7 @@ public class CleanCommand extends BaseCommand {
             System.out.println("Note: Built templates and instances in the Incus storage pool are not affected.");
             System.out.println("Use 'isx clean pool' to reclaim pool space.");
 
-            if (!confirm("Delete all listed directories?", skipConfirmation)) return CommandResult.SUCCESS;
+            if (!confirmDestructive("Delete all listed directories?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
             for (var info : infos) {
                 FileTrees.delete(info.path);
@@ -511,7 +511,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            if (!confirm(BuildOutput.STEP_INDENT + "Delete " + failed.size() + " failed build instance(s)?", skip)) {
+            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + failed.size() + " failed build instance(s)?", skip, "--skip-confirmation")) {
                 return true;
             }
 
@@ -542,7 +542,7 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            if (!confirm(BuildOutput.STEP_INDENT + "Delete " + unused.size() + " unused image(s)?", skip)) {
+            if (!confirmDestructive(BuildOutput.STEP_INDENT + "Delete " + unused.size() + " unused image(s)?", skip, "--skip-confirmation")) {
                 return true;
             }
 

@@ -127,8 +127,8 @@ public class ResetCommand extends BaseCommand {
         System.out.println("Run 'isx init' afterwards to set up again.");
         System.out.println();
 
-        if (!confirm("This will destroy all containers, templates, and VM disk images listed above. Proceed?",
-                skipConfirmation)) {
+        if (!confirmDestructive("This will destroy all containers, templates, and VM disk images listed above. Proceed?",
+                skipConfirmation, "--skip-confirmation")) {
             return CommandResult.SUCCESS;
         }
 

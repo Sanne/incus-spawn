@@ -798,7 +798,9 @@ hypervisor process to exit.
 It replaces the data disk with a blank sparse one **of the same size**, so a disk grown with `isx vm resize` stays
 grown, and boots. The appliance's `rcS` formats the blank disk and `incus-spawn-vm-init` recreates the bridge, the
 `cow` pool and the default profile. The command then removes the host integration of every instance it listed,
-signals the proxy, and checks that Incus answers with an empty CoW pool. `resetDataDisk` returns a `ResetResult`
+signals the proxy, and checks that Incus answers with an empty CoW pool. Like every command that deletes data, it
+refuses to run without a terminal to confirm on unless given its skip flag (`BaseCommand.confirmDestructive`):
+the older `confirm()` proceeds there, which is how `echo n | isx vm reset` once wiped a pool during testing. `resetDataDisk` returns a `ResetResult`
 rather than a boolean because the cleanup hinges on it: `NOT_RESET` (lock held, the VM would not exit, the disk
 could not be deleted) leaves every instance in place and must not touch their host state, while `VM_DOWN` means the
 disk is gone even though the VM did not come back.

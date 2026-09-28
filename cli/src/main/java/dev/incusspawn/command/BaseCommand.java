@@ -75,6 +75,10 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
         }
     }
 
+    /**
+     * Ask before a disruptive but recoverable action (a restart, a resize). With no terminal it
+     * proceeds; anything that deletes data uses {@link #confirmDestructive} instead.
+     */
     protected static boolean confirm(String prompt, boolean skipConfirmation) {
         if (skipConfirmation) return true;
         var console = System.console();
@@ -87,25 +91,34 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
     }
 
     /**
-     * {@link #confirm} for an action that destroys data: with no terminal to ask, it refuses
-     * instead of proceeding, so piped input or a script never wipes anything without the explicit
-     * skip flag. ({@code confirm} proceeds there, and ignores whatever is on stdin.)
+     * {@link #confirm} for an action that deletes data. With no terminal to ask on, {@code confirm}
+     * proceeds without reading stdin, so {@code echo n | isx ...} deletes anyway; this refuses
+     * instead, by throwing {@link NoTerminalException} (which {@link #execute} reports as an error
+     * and exit status 1). Declining at the prompt returns {@code false}, which is not an error.
+     *
+     * @param skipFlag the option that skips the question, named in the refusal
      */
-    protected static boolean confirmDestructive(String prompt, boolean skipConfirmation) {
-        return confirmDestructive(prompt, skipConfirmation, System.console());
+    protected static boolean confirmDestructive(String prompt, boolean skipConfirmation, String skipFlag) {
+        return confirmDestructive(prompt, skipConfirmation, skipFlag, System.console());
     }
 
-    static boolean confirmDestructive(String prompt, boolean skipConfirmation, java.io.Console console) {
+    static boolean confirmDestructive(String prompt, boolean skipConfirmation, String skipFlag,
+                                      Console console) {
         if (skipConfirmation) return true;
-        if (console == null) {
-            System.err.println("No terminal to confirm this on. Re-run with --yes to proceed without asking.");
-            return false;
-        }
+        // Since JDK 22 System.console() can be non-null with stdin redirected; isTerminal() says which.
+        if (console == null || !console.isTerminal()) throw new NoTerminalException(skipFlag);
         if (!askConfirmation(console, prompt, false)) {
             System.out.println("Aborted.");
             return false;
         }
         return true;
+    }
+
+    static final class NoTerminalException extends RuntimeException {
+        NoTerminalException(String skipFlag) {
+            super("this deletes data and there is no terminal to confirm it on. Re-run with "
+                    + skipFlag + " to proceed without asking.");
+        }
     }
 
     static Boolean parseConfirmation(String answer, boolean defaultValue) {

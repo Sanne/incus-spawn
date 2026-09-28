@@ -119,7 +119,7 @@ public class DestroyCommand extends BaseCommand {
             System.out.println("  " + n);
         }
 
-        if (!confirm("Destroy all listed " + kind + "s?", skipConfirmation)) return CommandResult.SUCCESS;
+        if (!confirmDestructive("Destroy all listed " + kind + "s?", skipConfirmation, "--skip-confirmation")) return CommandResult.SUCCESS;
 
         var incus = RuntimeServices.incus();
         var result = destroyNames(incus, names);
