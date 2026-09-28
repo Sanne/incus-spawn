@@ -2164,8 +2164,17 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** GitHub's fine-grained PAT creation form — lands the user directly on the "new token" page. */
-    private static final String GH_PAT_NEW_URL = "https://github.com/settings/personal-access-tokens/new";
+    /**
+     * GitHub's fine-grained PAT creation form, pre-filled through its template-URL query
+     * parameters with the permissions the agent needs: read/write on Contents, Issues and Pull
+     * requests, and read on Email addresses so {@link #checkGitHubEmail} can find the commit
+     * identity. GitHub's permission picker hides anything not yet added, so without the
+     * pre-fill the email permission is easy to miss. Resource owner, repository access and
+     * expiration are left for the user to choose on the page.
+     */
+    static final String GH_PAT_NEW_URL = "https://github.com/settings/personal-access-tokens/new"
+            + "?name=isx&description=Agent+token+for+isx+instances"
+            + "&contents=write&issues=write&pull_requests=write&emails=read";
 
     /**
      * Last-resort fallback: reuse the host's authenticated 'gh' CLI token. This is deliberately
@@ -2309,22 +2318,22 @@ public class InitCommand extends BaseCommand {
         System.out.println("  To create a fine-grained PAT (ideally signed in as the agent's account,");
         System.out.println("  not your personal one):");
         System.out.println();
-        System.out.println("    1. Open " + BOLD + TerminalLink.link(GH_PAT_NEW_URL) + RESET);
-        System.out.println("    2. Give it a name (e.g. 'isx') and an expiration.");
-        System.out.println("    3. Under " + BOLD + "Repository access" + RESET
-                + ", choose the repos to grant (or 'All repositories').");
-        System.out.println("    4. Under " + BOLD + "Repository permissions" + RESET + ", set to read/write:");
-        System.out.println("         Contents  •  Issues  •  Pull requests");
-        System.out.println("    5. Under " + BOLD + "Account permissions" + RESET + ", set " + BOLD
-                + "Email addresses" + RESET + " to read");
-        System.out.println("       " + DIM + "(needed to stamp your git commit identity)." + RESET);
-        System.out.println("    6. Click " + BOLD + "Generate token" + RESET
+        System.out.println("    1. Open the pre-filled token page:");
+        System.out.println("       " + BOLD + TerminalLink.link(GH_PAT_NEW_URL) + RESET);
+        System.out.println("       It already grants what isx needs:");
+        System.out.println("         Contents, Issues, Pull requests  " + DIM + "read and write" + RESET);
+        System.out.println("         Email addresses                  " + DIM + "read (stamps your git commit identity)" + RESET);
+        System.out.println("    2. Check " + BOLD + "Resource owner" + RESET + " is the agent's account, set an expiration, and");
+        System.out.println("       under " + BOLD + "Repository access" + RESET + " choose the repos to grant.");
+        System.out.println("    3. Click " + BOLD + "Generate token" + RESET
                 + " and copy the value (starts with 'github_pat_').");
         System.out.println();
-        System.out.println("  " + DIM + "Avoid admin, org, and delete permissions unless you need them." + RESET);
+        System.out.println("  " + DIM + "Adding a permission by hand: under Permissions, click 'Add permissions' and" + RESET);
+        System.out.println("  " + DIM + "search for it. Avoid admin, org, and delete permissions unless you need them." + RESET);
         System.out.println();
 
-        if (askConfirmation(prompts, "  Open the token page in your browser now?", true)) {
+        System.out.println("  Already have a token? Answer 'n' and paste it at the next prompt.");
+        if (askConfirmation(prompts, "  Open the pre-filled token page in your browser now?", true)) {
             if (openUrl(GH_PAT_NEW_URL)) {
                 System.out.println("  Opened your browser — finish there, then paste the token below.");
             } else {
@@ -2751,8 +2760,9 @@ public class InitCommand extends BaseCommand {
 
             System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
             System.out.println("  To fix this, either:");
-            System.out.println("    • Add 'Email addresses' (read) under Account permissions on your PAT");
-            System.out.println("      " + TerminalLink.link(patSettingsUrl(token)));
+            System.out.println("    • Edit your PAT at " + TerminalLink.link(patSettingsUrl(token)) + ":");
+            System.out.println("      under Permissions, click 'Add permissions', search for 'Email addresses'");
+            System.out.println("      and set it to Read-only (for a classic token, add the 'user:email' scope)");
             System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
             System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
             var newToken = askSecret(prompts);

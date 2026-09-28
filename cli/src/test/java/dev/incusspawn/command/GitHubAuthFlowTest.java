@@ -157,8 +157,22 @@ class GitHubAuthFlowTest {
         var init = new FakeInit();
         run(init, new ScriptedPrompts().line("").secret(""));
 
-        assertEquals(List.of("https://github.com/settings/personal-access-tokens/new"), init.opened);
+        assertEquals(List.of(InitCommand.GH_PAT_NEW_URL), init.opened);
         assertNothingSaved();
+    }
+
+    /**
+     * GitHub's permission picker only lists permissions already added, so the email one is easy
+     * to miss by hand; without it, commits carry no author email.
+     */
+    @Test
+    void theTokenPageIsPrefilledWithTheNeededPermissions() {
+        var url = java.net.URI.create(InitCommand.GH_PAT_NEW_URL);
+        assertEquals("/settings/personal-access-tokens/new", url.getPath());
+        var params = List.of(url.getQuery().split("&"));
+        for (var expected : List.of("emails=read", "contents=write", "issues=write", "pull_requests=write")) {
+            assertTrue(params.contains(expected), "missing " + expected + " in " + url);
+        }
     }
 
     /** CI runs {@code isx init </dev/null}: every prompt hits EOF and nothing may be written. */
