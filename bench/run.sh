@@ -285,10 +285,12 @@ echo "CLI startup:  ${CLI_STARTUP_US} us (median of 20)"
 
 PROXY_ENV=()
 if [ "$LOAD_MODE" = maven ]; then
-    # The proxy confirms every cache hit with upstream (a HEAD for Maven Central), so
-    # pointed at the real repository this run would send its whole load there and
-    # measure that repository's latency. A local stub stands in for it instead: the
-    # proxy still makes its HEAD, over TLS it verifies, to a peer that answers at once.
+    # The proxy confirms cache hits with upstream (a HEAD for Maven Central) once their
+    # artifact-cache: tiers stop trusting them, so pointed at the real repository this
+    # run could send its load there and measure that repository's latency. A local stub
+    # stands in for it instead: any HEAD the proxy makes goes, over TLS it verifies, to
+    # a peer that answers at once. With the default tiers the warmed payload is fresh,
+    # so hits make none (see bench/README.md).
     # The payload lives at a coordinate no real repository has, so the cached copy
     # can never stand in for a real artifact; cleanup() removes it anyway.
     STUB_DIR="$(mktemp -d)"

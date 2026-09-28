@@ -7,10 +7,11 @@ import java.util.Map;
 
 /**
  * How a cached Maven/Gradle artifact is confirmed with upstream before it is
- * served. Every hit is confirmed; only an unreachable upstream skips it.
+ * served, once its last confirmation is older than {@link ArtifactCacheTiers}
+ * trusts; an unreachable upstream skips it.
  * <p>
  * This is also the allowlist of domains whose artifacts are cached at all: a
- * domain with no entry is relayed. Confirming every hit means an online serve no
+ * domain with no entry is relayed. Confirming hits means an online serve no
  * longer depends on what a repository lets publishers do, so an entry is not a
  * claim that its content is immutable. A domain still has to be vetted, and
  * each entry below was, for three reasons:
@@ -20,7 +21,9 @@ import java.util.Map;
  *       returned if the repository does not change or withdraw what it has
  *       published. Central forbids both; Gradle does not withdraw distributions;
  *       the Plugin Portal can delete a version (7 days for authors, later via
- *       support), an accepted risk while offline.</li>
+ *       support), an accepted risk while offline. The same holds for a hit served
+ *       on a past confirmation ({@link ArtifactCacheTiers}), which a withdrawing
+ *       domain therefore never gets ({@link #mayWithdraw}).</li>
  *   <li><b>The confirmation must be sound for that repository.</b> A
  *       server-computed checksum header describes exactly the bytes the server
  *       would send, so {@link #HEAD_CHECKSUM} is sound even for content that
@@ -64,6 +67,19 @@ enum Revalidation {
     Revalidation(Sidecar headerChecksum, String header) {
         this.headerChecksum = headerChecksum;
         this.header = header;
+    }
+
+    /**
+     * Domains that can withdraw what they published: the Plugin Portal deletes versions
+     * (7 days for authors, later via support, e.g. a malicious plugin). Their hits are
+     * never served on a past confirmation ({@link ArtifactCacheTiers}): only offline,
+     * where the risk is accepted (see the class comment).
+     */
+    private static final java.util.Set<String> MAY_WITHDRAW = java.util.Set.of("plugins.gradle.org");
+
+    /** Whether this domain can withdraw a release, so its hits must always be confirmed first. */
+    static boolean mayWithdraw(String domain) {
+        return MAY_WITHDRAW.contains(domain);
     }
 
     /** How to confirm a cached artifact from this domain, or null when it must not be cached. */

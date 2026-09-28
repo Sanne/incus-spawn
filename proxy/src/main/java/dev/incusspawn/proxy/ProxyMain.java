@@ -141,6 +141,7 @@ public class ProxyMain implements QuarkusApplication {
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
                 creds, creds.toolProxies(), loaded.fingerprint());
         proxy.setIncusClient(incus);
+        proxy.useConfig(config);
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {

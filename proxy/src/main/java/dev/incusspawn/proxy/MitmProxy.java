@@ -35,6 +35,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -246,6 +247,8 @@ public class MitmProxy {
     boolean upstreamTrustAll = false;
     // Overridable for tests: see probeClient's options
     int probeReadIdleSeconds = 15;
+    // From config.yaml's artifact-cache: section, through useConfig()
+    volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
     // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
     // send a host's upstream connections to a local stub. Host header and SNI still
     // name the real host. Set before start().
@@ -358,11 +361,17 @@ public class MitmProxy {
         return snapshot;
     }
 
+    /** Take on the settings of config.yaml: at start (ProxyMain) and on every reload. */
+    void useConfig(dev.incusspawn.config.SpawnConfig config) {
+        configSnapshot = config;
+        artifactCacheTiers = ArtifactCacheTiers.from(config);
+    }
+
     private dev.incusspawn.config.SpawnConfig configSnapshot() {
         var snapshot = configSnapshot;
         if (snapshot == null) {
-            // The constructors take no config, so until the first reload the first
-            // per-instance request reads it here.
+            // Only for a proxy nobody gave a config (useConfig(), which ProxyMain calls at
+            // start): tests, which construct MitmProxy directly.
             snapshot = dev.incusspawn.config.SpawnConfig.load();
             configSnapshot = snapshot;
         }
@@ -535,7 +544,7 @@ public class MitmProxy {
             var newConfig = loaded.config();
             var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
             var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
-            configSnapshot = newConfig;
+            useConfig(newConfig);
             toolSetupsSnapshot = newSetups;
             credentials = newCreds;
             // Drop per-selection credentials before publishing the new defaults: a rotated
@@ -706,6 +715,7 @@ public class MitmProxy {
                 " (domains: " + REGISTRY_DOMAINS + ")");
         System.out.println("Maven cache: " + mavenCacheDir() +
                 " (domains: " + MAVEN_DOMAINS + ")");
+        System.out.println("Maven/Gradle confirmations: " + artifactCacheTiers);
         System.out.println("Maven .m2 fallback: " +
                 (Files.isDirectory(m2Repository()) ? m2Repository() : "not available"));
         System.out.println("Gradle cache: " + gradleCacheDir() +
@@ -729,6 +739,7 @@ public class MitmProxy {
     public void stop() {
         ProxyLog.info("Stopping proxy");
         try {
+            logCacheStats();
             try {
                 if (mitmServer != null) mitmServer.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
             } catch (Exception ignored) {}
@@ -1831,11 +1842,13 @@ public class MitmProxy {
     // Serve a cached artifact only when a direct fetch would return the same bytes:
     // - an artifact is stored only after matching a checksum from upstream, and that
     //   checksum is stored with it as a sidecar (VerifiedArtifactStore);
-    // - every hit is confirmed with upstream before it is served, the way the domain's
-    //   Revalidation says (a HEAD's X-Checksum-SHA1, or a fresh sidecar);
-    // - sidecar requests always go upstream, and the answer is reconciled with the
-    //   stored copy;
-    // - only when upstream cannot be reached are cached copies served unconfirmed.
+    // - a hit is served on its last confirmation with upstream while artifactCacheTiers
+    //   trusts it (confirmed again in the background once it ages), and confirmed before
+    //   it is served after that, the way the domain's Revalidation says (a HEAD's
+    //   X-Checksum-SHA1, or a fresh sidecar);
+    // - sidecar requests follow their artifact: the stored copy while it is trusted,
+    //   else upstream, and the answer is reconciled with the stored copy;
+    // - past the tiers, only when upstream cannot be reached are copies served unconfirmed.
 
     /**
      * Upstream's answer about an artifact's checksum or a sidecar.
@@ -1953,7 +1966,7 @@ public class MitmProxy {
             var target = Sidecar.of(artifactPath) == null ? targetOf.apply(artifactPath) : null;
             if (target != null && revalidation.fits(target.checksum())) {
                 if (sidecar != null) {
-                    serveSidecar(clientReq, domain, revalidation, sidecar, target.artifact());
+                    serveSidecar(clientReq, domain, revalidation, sidecar, target);
                 } else {
                     serveArtifact(clientReq, domain, revalidation, target);
                 }
@@ -1979,19 +1992,29 @@ public class MitmProxy {
                 : null;
     }
 
-    private record LocalCopies(long cachedSize, boolean hostCopy) {}
+    private record LocalCopies(VerifiedArtifactStore.CachedCopy cached, boolean hostCopy) {}
 
-    /** Serve an artifact from the verified cache once upstream confirms it, or download, verify and store it. */
+    /**
+     * Serve an artifact from the verified cache, confirmed with upstream as recently
+     * as {@link #artifactCacheTiers} asks, or download, verify and store it.
+     */
     private void serveArtifact(HttpServerRequest clientReq, String domain, Revalidation revalidation,
                                ArtifactTarget target) {
         var ref = domain + clientReq.path();
 
-        vertx.executeBlocking(() -> new LocalCopies(
-                Files.isRegularFile(target.artifact()) ? Files.size(target.artifact()) : -1L,
-                target.hostCopy() != null && Files.isRegularFile(target.hostCopy())), false
-        ).onSuccess(local -> {
-            if (local.cachedSize() >= 0) {
-                revalidateAndServe(clientReq, domain, revalidation, target, ref, local.cachedSize());
+        vertx.executeBlocking(() -> {
+            var cached = VerifiedArtifactStore.cachedCopy(target.artifact(), target.checksum(), null);
+            return new LocalCopies(cached,
+                    cached == null && target.hostCopy() != null && Files.isRegularFile(target.hostCopy()));
+        }, false).onSuccess(local -> {
+            var cached = local.cached();
+            if (cached != null) {
+                var tier = trustTier(domain, cached);
+                if (tier == ArtifactCacheTiers.Tier.EXPIRED) {
+                    revalidateAndServe(clientReq, domain, revalidation, target, ref, cached.size());
+                } else {
+                    serveTrusted(clientReq, domain, revalidation, target, ref, cached, tier);
+                }
             } else if (local.hostCopy() && !inBackoff(domain)) {
                 // The checksum is needed before deciding whether to download at all
                 probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
@@ -2006,6 +2029,129 @@ public class MitmProxy {
         });
     }
 
+    /**
+     * How far the artifact's last confirmation is trusted: the configured tiers, except
+     * on a domain that can withdraw what it published ({@link Revalidation#mayWithdraw}),
+     * whose every hit is confirmed first.
+     */
+    private ArtifactCacheTiers.Tier trustTier(String domain, VerifiedArtifactStore.CachedCopy cached) {
+        var tiers = Revalidation.mayWithdraw(domain) ? ArtifactCacheTiers.CONFIRM_EVERY_HIT : artifactCacheTiers;
+        return tiers.tierOf(cached.confirmedAt(), Instant.now());
+    }
+
+    /**
+     * Serve a copy whose last confirmation is still trusted, with no upstream check.
+     * The proxy vouches for its stored checksum as for the bytes: it goes out as the
+     * checksum header where upstream would send one, so Maven skips its own
+     * {@code .sha1} request, which would otherwise cost the round trip saved here.
+     */
+    private void serveTrusted(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+                              ArtifactTarget target, String ref, VerifiedArtifactStore.CachedCopy cached,
+                              ArtifactCacheTiers.Tier tier) {
+        // The header must describe the bytes sendFile is about to open. Vert.x opens by
+        // path, so check the path is still the file the checksum was read with, here on
+        // the thread that opens it next (a stat; sendFile's own open blocks likewise).
+        // A copy replaced since goes through the confirm-first path instead.
+        if (!VerifiedArtifactStore.unchanged(target.artifact(), cached)) {
+            revalidateAndServe(clientReq, domain, revalidation, target, ref, cached.size());
+            return;
+        }
+        recordHit(tier == ArtifactCacheTiers.Tier.STALE
+                ? ArtifactCacheStats.Hit.TRUSTED_CHECKING : ArtifactCacheStats.Hit.TRUSTED, cached.size());
+        if (revalidation.header != null) {
+            var hex = target.checksum().hex(cached.checksum());
+            if (hex != null) clientReq.response().putHeader(revalidation.header, hex);
+        }
+        serveCachedFile(clientReq.response(), target.artifact(), null);
+        if (tier == ArtifactCacheTiers.Tier.STALE) {
+            confirmInBackground(domain, clientReq.path(), revalidation, target, ref);
+        }
+    }
+
+    // Per-hit counts, logged as one summary line at most every cacheStatsIntervalMs
+    final ArtifactCacheStats cacheStats = new ArtifactCacheStats();
+    // Overridable for tests, which read the counts themselves
+    long cacheStatsIntervalMs = ArtifactCacheStats.INTERVAL_SECONDS * 1000L;
+    private final java.util.concurrent.atomic.AtomicBoolean cacheStatsPending =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Count a hit. The first one after a quiet spell schedules the summary, so an
+     * idle proxy neither logs nor wakes up for it.
+     */
+    private void recordHit(ArtifactCacheStats.Hit hit, long size) {
+        cacheStats.record(hit, size);
+        if (cacheStatsPending.compareAndSet(false, true)) {
+            vertx.setTimer(cacheStatsIntervalMs, id -> logCacheStats());
+        }
+    }
+
+    void logCacheStats() {
+        // Cleared first: a hit landing now schedules the next summary, whichever one counts it
+        cacheStatsPending.set(false);
+        var summary = cacheStats.drain();
+        if (summary != null) System.out.println(summary);
+    }
+
+    // Artifacts with a background confirmation queued or in flight, so overlapping hits share one
+    private final Set<Path> backgroundConfirmations = ConcurrentHashMap.newKeySet();
+    // Past the limit they wait their turn here; guarded by itself, as is confirmationsInFlight
+    private final java.util.ArrayDeque<Runnable> queuedConfirmations = new java.util.ArrayDeque<>();
+    private int confirmationsInFlight;
+    // Overridable for tests
+    int maxBackgroundConfirmations = 16;
+
+    /**
+     * Confirm a copy that was just served from its trusted-but-aging confirmation.
+     * A match renews the confirmation; a change or withdrawal evicts the copy, so
+     * the next request fetches it. An answer that settles neither (a 403, an
+     * unusable sidecar) expires the confirmation, so the next hit is confirmed first
+     * and gets that path's handling. Past {@link #maxBackgroundConfirmations} in
+     * flight, confirmations queue rather than being dropped.
+     */
+    private void confirmInBackground(String domain, String path, Revalidation revalidation,
+                                     ArtifactTarget target, String ref) {
+        var artifact = target.artifact();
+        if (!backgroundConfirmations.add(artifact)) return;
+        Runnable confirmation = () -> confirm(domain, path, revalidation, target).onComplete(ar -> {
+            if (ar.failed()) {
+                System.err.println("Background confirmation error for " + ref + ": " + ar.cause().getMessage());
+            } else {
+                var outcome = ar.result().outcome();
+                logEviction(outcome, ref, target.checksum(), ar.result().answer());
+                if (outcome != null && outcome != VerifiedArtifactStore.Outcome.MATCHED
+                        && outcome != VerifiedArtifactStore.Outcome.EVICTED) {
+                    vertx.executeBlocking(() -> {
+                        VerifiedArtifactStore.expireConfirmation(artifact, target.checksum());
+                        return null;
+                    }, false);
+                }
+            }
+            backgroundConfirmations.remove(artifact);
+            startNextConfirmation();
+        });
+        synchronized (queuedConfirmations) {
+            if (confirmationsInFlight >= maxBackgroundConfirmations) {
+                queuedConfirmations.add(confirmation);
+                return;
+            }
+            confirmationsInFlight++;
+        }
+        confirmation.run();
+    }
+
+    private void startNextConfirmation() {
+        Runnable next;
+        synchronized (queuedConfirmations) {
+            next = queuedConfirmations.poll();
+            if (next == null) {
+                confirmationsInFlight--;
+                return;
+            }
+        }
+        next.run();
+    }
+
     /** Ask upstream for the artifact's current checksum, the way the domain allows. */
     private Future<SidecarAnswer> probe(String domain, String path, Revalidation revalidation, Sidecar checksum) {
         return revalidation.header != null
@@ -2013,34 +2159,38 @@ public class MitmProxy {
                 : fetchSidecar(domain, path + checksum.extension);
     }
 
-    private void revalidateAndServe(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                    ArtifactTarget target, String ref, long size) {
+    /** Upstream's answer, and what it did to the cached copy: no outcome when upstream was unreachable. */
+    private record Confirmed(SidecarAnswer answer, VerifiedArtifactStore.Outcome outcome) {}
+
+    /** Ask upstream about a cached artifact and reconcile the copy with the answer. */
+    private Future<Confirmed> confirm(String domain, String path, Revalidation revalidation, ArtifactTarget target) {
         var probed = inBackoff(domain)
                 ? Future.succeededFuture(SidecarAnswer.UNREACHABLE)
-                : probe(domain, clientReq.path(), revalidation, target.checksum());
-        probed.onSuccess(answer -> {
-            if (answer.unreachable()) {
-                System.out.println("Artifact cache hit, upstream unreachable so not revalidated: " +
-                        ref + " (" + formatSize(size) + ")");
+                : probe(domain, path, revalidation, target.checksum());
+        return probed.compose(answer -> answer.unreachable()
+                ? Future.succeededFuture(new Confirmed(answer, null))
+                : vertx.executeBlocking(() -> new Confirmed(answer, VerifiedArtifactStore.reconcile(
+                        target.artifact(), target.checksum(), answer.status(), answer.body(),
+                        answer.mayEvict(revalidation))), false));
+    }
+
+    private void revalidateAndServe(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+                                    ArtifactTarget target, String ref, long size) {
+        confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
+            if (confirmed.outcome() == null) {
+                recordHit(ArtifactCacheStats.Hit.UNCONFIRMED, size);
                 serveCachedFile(clientReq.response(), target.artifact(), null);
-                return;
+            } else if (confirmed.outcome() == VerifiedArtifactStore.Outcome.MATCHED) {
+                recordHit(ArtifactCacheStats.Hit.CONFIRMED, size);
+                serveConfirmed(clientReq, target.artifact(), revalidation, confirmed.answer());
+            } else {
+                // Changed, withdrawn, or not confirmed (a 403, a disagreeing sidecar): let upstream answer
+                logEviction(confirmed.outcome(), ref, target.checksum(), confirmed.answer());
+                download(clientReq, domain, revalidation, target, ref);
             }
-            vertx.executeBlocking(() -> VerifiedArtifactStore.reconcile(target.artifact(), target.checksum(),
-                    answer.status(), answer.body(), answer.mayEvict(revalidation)), false
-            ).onSuccess(outcome -> {
-                if (outcome == VerifiedArtifactStore.Outcome.MATCHED) {
-                    System.out.println("Artifact cache hit, revalidated: " + ref +
-                            " (" + formatSize(size) + ")");
-                    serveConfirmed(clientReq, target.artifact(), revalidation, answer);
-                } else {
-                    // Changed, withdrawn, or not confirmed (a 403, a disagreeing sidecar): let upstream answer
-                    logEviction(outcome, ref, target.checksum(), answer);
-                    download(clientReq, domain, revalidation, target, ref);
-                }
-            }).onFailure(err -> {
-                System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
-                relayRequest(clientReq, domain);
-            });
+        }).onFailure(err -> {
+            System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
+            relayRequest(clientReq, domain);
         });
     }
 
@@ -2048,8 +2198,9 @@ public class MitmProxy {
      * Serve a copy upstream has just confirmed. Where upstream itself sends a
      * checksum header, the fresh value is passed on, so the client checks these
      * bytes against upstream (and Maven skips its own {@code .sha1} request).
-     * Never send one made up from the store: that would turn the client's check
-     * against upstream into a check against our own cache.
+     * Never send one from the store for a copy whose confirmation is not trusted:
+     * that would turn the client's check against upstream into a check against our
+     * own cache (see {@link #serveTrusted} for the copies it is trusted for).
      */
     private void serveConfirmed(HttpServerRequest clientReq, Path artifact,
                                 Revalidation revalidation, SidecarAnswer answer) {
@@ -2073,10 +2224,11 @@ public class MitmProxy {
             return;
         }
         vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(
-                target.hostCopy(), target.artifact(), checksum, answer.body()), false
-        ).onSuccess(imported -> {
-            if (imported) {
-                System.out.println("Maven .m2 hit: " + ref + " (" + checksum.extension + " verified)");
+                target.hostCopy(), target.artifact(), checksum, answer.body())
+                ? Files.size(target.artifact()) : -1L, false
+        ).onSuccess(importedSize -> {
+            if (importedSize >= 0) {
+                recordHit(ArtifactCacheStats.Hit.HOST_COPY, importedSize);
                 serveConfirmed(clientReq, target.artifact(), revalidation, answer);
             } else {
                 System.out.println("Maven .m2 copy differs from upstream: " + ref);
@@ -2106,32 +2258,49 @@ public class MitmProxy {
     }
 
     /**
-     * Serve a sidecar as upstream has it now, and use it to check the cached
-     * artifact (see {@link VerifiedArtifactStore#reconcile}). The stored copy is
-     * served only when upstream cannot be reached. Where a server-computed header
+     * Serve a sidecar. While the artifact's last confirmation is trusted
+     * ({@link #artifactCacheTiers}) its stored copy is served, as the artifact
+     * itself would be; an aging one is confirmed again in the background.
+     * Otherwise it is served as upstream has it now, and used to check the cached
+     * artifact (see {@link VerifiedArtifactStore#reconcile}); the stored copy then
+     * stands in only when upstream cannot be reached. Where a server-computed header
      * outranks sidecars ({@link Revalidation#sidecarsAuthoritative}), a
      * disagreement is settled by that header instead of evicting.
      */
     private void serveSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                              Sidecar sidecar, Path artifact) {
-        if (inBackoff(domain)) {
-            // Answer from the stored copy; without one, upstream may still answer
-            serveStoredSidecarOr(clientReq, artifact, sidecar,
-                    () -> fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact));
-        } else {
-            fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact);
-        }
+                              Sidecar sidecar, ArtifactTarget target) {
+        var artifact = target.artifact();
+        vertx.executeBlocking(() -> VerifiedArtifactStore.cachedCopy(artifact, target.checksum(), sidecar), false
+        ).onComplete(ar -> {
+            var cached = ar.succeeded() ? ar.result() : null;
+            var stored = cached == null ? null : cached.sidecar();
+            var tier = stored == null ? ArtifactCacheTiers.Tier.EXPIRED : trustTier(domain, cached);
+            if (tier != ArtifactCacheTiers.Tier.EXPIRED || (stored != null && inBackoff(domain))) {
+                sendSidecar(clientReq.response(), 200, stored);
+                if (tier == ArtifactCacheTiers.Tier.STALE) {
+                    var artifactPath = sidecar.artifactPath(clientReq.path());
+                    confirmInBackground(domain, artifactPath, revalidation, target, domain + artifactPath);
+                }
+            } else {
+                // Without a stored copy, upstream may still answer even in a backoff
+                fetchAndServeSidecar(clientReq, domain, revalidation, sidecar, artifact, stored);
+            }
+        });
     }
 
+    /** {@code stored}: the stored copy, served in upstream's place when it cannot be reached. */
     private void fetchAndServeSidecar(HttpServerRequest clientReq, String domain, Revalidation revalidation,
-                                      Sidecar sidecar, Path artifact) {
+                                      Sidecar sidecar, Path artifact, byte[] stored) {
         var path = clientReq.path();
         var clientResp = clientReq.response();
 
         fetchSidecar(domain, path).onSuccess(answer -> {
             if (answer.unreachable()) {
-                serveStoredSidecarOr(clientReq, artifact, sidecar,
-                        () -> sendError(clientResp, answer.errorStatus(), "Upstream unreachable"));
+                if (stored != null) {
+                    sendSidecar(clientResp, 200, stored);
+                } else {
+                    sendError(clientResp, answer.errorStatus(), "Upstream unreachable");
+                }
                 return;
             }
             if (answer == SidecarAnswer.UNUSABLE) {
@@ -2154,19 +2323,6 @@ public class MitmProxy {
                 sendSidecar(clientResp, answer.status(), answer.body());
             });
         });
-    }
-
-    private void serveStoredSidecarOr(HttpServerRequest clientReq, Path artifact, Sidecar sidecar,
-                                      Runnable otherwise) {
-        vertx.executeBlocking(() -> VerifiedArtifactStore.storedSidecar(artifact, sidecar), false)
-                .onComplete(ar -> {
-                    if (ar.succeeded() && ar.result() != null) {
-                        System.out.println("Upstream unreachable, serving stored " + clientReq.host() + clientReq.path());
-                        sendSidecar(clientReq.response(), 200, ar.result());
-                    } else {
-                        otherwise.run();
-                    }
-                });
     }
 
     /**
@@ -2685,8 +2841,8 @@ public class MitmProxy {
 
     /**
      * Check whether a Maven repository path goes through the artifact cache.
-     * Every hit is confirmed with upstream, so these exclusions are not about
-     * content changing:
+     * Hits are confirmed with upstream (within {@link ArtifactCacheTiers}), so these
+     * exclusions are not about content changing:
      * <ul>
      *   <li>{@code maven-metadata.xml}: confirming a hit costs the same round trip
      *       as fetching the file, so caching it gains nothing.</li>
@@ -2770,7 +2926,7 @@ public class MitmProxy {
         }
     }
 
-    private static String formatSize(long bytes) {
+    static String formatSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024L * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));

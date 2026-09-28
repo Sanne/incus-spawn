@@ -31,7 +31,10 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -92,6 +95,7 @@ class ArtifactCacheProxyTest {
     /** HEADs left to receive but never answer, like a connection that died silently. */
     static final AtomicInteger headsToStall = new AtomicInteger();
     static volatile long headDelayMs;
+    static final AtomicInteger headsAnswered = new AtomicInteger();
 
     @BeforeAll
     static void start() throws Exception {
@@ -124,6 +128,8 @@ class ArtifactCacheProxyTest {
                 new ProxyCredentials("", "", false, "", "", java.util.List.of()));
         proxy.upstreamTrustAll = true;
         proxy.probeReadIdleSeconds = 1;
+        // Tests read the hit counts themselves; a summary logged meanwhile would drain them
+        proxy.cacheStatsIntervalMs = TimeUnit.HOURS.toMillis(1);
         var ready = new CountDownLatch(1);
         var thread = new Thread(() -> {
             try {
@@ -161,6 +167,7 @@ class ArtifactCacheProxyTest {
     }
 
     static void reply(HttpServerRequest req, String key) {
+        if (req.method() == HttpMethod.HEAD) headsAnswered.incrementAndGet();
         var reply = routes.get(key);
         var resp = req.response();
         if (reply == null) {
@@ -197,6 +204,11 @@ class ArtifactCacheProxyTest {
         stalledConnection = null;
         headsToStall.set(0);
         headDelayMs = 0;
+        headsAnswered.set(0);
+        proxy.maxBackgroundConfirmations = 16;
+        // Most tests are about confirming a hit; the tiers that skip it have tests of their own
+        proxy.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
+        proxy.logCacheStats();
         online();
         for (var dir : new Path[] {Environment.mavenCacheDir(), Environment.gradleCacheDir(),
                 Environment.m2Repository()}) {
@@ -442,6 +454,218 @@ class ArtifactCacheProxyTest {
         assertNotNull(stalledConnection, "a HEAD was stalled");
         assertNotSame(stalledConnection, lastHeadConnection, "the retry went to another connection");
         assertTrue(ms < 10_000, "took " + ms + "ms");
+    }
+
+    // --- confirmation tiers (artifact-cache: fresh / max-stale) ---
+
+    /**
+     * Switch to the default tiers and cache {@code content} at {@code path}, as a first
+     * request would. Returns the stored checksum, whose mtime is the confirmation time.
+     */
+    static Path cacheJar(String host, String path, String content) throws Exception {
+        proxy.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+        publishJar(host, path, content);
+        get(host, path);
+        awaitFile(cached(host, path), content);
+        var stored = Sidecar.SHA1.storedFile(cached(host, path));
+        awaitSidecar(stored);
+        return stored;
+    }
+
+    /** Make an artifact look last confirmed {@code age} ago. */
+    static void confirmedAgo(Path storedChecksum, Duration age) throws Exception {
+        Files.setLastModifiedTime(storedChecksum, FileTime.from(Instant.now().minus(age)));
+    }
+
+    @Test
+    void freshHitIsServedWithoutAskingUpstream() throws Exception {
+        cacheJar(CENTRAL, JAR, "v1");
+
+        // Even a republish goes unseen while the confirmation is fresh: that is the trade
+        publishJar(CENTRAL, JAR, "v2");
+        hits.clear();
+        var hit = get(CENTRAL, JAR);
+        assertEquals("v1", hit.text());
+        assertEquals(hex("SHA-1", "v1".getBytes()), hit.checksumHeader(),
+                "the stored checksum goes out, so Maven skips its .sha1 request");
+        assertEquals(0, headsOn(CENTRAL, JAR));
+        assertEquals(0, hitsOn(CENTRAL, JAR));
+        assertTrue(proxy.cacheStats.drain().contains("(1 served on a fresh confirmation)"));
+    }
+
+    @Test
+    void hitSummaryIsLoggedOnceTheIntervalPasses() throws Exception {
+        cacheJar(CENTRAL, JAR, "v1");
+        var interval = proxy.cacheStatsIntervalMs;
+        proxy.cacheStatsIntervalMs = 200;
+        try {
+            // Nothing is pending after reset(), so this hit schedules the summary
+            get(CENTRAL, JAR);
+            assertEquals(1, proxy.cacheStats.pending());
+            await("the summary to drain the counts", () -> proxy.cacheStats.pending() == 0);
+            // And the next hit schedules another one
+            get(CENTRAL, JAR);
+            await("the next summary", () -> proxy.cacheStats.pending() == 0);
+        } finally {
+            proxy.cacheStatsIntervalMs = interval;
+        }
+    }
+
+    @Test
+    void freshSidecarIsServedFromTheStore() throws Exception {
+        cacheJar(CENTRAL, JAR, "v1");
+
+        hits.clear();
+        var sidecar = get(CENTRAL, JAR + ".sha1");
+        assertEquals(200, sidecar.status());
+        assertEquals(hex("SHA-1", "v1".getBytes()), sidecar.text());
+        assertEquals(0, hitsOn(CENTRAL, JAR + ".sha1"));
+        assertEquals(0, headsOn(CENTRAL, JAR));
+    }
+
+    @Test
+    void staleHitIsServedAtOnceAndConfirmedInTheBackground() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofHours(3));
+
+        hits.clear();
+        // Answered later than a serve from disk takes. (The 1s read-idle timeout counts from the
+        // connection's last read, so a delayed HEAD may be retried: count "at least", not "exactly".)
+        headDelayMs = 300;
+        var hit = get(CENTRAL, JAR);
+        assertEquals("v1", hit.text());
+        assertEquals(0, headsAnswered.get(), "served before its HEAD was answered");
+        assertTrue(proxy.cacheStats.drain().contains("(1 served while confirming again)"));
+
+        await("the confirmation to be renewed", () -> Duration.between(
+                Files.getLastModifiedTime(stored).toInstant(), Instant.now()).toMinutes() < 1);
+        var heads = headsOn(CENTRAL, JAR);
+        assertTrue(heads >= 1);
+        get(CENTRAL, JAR);
+        assertEquals(heads, headsOn(CENTRAL, JAR), "renewed, so fresh again");
+    }
+
+    @Test
+    void staleHitThatChangedIsEvictedForTheNextRequest() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofDays(2));
+
+        publishJar(CENTRAL, JAR, "v2");
+        assertEquals("v1", get(CENTRAL, JAR).text(), "the stale tier serves before it checks");
+        await("the eviction", () -> !Files.exists(cached(CENTRAL, JAR)));
+        assertEquals("v2", get(CENTRAL, JAR).text());
+        awaitFile(cached(CENTRAL, JAR), "v2");
+    }
+
+    @Test
+    void expiredHitIsConfirmedBeforeServing() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofDays(8));
+
+        publishJar(CENTRAL, JAR, "v2");
+        hits.clear();
+        assertEquals("v2", get(CENTRAL, JAR).text(), "past max-stale the change is seen first");
+        assertEquals(1, headsOn(CENTRAL, JAR));
+        assertNull(proxy.cacheStats.drain(), "an evicted hit is a download, not a cache hit");
+    }
+
+    @Test
+    void pluginPortalHitsAreAlwaysConfirmedFirst() throws Exception {
+        // The Portal can delete a version, so a past confirmation never stands in for one
+        cacheJar(PORTAL, PLUGIN_JAR, "p1");
+
+        hits.clear();
+        assertEquals("p1", get(PORTAL, PLUGIN_JAR).text());
+        assertEquals(1, hitsOn(PORTAL, PLUGIN_JAR + ".sha1"));
+        assertTrue(proxy.cacheStats.drain().contains("(1 confirmed first)"));
+    }
+
+    /** Cache the Gradle distribution under the default tiers; returns its stored checksum. */
+    static Path cacheDist() throws Exception {
+        proxy.artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
+        var zip = "gradle-zip".getBytes();
+        routes.put(GRADLE + " " + DIST, new Reply(200, zip, null));
+        var downloads = "https://" + GRADLE_DOWNLOADS + DIST + ".sha256";
+        routes.put(GRADLE + " " + DIST + ".sha256", new Reply(301, null, downloads));
+        routes.put(GRADLE_DOWNLOADS + " " + DIST + ".sha256", new Reply(200, hex("SHA-256", zip).getBytes(), null));
+        get(GRADLE, DIST);
+        var cached = Environment.gradleCacheDir().resolve("gradle-9.0-bin.zip");
+        awaitFile(cached, "gradle-zip");
+        var stored = Sidecar.SHA256.storedFile(cached);
+        awaitSidecar(stored);
+        return stored;
+    }
+
+    @Test
+    void freshHitOnSidecarOnlyDomainAsksNothing() throws Exception {
+        cacheDist();
+
+        hits.clear();
+        var hit = get(GRADLE, DIST);
+        assertEquals("gradle-zip", hit.text());
+        assertNull(hit.checksumHeader(), "Gradle sends no checksum header, so none is made up");
+        assertEquals(0, hitsOn(GRADLE, DIST + ".sha256"));
+        assertEquals(0, hitsOn(GRADLE_DOWNLOADS, DIST + ".sha256"));
+    }
+
+    @Test
+    void staleSidecarOnlyDomainIsConfirmedInTheBackground() throws Exception {
+        confirmedAgo(cacheDist(), Duration.ofHours(3));
+
+        hits.clear();
+        assertEquals("gradle-zip", get(GRADLE, DIST).text());
+        await("the background .sha256 fetch", () -> hitsOn(GRADLE_DOWNLOADS, DIST + ".sha256") == 1);
+    }
+
+    @Test
+    void inconclusiveBackgroundConfirmationExpiresTheCopy() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofHours(3));
+
+        // A 403 says nothing about the artifact: neither renew nor evict, but stop trusting it
+        routes.put(CENTRAL + " " + JAR, new Reply(403, null, null));
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        await("the confirmation to expire",
+                () -> Files.getLastModifiedTime(stored).toInstant().equals(Instant.EPOCH));
+        assertTrue(Files.exists(cached(CENTRAL, JAR)), "not evicted");
+    }
+
+    @Test
+    void backgroundConfirmationsPastTheLimitWaitTheirTurn() throws Exception {
+        proxy.maxBackgroundConfirmations = 1;
+        var jars = List.of(JAR, "/maven2/org/example/b/1.0/b-1.0.jar", "/maven2/org/example/c/1.0/c-1.0.jar");
+        for (var jar : jars) confirmedAgo(cacheJar(CENTRAL, jar, jar), Duration.ofHours(3));
+
+        hits.clear();
+        headDelayMs = 200;
+        for (var jar : jars) assertEquals(jar, get(CENTRAL, jar).text());
+        for (var jar : jars) {
+            await("the background HEAD of " + jar, () -> headsOn(CENTRAL, jar) >= 1);
+        }
+    }
+
+    @Test
+    void aClientsOwnSha1RequestDoesNotRenewTrustOnCentral() throws Exception {
+        // On Central the checksum header outranks a separately uploaded .sha1, so a
+        // matching .sha1 must not restart the window in which hits skip the HEAD
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofDays(8));
+        var before = Files.getLastModifiedTime(stored);
+
+        assertEquals(200, get(CENTRAL, JAR + ".sha1").status());
+        assertEquals(before, Files.getLastModifiedTime(stored));
+    }
+
+    @Test
+    void staleHitWhileUpstreamIsUnreachableIsStillServed() throws Exception {
+        var stored = cacheJar(CENTRAL, JAR, "v1");
+        confirmedAgo(stored, Duration.ofHours(3));
+        var before = Files.getLastModifiedTime(stored);
+
+        offline();
+        assertEquals("v1", get(CENTRAL, JAR).text());
+        assertStaysPresent(cached(CENTRAL, JAR), "v1");
+        assertEquals(before, Files.getLastModifiedTime(stored), "an unreachable upstream confirms nothing");
     }
 
     @Test

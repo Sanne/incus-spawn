@@ -66,6 +66,12 @@ public class SpawnConfig {
     @JsonProperty("tui-live-refresh")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean tuiLiveRefresh;
+    // How long the proxy trusts a cached Maven/Gradle artifact's last confirmation with
+    // upstream (ArtifactCacheConfig). Kept as the raw YAML value, so any shape loads and is
+    // written back as it was; null means the defaults, and is never written back.
+    @JsonProperty("artifact-cache")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Object artifactCache;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
@@ -613,6 +619,8 @@ public class SpawnConfig {
     // Deliberately not a bean getter: Jackson would serialize its boolean, writing the default out.
     public boolean tuiLiveRefreshEnabled() { return tuiLiveRefresh == null || tuiLiveRefresh; }
     public void setTuiLiveRefresh(Boolean enabled) { this.tuiLiveRefresh = enabled; }
+    /** The {@code artifact-cache:} section, or null when there is none. */
+    public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JsonAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
@@ -701,6 +709,7 @@ public class SpawnConfig {
         this.incusBridgeGateway = other.incusBridgeGateway;
         this.autoCloneRepos = other.autoCloneRepos;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
+        this.artifactCache = other.artifactCache;
         this.extras = other.extras;
     }
 

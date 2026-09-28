@@ -222,12 +222,58 @@ class VerifiedArtifactStoreTest {
     }
 
     @Test
-    void storedSidecarNeedsItsArtifact() throws Exception {
+    void cachedCopyNeedsItsArtifact() throws Exception {
         var artifact = cached(JAR);
-        assertArrayEquals(sha1Of(JAR), VerifiedArtifactStore.storedSidecar(artifact, Sidecar.SHA1));
-        assertNull(VerifiedArtifactStore.storedSidecar(artifact, Sidecar.MD5));
+        var copy = VerifiedArtifactStore.cachedCopy(artifact, Sidecar.SHA1, Sidecar.SHA1);
+        assertArrayEquals(sha1Of(JAR), copy.checksum());
+        assertArrayEquals(sha1Of(JAR), copy.sidecar());
+        assertEquals(Files.size(artifact), copy.size());
+        assertNotNull(copy.confirmedAt());
+        assertNull(VerifiedArtifactStore.cachedCopy(artifact, Sidecar.SHA1, Sidecar.MD5).sidecar());
         Files.delete(artifact);
-        assertNull(VerifiedArtifactStore.storedSidecar(artifact, Sidecar.SHA1));
+        assertNull(VerifiedArtifactStore.cachedCopy(artifact, Sidecar.SHA1, Sidecar.SHA1));
+    }
+
+    @Test
+    void onlyAnAuthoritativeMatchRenewsTheConfirmation() throws Exception {
+        var artifact = cached(JAR);
+        var stored = Sidecar.SHA1.storedFile(artifact);
+        var old = java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofDays(3)));
+        Files.setLastModifiedTime(stored, old);
+
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
+        assertEquals(old, Files.getLastModifiedTime(stored), "a sidecar that could not evict vouches for nothing");
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), true));
+        assertTrue(Files.getLastModifiedTime(stored).compareTo(old) > 0, "renewed");
+    }
+
+    @Test
+    void aNonAuthoritativeHashMatchStoresTheChecksumUnconfirmed() throws Exception {
+        var artifact = cached(JAR);
+        var stored = Sidecar.SHA1.storedFile(artifact);
+        Files.delete(stored);
+        assertEquals(Outcome.MATCHED, VerifiedArtifactStore.reconcile(artifact, Sidecar.SHA1, 200, sha1Of(JAR), false));
+        assertArrayEquals(sha1Of(JAR), Files.readAllBytes(stored));
+        assertEquals(java.time.Instant.EPOCH, Files.getLastModifiedTime(stored).toInstant());
+    }
+
+    @Test
+    void aReplacedArtifactIsNoLongerTheCachedCopy() throws Exception {
+        var artifact = cached(JAR);
+        var copy = VerifiedArtifactStore.cachedCopy(artifact, Sidecar.SHA1, null);
+        assertTrue(VerifiedArtifactStore.unchanged(artifact, copy));
+        var replacement = artifact.resolveSibling("replacement");
+        Files.write(replacement, "other bytes".getBytes());
+        Files.move(replacement, artifact, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        assertFalse(VerifiedArtifactStore.unchanged(artifact, copy));
+    }
+
+    @Test
+    void expiringAConfirmation() throws Exception {
+        var artifact = cached(JAR);
+        VerifiedArtifactStore.expireConfirmation(artifact, Sidecar.SHA1);
+        assertEquals(java.time.Instant.EPOCH,
+                VerifiedArtifactStore.cachedCopy(artifact, Sidecar.SHA1, null).confirmedAt().toInstant());
     }
 
     // --- host copy import ---

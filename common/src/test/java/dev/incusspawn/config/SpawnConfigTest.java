@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class SpawnConfigTest {
@@ -151,6 +153,67 @@ class SpawnConfigTest {
         var yaml = YAML.writeValueAsString(off);
         assertTrue(yaml.contains("tui-live-refresh: false"), yaml);
         assertFalse(YAML.readValue(yaml, SpawnConfig.class).tuiLiveRefreshEnabled());
+    }
+
+    @Test
+    void artifactCacheIsAbsentByDefaultAndNotWrittenBack() throws Exception {
+        assertNull(YAML.readValue("{}", SpawnConfig.class).artifactCache());
+        assertFalse(YAML.writeValueAsString(new SpawnConfig()).contains("artifact-cache"));
+    }
+
+    @Test
+    void artifactCacheRoundTrips() throws Exception {
+        var config = YAML.readValue("""
+                artifact-cache:
+                  fresh: 30m
+                  max-stale: 3d
+                """, SpawnConfig.class);
+        assertEquals("30m", config.artifactCache().fresh());
+        assertEquals("3d", config.artifactCache().maxStale());
+        var again = YAML.readValue(YAML.writeValueAsString(config), SpawnConfig.class);
+        assertEquals("30m", again.artifactCache().fresh());
+        assertEquals("3d", again.artifactCache().maxStale());
+
+        // Only the key that was set is written back
+        var partial = YAML.readValue("artifact-cache: {fresh: 1h}", SpawnConfig.class);
+        assertFalse(YAML.writeValueAsString(partial).contains("max-stale"));
+    }
+
+    @Test
+    void artifactCacheSurvivesAnUnrelatedRemoval() throws Exception {
+        var config = YAML.readValue("""
+                artifact-cache: {fresh: 1h}
+                incus-bridge-gateway: "10.1.2.3"
+                """, SpawnConfig.class);
+        config.removeConfigPath("incus-bridge-gateway");
+        assertEquals("1h", config.artifactCache().fresh());
+    }
+
+    @Test
+    void mistypedArtifactCacheDoesNotLoseTheRestOfTheConfig() throws Exception {
+        // Following "set both to 0" too literally must not fail the whole file: load() would
+        // then return an empty config, and the proxy would lose every credential
+        for (var value : new String[] {"0", "off", "[2h, 7d]"}) {
+            var config = YAML.readValue("artifact-cache: " + value + "\nincus-bridge-gateway: \"10.1.2.3\"\n",
+                    SpawnConfig.class);
+            assertEquals("10.1.2.3", config.getIncusBridgeGateway(), value);
+            assertFalse(config.artifactCache().wellFormed(), value);
+            assertTrue(YAML.writeValueAsString(config).contains("artifact-cache"), "written back as it was");
+        }
+        var numbers = YAML.readValue("artifact-cache: {fresh: 0, max-stale: 0}", SpawnConfig.class);
+        assertEquals("0", numbers.artifactCache().fresh());
+    }
+
+    @Test
+    void artifactCacheDurations() {
+        assertEquals(Duration.ZERO, ArtifactCacheConfig.parseDuration("0"));
+        assertEquals(Duration.ofSeconds(45), ArtifactCacheConfig.parseDuration("45s"));
+        assertEquals(Duration.ofMinutes(30), ArtifactCacheConfig.parseDuration("30m"));
+        assertEquals(Duration.ofHours(2), ArtifactCacheConfig.parseDuration(" 2H "));
+        assertEquals(Duration.ofDays(7), ArtifactCacheConfig.parseDuration("7d"));
+        for (var bad : new String[] {null, "", "2", "2x", "-1h", "1.5h", "2h30m", "99999999999999999999d", "999999999999999d"}) {
+            assertNull(ArtifactCacheConfig.parseDuration(bad), String.valueOf(bad));
+        }
     }
 
     @Test

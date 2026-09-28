@@ -16,7 +16,7 @@ import java.util.concurrent.Executors;
 /**
  * Stand-in for Maven Central during {@code bench/run.sh --load=maven}: serves one
  * artifact, with the {@code X-Checksum-SHA1} header Central sends, and its
- * {@code .sha1}. The proxy confirms every cache hit with upstream, so without a
+ * {@code .sha1}. The proxy confirms cache hits with upstream, so without a
  * stub the benchmark would send its whole load to the real Central, and measure
  * Central's latency rather than the proxy's.
  *

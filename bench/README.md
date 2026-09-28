@@ -70,15 +70,18 @@ It needs no extra setup — the harness builds a truststore from your isx CA, po
 before measuring so that every recorded request is a cache hit. Results carry `mbPerSec`
 alongside `meanReqPerSec`, computed from the artifact size actually fetched.
 
-The proxy confirms every cache hit with upstream (a `HEAD` for Maven Central), so the run
+The proxy confirms cache hits with upstream (a `HEAD` for Maven Central), so the run
 never talks to the real Central: that would send it the whole load and measure Central's
 latency, not the proxy's. `UpstreamStub.java` stands in for it on loopback, serving a
 642 KiB payload with Central's `X-Checksum-SHA1` header; the proxy is pointed at it through
 `ISX_BENCH_UPSTREAM`/`ISX_BENCH_UPSTREAM_CERT` and verifies its self-signed certificate like
 any upstream. The payload sits at a coordinate no repository has
-(`dev/incusspawn/bench/payload`), and the harness removes it from the cache afterwards. Each
-recorded request therefore includes one loopback `HEAD`, so `maven` results from before this
-change are not comparable with later ones. The stub speaks only HTTP/1.1, so these `HEAD`s take the proxy's HTTP/1.1 fallback rather than the HTTP/2 it uses against Central. It needs `java` and `keytool` from JDK 21 or later (the stub uses virtual threads).
+(`dev/incusspawn/bench/payload`), and the harness removes it from the cache afterwards. The
+proxy reads your `config.yaml`, so what a recorded hit measures depends on its `artifact-cache:`
+tiers. With the defaults the warmed payload is freshly confirmed, so hits make no `HEAD` and
+measure serving from disk. To measure confirmed hits, each with one loopback `HEAD`, set
+`artifact-cache: {fresh: 0, max-stale: 0}`. `maven` results from runs with different tiers, or
+from before the stub, are not comparable. The stub speaks only HTTP/1.1, so these `HEAD`s take the proxy's HTTP/1.1 fallback rather than the HTTP/2 it uses against Central. It needs `java` and `keytool` from JDK 21 or later (the stub uses virtual threads).
 
 Results record `loadMode`, and the delta table only ever compares runs of the same mode.
 

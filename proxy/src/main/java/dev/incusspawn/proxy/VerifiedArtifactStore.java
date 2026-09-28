@@ -9,6 +9,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 
 /**
  * On-disk half of the Maven/Gradle artifact cache: an artifact plus the stored
@@ -20,6 +21,10 @@ import java.nio.file.attribute.FileTime;
  *       upstream, and that checksum is committed with it as a sidecar.</li>
  *   <li>A stored checksum sidecar always describes the artifact beside it: it was
  *       either committed with it or checked against its hash before being stored.</li>
+ *   <li>The stored checksum's modification time is when upstream last confirmed
+ *       the artifact: set when both are committed, and again on every match by an
+ *       answer that could have evicted it. Renewing it is best-effort: a file the
+ *       proxy cannot re-stamp just ages, and gets confirmed before it is served.</li>
  *   <li>Commit, reconcile and evict for one artifact are serialized, so a store
  *       racing an eviction cannot leave a sidecar next to an artifact it does not
  *       describe. Hashing, which can take long for a large artifact, happens
@@ -139,7 +144,11 @@ final class VerifiedArtifactStore {
             if (sidecar.isChecksum() && sidecar.hex(body) == null) return Outcome.UNCHANGED;
 
             if (stored != null) {
-                return sidecar.sameContent(stored, body) ? Outcome.MATCHED : contradictedLocked(artifact, mayEvict);
+                if (!sidecar.sameContent(stored, body)) return contradictedLocked(artifact, mayEvict);
+                // Only an answer that could have evicted the copy may vouch for it (a .sha1
+                // on Central is outranked by the checksum header, and so confirms nothing)
+                if (mayEvict) stampConfirmation(storedFile, Instant.now());
+                return Outcome.MATCHED;
             }
             if (!sidecar.isChecksum()) {
                 writeAtomically(storedFile, body);
@@ -160,9 +169,96 @@ final class VerifiedArtifactStore {
             if (!before.equals(FileState.of(artifact))) return Outcome.UNCHANGED;
             if (sidecar.hex(body).equals(actual)) {
                 writeAtomically(sidecar.storedFile(artifact), body);
+                if (!mayEvict) stampConfirmation(sidecar.storedFile(artifact), Instant.EPOCH);
                 return Outcome.MATCHED;
             }
             return contradictedLocked(artifact, mayEvict);
+        }
+    }
+
+    /**
+     * What is cached for an artifact: the artifact file ({@code state}, and so its
+     * size); its stored checksum and when upstream last confirmed it (both null
+     * without one); and the stored copy of the sidecar asked for (null without one,
+     * or when none was asked for).
+     */
+    record CachedCopy(FileState state, byte[] checksum, FileTime confirmedAt, byte[] sidecar) {
+        long size() { return state.size(); }
+    }
+
+    // A read that saw the artifact replaced under it
+    private static final CachedCopy TORN = new CachedCopy(null, null, null, null);
+
+    /**
+     * The cached copy of an artifact, or null when it is not cached. Read without the
+     * lock, which commits hold across an fsync: a commit drops the old sidecars before
+     * it replaces the artifact and writes the new checksum after, and an eviction
+     * removes the artifact first, so while the artifact stays the same file across
+     * the reads, the checksum read describes it. Otherwise it is read again under the
+     * lock.
+     */
+    static CachedCopy cachedCopy(Path artifact, Sidecar checksum, Sidecar sidecar) throws IOException {
+        var copy = readCopy(artifact, checksum, sidecar);
+        if (copy != TORN) return copy;
+        synchronized (lockFor(artifact)) {
+            copy = readCopy(artifact, checksum, sidecar);
+            return copy == TORN ? null : copy;
+        }
+    }
+
+    private static CachedCopy readCopy(Path artifact, Sidecar checksum, Sidecar sidecar) throws IOException {
+        var before = attributesOrNull(artifact);
+        if (before == null || !before.isRegularFile()) return null;
+        var storedFile = checksum.storedFile(artifact);
+        var checksumAttrs = attributesOrNull(storedFile);
+        var stored = checksumAttrs != null && checksumAttrs.isRegularFile() ? readOrNull(storedFile) : null;
+        var sidecarBody = sidecar == null ? null
+                : sidecar == checksum ? stored
+                : readOrNull(sidecar.storedFile(artifact));
+        var state = FileState.of(before);
+        if (!state.equals(FileState.of(artifact))) return TORN;
+        return new CachedCopy(state, stored, stored == null ? null : checksumAttrs.lastModifiedTime(), sidecarBody);
+    }
+
+    /** Whether the artifact is still the file a {@link CachedCopy} was read from. */
+    static boolean unchanged(Path artifact, CachedCopy copy) {
+        return copy.state().equals(FileState.of(artifact));
+    }
+
+    /**
+     * Make the artifact's last confirmation untrusted, so its next hit confirms it
+     * first: for a background confirmation that could neither renew nor evict.
+     */
+    static void expireConfirmation(Path artifact, Sidecar checksum) {
+        synchronized (lockFor(artifact)) {
+            var storedFile = checksum.storedFile(artifact);
+            if (Files.isRegularFile(storedFile)) stampConfirmation(storedFile, Instant.EPOCH);
+        }
+    }
+
+    // Best-effort (see the class invariants): a file owned by another user can be
+    // readable, and even writable, and still refuse a new modification time
+    private static void stampConfirmation(Path storedChecksum, Instant at) {
+        try {
+            Files.setLastModifiedTime(storedChecksum, FileTime.from(at));
+        } catch (IOException e) {
+            ProxyLog.warn("Cannot record the confirmation of " + storedChecksum + ": " + e.getMessage());
+        }
+    }
+
+    private static BasicFileAttributes attributesOrNull(Path file) throws IOException {
+        try {
+            return Files.readAttributes(file, BasicFileAttributes.class);
+        } catch (NoSuchFileException e) {
+            return null;
+        }
+    }
+
+    private static byte[] readOrNull(Path file) throws IOException {
+        try {
+            return Files.readAllBytes(file);
+        } catch (NoSuchFileException e) {
+            return null;
         }
     }
 
@@ -177,18 +273,6 @@ final class VerifiedArtifactStore {
     static void dropSidecar(Path artifact, Sidecar sidecar) throws IOException {
         synchronized (lockFor(artifact)) {
             Files.deleteIfExists(sidecar.storedFile(artifact));
-        }
-    }
-
-    /**
-     * The stored copy of a sidecar, or null unless both it and the artifact it
-     * describes are cached. Served only when upstream cannot be reached.
-     */
-    static byte[] storedSidecar(Path artifact, Sidecar sidecar) throws IOException {
-        synchronized (lockFor(artifact)) {
-            var storedFile = sidecar.storedFile(artifact);
-            if (!Files.isRegularFile(artifact) || !Files.isRegularFile(storedFile)) return null;
-            return Files.readAllBytes(storedFile);
         }
     }
 
@@ -212,11 +296,14 @@ final class VerifiedArtifactStore {
     }
 
     /** Enough to tell whether a file was replaced: a new inode or new contents change it. */
-    private record FileState(Object fileKey, FileTime modified, long size) {
+    record FileState(Object fileKey, FileTime modified, long size) {
+        static FileState of(BasicFileAttributes attrs) {
+            return new FileState(attrs.fileKey(), attrs.lastModifiedTime(), attrs.size());
+        }
+
         static FileState of(Path file) {
             try {
-                var attrs = Files.readAttributes(file, BasicFileAttributes.class);
-                return new FileState(attrs.fileKey(), attrs.lastModifiedTime(), attrs.size());
+                return of(Files.readAttributes(file, BasicFileAttributes.class));
             } catch (IOException e) {
                 return null;
             }
