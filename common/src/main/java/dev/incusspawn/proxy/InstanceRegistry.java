@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <h3>Why source address identifies an instance</h3>
  * Every branch is given a static IP on the bridge by {@code InstanceLifecycle.configureBranch},
- * recorded as {@link Metadata#STATIC_IP}, and the iptables REDIRECT that sends :443 to the
+ * and every template build container by {@code InstanceLifecycle.assignBuildAddress} for as long
+ * as it builds (#903), recorded as {@link Metadata#STATIC_IP}, and the iptables REDIRECT that sends :443 to the
  * proxy preserves the source address. So the address a connection arrives from is the
  * instance's own, and one {@code /1.0/instances?recursion=1} call maps every address at once.
  *
@@ -29,10 +30,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <h3>Staleness</h3>
  * Lookups never block -- they read a snapshot, and the caller refreshes off the event loop.
  * An address missing from the snapshot resolves to the configured defaults rather than
- * failing: the proxy also serves template build containers and host-side traffic, which have
- * no account pinning and must keep working. The window where a freshly branched instance is
- * not yet in the snapshot is closed by {@code isx branch} signalling the proxy on completion,
- * with {@link #STALE_AFTER_MS} as the backstop if that signal is missed.
+ * failing: the proxy also serves host-side traffic, which has no account pinning and must keep
+ * working. The window where a freshly branched instance or build container is not yet in the
+ * snapshot is closed by {@code isx branch} and {@code isx build} signalling the proxy before it
+ * starts, with {@link #STALE_AFTER_MS} as the backstop if that signal is missed.
  *
  * <p>Note this is deliberately Vert.x-free: {@link IncusClient} calls block, so the proxy
  * drives {@link #refresh} from a worker thread and only ever calls {@link #lookup} on the
@@ -46,11 +47,11 @@ public final class InstanceRegistry {
     /**
      * Floor between refreshes triggered by an unknown address.
      *
-     * <p>A miss is not rare: only branches get a static IP, so template build containers and
-     * host-side traffic never appear in the map and miss on every single request. Without a
-     * floor, a build's steady stream of API calls would each schedule a full instance listing.
-     * {@code isx branch} and {@code isx destroy} signal the proxy directly, so the miss path is
-     * only a backstop and can afford to be lazy.
+     * <p>A miss is not rare: host-side traffic never appears in the map and misses on every
+     * single request, as does a build container that started before the proxy was signalled.
+     * Without a floor, a steady stream of such calls would each schedule a full instance
+     * listing. {@code isx branch}, {@code isx build} and {@code isx destroy} signal the proxy
+     * directly, so the miss path is only a backstop and can afford to be lazy.
      */
     public static final long MISS_REFRESH_INTERVAL_MS = 1_000L;
 
@@ -128,7 +129,7 @@ public final class InstanceRegistry {
     /**
      * Whether an unknown address should trigger a refresh, rate-limited to
      * {@link #MISS_REFRESH_INTERVAL_MS}. Callers that miss on every request -- which is the
-     * normal case for build containers -- would otherwise list every instance each time.
+     * normal case for host-side traffic -- would otherwise list every instance each time.
      */
     public boolean wantsMissRefresh() {
         return System.currentTimeMillis() - snapshot.takenAt() > MISS_REFRESH_INTERVAL_MS;

@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.function.Consumer;
 
 /**
@@ -141,28 +142,98 @@ public final class InstanceLifecycle {
         }
 
         if (nicDevice == null) incus.update(name, instance, update);
-        else claimAndWrite(incus, name, instance, update, nicDevice, bridge);
+        else claimAndWrite(incus, name, instance, update, nicDevice, bridge, true);
+    }
+
+    /**
+     * Give a stopped build container an address the proxy can identify it by, with
+     * {@code config} (its template's account pins) in the same write, before its first start.
+     *
+     * <p>The proxy picks credentials by source address, and knows only instances with a
+     * {@link Metadata#STATIC_IP}. A build on a DHCP address would be served every namespace's
+     * default account, whatever its template's {@code accounts:} chose (#903). The address comes
+     * from the same allocator as a branch's, with the same {@code security.ipv4_filtering} that
+     * makes it trustworthy. Unlike a branch no {@code .network} file is pushed: the build's guest
+     * keeps DHCP, and Incus's DHCP server hands out the NIC's {@code ipv4.address}. Undone by
+     * {@link #releaseBuildAddress} once the build has stopped.
+     *
+     * @param configFor the config to write, given the {@code config} the instance has now
+     * @return the address assigned
+     */
+    public static String assignBuildAddress(IncusClient incus, String name,
+                                            Function<JsonNode, Map<String, String>> configFor) {
+        var instance = incus.instanceMetadata(name);
+        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        var bridge = BridgeAddress.require(incus);
+        var nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
+        if (nicDevice == null) {
+            throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);
+        }
+        var update = new InstanceUpdate();
+        update.device(nicDevice, "security.ipv4_filtering", "true");
+        update.config(configFor.apply(instance.path("config")));
+        return claimAndWrite(incus, name, instance, update, nicDevice, bridge, false);
+    }
+
+    /**
+     * Give back the address {@link #assignBuildAddress} claimed, on the stopped template. A
+     * template makes no requests of its own and its copies never keep an address, so holding
+     * one would only use up the bridge's addresses, one per template. The NIC goes back to the
+     * profile's when all the build changed was the address and its filtering.
+     */
+    public static void releaseBuildAddress(IncusClient incus, String name) {
+        var instance = incus.instanceMetadata(name);
+        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        var update = new InstanceUpdate();
+        update.unset(Metadata.STATIC_IP);
+        var addressed = IncusClient.withoutStaticAddress(instance.path("devices"));
+        var fromProfiles = addressed.isEmpty() ? Map.<String, JsonNode>of() : profileDevices(incus, instance);
+        addressed.forEach((device, remaining) -> {
+            remaining.remove("security.ipv4_filtering");
+            var profileDevice = fromProfiles.get(device);
+            if (profileDevice != null && remaining.equals(IncusClient.deviceConfig(profileDevice))) {
+                update.removeDevice(device);
+            } else {
+                update.replaceDevice(device, remaining);
+            }
+        });
+        incus.update(name, instance, update);
+    }
+
+    /** The devices the instance's profiles give it, by name, one read per profile. */
+    private static Map<String, JsonNode> profileDevices(IncusClient incus, JsonNode instance) {
+        // Later profiles override earlier ones, as Incus expands them
+        var devices = new LinkedHashMap<String, JsonNode>();
+        for (var profile : instance.path("profiles")) {
+            incus.profileDevices(profile.asText()).properties()
+                    .forEach(e -> devices.put(e.getKey(), e.getValue()));
+        }
+        return devices;
     }
 
     /**
      * Allocate the branch's address and write {@code update} with it, holding the allocation
      * lock throughout. Everything that does not depend on the address is read before it, so
      * concurrent branches wait on each other only for the listing, the push and the write (#815).
+     *
+     * @param pushNetworkConfig whether to push a static {@code .network} file into a container,
+     *                          so it boots without asking DHCP; a branch does, a build does not
      */
-    private static void claimAndWrite(IncusClient incus, String name, JsonNode instance,
-                                      InstanceUpdate update, String nicDevice, BridgeAddress bridge) {
+    private static String claimAndWrite(IncusClient incus, String name, JsonNode instance,
+                                        InstanceUpdate update, String nicDevice, BridgeAddress bridge,
+                                        boolean pushNetworkConfig) {
         var isVm = IncusClient.isVm(instance);
         var filteringRefused = new AtomicBoolean();
-        StaticIpAllocator.claim(incus, bridge, ip -> {
+        var assigned = StaticIpAllocator.claim(incus, bridge, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
-            BuildOutput.step("Assigning static IP " + ip + ".");
+            if (pushNetworkConfig) BuildOutput.step("Assigning static IP " + ip + ".");
             update.device(nicDevice, "ipv4.address", ip);
             update.config(Metadata.STATIC_IP, ip);
             // Pushed before the write rather than after, so the push is not the last thing
             // before the start: see "Why nothing is pushed into an instance just before it
             // starts".
-            if (!isVm) {
+            if (!isVm && pushNetworkConfig) {
                 pushStaticNetworkConfig(incus, name, ip, bridge.gateway(), bridge.prefixLen());
             }
             try {
@@ -181,6 +252,7 @@ public final class InstanceLifecycle {
         });
         // After the claim: the address is written, so no one need wait on this write
         if (filteringRefused.get()) applyIpFiltering(incus, name, nicDevice);
+        return assigned;
     }
 
     private static final Map<String, String> MASKED_DEVICE = Map.of("type", "none");
@@ -210,12 +282,7 @@ public final class InstanceLifecycle {
      * stays.
      */
     private static JsonNode unmaskNics(IncusClient incus, JsonNode instance, InstanceUpdate update) {
-        // Later profiles override earlier ones, as Incus expands them
-        var profileDevices = new LinkedHashMap<String, JsonNode>();
-        for (var profile : instance.path("profiles")) {
-            incus.profileDevices(profile.asText()).properties()
-                    .forEach(e -> profileDevices.put(e.getKey(), e.getValue()));
-        }
+        var profileDevices = profileDevices(incus, instance);
         var view = instance.deepCopy();
         var expanded = (ObjectNode) view.path("expanded_devices");
         instance.path("devices").properties().forEach(e -> {

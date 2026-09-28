@@ -742,7 +742,7 @@ public class IncusClient {
     }
 
     /** A device's config as a mutable map, e.g. to send it back changed: Incus replaces a device whole. */
-    static Map<String, String> deviceConfig(JsonNode device) {
+    public static Map<String, String> deviceConfig(JsonNode device) {
         var config = new LinkedHashMap<String, String>();
         device.properties().forEach(e -> config.put(e.getKey(), e.getValue().asText("")));
         return config;
@@ -830,7 +830,7 @@ public class IncusClient {
      * whose NIC conflicts with another (it only logs it), and the proxy would map that address to
      * whichever of the two it lists last.
      */
-    static Map<String, Map<String, String>> withoutStaticAddress(JsonNode devices) {
+    public static Map<String, Map<String, String>> withoutStaticAddress(JsonNode devices) {
         var result = new LinkedHashMap<String, Map<String, String>>();
         devices.properties().forEach(e -> {
             var device = e.getValue();

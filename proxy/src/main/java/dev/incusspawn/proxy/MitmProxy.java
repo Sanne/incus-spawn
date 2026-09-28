@@ -359,8 +359,9 @@ public class MitmProxy {
     /**
      * Credentials for whoever sent this request.
      *
-     * <p>An address that is not a known instance -- a template build container, host-side
-     * traffic -- gets the configured defaults. An instance that pins nothing gets the same.
+     * <p>An address that is not a known instance -- host-side traffic -- gets the configured
+     * defaults, and so does an instance that pins nothing. Template build containers are known
+     * instances: they hold a static IP while they build (#903).
      * Only an explicit pin diverges, and a pin naming an account that is not configured
      * raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException} so the
      * caller can fail the request instead of spending the wrong credential (#351).
@@ -375,7 +376,7 @@ public class MitmProxy {
         var instance = registry.lookup(sourceAddress);
         // A miss is the case worth refreshing for: a branch that happened since the last
         // snapshot. isx signals the proxy on branch, so this is only the backstop -- and it is
-        // rate-limited, because a build container has no static IP and so misses every time.
+        // rate-limited, because host-side traffic has no static IP and so misses every time.
         if (instance == null ? registry.wantsMissRefresh() : registry.isStale()) {
             scheduleRegistryRefresh(registry);
         }
