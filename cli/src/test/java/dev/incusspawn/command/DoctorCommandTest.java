@@ -210,7 +210,7 @@ class DoctorCommandTest {
     @Test
     void addWithRequiresIncludesTheToolItself() {
         var into = new java.util.HashSet<String>();
-        DoctorCommand.addWithRequires("codex", toolMap(new FakeTool("codex")), into);
+        dev.incusspawn.tool.ToolSetup.addWithRequires("codex", toolMap(new FakeTool("codex")), into);
         assertEquals(java.util.Set.of("codex"), into);
     }
 
@@ -223,7 +223,7 @@ class DoctorCommandTest {
                 new FakeTool("codex", "nodejs"),
                 new FakeTool("nodejs"));
         var into = new java.util.HashSet<String>();
-        DoctorCommand.addWithRequires("my-wrapper", tools, into);
+        dev.incusspawn.tool.ToolSetup.addWithRequires("my-wrapper", tools, into);
         assertEquals(java.util.Set.of("my-wrapper", "codex", "nodejs"), into);
     }
 
@@ -231,14 +231,14 @@ class DoctorCommandTest {
     void addWithRequiresToleratesACycleWithoutLooping() {
         var tools = toolMap(new FakeTool("a", "b"), new FakeTool("b", "a"));
         var into = new java.util.HashSet<String>();
-        DoctorCommand.addWithRequires("a", tools, into);
+        dev.incusspawn.tool.ToolSetup.addWithRequires("a", tools, into);
         assertEquals(java.util.Set.of("a", "b"), into);
     }
 
     @Test
     void addWithRequiresToleratesAnUnknownTool() {
         var into = new java.util.HashSet<String>();
-        DoctorCommand.addWithRequires("ghost", Map.of(), into);
+        dev.incusspawn.tool.ToolSetup.addWithRequires("ghost", Map.of(), into);
         assertEquals(java.util.Set.of("ghost"), into);
     }
 

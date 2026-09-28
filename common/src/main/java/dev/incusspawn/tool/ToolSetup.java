@@ -135,6 +135,20 @@ public interface ToolSetup {
     default java.util.List<String> requires() { return java.util.List.of(); }
 
     /**
+     * Adds {@code name} and everything it (transitively) {@linkplain #requires requires} to
+     * {@code into}. A name missing from {@code allTools} is still added, just not expanded.
+     */
+    static void addWithRequires(String name, java.util.Map<String, ToolSetup> allTools,
+                                java.util.Set<String> into) {
+        if (!into.add(name)) return; // already visited -- also guards against a requires cycle
+        var tool = allTools.get(name);
+        if (tool == null) return;
+        for (var dep : tool.requires()) {
+            addWithRequires(dep, allTools, into);
+        }
+    }
+
+    /**
      * Parameter definitions for this tool. Returns an empty map by default.
      * Tools can override this to declare parameters with validation rules.
      */

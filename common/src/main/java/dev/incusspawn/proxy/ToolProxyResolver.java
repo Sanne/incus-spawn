@@ -218,6 +218,43 @@ public final class ToolProxyResolver {
         return result;
     }
 
+    /** A declared secret some tool needs that resolves to nothing; {@code path} is its flat config path. */
+    public record MissingSecret(String toolName, String path, String description) {}
+
+    /**
+     * The {@code secret: true} entries of {@code toolNames} that resolve to nothing for the given
+     * account selection -- "does this instance have the credentials its tools need". A secret
+     * several tools share (Copilot borrows {@code github.token}) is reported once, for the first.
+     * Tools absent from {@code toolSetups} are skipped, as are those whose only auth is
+     * {@code type: anthropic}: Claude's credential is a typed account, not one key.
+     *
+     * @param toolSetups the tools the proxy serves ({@link #proxyToolSetups})
+     */
+    public static List<MissingSecret> missingSecrets(JsonNode configTree, Map<String, ToolSetup> toolSetups,
+                                                     java.util.Collection<String> toolNames,
+                                                     Map<String, String> accountsByNamespace) {
+        var result = new LinkedHashMap<String, MissingSecret>();
+        for (var toolName : toolNames) {
+            var tool = toolSetups.get(toolName);
+            var proxyDef = tool == null ? null : tool.proxy();
+            if (proxyDef == null) continue;
+            boolean hasNonAnthropicAuth = proxyDef.getAuth().stream()
+                    .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
+            if (!hasNonAnthropicAuth) continue;
+
+            for (var configDef : proxyDef.getConfiguration().values()) {
+                if (!configDef.isSecret()) continue;
+                var path = proxyDef.fullConfigPath(configDef);
+                if (result.containsKey(path)) continue;
+                var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, accountsByNamespace);
+                if (value == null || value.isBlank()) {
+                    result.put(path, new MissingSecret(toolName, path, configDef.getDescription()));
+                }
+            }
+        }
+        return List.copyOf(result.values());
+    }
+
     static String fingerprint(List<ResolvedToolProxy> proxies) {
         if (proxies == null || proxies.isEmpty()) return "";
         return sha256(fingerprintContent(proxies));
@@ -257,7 +294,8 @@ public final class ToolProxyResolver {
         while (it.hasNext()) {
             var entry = it.next();
             if (projectLocal.contains(entry.getKey()) && entry.getValue().proxy() != null) {
-                System.err.println("Warning: tool '" + entry.getKey()
+                // Warnings, not stderr: the TUI's branch dialog reaches this via CredentialCheck.
+                dev.incusspawn.Warnings.warn("tool '" + entry.getKey()
                         + "' has proxy configuration but is project-local (.incus-spawn/tools/)."
                         + " The proxy daemon cannot see project-local tools —"
                         + " move it to ~/.config/incus-spawn/tools/ or a configured search path.");

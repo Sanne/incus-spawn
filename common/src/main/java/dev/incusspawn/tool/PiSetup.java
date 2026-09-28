@@ -75,6 +75,28 @@ public class PiSetup implements ToolSetup {
         return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai"));
     }
 
+    /** The isx-managed credential a pi provider spends. */
+    public enum Credential {
+        /** Claude's account, whatever its type. */
+        ANTHROPIC,
+        /** Claude's account, which must be a Vertex AI one. */
+        VERTEX,
+        /** The {@code openai} namespace's API key. */
+        OPENAI,
+        /** None isx manages: pi brings its own for a provider isx does not know. */
+        NONE
+    }
+
+    /** Which credential pi spends for the {@code provider} in its resolved parameters. */
+    public static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
+        return switch (resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER)) {
+            case "anthropic" -> Credential.ANTHROPIC;
+            case "vertex", "google" -> Credential.VERTEX;
+            case "openai" -> Credential.OPENAI;
+            default -> Credential.NONE;
+        };
+    }
+
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         return envEntries(resolvedParams, java.util.Map.of());
@@ -89,20 +111,21 @@ public class PiSetup implements ToolSetup {
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams,
                                      java.util.Map<String, String> accountSelection) {
         var entries = new ArrayList<EnvEntry>();
-        var provider = resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER);
+        var credential = credentialFor(resolvedParams);
         var account = SpawnConfig.load().getClaude()
                 .accountNamed(accountSelection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
         var type = account == null ? null : account.effectiveType();
 
-        if ("openai".equals(provider)) {
+        if (credential == Credential.OPENAI) {
             // OpenAI has its own credential; the Claude account is irrelevant here.
             entries.add(EnvEntry.set("OPENAI_API_KEY", "sk-placeholder"));
-        } else if ("vertex".equals(provider) || "google".equals(provider)) {
+        } else if (credential == Credential.VERTEX) {
             if (type == SpawnConfig.ClaudeAccountType.VERTEX) {
                 entries.add(EnvEntry.set("GOOGLE_CLOUD_PROJECT", account.getVertexProjectId()));
                 entries.add(EnvEntry.set("GOOGLE_CLOUD_LOCATION", account.getCloudMlRegion()));
             }
         } else if (type == SpawnConfig.ClaudeAccountType.OAUTH) {
+            // ANTHROPIC, and NONE too: a placeholder is harmless to a provider that ignores it.
             entries.add(EnvEntry.set("ANTHROPIC_OAUTH_TOKEN", SpawnConfig.ClaudeConfig.PLACEHOLDER_OAUTH_TOKEN));
         } else {
             entries.add(EnvEntry.set("ANTHROPIC_API_KEY", "sk-ant-placeholder"));

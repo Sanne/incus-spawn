@@ -3,6 +3,7 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.CredentialCheck;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
@@ -17,6 +18,7 @@ import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.util.BuildOutput;
 
 import java.nio.file.Path;
@@ -75,7 +77,9 @@ public final class BranchFlow {
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins) {}
 
     /** An account selection and who chose each pin in it. */
-    private record ResolvedAccounts(Map<String, String> accounts, Map<String, AccountOrigin> origins) {}
+    /** @param template the leaf template the source was built from ({@link Inherited#template}) */
+    private record ResolvedAccounts(String template, Map<String, String> accounts,
+                                    Map<String, AccountOrigin> origins) {}
 
     /**
      * A refusal. {@code reported} is true when the reason was already printed (a banner, the
@@ -119,9 +123,10 @@ public final class BranchFlow {
 
         // Resolve and validate the account selection before anything is created: a typo
         // should be reported now, not as a failed API call inside the container later.
+        var config = SpawnConfig.load();
         ResolvedAccounts accounts;
         try {
-            accounts = resolveAccountSelection(incus, req, defs);
+            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config);
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             throw new BranchException(e.getMessage());
@@ -135,11 +140,8 @@ public final class BranchFlow {
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             checkCaMismatch(incus, req.source());
-            var def = defs.get(req.source());
-            if (def != null) {
-                var credError = SpawnConfig.checkCredentials(def, defs, n -> false);
-                if (!credError.isEmpty()) throw new BranchException(credError);
-            }
+            var credError = missingCredentials(config, accounts, defs, new ToolDefLoader());
+            if (!credError.isEmpty()) throw new BranchException(credError);
         }
 
         try {
@@ -248,22 +250,51 @@ public final class BranchFlow {
     }
 
     /**
+     * The credentials a branch of {@code source} would be missing, or why its account selection
+     * is refused, as a message; {@code ""} when neither. The same check {@link #preflight} makes,
+     * for the TUI's branch dialog to report before it hands the terminal back.
+     *
+     * @param accountOverrides {@code <ns>=<account>} selections, as {@code --account} takes them
+     */
+    public static String credentialProblem(IncusClient incus, String source, List<String> accountOverrides,
+                                           Map<String, ImageDef> defs, ToolDefLoader loader) {
+        var config = SpawnConfig.load();
+        try {
+            return missingCredentials(config,
+                    resolveAccountSelection(incus, source, accountOverrides, defs, config), defs, loader);
+        } catch (AccountSelection.InvalidSelectionException
+                 | AccountResolver.UnknownAccountException e) {
+            return e.getMessage();
+        }
+    }
+
+    /**
+     * Checked against the template the branch inherits from -- for a branch of a branch, the leaf
+     * template recorded on the source -- and the selection it will actually be stamped with.
+     */
+    private static String missingCredentials(SpawnConfig config, ResolvedAccounts accounts,
+                                             Map<String, ImageDef> defs, ToolDefLoader loader) {
+        var template = defs.get(accounts.template());
+        if (template == null) return "";
+        return CredentialCheck.check(config, template, defs, accounts.accounts(), loader);
+    }
+
+    /**
      * The branch's account selection: what it {@linkplain #inheritedAccounts inherits}, with any
      * {@code --account} override applied on top, validated and checked against what the source
      * was built for.
      */
-    private static ResolvedAccounts resolveAccountSelection(IncusClient incus, Request req,
-                                                            Map<String, ImageDef> defs) {
-        var inherited = inheritedAccounts(incus, req.source(), defs);
-        var source = req.source();
+    private static ResolvedAccounts resolveAccountSelection(IncusClient incus, String source,
+                                                            List<String> accountOverrides,
+                                                            Map<String, ImageDef> defs, SpawnConfig config) {
+        var inherited = inheritedAccounts(incus, source, defs);
         var selection = new java.util.LinkedHashMap<>(inherited.accounts());
         var origins = new java.util.LinkedHashMap<>(inherited.origins());
 
-        var overrides = AccountSelection.parse(req.accountOverrides());
+        var overrides = AccountSelection.parse(accountOverrides);
         selection.putAll(overrides);
         overrides.keySet().forEach(ns -> origins.put(ns, AccountOrigin.EXPLICIT));
 
-        var config = SpawnConfig.load();
         AccountSelection.validate(config, selection);
 
         // A branch is a CoW copy of an already-built template, so its environment is already
@@ -273,7 +304,7 @@ public final class BranchFlow {
         var reason = AccountSelection.incompatibilityReason(config, incus, source, selection);
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
-        return new ResolvedAccounts(selection, origins);
+        return new ResolvedAccounts(inherited.template(), selection, origins);
     }
 
     /**
