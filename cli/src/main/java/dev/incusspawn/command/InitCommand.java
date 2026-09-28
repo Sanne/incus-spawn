@@ -2723,6 +2723,18 @@ public class InitCommand extends BaseCommand {
             account = chosen.get();
         }
 
+        // After each saved token, come back to the same menu, so a second identity can be
+        // added in this run rather than by re-running init. Enter (or EOF) moves on.
+        while (collectGitHubToken(config, prompts, account)) {
+            System.out.println();
+            var next = chooseAccountTarget(config, GhSetup.NAMESPACE, "GitHub", prompts);
+            if (next.isEmpty()) return;
+            account = next.get();
+        }
+    }
+
+    /** Walks the user through one token for {@code account}; returns true once one is saved. */
+    private boolean collectGitHubToken(SpawnConfig config, Prompts prompts, AccountTarget account) {
         // Prioritize a dedicated agent identity: walk the user through minting a fine-grained PAT.
         printGitHubPatGuide(prompts);
 
@@ -2734,28 +2746,28 @@ public class InitCommand extends BaseCommand {
                 // agent act as you — so it is offered here (default No), never as the primary path.
                 var outcome = offerGhCliToken(config, prompts, account);
                 if (outcome == GhTokenOutcome.SAVED) {
-                    break;
+                    return true;
                 }
                 if (outcome == GhTokenOutcome.FAILED) {
                     // The gh fallback promised to "continue with manual setup" — re-prompt for a PAT.
                     continue;
                 }
                 System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
-                break;
+                return false;
             }
 
             var result = verifyGitHubToken(token, prompts);
             if (result == null) {
                 if (!askConfirmation(prompts, "  Try again?", true)) {
                     System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
-                    break;
+                    return false;
                 }
                 continue;
             }
 
             if (result.email != null) {
                 saveGitHubToken(config, account, token, result.email);
-                break;
+                return true;
             }
 
             System.out.println("  \u001B[1;33m⚠ No email accessible — git commits will have no author email.\u001B[0m");
@@ -2764,27 +2776,54 @@ public class InitCommand extends BaseCommand {
             System.out.println("      under Permissions, click 'Add permissions', search for 'Email addresses'");
             System.out.println("      and set it to Read-only (for a classic token, add the 'user:email' scope)");
             System.out.println("    • Or make your email public at " + TerminalLink.link("https://github.com/settings/profile"));
-            System.out.print("  Enter new PAT with email permission, or press Enter to continue without: ");
-            var newToken = askSecret(prompts);
-            if (newToken.isBlank()) {
-                saveGitHubToken(config, account, token, null);
-                break;
-            }
+            // A mistyped or half-pasted replacement must not end the step: ask again until a
+            // token verifies or the user settles for the one that already did.
+            while (true) {
+                System.out.print("  Enter new PAT with email permission, or press Enter to keep the one above"
+                        + " (without email): ");
+                var newToken = askSecret(prompts);
+                if (newToken.isBlank()) {
+                    saveGitHubToken(config, account, token, null);
+                    return true;
+                }
 
-            var newResult = verifyGitHubToken(newToken, prompts);
-            if (newResult == null) {
-                System.out.println("  New token failed verification — keeping the original token.");
-                saveGitHubToken(config, account, token, null);
-                break;
+                var newResult = verifyGitHubToken(newToken, prompts);
+                if (newResult == null) {
+                    System.out.println("  That token failed verification — try again, or press Enter to keep the one above.");
+                    continue;
+                }
+                // Same target as every other save in this flow, so a re-minted PAT lands in the
+                // account the user picked rather than back in the flat field.
+                saveGitHubToken(config, account, newToken, newResult.email);
+                if (newResult.email == null) {
+                    System.out.println("  (still without email)");
+                }
+                return true;
             }
-            // Same target as every other save in this flow, so a re-minted PAT lands in the
-            // account the user picked rather than back in the flat field.
-            saveGitHubToken(config, account, newToken, newResult.email);
-            if (newResult.email == null) {
-                System.out.println("  (still without email)");
-            }
-            break;
         }
+    }
+
+    /** Prefixes GitHub gives its tokens: fine-grained PAT, classic PAT, OAuth (gh CLI), user-to-server, server-to-server. */
+    private static final List<String> GITHUB_TOKEN_PREFIXES = List.of("github_pat_", "ghp_", "gho_", "ghu_", "ghs_");
+
+    /**
+     * Non-fatal shape check; verification against the API remains the authority. The input is
+     * hidden, so a keystroke typed before the paste goes unseen: name it rather than leave the
+     * user with a bare 401.
+     */
+    static Optional<String> githubTokenShapeWarning(String token) {
+        if (token == null || token.isBlank()) return Optional.empty();
+        for (var prefix : GITHUB_TOKEN_PREFIXES) {
+            if (token.startsWith(prefix)) return Optional.empty();
+        }
+        for (var prefix : GITHUB_TOKEN_PREFIXES) {
+            int at = token.indexOf(prefix);
+            if (at > 0) {
+                return Optional.of("Note: " + at + (at == 1 ? " character comes" : " characters come")
+                        + " before '" + prefix + "' — something was typed before the paste.");
+            }
+        }
+        return Optional.of("Note: token does not start with 'github_pat_' (fine-grained) or 'ghp_' (classic).");
     }
 
     record GitHubVerifyResult(String login, String email) {}
@@ -2793,6 +2832,7 @@ public class InitCommand extends BaseCommand {
 
     /** @param prompts picks between several verified emails, when the account has them */
     GitHubVerifyResult verifyGitHubToken(String token, Prompts prompts) {
+        githubTokenShapeWarning(token).ifPresent(warning -> System.out.println("  " + warning));
         System.out.println("  Testing GitHub token...");
         try {
             var client = getHttpClient();
