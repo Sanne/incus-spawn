@@ -1567,6 +1567,8 @@ public class IncusClient {
      * If force is true, stops the instance first (REST API does not accept delete of a running instance).
      */
     public void delete(String name, boolean force) {
+        // Before the stop: a refused delete must leave a running instance running.
+        requireStorageOnDisk(name);
         var http = http();
         if (force) {
             try {
@@ -1576,7 +1578,6 @@ public class IncusClient {
                 // May already be stopped — proceed to delete.
             }
         }
-        requireStorageOnDisk(name);
         var resp = http.requestAndWait("DELETE", "/1.0/instances/" + name, null);
         if (!resp.isSuccess()) throw new IncusException("Failed to delete " + name);
         cleanupStaleVolumes(name);

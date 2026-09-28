@@ -244,6 +244,13 @@ public class VmCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
+            // Only Incus can say which instances are on the disk, and the host keeps state for
+            // each (SSH config, git remotes) that the reset must remove: a stopped VM is booted to
+            // ask. Booting it is also the reset's own last step, so this costs a boot, not a risk.
+            if (!VmManager.isRunning()) {
+                BuildOutput.note("The VM is not running: starting it to list what the reset deletes.");
+                VmManager.start();
+            }
             var lost = survey(incus);
 
             System.out.println("This deletes the VM's data disk (" + Environment.vmDataImage() + "),");
@@ -261,9 +268,13 @@ public class VmCommand extends BaseCommand {
             }
 
             BuildOutput.header("Resetting VM data disk");
-            boolean up = VmManager.resetDataDisk();
-            // Whatever the outcome, the instances are gone once the disk is: drop what the host
-            // keeps for them (SSH config, git remotes, ...) and let the proxy forget their addresses.
+            var result = VmManager.resetDataDisk();
+            if (result == VmManager.ResetResult.NOT_RESET) {
+                System.err.println("The data disk was not reset; nothing was deleted.");
+                return CommandResult.valueOf(1);
+            }
+            // The instances are gone with the disk, whether or not the VM came back: drop what the
+            // host keeps for them and let the proxy forget their addresses.
             var gone = lost == null ? List.<String>of() : lost.all();
             for (var name : gone) {
                 try {
@@ -273,7 +284,11 @@ public class VmCommand extends BaseCommand {
                 }
             }
             if (!gone.isEmpty()) InstanceDestroyer.refreshProxy();
-            if (!up) {
+            if (lost == null) {
+                System.err.println("Note: the instances on the old disk could not be listed, so the host still"
+                        + " holds their SSH config entries and git remotes. Remove those by hand if they get in the way.");
+            }
+            if (result == VmManager.ResetResult.VM_DOWN) {
                 System.err.println("The data disk was reset, but the VM did not come back. Check 'isx vm console'.");
                 return CommandResult.valueOf(1);
             }

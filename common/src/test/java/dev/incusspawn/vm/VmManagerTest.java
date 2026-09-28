@@ -189,12 +189,26 @@ class VmManagerTest {
             raf.write("_BHRfS_M".getBytes(StandardCharsets.US_ASCII));
         }
 
-        assertFalse(VmManager.resetDataDisk(), "the VM cannot start without artifacts");
+        assertEquals(VmManager.ResetResult.VM_DOWN, VmManager.resetDataDisk(),
+                "the disk is replaced even though the VM cannot start without artifacts");
 
         assertEquals(grown, VmManager.dataDiskSizeBytes());
         try (var in = Files.newInputStream(Environment.vmDataImage())) {
             assertArrayEquals(new byte[8], in.readNBytes(8), "the old contents must be gone");
         }
+    }
+
+    @Test
+    void resetDataDiskThatCannotDeleteTheDiskReportsNothingWasReset() throws Exception {
+        // Callers clean up after the instances on a reset disk, so a reset that never happened
+        // must not look like one whose VM failed to come back.
+        var disk = Environment.vmDataImage();
+        Files.createDirectories(disk);
+        Files.writeString(disk.resolve("keep"), "x");
+
+        assertEquals(VmManager.ResetResult.NOT_RESET, VmManager.resetDataDisk());
+
+        assertTrue(Files.exists(disk.resolve("keep")));
     }
 
     @Test

@@ -994,9 +994,10 @@ public final class VmManager {
      * grown. Holds the VM lifecycle lock throughout, so no other command can start the VM on the
      * old disk halfway through.
      *
-     * @return whether the VM came back with Incus answering
+     * @return whether the disk was replaced, and if so whether the VM came back with Incus answering
      */
-    public static boolean resetDataDisk() {
+    public static ResetResult resetDataDisk() {
+        boolean wiped = false;
         try (var ignored = acquireVmLock()) {
             long size = dataDiskSizeBytes();
             if (size <= 0) size = parseDiskSize(diskSize());
@@ -1021,14 +1022,21 @@ public final class VmManager {
                 BuildOutput.stepBreak();
                 throw new VmException("Failed to delete data disk: " + e.getMessage());
             }
+            wiped = true;
             BuildOutput.stepDone();
             createDataDisk(size);
-            return startLocked() == StartResult.LAUNCHED && awaitReady();
+            return startLocked() == StartResult.LAUNCHED && awaitReady() ? ResetResult.READY : ResetResult.VM_DOWN;
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
-            return false;
+            return wiped ? ResetResult.VM_DOWN : ResetResult.NOT_RESET;
         }
     }
+
+    /**
+     * How {@link #resetDataDisk} ended. Only {@code NOT_RESET} leaves the old disk, and with it
+     * every instance, in place: callers must not clean up after instances in that case.
+     */
+    public enum ResetResult { NOT_RESET, VM_DOWN, READY }
 
     /**
      * Current logical size of the data-disk image in bytes, or -1 if it does not exist.

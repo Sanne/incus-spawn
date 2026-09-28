@@ -110,15 +110,18 @@ class InstanceSubvolumesTest {
 
     @Test
     void deleteRefusesARecordWhoseSubvolumeIsMissing() {
-        var daemon = new FakeIncusDaemon().container("tpl-isx-rebuilding", Map.of()).container("dev-1", Map.of());
+        var daemon = new FakeIncusDaemon()
+                .instance("tpl-isx-rebuilding", "container", "Running", Map.of())
+                .container("dev-1", Map.of());
         var client = daemon.client();
         client.subvolumeLister = pool -> listing("dev-1", "tpl-isx");
 
         var e = assertThrows(IncusClient.DanglingRecordException.class,
-                () -> client.delete("tpl-isx-rebuilding", false));
+                () -> client.delete("tpl-isx-rebuilding", true));
         assertTrue(e.getMessage().contains("containers/tpl-isx-rebuilding"), e.getMessage());
-        assertTrue(daemon.requests().stream().noneMatch(r -> r.startsWith("DELETE ")),
-                "the record must not be deleted: " + daemon.requests());
+        assertTrue(daemon.requests().stream().noneMatch(r -> r.startsWith("DELETE ") || r.startsWith("PUT ")),
+                "the record must be neither deleted nor stopped: " + daemon.requests());
+        assertEquals("Running", daemon.instance("tpl-isx-rebuilding").path("status").asText());
         assertEquals(Optional.of(false), client.storageOnDisk("tpl-isx-rebuilding"));
     }
 

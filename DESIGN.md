@@ -792,11 +792,16 @@ unprivileged host): refusing every delete there would be worse than the rare orp
   read-only sudoers rule. On macOS it points at `isx vm reset`.
 
 `isx vm reset` (`VmManager.resetDataDisk`) is the macOS last resort for a pool with nothing worth keeping. It lists
-what will be lost, then, holding the VM lifecycle lock, stops the VM and waits for the hypervisor process to exit.
+what will be lost, booting a stopped VM to ask Incus, because the host keeps per-instance state (SSH config, git
+remotes) that only instance names can find. Then, holding the VM lifecycle lock, it stops the VM and waits for the
+hypervisor process to exit.
 It replaces the data disk with a blank sparse one **of the same size**, so a disk grown with `isx vm resize` stays
 grown, and boots. The appliance's `rcS` formats the blank disk and `incus-spawn-vm-init` recreates the bridge, the
 `cow` pool and the default profile. The command then removes the host integration of every instance it listed,
-signals the proxy, and checks that Incus answers with an empty CoW pool.
+signals the proxy, and checks that Incus answers with an empty CoW pool. `resetDataDisk` returns a `ResetResult`
+rather than a boolean because the cleanup hinges on it: `NOT_RESET` (lock held, the VM would not exit, the disk
+could not be deleted) leaves every instance in place and must not touch their host state, while `VM_DOWN` means the
+disk is gone even though the VM did not come back.
 
 ### Repo Cloning and Reference Optimization
 
