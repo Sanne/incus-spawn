@@ -45,11 +45,17 @@ public final class BranchFlow {
 
     private BranchFlow() {}
 
-    /** Tells the proxy to re-read the instance list; replaced by tests, which have no proxy. */
-    static Runnable proxyRefresh = ProxyService::signalAccountRefresh;
+    /**
+     * Tells the proxy at a health address to re-read the instance list; replaced by tests, which
+     * have no proxy.
+     */
+    static java.util.function.Consumer<String> proxyRefresh = ProxyService::signalAccountRefresh;
 
-    /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
-    static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
+    /**
+     * Whether the proxy is up, warning if not, given the bridge gateway (null to look it up);
+     * replaced by tests, which have no proxy.
+     */
+    static java.util.function.BiPredicate<IncusClient, String> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
     /**
      * What to branch. {@code kvm} null means "whatever the source template was built with";
@@ -123,9 +129,9 @@ public final class BranchFlow {
     }
 
     /**
-     * Run every check that can refuse the branch, before anything is created. The caller has
-     * already established that {@code source} exists (the CLI does, while resolving it), so it is
-     * not looked up again here.
+     * Run every check that can refuse the branch, before anything is created, including that
+     * {@code source} exists: callers need not look first, and should not -- the read that finds out
+     * is the one every check here works from.
      */
     public static Preflight preflight(IncusClient incus, Request req) {
         return preflight(incus, req, ImageDef.loadAll());
@@ -142,7 +148,7 @@ public final class BranchFlow {
         // The one read of the source: every check below, and create(), work from it.
         var source = incus.instanceMetadata(req.source());
         if (!source.isObject()) { // Incus answers a missing instance with "metadata": null
-            throw new BranchException("'" + req.source() + "' does not exist.");
+            throw new BranchException("source instance '" + req.source() + "' does not exist.");
         }
         var sourceConfig = source.path("config");
 
@@ -161,12 +167,13 @@ public final class BranchFlow {
 
         String bridgeCidr = null;
         if (req.networkMode() != NetworkMode.AIRGAP) {
-            if (!proxyHealthCheck.test(incus)) {
+            // Read once: the proxy's health address, and in create() the branch's own address,
+            // the proxy refresh and the start diagnostics, all come from it.
+            bridgeCidr = readBridgeCidr(incus);
+            if (!proxyHealthCheck.test(incus, gatewayOf(bridgeCidr))) {
                 throw new BranchException("the isx proxy is not running; "
                         + "run 'isx doctor' to diagnose.", true);
             }
-            // Read once: create() configures the branch's address and its start diagnostics from it.
-            bridgeCidr = BridgeSubnetCheck.resolveBridgeCidr(incus);
             BridgeSubnetCheck.warnIfConflict(bridgeCidr);
             FirewallDetector.warnIfNotRunning();
             checkCaMismatch(sourceConfig, req.source());
@@ -198,6 +205,8 @@ public final class BranchFlow {
         // changed while it is branched from, and the copy is of the same type.
         var sourceConfig = preflight.source().path("config");
         boolean isVm = IncusClient.isVm(preflight.source());
+        // An airgapped branch still needs it: to reach the proxy, and to diagnose its start.
+        var bridgeCidr = preflight.bridgeCidr() != null ? preflight.bridgeCidr() : readBridgeCidr(incus);
 
         BuildOutput.branchHeader(name, source);
 
@@ -248,8 +257,10 @@ public final class BranchFlow {
                 : "kvm".equals(IncusClient.configValue(sourceConfig, Metadata.INSTANCE_MODE));
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
-                preflight.accountOrigins(), enableKvm, req.extraConfig()), branch, preflight.bridgeCidr());
-        announceAccountSelection(preflight.accounts());
+                preflight.accountOrigins(), enableKvm, req.extraConfig()), branch, bridgeCidr);
+        var gateway = gatewayOf(bridgeCidr);
+        announceAccountSelection(preflight.accounts(), gateway != null
+                ? ProxyHealthCheck.healthAddress(gateway) : ProxyHealthCheck.healthAddress(incus));
         // Past configureBranch's write, the snapshot still holds everything read from here on:
         // keys the branch copied from its source, which that write does not touch.
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, branch,
@@ -267,9 +278,7 @@ public final class BranchFlow {
         if (!req.start()) return null;
 
         // Read nothing more once it starts: the Incus daemon blocks API calls after start due
-        // to seccomp_notify lock contention. The bridge is read here only if preflight did not.
-        var bridgeCidr = preflight.bridgeCidr() != null ? preflight.bridgeCidr()
-                : BridgeSubnetCheck.resolveBridgeCidr(incus);
+        // to seccomp_notify lock contention.
         var prefetched = InstanceLifecycle.runtimeConfig(branch.path("config"), bridgeCidr);
         InstanceLifecycle.startShowingProgress(incus, name, isVm);
 
@@ -409,8 +418,8 @@ public final class BranchFlow {
         return new Inherited(templateName, selection, origins);
     }
 
-    /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */
-    private static void announceAccountSelection(Map<String, String> selection) {
+    /** Report the account pins {@code configureBranch} stamped, and tell the proxy at {@code healthAddress}. */
+    private static void announceAccountSelection(Map<String, String> selection, String healthAddress) {
         if (!selection.isEmpty()) {
             BuildOutput.step("Credential accounts: " + AccountSelection.describe(selection) + ".");
         }
@@ -419,7 +428,7 @@ public final class BranchFlow {
         // would still map that address to the old instance and hand its account to this one.
         // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
         // so the first request from inside already sees the right answer.
-        proxyRefresh.run();
+        proxyRefresh.accept(healthAddress);
     }
 
     private static void warnIfTemplateWantsGui(JsonNode sourceConfig, String source,
@@ -432,6 +441,21 @@ public final class BranchFlow {
         if (def != null && def.isGui()) {
             System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
         }
+    }
+
+    /** The bridge's {@code ipv4.address}, or null when it cannot be read: each use has its own fallback. */
+    private static String readBridgeCidr(IncusClient incus) {
+        try {
+            return BridgeSubnetCheck.resolveBridgeCidr(incus);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The gateway in a bridge address, or null for none, so the caller falls back to looking it up. */
+    private static String gatewayOf(String bridgeCidr) {
+        return bridgeCidr == null ? null
+                : dev.incusspawn.incus.BridgeAddress.parse(bridgeCidr).map(b -> b.gateway()).orElse(null);
     }
 
     private static void checkCaMismatch(JsonNode sourceConfig, String source) {

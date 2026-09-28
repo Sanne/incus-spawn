@@ -1,11 +1,9 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
-import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.tool.ActionResolver;
@@ -105,7 +103,7 @@ public class BranchCommand extends BaseCommand {
 
         var shellPrep = prefetched.toShellPrep();
         if (!shell) {
-            var defaultCmd = resolveDefaultCommand(resolvedSource, preflight.defs());
+            var defaultCmd = resolveDefaultCommand(preflight);
             if (defaultCmd != null) {
                 shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
@@ -114,25 +112,16 @@ public class BranchCommand extends BaseCommand {
         return CommandResult.SUCCESS;
     }
 
+    /** The source named or detected; whether it exists is preflight's to find out, in the read it makes anyway. */
     private String resolveSource() {
-        if (source != null) {
-            if (!incus.exists(source)) {
-                System.err.println("Error: source instance '" + source + "' does not exist.");
-                return null;
-            }
-            return source;
-        }
+        if (source != null) return source;
 
         // Try to auto-detect from cwd
         var projectConfig = ProjectConfig.findInDirectory(Path.of("."));
         if (projectConfig != null && projectConfig.getName() != null) {
             var detected = projectConfig.getName();
-            if (incus.exists(detected)) {
-                System.out.println("Auto-detected source: " + detected);
-                return detected;
-            }
-            System.err.println("Error: auto-detected source '" + detected + "' does not exist.");
-            return null;
+            System.out.println("Auto-detected source: " + detected);
+            return detected;
         }
 
         System.err.println("Error: no --from specified and no incus-spawn.yaml found in current directory.");
@@ -140,18 +129,13 @@ public class BranchCommand extends BaseCommand {
         return null;
     }
 
-    private String resolveDefaultCommand(String source, Map<String, ImageDef> defs) {
-        var templateName = source;
-        if (!defs.containsKey(templateName)) {
-            var profile = incus.configGet(source, Metadata.PROFILE);
-            if (profile != null && !profile.isEmpty()) {
-                templateName = profile;
-            }
-        }
-
+    /** From what preflight read of the source: nothing more is asked of Incus once it has started. */
+    private String resolveDefaultCommand(BranchFlow.Preflight preflight) {
+        var defs = preflight.defs();
+        var templateName = preflight.template();
         var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
                 RuntimeServices.toolSetups(), defs);
-        var installedTools = resolver.collectInstalledTools(source, templateName);
+        var installedTools = resolver.collectInstalledTools(preflight.source().path("config"), templateName);
         var repos = resolver.collectRepos(templateName);
         var action = resolver.findDefaultAction(name, templateName, installedTools, repos);
         if (action.isEmpty()) return null;

@@ -31,7 +31,7 @@ public record BridgeAddress(String gateway, CidrUtils.Cidr subnet) {
      * {@code 10.166.11.1/24}; an address without a prefix length is taken as a /24. Empty and
      * {@code none} (an IPv6-only bridge) are no address.
      */
-    static Optional<BridgeAddress> parse(String cidr) {
+    public static Optional<BridgeAddress> parse(String cidr) {
         if (cidr.isEmpty() || cidr.equals("none")) return Optional.empty();
         var slash = cidr.indexOf('/');
         var gateway = slash < 0 ? cidr : cidr.substring(0, slash);

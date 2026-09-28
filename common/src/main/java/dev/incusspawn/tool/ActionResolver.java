@@ -118,9 +118,18 @@ public class ActionResolver {
      * Falls back to the YAML chain for templates or when BUILD_SOURCE is unavailable.
      */
     public Set<String> collectInstalledTools(String instanceName, String parentTemplate) {
-        var buildSourceJson = incus.configGet(instanceName, Metadata.BUILD_SOURCE);
-        if (buildSourceJson != null && !buildSourceJson.isBlank()) {
-            var type = Metadata.getType(incus, instanceName);
+        return collectInstalledTools(incus.instanceMetadata(instanceName).path("config"), parentTemplate);
+    }
+
+    /**
+     * As {@link #collectInstalledTools(String, String)}, from the instance's {@code config} as the
+     * caller already read it -- {@code isx branch} holds its source's from preflight.
+     */
+    public Set<String> collectInstalledTools(com.fasterxml.jackson.databind.JsonNode instanceConfig,
+                                             String parentTemplate) {
+        var buildSourceJson = IncusClient.configValue(instanceConfig, Metadata.BUILD_SOURCE);
+        if (!buildSourceJson.isBlank()) {
+            var type = IncusClient.configValue(instanceConfig, Metadata.TYPE);
             if (!Metadata.TYPE_BASE.equals(type)) {
                 var bs = dev.incusspawn.config.BuildSource.fromJson(buildSourceJson);
                 if (bs != null) {

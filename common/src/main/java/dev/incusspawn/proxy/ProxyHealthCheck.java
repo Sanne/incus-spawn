@@ -49,9 +49,17 @@ public final class ProxyHealthCheck {
      * listening port means {@code fuser} scanning every process on the host.
      */
     public static long reportedProxyPid() {
-        var addr = resolveHealthAddress();
-        if (addr == null) return -1;
-        var info = fetchProxyInfo(addr, 500);
+        return reportedProxyPid(resolveHealthAddress());
+    }
+
+    /**
+     * As {@link #reportedProxyPid()}, at a health address the caller already knows
+     * ({@link #healthAddress}); null for none. Finding it otherwise takes a new Incus client and a
+     * bridge lookup.
+     */
+    public static long reportedProxyPid(String healthAddress) {
+        if (healthAddress == null) return -1;
+        var info = fetchProxyInfo(healthAddress, 500);
         return info == null ? -1 : info.pid();
     }
 
@@ -61,19 +69,39 @@ public final class ProxyHealthCheck {
                 ? "127.0.0.1" : ProxyConfig.resolveGatewayIp(incus);
     }
 
-    private record CacheEntry(IncusClient client, ProxyStatus status, long timestamp) {}
+    /** As {@link #healthAddress(IncusClient)}, given the bridge gateway the caller already read. */
+    public static String healthAddress(String gatewayIp) {
+        return dev.incusspawn.Platform.isMacOS() ? "127.0.0.1" : gatewayIp;
+    }
+
+    /**
+     * A recent answer, and the {@code /health} it came from (null when the proxy did not answer):
+     * {@link #warnIfDrifted} assesses drift from that rather than asking the proxy again.
+     */
+    private record CacheEntry(IncusClient client, ProxyStatus status, ProxyInfo info, long timestamp) {}
     private static volatile CacheEntry cache;
     private static final long CACHE_TTL_MS = 2000;
 
     public static ProxyStatus check(IncusClient incus) {
+        return check(incus, null);
+    }
+
+    /**
+     * As {@link #check(IncusClient)}, given the bridge gateway when the caller already read it
+     * (null to read it here), since finding it is a request to Incus.
+     */
+    public static ProxyStatus check(IncusClient incus, String gatewayIp) {
+        var entry = freshEntry(incus);
+        if (entry != null) return entry.status;
+        entry = checkUncached(incus, gatewayIp);
+        cache = entry;
+        return entry.status;
+    }
+
+    private static CacheEntry freshEntry(IncusClient incus) {
         var entry = cache;
-        if (entry != null && entry.client == incus
-                && (System.currentTimeMillis() - entry.timestamp) < CACHE_TTL_MS) {
-            return entry.status;
-        }
-        var result = checkUncached(incus);
-        cache = new CacheEntry(incus, result, System.currentTimeMillis());
-        return result;
+        return entry != null && entry.client == incus
+                && (System.currentTimeMillis() - entry.timestamp) < CACHE_TTL_MS ? entry : null;
     }
 
     public static void invalidateCache() {
@@ -112,23 +140,24 @@ public final class ProxyHealthCheck {
         return false;
     }
 
-    private static ProxyStatus checkUncached(IncusClient incus) {
+    private static CacheEntry checkUncached(IncusClient incus, String gatewayIp) {
+        var now = System.currentTimeMillis();
         if (dev.incusspawn.Platform.isMacOS()) {
-            var result = checkHealth("127.0.0.1");
-            if (result.healthy()) {
-                return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
-            }
+            var info = fetchProxyInfo("127.0.0.1", 500);
+            if (info != null) return new CacheEntry(incus, answered(info), info, now);
         }
-        var gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-        var result = checkHealth(gatewayIp);
-        if (result.healthy()) {
-            return result.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
-        }
+        if (gatewayIp == null) gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+        var info = fetchProxyInfo(gatewayIp, 500);
+        if (info != null) return new CacheEntry(incus, answered(info), info, now);
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
-            return ProxyStatus.STALE_DNS;
+            return new CacheEntry(incus, ProxyStatus.STALE_DNS, null, now);
         }
-        return ProxyStatus.NOT_RUNNING;
+        return new CacheEntry(incus, ProxyStatus.NOT_RUNNING, null, now);
+    }
+
+    private static ProxyStatus answered(ProxyInfo info) {
+        return info.dnsConfigured() ? ProxyStatus.RUNNING : ProxyStatus.WAITING_FOR_DNS;
     }
 
     private static HealthResult checkHealth(String addr) {
@@ -325,7 +354,12 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean checkOrWarn(IncusClient incus) {
-        var status = check(incus);
+        return checkOrWarn(incus, null);
+    }
+
+    /** As {@link #checkOrWarn(IncusClient)}, given the bridge gateway when the caller already read it. */
+    public static boolean checkOrWarn(IncusClient incus, String gatewayIp) {
+        var status = check(incus, gatewayIp);
         if (status == ProxyStatus.RUNNING) {
             warnIfDrifted(incus);
             return true;
@@ -401,7 +435,10 @@ public final class ProxyHealthCheck {
 
     static void warnIfDrifted(IncusClient incus) {
         try {
-            var info = fetchProxyInfo(healthAddress(incus));
+            // What check() just fetched, when it did: every caller checks first, and asking the
+            // proxy again would cost the bridge lookup and the /health request a second time.
+            var entry = freshEntry(incus);
+            var info = entry != null && entry.info() != null ? entry.info() : fetchProxyInfo(healthAddress(incus));
             var report = assessDrift(info);
             if (report.isEmpty()) return;
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";

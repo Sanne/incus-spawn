@@ -32,7 +32,7 @@ class BranchFlowAccountsTest {
     /** The branch's pin each time the proxy was signalled. */
     private final List<String> pinAtRefresh = new ArrayList<>();
     private FakeIncusDaemon daemon;
-    private Runnable originalRefresh;
+    private java.util.function.Consumer<String> originalRefresh;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -50,7 +50,7 @@ class BranchFlowAccountsTest {
                   default: personal
                 """);
         originalRefresh = BranchFlow.proxyRefresh;
-        BranchFlow.proxyRefresh = () -> pinAtRefresh.add(pin());
+        BranchFlow.proxyRefresh = healthAddress -> pinAtRefresh.add(pin());
     }
 
     @AfterEach

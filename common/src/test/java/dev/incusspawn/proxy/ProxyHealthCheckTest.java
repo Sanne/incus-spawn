@@ -266,4 +266,37 @@ class ProxyHealthCheckTest {
         assertFalse(report.restartHelps());
         assertTrue(ProxyHealthCheck.assessDrift(null, () -> TRIED).isEmpty());
     }
+
+    @Test
+    void checkOrWarnAsksTheProxyOnceAndIncusNothingGivenTheGateway() throws Exception {
+        // The drift check reuses what the health check just fetched: it used to look the gateway
+        // up again and ask /health a second time, on every branch, shell and start.
+        assumeFalse(dev.incusspawn.Platform.isMacOS(), "macOS asks 127.0.0.1 first");
+        HttpServer server;
+        try {
+            server = HttpServer.create(new InetSocketAddress("127.0.0.2", ProxyConfig.DEFAULT_HEALTH_PORT), 0);
+        } catch (java.io.IOException e) {
+            assumeTrue(false, "cannot listen on 127.0.0.2:" + ProxyConfig.DEFAULT_HEALTH_PORT + ": " + e);
+            return;
+        }
+        var asked = new java.util.concurrent.atomic.AtomicInteger();
+        var build = BuildInfo.instance();
+        server.createContext("/health", exchange -> {
+            asked.incrementAndGet();
+            var body = ("{\"status\":\"ok\",\"dnsConfigured\":true,\"version\":\"" + build.version()
+                    + "\",\"gitSha\":\"" + build.gitSha() + "\"}").getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var incus = mock(IncusClient.class);
+            assertTrue(ProxyHealthCheck.checkOrWarn(incus, "127.0.0.2"));
+            assertEquals(1, asked.get(), "one /health request for the check and the drift check together");
+            verifyNoInteractions(incus);
+        } finally {
+            server.stop(0);
+        }
+    }
 }

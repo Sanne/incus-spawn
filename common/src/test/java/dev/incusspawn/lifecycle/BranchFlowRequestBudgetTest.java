@@ -33,15 +33,18 @@ class BranchFlowRequestBudgetTest {
     private static final String SOURCE = "tpl-dev";
     private static final String NAME = "dev-2";
 
-    private Runnable originalRefresh;
-    private java.util.function.Predicate<dev.incusspawn.incus.IncusClient> originalHealthCheck;
+    private java.util.function.Consumer<String> originalRefresh;
+    private java.util.function.BiPredicate<dev.incusspawn.incus.IncusClient, String> originalHealthCheck;
+    /** The gateway the health check was given, and the address the proxy was signalled at. */
+    private final List<String> checkedAt = new java.util.ArrayList<>();
+    private final List<String> refreshedAt = new java.util.ArrayList<>();
 
     @BeforeEach
     void setUp() throws Exception {
         originalRefresh = BranchFlow.proxyRefresh;
         originalHealthCheck = BranchFlow.proxyHealthCheck;
-        BranchFlow.proxyRefresh = () -> {};
-        BranchFlow.proxyHealthCheck = incus -> true;
+        BranchFlow.proxyRefresh = refreshedAt::add;
+        BranchFlow.proxyHealthCheck = (incus, gateway) -> checkedAt.add(gateway);
         writeConfig("github:\n  accounts:\n    work: { token: ghp_w }\n  default: work\n");
     }
 
@@ -99,8 +102,9 @@ class BranchFlowRequestBudgetTest {
 
         daemon.clearRequests();
         BranchFlow.create(incus, preflight);
-        // The pools, the copy and its wait, the branch, its one write.
-        assertBudget(5, daemon.requests(), "create (airgap, not started)");
+        // The bridge (to reach the proxy), the pools, the copy and its wait, the branch, its one write.
+        assertBudget(6, daemon.requests(), "create (airgap, not started)");
+        assertEquals(List.of("10.166.11.1"), refreshedAt, "the proxy is signalled at the gateway read once");
     }
 
     @Test
@@ -110,6 +114,7 @@ class BranchFlowRequestBudgetTest {
         var preflight = BranchFlow.preflight(incus, request(NetworkMode.FULL, true), defs());
         // Whether the name is free, the source, the bridge.
         assertBudget(3, daemon.requests(), "preflight (networked)");
+        assertEquals(List.of("10.166.11.1"), checkedAt, "the health check is given the gateway, not left to find it");
 
         daemon.clearRequests();
         assertThrows(IncusException.class, () -> BranchFlow.create(incus, preflight),
@@ -122,6 +127,9 @@ class BranchFlowRequestBudgetTest {
         assertBudget(9, requests.subList(0, started + 2), "create (networked) through its start");
         assertEquals(0, reads(requests, SOURCE), "the source is read once, in preflight");
         assertEquals(1, reads(requests.subList(0, started), NAME), "the branch is read once before it starts");
+        assertEquals(0, requests.stream().filter(r -> r.startsWith("GET /1.0/networks/")).count(),
+                "the bridge preflight read serves the branch's address, the refresh and the start");
+        assertEquals(List.of("10.166.11.1"), refreshedAt);
     }
 
     @Test
@@ -136,7 +144,7 @@ class BranchFlowRequestBudgetTest {
         var preflight = BranchFlow.preflight(incus, request(NetworkMode.AIRGAP, false), defs());
         daemon.clearRequests();
         BranchFlow.create(incus, preflight);
-        assertBudget(5, daemon.requests(), "create (airgap, not started, with a host path)");
+        assertBudget(6, daemon.requests(), "create (airgap, not started, with a host path)");
     }
 
     @Test
@@ -144,7 +152,7 @@ class BranchFlowRequestBudgetTest {
         var daemon = new FakeIncusDaemon();
         var e = assertThrows(BranchFlow.BranchException.class, () ->
                 BranchFlow.preflight(daemon.client(), request(NetworkMode.AIRGAP, false), defs()));
-        assertEquals("'" + SOURCE + "' does not exist.", e.getMessage());
+        assertEquals("source instance '" + SOURCE + "' does not exist.", e.getMessage());
         assertBudget(2, daemon.requests(), "preflight (source gone)");
     }
 }
