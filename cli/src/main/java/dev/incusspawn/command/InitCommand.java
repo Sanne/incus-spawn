@@ -2752,14 +2752,14 @@ public class InitCommand extends BaseCommand {
                     // The gh fallback promised to "continue with manual setup" — re-prompt for a PAT.
                     continue;
                 }
-                System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
+                reportGitHubSkipped(config);
                 return false;
             }
 
             var result = verifyGitHubToken(token, prompts);
             if (result == null) {
                 if (!askConfirmation(prompts, "  Try again?", true)) {
-                    System.out.println("  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
+                    reportGitHubSkipped(config);
                     return false;
                 }
                 continue;
@@ -2801,6 +2801,16 @@ public class InitCommand extends BaseCommand {
                 return true;
             }
         }
+    }
+
+    /**
+     * A skip leaves every saved account as it was, so "skipped setup" is only true when there
+     * are none -- not after adding a first account this run, nor on a re-run that has some.
+     */
+    private static void reportGitHubSkipped(SpawnConfig config) {
+        System.out.println(hasAccountsToPreserve(config, GhSetup.NAMESPACE)
+                ? "  No token added for this account."
+                : "  Skipped GitHub setup. You can configure it later by re-running 'isx init'.");
     }
 
     /** Prefixes GitHub gives its tokens: fine-grained PAT, classic PAT, OAuth (gh CLI), user-to-server, server-to-server. */

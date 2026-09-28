@@ -345,6 +345,24 @@ class GitHubAuthFlowTest {
         assertEquals("default", saved("github.default"));
     }
 
+    /** Skipping an extra account must not claim GitHub setup was skipped: the first is saved. */
+    @Test
+    void skippingASecondAccountSaysOnlyThatOneWasSkipped() {
+        var out = captureStdout(() -> run(new FakeInit().acceptAgentPat(),
+                declineBrowser().secret(AGENT_PAT).line("a", "work", NO_BROWSER).secret("")));
+
+        assertTrue(out.contains("No token added for this account."), out);
+        assertFalse(out.contains("Skipped GitHub setup"), out);
+        assertEquals(AGENT_PAT, saved("github.accounts.default.token"));
+    }
+
+    @Test
+    void skippingTheOnlyAccountSaysSetupWasSkipped() {
+        var out = captureStdout(() -> run(new FakeInit(), declineBrowser().secret("")));
+
+        assertTrue(out.contains("Skipped GitHub setup"), out);
+    }
+
     /**
      * #740 end to end: naming a second account and then abandoning at the PAT prompt must
      * leave the file byte-for-byte as it was -- not migrated into a shape an older isx reads as
