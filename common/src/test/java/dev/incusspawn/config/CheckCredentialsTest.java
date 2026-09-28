@@ -29,36 +29,32 @@ class CheckCredentialsTest {
                 %s""".formatted(provider, accounts);
     }
 
-    private static final String OPENAI_ONLY_WORK = """
-            openai:
-              accounts:
-                work: { apiKey: "sk-work" }
-                personal: {}
-              default: personal
-            """;
-
-    private static final String OPENAI_ONLY_DEFAULT = """
-            openai:
-              accounts:
-                personal: { apiKey: "sk-personal" }
-                work: {}
-              default: personal
-            """;
+    /** OpenAI accounts 'personal' (the default) and 'work', with a key only in {@code keyed}. */
+    private static String openaiKeyOnlyIn(String keyed) {
+        var other = keyed.equals("work") ? "personal" : "work";
+        return """
+                openai:
+                  accounts:
+                    %s: { apiKey: "sk-%s" }
+                    %s: {}
+                  default: personal
+                """.formatted(keyed, keyed, other);
+    }
 
     @Test
     void piOpenaiPinnedToConfiguredAccountIsNotMissing() throws Exception {
-        assertEquals("", check(OPENAI_ONLY_WORK, piTemplate("openai", "accounts:\n  openai: work\n")));
+        assertEquals("", check(openaiKeyOnlyIn("work"), piTemplate("openai", "accounts:\n  openai: work\n")));
     }
 
     @Test
     void piOpenaiPinnedToAccountWithoutKeyIsMissing() throws Exception {
-        var result = check(OPENAI_ONLY_DEFAULT, piTemplate("openai", "accounts:\n  openai: work\n"));
+        var result = check(openaiKeyOnlyIn("personal"), piTemplate("openai", "accounts:\n  openai: work\n"));
         assertTrue(result.contains("OpenAI API key"), result);
     }
 
     @Test
     void piOpenaiUnpinnedUsesDefault() throws Exception {
-        assertEquals("", check(OPENAI_ONLY_DEFAULT, piTemplate("openai", "")));
+        assertEquals("", check(openaiKeyOnlyIn("personal"), piTemplate("openai", "")));
     }
 
     private static final String CLAUDE_API_KEY_AND_VERTEX = """
