@@ -36,6 +36,14 @@ public final class SecretRegistry {
         return locations(new ToolDefLoader().allToolSetups());
     }
 
+    /**
+     * Whether a config path names somewhere in {@code config.yaml}: a malformed one ({@code "."},
+     * {@code "a..b"}, blank) names nothing a user could set.
+     */
+    public static boolean isNavigable(String path) {
+        return !path.isBlank() && java.util.Arrays.stream(path.split("\\.", -1)).noneMatch(String::isBlank);
+    }
+
     /** Testable overload: collect declared secret locations from a given tool set. */
     public static List<SecretLocation> locations(Map<String, ToolSetup> toolSetups) {
         var result = new ArrayList<SecretLocation>();
@@ -45,11 +53,9 @@ public final class SecretRegistry {
             for (var configEntry : proxy.getConfiguration().values()) {
                 if (!configEntry.isSecret() || configEntry.isConfirm()) continue;
                 var path = proxy.fullConfigPath(configEntry);
-                // A malformed config-path (".", "a..b") names nothing navigable. Dropping it
-                // here keeps one bad tool definition from failing the whole bundle.
-                if (path.isBlank() || java.util.Arrays.stream(path.split("\\.", -1)).anyMatch(String::isBlank)) {
-                    continue;
-                }
+                // Dropping a malformed one here keeps one bad tool definition from failing the
+                // whole bundle.
+                if (!isNavigable(path)) continue;
                 result.add(new SecretLocation(path, entry.getKey(), configEntry.getDescription()));
             }
         }

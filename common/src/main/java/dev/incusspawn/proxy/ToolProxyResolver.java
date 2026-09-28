@@ -216,7 +216,7 @@ public final class ToolProxyResolver {
         return result;
     }
 
-    /** A declared secret that resolves to nothing; {@code path} is its flat config path. */
+    /** A configuration entry some tool needs that resolves to nothing; {@code path} is its flat config path. */
     public record MissingSecret(String path, String description) {}
 
     /**
@@ -229,11 +229,14 @@ public final class ToolProxyResolver {
     }
 
     /**
-     * The {@code secret: true} entries of {@code toolNames} that resolve to nothing for the given
-     * account selection -- "does this instance have the credentials its tools need". A secret
-     * several tools share (Copilot borrows {@code github.token}) is reported once.
-     * Tools absent from {@code toolSetups} are skipped, as are those whose only auth is
-     * {@code type: anthropic}: Claude's credential is a typed account, not one key.
+     * What {@code toolNames} would be missing for the given account selection, judged as
+     * {@link #resolve} judges it: an auth entry is served once every key it references resolves,
+     * and a tool is usable while any one of its entries is. For a tool none of whose entries
+     * would be served, the unresolved keys they reference are reported -- once each, since tools
+     * may share one (Copilot borrows {@code github.token}). An entry whose config path is
+     * malformed ({@link dev.incusspawn.config.SecretRegistry#isNavigable}) is not asked for:
+     * nobody could supply it. Tools absent from {@code toolSetups}, and those served only by
+     * {@code type: anthropic}, are skipped: Claude's credential is a typed account.
      *
      * @param toolSetups the tools the proxy serves ({@link #proxyToolSetups})
      */
@@ -246,18 +249,36 @@ public final class ToolProxyResolver {
             var proxyDef = tool == null ? null : tool.proxy();
             if (proxyDef == null || !servesNonAnthropicAuth(proxyDef)) continue;
 
-            for (var configDef : proxyDef.getConfiguration().values()) {
-                // What SecretRegistry counts as a secret: a confirm entry is a consent, not a key.
-                if (!configDef.isSecret() || configDef.isConfirm()) continue;
-                var path = proxyDef.fullConfigPath(configDef);
-                if (result.containsKey(path)) continue;
-                var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, accountsByNamespace);
-                if (value == null || value.isBlank()) {
-                    result.put(path, new MissingSecret(path, configDef.getDescription()));
+            var resolved = resolveConfiguration(proxyDef, configTree, toolSetups, accountsByNamespace);
+            var unsupplied = new java.util.LinkedHashSet<String>();
+            boolean anyServed = false;
+            for (var auth : proxyDef.getAuth()) {
+                if (auth.getDomains() == null || auth.getDomains().isEmpty()) continue;
+                if (auth.getType() == null || "anthropic".equals(auth.getType())) continue;
+                var missing = extractReferencedKeys(auth).stream()
+                        .filter(key -> !resolved.containsKey(key) && suppliable(proxyDef, key))
+                        .toList();
+                if (missing.isEmpty()) {
+                    anyServed = true;
+                    break;
                 }
+                unsupplied.addAll(missing);
+            }
+            if (anyServed) continue;
+            for (var key : unsupplied) {
+                var entry = proxyDef.getConfiguration().get(key);
+                var path = proxyDef.fullConfigPath(entry);
+                result.putIfAbsent(path, new MissingSecret(path, entry.getDescription()));
             }
         }
         return List.copyOf(result.values());
+    }
+
+    /** Whether a user could set the entry a key names: it exists, and has somewhere to live. */
+    private static boolean suppliable(ToolDef.ProxyDef proxyDef, String key) {
+        var entry = proxyDef.getConfiguration().get(key);
+        return entry != null && !entry.isConfirm()
+                && dev.incusspawn.config.SecretRegistry.isNavigable(proxyDef.fullConfigPath(entry));
     }
 
     static String fingerprint(List<ResolvedToolProxy> proxies) {

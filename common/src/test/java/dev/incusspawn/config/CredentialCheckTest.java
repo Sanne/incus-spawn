@@ -186,4 +186,54 @@ class CredentialCheckTest {
         var result = check("{}", "name: tpl-pi\ntools:\n  - pi: {provider: ~}\n");
         assertTrue(result.contains("Anthropic API key"), result);
     }
+
+    // --- Only what the proxy needs: an auth entry is served once the keys it references resolve
+
+    private static dev.incusspawn.tool.ToolSetup yamlTool(String yaml) throws Exception {
+        return new dev.incusspawn.tool.YamlToolSetup(dev.incusspawn.tool.ToolDef.loadFromStream(
+                new java.io.ByteArrayInputStream(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+    }
+
+    /** Three auth entries on three domains, each with its own secret, as the CI fixture has. */
+    private static final String THREE_WAYS = """
+            name: three-ways
+            proxy:
+              config-namespace: threeWays
+              configuration:
+                token: { config-path: token, description: "Three-ways token", secret: true }
+                password: { config-path: password, description: "Three-ways password", secret: true }
+                api-key: { config-path: apiKey, description: "Three-ways API key", secret: true }
+              auth:
+                - { domains: [a.example], type: bearer, token: "${token}" }
+                - { domains: [b.example], type: basic, username: "u", password: "${password}" }
+                - { domains: [c.example], type: header, name: X-Key, value: "Key ${api-key}" }
+            """;
+
+    @Test
+    void oneServableAuthEntryIsEnough() throws Exception {
+        // The proxy injects the bearer token; the other two secrets serve other domains.
+        assertEquals("", check("threeWays: { token: t }", template("[three-ways]"), Map.of(),
+                yamlTool(THREE_WAYS)));
+    }
+
+    @Test
+    void noServableAuthEntryNamesWhatWouldServeOne() throws Exception {
+        var result = check("{}", template("[three-ways]"), Map.of(), yamlTool(THREE_WAYS));
+        assertTrue(result.contains("Three-ways token"), result);
+        assertTrue(result.contains("Three-ways password"), result);
+    }
+
+    @Test
+    void aSecretNobodyCouldSetIsNotAskedFor() throws Exception {
+        // No config-path and no value: the validator only warns, and no config.yaml could hold it.
+        var tool = yamlTool("""
+                name: unsettable
+                proxy:
+                  configuration:
+                    key: { description: "Unsettable key", secret: true }
+                  auth:
+                    - { domains: [d.example], type: bearer, token: "${key}" }
+                """);
+        assertEquals("", check("{}", template("[unsettable]"), Map.of(), tool));
+    }
 }
