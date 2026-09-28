@@ -355,11 +355,12 @@ public class CompletionCommand extends BaseCommand {
               local -a _account_subcmds
               _account_subcmds=(
                 'list:list configured accounts per namespace'
-                'show:show the accounts an instance uses'
+                'show:show the account an instance uses for each credential'
                 'set:point an instance at different credential accounts'
+                'unset:make an instance follow the default account again'
               )
               case $words[1] in
-                show|set) _isx_instances ;;
+                show|set|unset) _isx_instances ;;
                 *) _describe -t subcmds 'account subcommand' _account_subcmds ;;
               esac
             }
@@ -568,6 +569,24 @@ public class CompletionCommand extends BaseCommand {
                     --action) return ;;
                   esac
                   COMPREPLY=( $(compgen -W "--help --action" -- "$cur") )
+                  ;;
+                account)
+                  local acct_cmd=""
+                  local j
+                  for (( j=i+1; j < cword; j++ )); do
+                    case "${words[j]}" in
+                      list|show|set|unset) acct_cmd="${words[j]}"; break ;;
+                    esac
+                  done
+                  case "$acct_cmd" in
+                    "") COMPREPLY=( $(compgen -W "list show set unset --help" -- "$cur") ) ;;
+                    show|set|unset)
+                      if [[ "$prev" == "$acct_cmd" ]]; then
+                        COMPREPLY=( $(compgen -W "$(_isx_list_instances) --help" -- "$cur") )
+                      fi
+                      ;;
+                    *) COMPREPLY=( $(compgen -W "--help" -- "$cur") ) ;;
+                  esac
                   ;;
                 project)
                   local proj_subcmds="create update"
@@ -836,12 +855,14 @@ public class CompletionCommand extends BaseCommand {
 
             # ── account ─────────────────────────────────────────────────────────────────
 
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a show -d 'Show the accounts an instance uses'
-            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a list -d 'List configured accounts per namespace'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a show -d 'Show the account an instance uses for each credential'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a set  -d 'Point an instance at different credential accounts'
+            complete -c isx -f -n '__isx_using_subcommand account; and not string match -qr -- "\\b(list|show|set|unset)\\b" (commandline -opc)' -a unset -d 'Make an instance follow the default account again'
 
             complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand show' -a '(__isx_instances)' -d 'Instance name'
             complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand set'  -a '(__isx_instances)' -d 'Instance name'
+            complete -c isx -f -n '__isx_using_subcommand account; and __isx_using_subcommand unset' -a '(__isx_instances)' -d 'Instance name'
 
             # ── tools ────────────────────────────────────────────────────────────────────
 

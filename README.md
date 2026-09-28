@@ -84,6 +84,7 @@ See [Installation](#installation) for all options and update instructions. Shell
 - Containers hold only placeholder values (e.g. `sk-ant-placeholder`) that satisfy tools' local auth checks; placeholders cannot authenticate against any real service
 - **Vertex AI support**: the proxy transparently translates requests to Vertex AI format — no GCP credentials enter the container
 - **Claude Pro/Max support**: authenticate via `claude setup-token`; the proxy injects the OAuth Bearer token transparently
+- **Several accounts per credential**: configure e.g. a personal and a client Claude subscription, or two GitHub identities, and choose per template or per instance which one is spent -- see [Credential accounts](#credential-accounts)
 - **HTTPS only**: Git operations must use HTTPS URLs (not SSH). `gh` defaults to HTTPS; for `git clone`, use `https://github.com/...`
 
 There is no API, endpoint, environment variable, or file that code inside the container can access to obtain real credentials — the injection happens entirely outside the trust boundary.
@@ -114,7 +115,7 @@ tpl-java  (stopped template, ~2GB)
 
 You can install packages, break things, and destroy a branch when done. The template and other branches are completely unaffected. Sudo works without a password, and shell sessions set the terminal title to `isx:<containername>` so you always know which environment you're in.
 
-Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, or an inbox mount to share files read-only from the host. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
+Branches can optionally enable GUI/audio passthrough (Wayland + PipeWire with GPU acceleration, Linux only), restricted networking, an inbox mount to share files read-only from the host, or different [credential accounts](#credential-accounts) than their template's. Resource limits (CPU, memory, disk) are auto-detected from the host but can be overridden. The interactive TUI (`isx` with no arguments) provides a Midnight Commander-style interface with modal dialogs for branching, renaming, and building, plus F3 detail views and F9 tool actions.
 
 The TUI shows a storage gauge and per-row disk usage so you can see what's filling the pool. Sizes are approximate (marked `~`): the base template carries the shared base image, while CoW branches show only the data unique to them. Press **C** to reclaim space, or on macOS grow the disk with `isx vm resize <size>`.
 
@@ -1020,30 +1021,6 @@ claude:
       cloudMlRegion: europe-west1
       vertexProjectId: acme-prod
   default: personal
-```
-
-`default` names the account used when nothing narrower applies. A template can override it for
-everything branched from it:
-
-```yaml
-name: tpl-acme
-parent: tpl-dev
-accounts:
-  claude: acme
-```
-
-And a single instance can override the template:
-
-```shell
-isx branch review-1 --account claude=acme
-isx account list                       # what is configured
-isx account show review-1              # what this instance uses
-isx account set review-1 claude=personal
-```
-
-The same works for GitHub, and for any credential a tool declares:
-
-```yaml
 github:
   accounts:
     personal:
@@ -1054,23 +1031,96 @@ github:
   default: personal
 ```
 
+You don't need to write this by hand: `isx init` adds, replaces, renames and removes accounts, and
+chooses the default, for Claude, GitHub and any credential a tool declares. A credential configured
+before accounts existed appears as the account `default`.
+
+Which account an instance uses is decided in three layers, the most specific winning:
+
+1. the credential's `default` in `config.yaml`;
+2. the template's `accounts:`, merged key by key down its parent chain;
+3. the instance's own choice: `isx branch --account`, `isx account set`, or **a** in the TUI.
+
+```yaml
+name: tpl-acme
+parent: tpl-java
+accounts:
+  claude: acme
+  github: acme-bot
+```
+
+A template's choice is copied onto each instance when it is branched. Editing `accounts:` later
+changes future branches, not existing ones -- running work is never re-pointed behind your back --
+and `isx account show` points out an instance that no longer matches its template. A template
+itself picks up the change when it is rebuilt.
+
+#### Example: keeping a client's work on the client's accounts
+
+With the configuration and template above:
+
+```shell
+isx build tpl-acme
+isx branch acme-42 --from tpl-acme
+isx account show acme-42
+```
+
+```
+acme-42 (branched from tpl-acme):
+
+  claude  acme -- Google Cloud Vertex AI (region: europe-west1, project: acme-prod)
+          Pinned by template tpl-acme's accounts: setting, copied onto this instance when it was branched.
+
+  github  acme-bot -- commits as bot@acme.example
+          Pinned by template tpl-acme's accounts: setting, copied onto this instance when it was branched.
+```
+
+Everything in `acme-42` -- Claude Code, `gh`, `git push`, commits -- now runs as Acme's accounts,
+while instances branched from other templates keep using your own. For a one-off, override a
+single instance instead: `isx branch review-1 --account github=acme-bot`.
+
+#### Inspecting and changing an instance's accounts
+
+```shell
+isx account list                        # accounts per credential, and which instances pin each
+isx account show review-1               # what review-1 uses, and why
+isx account set review-1 github=acme-bot
+isx account unset review-1 github       # follow the default again
+```
+
+In the TUI, **F3** on an instance shows the same as `isx account show`, and **a** changes it.
+
+`show` says in words where each account comes from. An instance is either *pinned* to an account,
+and keeps it whatever the global default becomes, or *not pinned*, in which case it uses the global
+default (`<ns>.default` in `config.yaml`) and changes account when that default is changed. A pin is
+always stored on the instance, and isx records who chose it: the template's `accounts:` (copied when
+the instance was branched), an explicit choice for the instance (`--account`, `isx account set`, the
+TUI), or an explicit choice on the instance it was branched from. Pinning the account that happens to
+be the default is therefore not the same as following it, which is why `unset` exists.
+
 Selections are always written `<namespace>=<account>`, where the namespace is the credential's
-section in `config.yaml` (`claude`, `github`, and any namespace a tool declares). Pass the flag
+section in `config.yaml` (`claude`, `github`, and any namespace a tool declares). Pass `--account`
 more than once to set several.
 
 Because credentials live in the proxy and never inside the container, re-pointing a running
 instance takes effect on its next request -- nothing inside needs restarting. Re-pointing a
-GitHub account also refreshes the container's git identity (`user.name`, `user.email`) on its
-next use, so commits are authored by the account whose token pushes them.
+GitHub account also refreshes the container's git identity (`user.name`, `user.email`), so commits
+are authored by the account whose token pushes them.
 
 Moving *between Claude auth modes* (Pro/Max OAuth, API key, Vertex) is the one exception: the
 mode is written into the container's environment when the template is built and a running agent
-has already read it, so `isx account set` refuses that swap and tells you which template to
-branch from instead.
+has already read it, so isx refuses that swap and tells you which kind of template to branch from
+instead. Keep one template per mode you use, as `tpl-acme` above does for Vertex
+([#866](https://github.com/Sanne/incus-spawn/issues/866) tracks lifting this).
 
-If an instance names an account that has since been renamed or removed, its requests fail with a
-message saying so -- isx will not quietly spend a different account. `isx doctor` lists instances
-in that state.
+#### Removing and renaming accounts
+
+If an instance is pinned to an account that has since been renamed or removed, its requests fail
+with a message saying so -- isx will not quietly spend a different account. To avoid getting there,
+`isx init` lists the instances pinned to an account, and the templates naming it, before removing
+it, and asks first. Renaming an account in `isx init` re-points the instances pinned to it; the
+templates that name it are listed for you to update, since their YAML is yours. `isx account list`,
+`isx account show` and `isx doctor` all report instances left pinned to a missing account; fix one
+with `isx account set` or `isx account unset`.
 
 The `config.yaml` also supports git remote auto-management via `host-paths` and `repo-paths` (see [Git Remotes](#git-remotes)), and a `searchPaths` list for loading templates and tools from external directories. Each directory should contain `images/` and/or `tools/` subdirectories following the same YAML schema as the built-in definitions. Tilde (`~`) expansion is supported for all path settings:
 
@@ -1139,6 +1189,7 @@ Beyond security, a shared project directory is also **misleading**. The agent's 
 | [`isx update-all`](#isx-update-all) | Update packages and repos in all templates |
 | [`isx templates`](#isx-templates) | Manage template definitions |
 | [`isx tools`](#isx-tools) | List and inspect available tool definitions |
+| [`isx account`](#isx-account) | Show or change the credential accounts an instance uses |
 | [`isx project`](#isx-project) | Manage project templates |
 | [`isx proxy`](#isx-proxy) | Manage the MITM authentication proxy |
 | [`isx doctor`](#isx-doctor) | Diagnose host, proxy, VM, and tunnel health |
@@ -1160,7 +1211,7 @@ Launch the interactive TUI. Falls back to plain-text listing when stdout is not 
 
 ### `isx init`
 
-One-time host setup: install Incus, configure auth, test connectivity.
+One-time host setup: install Incus, configure credentials and their [accounts](#credential-accounts), test connectivity. Safe to re-run, e.g. to add, rename or remove an account.
 
     isx init
 
@@ -1201,6 +1252,7 @@ Create a new instance as a copy-on-write clone from a template or existing insta
 | `--disk <size>` | Disk size limit (default: adaptive) |
 | `--no-start` | Don't start the instance after creation |
 | `--shell` | Open a plain shell instead of running the default action |
+| `--account <ns>=<account>` | Use this [credential account](#credential-accounts) instead of the template's or the default; repeatable |
 
 ### `isx shell`
 
@@ -1321,6 +1373,19 @@ List and inspect available tool definitions. Running bare `isx tools` defaults t
 #### `isx tools show`
 
     isx tools show <name>
+
+### `isx account`
+
+Show or change which [credential account](#credential-accounts) an instance uses. Accounts themselves are configured with `isx init`. Running bare `isx account` defaults to `list`.
+
+    isx account <subcommand>
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Configured accounts per credential, the default, and the instances pinned to each |
+| `show <instance>` | The account the instance uses for each credential, and where it comes from |
+| `set <instance> <ns>=<account>...` | Pin the instance to these accounts; takes effect on its next request |
+| `unset <instance> <ns>...` | Remove the pins, so the instance follows the default again |
 
 ### `isx project`
 

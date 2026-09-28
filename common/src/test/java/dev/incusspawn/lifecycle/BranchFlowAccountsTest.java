@@ -74,10 +74,14 @@ class BranchFlowAccountsTest {
     }
 
     private void branch(String source, Map<String, ImageDef> defs) {
+        branch(source, defs, List.of());
+    }
+
+    private void branch(String source, Map<String, ImageDef> defs, List<String> accountOverrides) {
         // Airgapped and not started: what is under test is the selection and the signal, not
         // the proxy health check or the guest's boot.
         var request = new BranchFlow.Request(source, "dev-2", false, false, NetworkMode.AIRGAP,
-                null, null, null, null, List.of(), false, Map.of());
+                null, null, null, null, accountOverrides, false, Map.of());
         BranchFlow.create(daemon.client(), BranchFlow.preflight(daemon.client(), request, defs));
     }
 
@@ -120,5 +124,62 @@ class BranchFlowAccountsTest {
         assertEquals(List.of(), pinAtRefresh);
         assertEquals(List.of(), daemon.requests().stream()
                 .filter(r -> r.startsWith("POST ")).toList(), "no branch was created");
+    }
+
+    // ── who chose each pin is recorded beside it ───────────────────────────────
+
+    private static final String GITHUB_ORIGIN = Metadata.accountOriginKey("github");
+
+    private String origin() {
+        return daemon.instance("dev-2").path("config").path(GITHUB_ORIGIN).asText("");
+    }
+
+    @Test
+    void aTemplatesChoiceIsRecordedAsTheTemplates() throws Exception {
+        daemon = template();
+        branch("tpl-dev", templateWithAccount("work"));
+        assertEquals("template:tpl-dev", origin());
+    }
+
+    /** Even when it names the template's own account: an explicit choice stays explicit. */
+    @Test
+    void anAccountFlagIsRecordedAsExplicit() throws Exception {
+        daemon = template();
+        branch("tpl-dev", templateWithAccount("work"), List.of("github=work"));
+        assertEquals("work", pin());
+        assertEquals("explicit", origin());
+    }
+
+    @Test
+    void anExplicitChoiceOnTheSourceIsRecordedAsCopiedFromIt() throws Exception {
+        daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev",
+                GITHUB, "bot", GITHUB_ORIGIN, "explicit"));
+        branch("dev-1", templateWithAccount("work"));
+        assertEquals("bot", pin());
+        assertEquals("copied:dev-1", origin());
+    }
+
+    @Test
+    void theTemplatesChoiceStaysTheTemplatesThroughABranchOfABranch() throws Exception {
+        daemon = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev",
+                GITHUB, "work", GITHUB_ORIGIN, "template:tpl-dev"));
+        branch("dev-1", templateWithAccount("work"));
+        assertEquals("template:tpl-dev", origin());
+    }
+
+    /** A template built before origins were recorded: its pin matching its definition is its own. */
+    @Test
+    void anUnrecordedPinMatchingTheTemplateIsTheTemplates() throws Exception {
+        daemon = new FakeIncusDaemon().container("tpl-dev", Map.of(Metadata.TYPE, Metadata.TYPE_BASE,
+                Metadata.PROFILE, "tpl-dev", GITHUB, "work"));
+        branch("tpl-dev", templateWithAccount("work"));
+        assertEquals("template:tpl-dev", origin());
+    }
+
+    @Test
+    void aBranchThatPinsNothingCarriesNoOrigin() {
+        daemon = template();
+        branch("tpl-dev", Map.of());
+        assertEquals("", origin());
     }
 }

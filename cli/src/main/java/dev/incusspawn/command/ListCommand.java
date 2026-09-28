@@ -128,6 +128,8 @@ public class ListCommand extends BaseCommand {
 
     // Background operation state
     private final AtomicBoolean needsRefresh = new AtomicBoolean(false);
+    /** An account change finished in the background; an open detail dialog re-reads its accounts. */
+    private final AtomicBoolean detailAccountsStale = new AtomicBoolean(false);
     /** Redraw on the next tick without reloading data -- for state that changed off the UI thread. */
     private final AtomicBoolean needsRepaint = new AtomicBoolean(false);
     private final AtomicReference<String> pendingStatusMessage = new AtomicReference<>();
@@ -168,13 +170,19 @@ public class ListCommand extends BaseCommand {
     private java.util.Set<String> liveInstanceNames = java.util.Set.of();
     // The instance the F3 detail dialog was opened on (it renders the current selection).
     private String detailInstanceName;
+    /** The credential account dialog; null while it is closed. */
+    private AccountsModal accountsModal;
+    /** Mode to return to when it closes: it opens from the instance list and from its details. */
+    private Mode accountsReturnMode = Mode.BROWSE;
+    /** The detail dialog's "Credential accounts" section, resolved once per opening. */
+    private List<dev.incusspawn.config.AccountUsage.Use> detailAccountUses = List.of();
 
     /** Result of a light refresh, produced off the UI thread. Exactly one of instances/error is set. */
     private record LiveSnapshot(long generation, List<InstanceInfo> instances,
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -1214,6 +1222,7 @@ public class ListCommand extends BaseCommand {
             case NEW_TEMPLATE -> handleNewTemplateEvent(key, tui);
             case TEMPLATE_DETAIL -> handleTemplateDetailEvent(key, tui);
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
+            case ACCOUNTS -> handleAccountsEvent(key);
             case INFO -> handleInfoEvent(key);
             case HELP_CHAT -> {
                 if (!helpChat.handleKey(key)) mode = Mode.BROWSE;
@@ -1401,6 +1410,7 @@ public class ListCommand extends BaseCommand {
         if (key.isKey(KeyCode.F3)) {
             instanceDetailScrollOffset = 0;
             detailInstanceName = selected.name;
+            detailAccountUses = accountUsesFor(selected);
             mode = Mode.INSTANCE_DETAIL;
             return true;
         }
@@ -1431,6 +1441,10 @@ public class ListCommand extends BaseCommand {
             pendingAction = PendingAction.SHELL;
             pendingActionTarget = selected.name;
             tui.quit();
+            return true;
+        }
+        if (key.isChar('a')) {
+            openAccountsModal(selected.name, Mode.BROWSE);
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
@@ -1492,7 +1506,7 @@ public class ListCommand extends BaseCommand {
     private boolean isInstanceActionKey(KeyEvent key, InstanceInfo selected) {
         return key.isKey(KeyCode.F8) || key.isKey(KeyCode.DELETE) || key.isKey(KeyCode.F2)
                 || key.isKey(KeyCode.ENTER) || key.isKey(KeyCode.F4) || key.isKey(KeyCode.F6)
-                || key.isKey(KeyCode.F9) || (key.isKey(KeyCode.F7) && isRunning(selected));
+                || key.isKey(KeyCode.F9) || key.isChar('a') || (key.isKey(KeyCode.F7) && isRunning(selected));
     }
 
     private void openBuildMenu(TemplateInfo template) {
@@ -2090,6 +2104,10 @@ public class ListCommand extends BaseCommand {
     private void render(dev.tamboui.terminal.Frame frame, TableState tableState) {
         // Apply background task state BEFORE layout/rendering so this frame uses fresh data
         backgroundTasks.cleanupCompleted(TASK_DISPLAY_DURATION);
+        if (detailAccountsStale.getAndSet(false) && mode == Mode.INSTANCE_DETAIL) {
+            var selected = selectedEntry(instanceTableState);
+            detailAccountUses = selected == null ? List.of() : accountUsesFor(selected);
+        }
         if (needsRefresh.get()) {
             long now = System.currentTimeMillis();
             if (now - lastRefreshTime > REFRESH_DEBOUNCE_MS) {
@@ -2879,6 +2897,7 @@ public class ListCommand extends BaseCommand {
                 if (template != null) templateDetail.render(frame, screen, template);
             }
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
+            case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
@@ -3085,6 +3104,16 @@ public class ListCommand extends BaseCommand {
     private boolean handleInstanceDetailEvent(KeyEvent key, TuiRunner tui) {
         if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC() || key.isKey(KeyCode.F3)) {
             mode = Mode.BROWSE;
+            return true;
+        }
+        if (key.isChar('a')) {
+            var selected = selectedEntry(instanceTableState);
+            if (selected == null || vanished(selected.name)) return true;
+            if (hasPendingOp(selected) || backgroundTasks.hasRunningTask(selected.name)) {
+                statusMessage = "Operation in progress for " + selected.name;
+                return true;
+            }
+            openAccountsModal(selected.name, Mode.INSTANCE_DETAIL);
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
@@ -3529,6 +3558,7 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("F8/Del", "Destroy", "⇧F8/Del", "Destroy all"),
                 shortcutRow("F9", "Tool actions", null, null),
                 shortcutRow("F10", "Quit", null, null),
+                shortcutRow("a", "Credential accounts", null, null),
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
                 shortcutRow("n", "New template…", null, null),
@@ -3622,6 +3652,118 @@ public class ListCommand extends BaseCommand {
         return Line.from(spans);
     }
 
+    /**
+     * What {@code isx account show} reports for this instance, for the detail dialog. Best effort:
+     * the dialog is worth opening without it, so a failure leaves the section out.
+     */
+    private List<dev.incusspawn.config.AccountUsage.Use> accountUsesFor(InstanceInfo info) {
+        try {
+            var config = SpawnConfig.load();
+            var template = resolveTemplateName(info);
+            var templateDef = template == null ? null : imageDefs.get(template);
+            var templateAccounts = templateDef == null ? Map.<String, String>of()
+                    : dev.incusspawn.config.ImageDef.resolveAccounts(templateDef, imageDefs);
+            // One instance read for the pins and who chose them.
+            var metadata = incus.configByPrefix(info.name, Metadata.PREFIX);
+            var pins = new java.util.LinkedHashMap<String, String>();
+            var pinPrefix = Metadata.ACCOUNT_PREFIX.substring(Metadata.PREFIX.length());
+            metadata.forEach((k, v) -> {
+                if (k.startsWith(pinPrefix) && v != null && !v.isBlank()) pins.put(k.substring(pinPrefix.length()), v.strip());
+            });
+            return dev.incusspawn.config.AccountUsage.of(config,
+                    dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader),
+                    pins, dev.incusspawn.config.AccountSelection.originsFromMetadata(metadata), templateAccounts);
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    private void openAccountsModal(String instance, Mode returnTo) {
+        List<AccountsModal.Row> rows;
+        try {
+            var config = SpawnConfig.load();
+            rows = AccountsModal.rowsFor(config, dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader),
+                    dev.incusspawn.config.AccountSelection.read(incus, instance));
+        } catch (RuntimeException e) {
+            statusMessage = "Couldn't read credential accounts: " + e.getMessage();
+            return;
+        }
+        if (rows.isEmpty()) {
+            statusMessage = "No credential accounts configured. Run 'isx init' to add one.";
+            return;
+        }
+        accountsModal = new AccountsModal(modal, theme, instance, rows);
+        accountsReturnMode = returnTo;
+        mode = Mode.ACCOUNTS;
+    }
+
+    private boolean handleAccountsEvent(KeyEvent key) {
+        switch (accountsModal.handleKey(key)) {
+            case STAY -> { return true; }
+            case CLOSE -> {
+                closeAccountsModal();
+                return true;
+            }
+            case APPLY -> { }
+        }
+        var instance = accountsModal.instance();
+        var changes = accountsModal.changes();
+        var config = SpawnConfig.load();
+        // The TUI's own loader: a fresh one would re-read the tool definitions and print their
+        // warnings over the screen, from this thread and again from the background one.
+        var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
+        // Checked here, on the event thread, so a refusal is read in the dialog while the user
+        // is still choosing; applying -- which may re-derive the git identity inside the
+        // instance -- then runs in the background.
+        try {
+            InstanceLifecycle.checkAccountChange(incus, instance, config, setups, changes);
+        } catch (dev.incusspawn.config.AccountSelection.InvalidSelectionException
+                 | dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+            accountsModal.setError(e.getMessage());
+            return true;
+        } catch (RuntimeException e) {
+            accountsModal.setError("Couldn't check the change: " + e.getMessage());
+            return true;
+        }
+        closeAccountsModal();
+        if (!backgroundTasks.tryClaim(instance)) {
+            statusMessage = "Operation already in progress for " + instance;
+            return true;
+        }
+        var described = describeAccountChanges(changes);
+        backgroundTasks.submit("Switching accounts of " + instance, "Switched accounts of " + instance,
+                instance, () -> {
+                    try {
+                        InstanceLifecycle.changeAccounts(incus, instance, config, setups, changes,
+                                msg -> { }, msg -> setStatusMessage("Warning: " + msg));
+                        setStatusMessage(instance + ": " + described);
+                    } catch (RuntimeException e) {
+                        setStatusMessage("Couldn't change accounts of " + instance + ": " + e.getMessage());
+                        throw e;
+                    } finally {
+                        backgroundTasks.releaseClaim(instance);
+                        detailAccountsStale.set(true);
+                        refreshDataAfterBackground();
+                    }
+                });
+        return true;
+    }
+
+    private void closeAccountsModal() {
+        mode = accountsReturnMode;
+        if (mode == Mode.INSTANCE_DETAIL) {
+            var selected = selectedEntry(instanceTableState);
+            detailAccountUses = selected == null ? List.of() : accountUsesFor(selected);
+        }
+        accountsModal = null;
+    }
+
+    static String describeAccountChanges(Map<String, String> changes) {
+        var parts = new ArrayList<String>();
+        changes.forEach((ns, account) -> parts.add(account == null ? ns + " follows the default" : ns + "=" + account));
+        return String.join(", ", parts);
+    }
+
     private void renderInstanceDetailModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
         var selected = selectedEntry(instanceTableState);
         if (selected == null) return;
@@ -3656,6 +3798,7 @@ public class ListCommand extends BaseCommand {
 
         var hintSpans = new ArrayList<Span>();
         modal.addKey(hintSpans, "F2", "Shell");
+        modal.addKey(hintSpans, "a", "Accounts");
         modal.addKey(hintSpans, "F3/Esc", "Close");
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(1));
     }
@@ -3740,6 +3883,35 @@ public class ListCommand extends BaseCommand {
         }
 
         lines.add(Line.styled("", lineStyle));
+
+        if (!detailAccountUses.isEmpty()) {
+            lines.add(Line.from(List.of(Span.styled("Credential accounts:", labelStyle),
+                    Span.styled("  (a to change)", dimStyle))));
+            int nsWidth = detailAccountUses.stream().mapToInt(u -> u.namespace().length()).max().orElse(0);
+            for (var use : detailAccountUses) {
+                var ns = use.namespace() + " ".repeat(nsWidth - use.namespace().length());
+                var spans = new ArrayList<Span>();
+                spans.add(Span.styled("  " + ns + "  ", labelStyle));
+                spans.add(Span.styled(use.account().isEmpty() ? "(none)" : use.account(),
+                        use.problem().isEmpty() ? lineStyle : Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())));
+                if (!use.description().isEmpty()) spans.add(Span.styled(" -- " + use.description(), dimStyle));
+                lines.add(Line.from(spans));
+                var template = resolveTemplateName(info);
+                lines.add(Line.from(List.of(Span.styled("    " + dev.incusspawn.config.AccountUsage.explainSource(
+                        use, template == null ? "-" : template, info.name.equals(template)), dimStyle))));
+                if (!use.problem().isEmpty()) {
+                    lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
+                            + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
+                } else if (!use.templateProblem().isEmpty()) {
+                    lines.add(Line.from(List.of(Span.styled("    the template names '" + use.templateAccount()
+                            + "', which is not configured", dimStyle))));
+                } else if (use.differsFromTemplate()) {
+                    lines.add(Line.from(List.of(Span.styled("    the template now names '"
+                            + use.templateAccount() + "'", dimStyle))));
+                }
+            }
+            lines.add(Line.styled("", lineStyle));
+        }
 
         lines.add(Line.from(List.of(
                 Span.styled("Project:        ", labelStyle),
@@ -4732,6 +4904,7 @@ public class ListCommand extends BaseCommand {
             case CONFIRM_STOP_FOR_RENAME, RENAME -> renameSourceName;
             case BRANCH -> branchSourceName;
             case INSTANCE_DETAIL -> detailInstanceName;
+            case ACCOUNTS -> accountsModal != null ? accountsModal.instance() : null;
             case ACTIONS -> actionsContext != null ? actionsContext.instanceName() : null;
             default -> null;
         };

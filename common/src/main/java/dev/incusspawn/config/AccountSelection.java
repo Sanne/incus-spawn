@@ -95,6 +95,21 @@ public final class AccountSelection {
                 AccountResolver.effectiveAccount(config, namespace, account));
     }
 
+    /**
+     * As {@link #validate(SpawnConfig, Map)}, against setups the caller already discovered, so
+     * a YAML tool's namespace is not looked up by scanning the tool definitions again.
+     */
+    public static void validate(SpawnConfig config, Map<String, String> selection,
+                                Map<String, ToolSetup> setups) {
+        if (selection == null || selection.isEmpty()) return;
+        var tree = config.tree();
+        selection.forEach((namespace, account) -> {
+            var setup = setups.get(namespace);
+            var shape = setup != null ? setup.accountShape() : AccountResolver.shapeOf(config, namespace);
+            AccountResolver.effectiveAccount(tree, namespace, shape, account);
+        });
+    }
+
     /** What a namespace offers: every usable account, and which one applies by default. */
     public record AccountListing(List<String> names, String defaultName) {}
 
@@ -152,7 +167,12 @@ public final class AccountSelection {
      */
     public static String incompatibilityReason(SpawnConfig config, IncusClient incus,
                                                String instance, Map<String, String> selection) {
-        var setups = namespaceSetups(config);
+        return incompatibilityReason(config, incus, instance, selection, namespaceSetups(config));
+    }
+
+    /** As {@link #incompatibilityReason(SpawnConfig, IncusClient, String, Map)}, against known setups. */
+    public static String incompatibilityReason(SpawnConfig config, IncusClient incus, String instance,
+                                               Map<String, String> selection, Map<String, ToolSetup> setups) {
         var wanted = bakedIdentities(config, selection, setups);
         if (wanted.isEmpty()) return "";
         var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
@@ -161,8 +181,12 @@ public final class AccountSelection {
             var wasBaked = baked.get(namespace);
             if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(entry.getValue())) continue;
             if (canRebake(setups.get(namespace))) continue;
+            // A null account is "follow the default" -- what 'isx account unset' asks for.
+            var chosen = selection.get(namespace);
+            var what = chosen == null || chosen.isBlank()
+                    ? "the default account" : "account '" + chosen + "'";
             return "Instance '" + instance + "' was built for " + namespace + " '"
-                    + wasBaked + "', but account '" + selection.get(namespace) + "' is '"
+                    + wasBaked + "', but " + what + " is '"
                     + entry.getValue() + "'. That is baked into the container at build time and"
                     + " cannot be changed on a built instance -- branch from a template"
                     + " configured for '" + entry.getValue() + "' instead.";
@@ -181,10 +205,19 @@ public final class AccountSelection {
      */
     public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
                                                       String instance) {
+        return staleIdentities(config, incus, instance, null);
+    }
+
+    /**
+     * As {@link #staleIdentities(SpawnConfig, IncusClient, String)}, against known setups;
+     * {@code null} discovers them, and only when something is baked at all.
+     */
+    public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
+                                                      String instance, Map<String, ToolSetup> knownSetups) {
         var stale = new LinkedHashMap<String, String>();
         var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
         if (baked.isEmpty()) return stale;
-        var setups = namespaceSetups(config);
+        var setups = knownSetups != null ? knownSetups : namespaceSetups(config);
         var selection = read(incus, instance);
         bakedIdentities(config, effectiveSelection(selection, setups), setups)
                 .forEach((namespace, identity) -> {
@@ -208,6 +241,65 @@ public final class AccountSelection {
         return effective;
     }
 
+    /**
+     * Follow an account rename onto every instance: pins to {@code from} become pins to
+     * {@code to}, and so does a baked identity that <em>is</em> the account name (GitHub's), so
+     * the rename does not read as a change of identity and trigger a needless re-derive.
+     *
+     * <p>Run after the config is saved under the new name: until then the proxy would answer
+     * the re-pointed pin with "not configured". One list request, and one write per instance
+     * that has anything to change.
+     *
+     * @param config the configuration as it reads after the rename
+     * @return the instances whose pin was re-pointed
+     */
+    public static List<String> renameInInstances(IncusClient incus, SpawnConfig config,
+                                                 String namespace, String from, String to) {
+        var setup = namespaceSetups(config).get(namespace);
+        // Only a tool that bakes the account itself: Claude bakes an auth mode, which an
+        // account's name could coincide with without being it.
+        var identityIsName = setup != null && setup.canRebakeForAccount()
+                && identityIsAccountName(setup, config, to);
+        var pinKey = Metadata.accountKey(namespace);
+        var identityKey = Metadata.accountIdentityKey(namespace);
+        var repointed = new java.util.ArrayList<String>();
+        JsonNode root;
+        try {
+            root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(incus.listJsonConfig());
+        } catch (Exception e) {
+            throw new dev.incusspawn.incus.IncusException(
+                    "Could not read instance account pinning: " + e.getMessage(), e);
+        }
+        for (var instance : root) {
+            var name = instance.path("name").asText("");
+            var instanceConfig = instance.path("config");
+            if (name.isEmpty() || !instanceConfig.isObject()) continue;
+            var updates = new LinkedHashMap<String, String>();
+            if (from.equals(instanceConfig.path(pinKey).asText(""))) updates.put(pinKey, to);
+            if (identityIsName && from.equals(instanceConfig.path(identityKey).asText(""))) {
+                updates.put(identityKey, to);
+            }
+            if (updates.isEmpty()) continue;
+            incus.configSetAll(name, updates);
+            if (updates.containsKey(pinKey)) repointed.add(name);
+        }
+        return repointed;
+    }
+
+    /**
+     * Whether the tool's baked identity for {@code account} is its name. Asking resolves the
+     * account, which refuses an incomplete one -- and a rename must still re-point the pins of an
+     * account that is incomplete, or they would name something that no longer exists. Such an
+     * identity is left alone; it is re-derived once the account is usable.
+     */
+    private static boolean identityIsAccountName(ToolSetup setup, SpawnConfig config, String account) {
+        try {
+            return account.equals(setup.bakedAccountIdentity(config, account));
+        } catch (AccountResolver.UnknownAccountException e) {
+            return false;
+        }
+    }
+
     /** Render a selection for humans: {@code claude=work, github=acme-bot}. */
     public static String describe(Map<String, String> selection) {
         if (selection == null || selection.isEmpty()) return "(defaults)";
@@ -217,33 +309,68 @@ public final class AccountSelection {
     }
 
     /**
-     * Write a selection onto an instance, unpinning namespaces it no longer names.
+     * Record an instance's pins and who chose each, replacing what it had: namespaces in
+     * {@code current} but not in {@code selection} are unpinned.
      *
      * <p>Cleared keys are sent as {@code null}, which Incus removes; an empty string would set
      * the key to an empty value and leave it visible in {@code incus config show} forever.
+     *
+     * @param origins who chose each pin in {@code selection}; a namespace missing here is
+     *                recorded as unknown rather than guessed
      */
-    public static void stamp(IncusClient incus, String instance, Map<String, String> selection) {
-        stamp(incus, instance, selection, read(incus, instance));
-    }
-
-    /** As {@link #stamp(IncusClient, String, Map)}, reusing a selection the caller just read. */
     public static void stamp(IncusClient incus, String instance, Map<String, String> selection,
-                             Map<String, String> current) {
-        var updates = new LinkedHashMap<String, Object>(stampUpdates(selection, current));
+                             Map<String, AccountOrigin> origins, Map<String, String> current) {
+        var updates = new LinkedHashMap<String, Object>(stampUpdates(selection, origins, current));
         if (!updates.isEmpty()) incus.configUpdate(instance, updates);
     }
 
     /**
      * The config changes {@link #stamp} makes, for a caller folding them into a larger write:
-     * a {@code null} value removes the key.
+     * a {@code null} value removes the key. A pin and its origin are always written together.
      */
     public static Map<String, String> stampUpdates(Map<String, String> selection,
+                                                   Map<String, AccountOrigin> origins,
                                                    Map<String, String> current) {
         var updates = new LinkedHashMap<String, String>();
-        current.keySet().forEach(ns -> updates.put(Metadata.accountKey(ns), null));
-        selection.forEach((namespace, account) ->
-                updates.put(Metadata.accountKey(namespace), account));
+        current.keySet().forEach(ns -> {
+            updates.put(Metadata.accountKey(ns), null);
+            updates.put(Metadata.accountOriginKey(ns), null);
+        });
+        selection.forEach((namespace, account) -> {
+            updates.put(Metadata.accountKey(namespace), account);
+            var origin = origins.getOrDefault(namespace, AccountOrigin.UNKNOWN).encode();
+            updates.put(Metadata.accountOriginKey(namespace), origin.isEmpty() ? null : origin);
+        });
         return updates;
+    }
+
+    /** Who chose each pin recorded in an instance's {@code config}. */
+    public static Map<String, AccountOrigin> originsFromConfig(JsonNode config) {
+        var origins = new LinkedHashMap<String, AccountOrigin>();
+        config.properties().forEach(entry -> {
+            if (!entry.getKey().startsWith(Metadata.ACCOUNT_ORIGIN_PREFIX)) return;
+            origins.put(entry.getKey().substring(Metadata.ACCOUNT_ORIGIN_PREFIX.length()),
+                    AccountOrigin.decode(entry.getValue().isNull() ? "" : entry.getValue().asText("")));
+        });
+        return origins;
+    }
+
+    /** Who chose each pin on an instance, from its keys without {@link Metadata#PREFIX}. */
+    public static Map<String, AccountOrigin> originsFromMetadata(Map<String, String> metadata) {
+        var prefix = Metadata.ACCOUNT_ORIGIN_PREFIX.substring(Metadata.PREFIX.length());
+        var origins = new LinkedHashMap<String, AccountOrigin>();
+        metadata.forEach((key, value) -> {
+            if (key.startsWith(prefix)) origins.put(key.substring(prefix.length()), AccountOrigin.decode(value));
+        });
+        return origins;
+    }
+
+    /** Who chose each pin on an instance. */
+    public static Map<String, AccountOrigin> readOrigins(IncusClient incus, String instance) {
+        var origins = new LinkedHashMap<String, AccountOrigin>();
+        incus.configByPrefix(instance, Metadata.ACCOUNT_ORIGIN_PREFIX)
+                .forEach((ns, value) -> origins.put(ns, AccountOrigin.decode(value)));
+        return origins;
     }
 
     /** The selection recorded in an instance's {@code config}, as {@link #read} returns it. */
@@ -288,8 +415,17 @@ public final class AccountSelection {
      * {@link #bakedIdentities} should pass the map rather than asking twice.
      */
     public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config) {
+        return namespaceSetups(config, new dev.incusspawn.tool.ToolDefLoader());
+    }
+
+    /**
+     * As {@link #namespaceSetups(SpawnConfig)}, from a loader the caller already holds -- the
+     * TUI's, which has read the tool YAMLs once already and would otherwise re-read them, and
+     * re-print their warnings over its screen, every time a dialog opens.
+     */
+    public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config, dev.incusspawn.tool.ToolDefLoader loader) {
         var byNamespace = new LinkedHashMap<String, ToolSetup>();
-        dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config)
+        dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config, loader)
                 .forEach((toolName, setup) -> {
                     var proxyDef = setup.proxy();
                     if (proxyDef == null) return;

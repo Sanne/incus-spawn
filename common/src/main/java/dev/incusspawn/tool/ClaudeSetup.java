@@ -65,6 +65,12 @@ public class ClaudeSetup implements ToolSetup {
         return SpawnConfig.ClaudeConfig.ACCOUNT_SHAPE;
     }
 
+    @Override
+    public String describeAccount(SpawnConfig config, String accountName) {
+        var account = config.getClaude().allAccounts().get(accountName);
+        return account == null ? "" : account.describe();
+    }
+
     /**
      * The auth mode, not the account name: {@code envEntries} writes a different set of
      * variables for each mode, so vertex/oauth/api-key accounts are not interchangeable on a

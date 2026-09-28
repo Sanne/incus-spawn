@@ -122,6 +122,23 @@ public final class NamespaceAccounts {
     }
 
     /**
+     * Rename an account, keeping its place in file order and moving the default with it.
+     * Instances pinned to the old name are not this method's business -- they live in Incus,
+     * not in the file -- so the caller re-points them.
+     *
+     * @throws IllegalArgumentException when {@code to} is already an account
+     */
+    public static void rename(SpawnConfig config, String namespace, String from, String to) {
+        if (names(config, namespace).contains(to)) {
+            throw new IllegalArgumentException("There is already an account named '" + to + "'.");
+        }
+        materialize(config, namespace);
+        var wasDefault = from.equals(AccountResolver.defaultName(config.tree(), namespace));
+        config.renameConfigKey(namespace + "." + AccountResolver.ACCOUNTS_KEY, from, to);
+        if (wasDefault) setDefault(config, namespace, to);
+    }
+
+    /**
      * Remove every account under a namespace, and the flat credential of a pre-accounts file.
      * Values shared by every account stay: they describe the namespace, not a credential.
      */

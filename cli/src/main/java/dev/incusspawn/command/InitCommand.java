@@ -1,7 +1,10 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.config.AccountSelection;
+import dev.incusspawn.config.AccountUsage;
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NamespaceAccounts;
 import dev.incusspawn.tool.GhSetup;
 import dev.incusspawn.config.SpawnConfig;
@@ -14,6 +17,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.InstanceRegistry;
 import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1669,8 +1673,9 @@ public class InitCommand extends BaseCommand {
      * @return the account to configure next, or empty when there is nothing left to do.
      */
     private Optional<AccountTarget> manageClaudeAccounts(SpawnConfig config, Prompts prompts) {
-        var claude = config.getClaude();
         while (true) {
+            // Re-read every pass: a rename replaces the whole Claude section of the config.
+            var claude = config.getClaude();
             var accounts = claude.allAccounts();
             var defaultName = claude.accountName();
             System.out.println("  Claude accounts:");
@@ -1689,6 +1694,7 @@ public class InitCommand extends BaseCommand {
                 System.out.println("    d. Change which account is the default");
                 System.out.println("    x. Remove an account");
             }
+            System.out.println("    n. Rename an account");
             System.out.print("  Choice (Enter to keep as-is): ");
             var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
 
@@ -1702,7 +1708,14 @@ public class InitCommand extends BaseCommand {
                     return Optional.of(new AccountTarget(name, false));
                 }
                 case "r" -> {
+                    var going = new java.util.ArrayList<>(accounts.keySet());
+                    going.remove(AccountTarget.FRESH.name());
+                    if (!confirmLosingAccounts(SpawnConfig.ClaudeConfig.NAMESPACE, going, prompts)) continue;
                     return Optional.of(AccountTarget.FRESH);
+                }
+                case "n" -> {
+                    renameAccount(config, SpawnConfig.ClaudeConfig.NAMESPACE, accounts.keySet(), prompts);
+                    continue;
                 }
                 // 'd' and 'x' save immediately rather than on the way out of the menu: each
                 // prints a confirmation naming what changed, and the loop then returns to the
@@ -1734,7 +1747,8 @@ public class InitCommand extends BaseCommand {
                             var account = accounts.get(name);
                             if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
                                 System.out.println("  Cannot remove '" + name + "' — it is the only working account.");
-                            } else {
+                            } else if (confirmLosingAccounts(SpawnConfig.ClaudeConfig.NAMESPACE,
+                                    List.of(name), prompts)) {
                                 claude.getAccounts().remove(name);
                                 if (name.equals(claude.getDefaultAccount())) {
                                     claude.setDefaultAccount(claude.accountName());
@@ -1756,8 +1770,12 @@ public class InitCommand extends BaseCommand {
 
     /** Prompts for a new account name, rejecting duplicates and anything YAML-hostile. */
     private static String askAccountName(Prompts prompts, java.util.Set<String> taken) {
+        return askAccountName(prompts, taken, "  Name for this account (e.g. personal, work — Enter to cancel): ");
+    }
+
+    private static String askAccountName(Prompts prompts, java.util.Set<String> taken, String prompt) {
         while (true) {
-            System.out.print("  Name for this account (e.g. personal, work — Enter to cancel): ");
+            System.out.print(prompt);
             var name = readInput(prompts.readLine());
             if (name.isEmpty()) return "";
             if (taken.contains(name)) {
@@ -2366,6 +2384,7 @@ public class InitCommand extends BaseCommand {
             System.out.println("    r. Replace all with a single account");
             System.out.println("    d. Change which account is the default");
             System.out.println("    x. Remove an account");
+            System.out.println("    n. Rename an account");
             System.out.print("  Choice (Enter to keep as-is): ");
             var choice = readInput(prompts.readLine()).toLowerCase(java.util.Locale.ROOT);
 
@@ -2381,7 +2400,12 @@ public class InitCommand extends BaseCommand {
                     if (accounts.contains(name)) return Optional.of(new AccountTarget(name, false));
                     if (!name.isEmpty()) System.out.println("  No account named '" + name + "'.");
                 }
-                case "r" -> { return Optional.of(AccountTarget.FRESH); }
+                case "r" -> {
+                    var going = new java.util.ArrayList<>(accounts);
+                    going.remove(AccountTarget.FRESH.name());
+                    if (confirmLosingAccounts(namespace, going, prompts)) return Optional.of(AccountTarget.FRESH);
+                }
+                case "n" -> renameAccount(config, namespace, new java.util.LinkedHashSet<>(accounts), prompts);
                 // 'd' and 'x' save immediately and loop back to the listing, so an abort after
                 // this point cannot leave the confirmation they printed a lie.
                 case "d" -> {
@@ -2398,16 +2422,117 @@ public class InitCommand extends BaseCommand {
                 case "x" -> {
                     System.out.print("  Name of the account to remove: ");
                     var name = readInput(prompts.readLine());
-                    if (accounts.contains(name)) {
+                    if (accounts.contains(name) && confirmLosingAccounts(namespace, List.of(name), prompts)) {
                         NamespaceAccounts.remove(config, namespace, name);
                         config.save();
                         System.out.println("  Removed account '" + name + "'.");
-                    } else if (!name.isEmpty()) {
+                    } else if (!name.isEmpty() && !accounts.contains(name)) {
                         System.out.println("  No account named '" + name + "'.");
                     }
                 }
                 default -> { }
             }
+        }
+    }
+
+    /**
+     * Before accounts go away, name what still points at them -- instances pinned to them, whose
+     * requests fail once they are gone, and templates whose {@code accounts:} name them, which
+     * then refuse to branch -- and let the user back out. Removal never falls back to the
+     * default on their behalf: for the client work this exists for, the default belongs to
+     * someone else.
+     *
+     * @return true to go ahead
+     */
+    boolean confirmLosingAccounts(String namespace, java.util.Collection<String> going, Prompts prompts) {
+        if (going.isEmpty()) return true;
+        var pins = instanceAccountPins();
+        var instances = new java.util.ArrayList<String>();
+        var templates = new java.util.ArrayList<String>();
+        for (var account : going) {
+            AccountUsage.pinnedTo(pins, namespace, account)
+                    .forEach(i -> instances.add(i + " (" + namespace + "=" + account + ")"));
+            templatesNaming(namespace, account)
+                    .forEach(t -> templates.add(t + " (" + namespace + ": " + account + ")"));
+        }
+        if (instances.isEmpty() && templates.isEmpty()) return true;
+        if (!instances.isEmpty()) {
+            System.out.println("  These instances are pinned to " + (going.size() == 1 ? "it" : "those accounts")
+                    + " and would fail their requests:");
+            instances.forEach(i -> System.out.println("    - " + i));
+            System.out.println("  Re-point them first with 'isx account set', or 'isx account unset'"
+                    + " to have them follow the default.");
+        }
+        if (!templates.isEmpty()) {
+            System.out.println("  These templates name " + (going.size() == 1 ? "it" : "them")
+                    + " under accounts: and could no longer be branched:");
+            templates.forEach(t -> System.out.println("    - " + t));
+        }
+        return askConfirmation(prompts, "  Remove anyway?", false);
+    }
+
+    /**
+     * Rename an account and follow it everywhere isx can: the default, and every instance
+     * pinned to it. Template YAML is the user's file and is only reported, never rewritten.
+     */
+    void renameAccount(SpawnConfig config, String namespace, java.util.Set<String> accounts, Prompts prompts) {
+        System.out.print("  Name of the account to rename: ");
+        var from = readInput(prompts.readLine());
+        if (from.isEmpty()) return;
+        if (!accounts.contains(from)) {
+            System.out.println("  No account named '" + from + "'.");
+            return;
+        }
+        var to = askAccountName(prompts, accounts, "  New name for '" + from + "' (Enter to cancel): ");
+        if (to.isEmpty()) return;
+        NamespaceAccounts.rename(config, namespace, from, to);
+        config.save();
+        System.out.println("  Renamed '" + from + "' to '" + to + "'.");
+        try {
+            var repointed = renameInInstances(config, namespace, from, to);
+            if (!repointed.isEmpty()) {
+                System.out.println("  Re-pointed " + String.join(", ", repointed) + " to '" + to + "'.");
+            }
+        } catch (Exception e) {
+            System.out.println("  Could not update the instances pinned to '" + from + "' ("
+                    + e.getMessage() + "). Re-point them with 'isx account set <instance> "
+                    + namespace + "=" + to + "'.");
+        }
+        var templates = templatesNaming(namespace, from);
+        if (!templates.isEmpty()) {
+            System.out.println("  " + (templates.size() == 1 ? "Template " : "Templates ")
+                    + String.join(", ", templates) + (templates.size() == 1 ? " still names '" : " still name '")
+                    + from + "' under accounts: -- change it to '" + to + "' in the YAML, or"
+                    + " branching from " + (templates.size() == 1 ? "it" : "them") + " fails.");
+        }
+    }
+
+    /** Every instance's account pins, or none when Incus cannot be asked. Overridden in tests. */
+    Map<String, Map<String, String>> instanceAccountPins() {
+        try {
+            return InstanceRegistry.accountsByInstance(RuntimeServices.incus());
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /** Re-point instances after a rename, and tell the proxy. Overridden in tests. */
+    List<String> renameInInstances(SpawnConfig config, String namespace, String from, String to) {
+        var repointed = AccountSelection.renameInInstances(RuntimeServices.incus(), config, namespace, from, to);
+        if (!repointed.isEmpty()) ProxyService.signalAccountRefresh();
+        return repointed;
+    }
+
+    /** Templates whose own {@code accounts:} name this account. Overridden in tests. */
+    List<String> templatesNaming(String namespace, String account) {
+        try {
+            return ImageDef.loadAll(msg -> { }).values().stream()
+                    .filter(def -> account.equals(def.getAccounts().get(namespace)))
+                    .map(ImageDef::getName)
+                    .sorted()
+                    .toList();
+        } catch (Exception e) {
+            return List.of();
         }
     }
 

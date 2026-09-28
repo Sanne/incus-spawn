@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.HostResourceSetup;
@@ -71,7 +72,10 @@ public final class BranchFlow {
 
     /** A request that passed {@link #preflight}: nothing has been created yet. */
     public record Preflight(Request request, Map<String, ImageDef> defs,
-                            Map<String, String> accounts) {}
+                            Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins) {}
+
+    /** An account selection and who chose each pin in it. */
+    private record ResolvedAccounts(Map<String, String> accounts, Map<String, AccountOrigin> origins) {}
 
     /**
      * A refusal. {@code reported} is true when the reason was already printed (a banner, the
@@ -115,7 +119,7 @@ public final class BranchFlow {
 
         // Resolve and validate the account selection before anything is created: a typo
         // should be reported now, not as a failed API call inside the container later.
-        Map<String, String> accounts;
+        ResolvedAccounts accounts;
         try {
             accounts = resolveAccountSelection(incus, req, defs);
         } catch (AccountSelection.InvalidSelectionException
@@ -143,7 +147,7 @@ public final class BranchFlow {
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
         }
-        return new Preflight(req, defs, accounts);
+        return new Preflight(req, defs, accounts.accounts(), accounts.origins());
     }
 
     /**
@@ -201,8 +205,8 @@ public final class BranchFlow {
         var enableKvm = req.kvm() != null ? req.kvm()
                 : "kvm".equals(incus.configGet(source, Metadata.INSTANCE_MODE));
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
-                cpu, memory, disk, networkMode, source, preflight.accounts(), enableKvm,
-                req.extraConfig()));
+                cpu, memory, disk, networkMode, source, preflight.accounts(),
+                preflight.accountOrigins(), enableKvm, req.extraConfig()));
         announceAccountSelection(preflight.accounts());
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
 
@@ -251,8 +255,8 @@ public final class BranchFlow {
      * branch is the leaf template recorded in {@link Metadata#PROFILE} -- the same rule
      * {@code InstancePrep} uses to find the chain.
      */
-    private static Map<String, String> resolveAccountSelection(IncusClient incus, Request req,
-                                                               Map<String, ImageDef> defs) {
+    private static ResolvedAccounts resolveAccountSelection(IncusClient incus, Request req,
+                                                            Map<String, ImageDef> defs) {
         var source = req.source();
         var profile = incus.configGet(source, Metadata.PROFILE);
         var templateName = (profile != null && !profile.isEmpty()) ? profile : source;
@@ -263,8 +267,25 @@ public final class BranchFlow {
         // 'isx account set' shows that choice to the user, and the CoW copy carries it across
         // regardless -- resolving the template here would silently stamp over it.
         var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
-        selection.putAll(AccountSelection.read(incus, source));
-        selection.putAll(AccountSelection.parse(req.accountOverrides()));
+        var origins = new java.util.LinkedHashMap<String, AccountOrigin>();
+        selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(templateName)));
+
+        var sourcePins = AccountSelection.read(incus, source);
+        var sourceOrigins = AccountSelection.readOrigins(incus, source);
+        sourcePins.forEach((ns, account) -> {
+            // A pin the source recorded no origin for, but which is what the template chooses,
+            // is the template's: that is how every pre-origin template build stamped it.
+            var origin = sourceOrigins.getOrDefault(ns, AccountOrigin.UNKNOWN);
+            if (origin.kind() == AccountOrigin.Kind.UNKNOWN && account.equals(selection.get(ns))) {
+                origin = AccountOrigin.template(templateName);
+            }
+            selection.put(ns, account);
+            origins.put(ns, origin.copiedOnto(source));
+        });
+
+        var overrides = AccountSelection.parse(req.accountOverrides());
+        selection.putAll(overrides);
+        overrides.keySet().forEach(ns -> origins.put(ns, AccountOrigin.EXPLICIT));
 
         var config = SpawnConfig.load();
         AccountSelection.validate(config, selection);
@@ -276,7 +297,7 @@ public final class BranchFlow {
         var reason = AccountSelection.incompatibilityReason(config, incus, source, selection);
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
-        return selection;
+        return new ResolvedAccounts(selection, origins);
     }
 
     /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */

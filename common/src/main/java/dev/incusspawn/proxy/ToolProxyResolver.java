@@ -51,7 +51,11 @@ public final class ToolProxyResolver {
      * {@link #resolve(SpawnConfig, Map, Map)} per request.
      */
     public static Map<String, ToolSetup> proxyToolSetups(SpawnConfig config) {
-        var loader = new ToolDefLoader();
+        return proxyToolSetups(config, new ToolDefLoader());
+    }
+
+    /** As {@link #proxyToolSetups(SpawnConfig)}, from a loader the caller already holds. */
+    public static Map<String, ToolSetup> proxyToolSetups(SpawnConfig config, ToolDefLoader loader) {
         var filtered = filterByFeatureGate(config, loader.allToolSetups());
         rejectProjectLocalProxy(loader.projectLocalToolNames(), filtered);
         return filtered;

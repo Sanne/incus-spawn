@@ -2359,7 +2359,11 @@ public class BuildCommand extends BaseCommand {
                                        Map<String, ImageDef> defs) {
         var selection = ImageDef.resolveAccounts(imageDef, defs);
         if (!selection.isEmpty()) {
-            AccountSelection.stamp(incus, container, selection);
+            // Named after the definition, not the container: a rebuild stamps a temporary one.
+            var origins = new java.util.LinkedHashMap<String, dev.incusspawn.config.AccountOrigin>();
+            selection.keySet().forEach(ns ->
+                    origins.put(ns, dev.incusspawn.config.AccountOrigin.template(imageDef.getName())));
+            AccountSelection.stamp(incus, container, selection, origins, AccountSelection.read(incus, container));
         }
         // Every namespace gets an env class, not just the ones this template selected: the
         // build baked *some* auth mode either way, and a later swap has to be checked against

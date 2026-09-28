@@ -1,0 +1,24 @@
+
+
+
+
+
+
+  ╔ Credential accounts: review-1 ═══════════════════════════════════════════╗
+  ║ Takes effect on the next request; nothing inside restarts.               ║
+  ║                                                                          ║
+  ║  ▸ claude < global default (personal) >                                  ║
+  ║           Claude Pro/Max OAuth token                                     ║
+  ║           not pinned: changes if the global default is changed           ║
+  ║    github < bot >                                                        ║
+  ║           commits as bot@acme.example                                    ║
+  ║           pinned to this instance                                        ║
+  ║                                                                          ║
+  ║  Enter Apply   Esc Cancel   ↑↓ Credential   ←→/Space Account             ║
+  ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+
+
+
+

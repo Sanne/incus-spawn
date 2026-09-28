@@ -55,6 +55,15 @@ public interface ToolSetup {
     }
 
     /**
+     * A short, secret-free description of one of this tool's accounts -- what kind of
+     * credential it is, or whose -- for listings such as {@code isx account list}; {@code ""}
+     * when there is nothing to say beyond its name. Never include the credential itself.
+     */
+    default String describeAccount(dev.incusspawn.config.SpawnConfig config, String accountName) {
+        return "";
+    }
+
+    /**
      * What the build <em>derived</em> from this account and wrote into the image, or {@code ""}
      * when the account makes no difference to what gets baked.
      *

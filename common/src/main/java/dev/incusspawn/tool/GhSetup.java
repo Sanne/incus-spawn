@@ -70,6 +70,13 @@ public class GhSetup implements ToolSetup {
         return dev.incusspawn.config.AccountShape.declared(List.of("token"), List.of("token", "email"));
     }
 
+    /** The commit email, when the account names one: which identity it is, without the token. */
+    @Override
+    public String describeAccount(SpawnConfig config, String accountName) {
+        var email = AccountResolver.value(config, NAMESPACE, accountName, "email");
+        return email == null || email.isBlank() ? "" : "commits as " + email;
+    }
+
     /**
      * The account name itself: {@code user.name} and {@code user.email} are derived from
      * whoever the token belongs to, so any change of account is a change of identity -- unlike

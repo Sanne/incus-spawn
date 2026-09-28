@@ -11,6 +11,7 @@
 #   - an instance pinned to an account that no longer exists is refused, rather
 #     than quietly served the default, which would spend the wrong subscription
 #   - the refusal is scoped to that instance; its neighbours keep working
+#   - 'isx account unset' returns an instance to the configured default, live
 #
 # Requires:
 #   - instances acct-alpha and acct-beta branched and running
@@ -100,6 +101,26 @@ assert_eq "a neighbouring instance keeps working throughout" \
 # Leave the instance usable for anything that runs after this.
 isx account set acct-alpha testAccountTool=alpha >/dev/null 2>&1 \
     || incus config set acct-alpha user.incus-spawn.account.testAccountTool alpha
+echo ""
+
+echo "[4] Unpinning follows the default again"
+# acct-beta was branched with --account testAccountTool=beta; the default is alpha.
+isx account unset acct-beta testAccountTool >/dev/null
+assert_eq "acct-beta is served the default account's credential on its next request" \
+    "acct-token-alpha" "$(injected_in acct-beta)"
+assert_eq "the pin is removed from the instance, not blanked" \
+    "" "$(incus config get acct-beta user.incus-spawn.account.testAccountTool)"
+# The account line, then the sentence saying where it comes from.
+SHOW=$(isx account show acct-beta 2>/dev/null | grep -A1 '^  testAccountTool ' | tr '\n' ' ')
+case "$SHOW" in
+    *alpha*"Not pinned: follows the global default"*) pass "'isx account show' reports it as following the default" ;;
+    *) fail "'isx account show' reports it as following the default" "got: $SHOW" ;;
+esac
+assert_eq "acct-alpha, still pinned, is unaffected" \
+    "acct-token-alpha" "$(injected_in acct-alpha)"
+
+isx account set acct-beta testAccountTool=beta >/dev/null 2>&1 \
+    || incus config set acct-beta user.incus-spawn.account.testAccountTool beta
 echo ""
 
 echo "========================================"

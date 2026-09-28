@@ -41,6 +41,8 @@ public final class Metadata {
     public static final String AGENT_RESTART_BOOT = PREFIX + "agent-restart-boot";
     /** Prefix of the per-namespace credential account selection; see {@link #accountKey}. */
     public static final String ACCOUNT_PREFIX = PREFIX + "account.";
+    /** Prefix of who chose each namespace's pinned account; see {@link #accountOriginKey}. */
+    public static final String ACCOUNT_ORIGIN_PREFIX = PREFIX + "account-origin.";
     /** Prefix of what the build derived from each namespace's account; see {@link #accountIdentityKey}. */
     public static final String ACCOUNT_IDENTITY_PREFIX = PREFIX + "account-identity.";
     // Referenced (rfer) bytes of a built template's btrfs subvolume, stamped once at build time.
@@ -82,6 +84,17 @@ public final class Metadata {
      */
     public static String accountIdentityKey(String namespace) {
         return ACCOUNT_IDENTITY_PREFIX + namespace;
+    }
+
+    /**
+     * Key recording who chose the account pinned under {@link #accountKey} -- a template's
+     * {@code accounts:}, or an explicit choice for an instance -- so it can be reported as a
+     * fact rather than guessed from whether the pin happens to match the template.
+     *
+     * @see dev.incusspawn.config.AccountOrigin
+     */
+    public static String accountOriginKey(String namespace) {
+        return ACCOUNT_ORIGIN_PREFIX + namespace;
     }
 
     public static String getType(IncusClient incus, String name) {

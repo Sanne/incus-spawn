@@ -656,6 +656,37 @@ public class SpawnConfig {
         }
     }
 
+    /**
+     * Rename one key of the object at {@code parentPath}, keeping its value -- types and nesting
+     * intact -- and its position among its siblings. File order is meaningful for accounts: with
+     * no usable default, the first usable one in file order is served. No-op when the key is
+     * absent; refuses to overwrite an existing {@code to}.
+     */
+    public void renameConfigKey(String parentPath, String from, String to) {
+        var tree = (com.fasterxml.jackson.databind.node.ObjectNode) YAML.valueToTree(this);
+        com.fasterxml.jackson.databind.JsonNode node = tree;
+        for (var segment : parentPath.split("\\.")) {
+            node = node.get(segment);
+            if (node == null) return;
+        }
+        if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode parent)
+                || !parent.has(from) || from.equals(to)) return;
+        if (parent.has(to)) {
+            throw new IllegalArgumentException("'" + to + "' already exists under " + parentPath);
+        }
+        var entries = new java.util.ArrayList<java.util.Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>>();
+        parent.fields().forEachRemaining(entries::add);
+        parent.removeAll();
+        for (var entry : entries) {
+            parent.set(entry.getKey().equals(from) ? to : entry.getKey(), entry.getValue());
+        }
+        try {
+            copyFrom(YAML.treeToValue(tree, SpawnConfig.class));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to rename " + parentPath + "." + from, e);
+        }
+    }
+
     /** Overwrite every field from another instance, for a whole-tree replacement. */
     private void copyFrom(SpawnConfig other) {
         this.claude = other.claude;

@@ -50,21 +50,24 @@ public final class InstanceLifecycle {
      * @param parent   the instance or template the branch was copied from
      * @param accounts credential account pins to stamp, which clear any the copy carried that
      *                 they do not name; empty leaves the copied pins as they are
+     * @param accountOrigins who chose each of {@code accounts}, recorded beside the pin
      * @param kvm      whether KVM passthrough is configured next; if not, KVM devices and
      *                 metadata inherited from the source are dropped
      * @param extraConfig further {@code config} keys the caller stamps on its branch, in the
      *                 same write; applied last
      */
     public record BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
-                                 String parent, Map<String, String> accounts, boolean kvm,
-                                 Map<String, String> extraConfig) {
+                                 String parent, Map<String, String> accounts,
+                                 Map<String, dev.incusspawn.config.AccountOrigin> accountOrigins,
+                                 boolean kvm, Map<String, String> extraConfig) {
         public BranchSettings {
+            accountOrigins = accountOrigins == null ? Map.of() : Map.copyOf(accountOrigins);
             extraConfig = extraConfig == null ? Map.of() : Map.copyOf(extraConfig);
         }
 
         public BranchSettings(String cpu, String memory, String disk, NetworkMode networkMode,
                               String parent, Map<String, String> accounts, boolean kvm) {
-            this(cpu, memory, disk, networkMode, parent, accounts, kvm, Map.of());
+            this(cpu, memory, disk, networkMode, parent, accounts, Map.of(), kvm, Map.of());
         }
     }
 
@@ -126,7 +129,7 @@ public final class InstanceLifecycle {
         update.config(Metadata.PARENT, settings.parent());
         update.config(Metadata.CREATED, Metadata.today());
         if (!settings.accounts().isEmpty()) {
-            update.config(AccountSelection.stampUpdates(settings.accounts(),
+            update.config(AccountSelection.stampUpdates(settings.accounts(), settings.accountOrigins(),
                     AccountSelection.fromConfig(instance.path("config"))));
         }
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
@@ -266,9 +269,30 @@ public final class InstanceLifecycle {
      * refused at selection time, so there is nothing to reconcile.
      */
     public static void reconcileAccountIdentities(IncusClient incus, String name) {
+        reconcileAccountIdentities(incus, name, BuildOutput::step,
+                msg -> System.err.println("Warning: " + msg));
+    }
+
+    /**
+     * As {@link #reconcileAccountIdentities(IncusClient, String)}, reporting through sinks rather
+     * than the terminal -- the TUI's, where a line printed from a background thread would be
+     * drawn over and lost.
+     */
+    public static void reconcileAccountIdentities(IncusClient incus, String name,
+                                                  Consumer<String> progress, Consumer<String> warnings) {
+        reconcileAccountIdentities(incus, name, SpawnConfig.load(), null, progress, warnings);
+    }
+
+    /**
+     * @param knownSetups the credential namespaces' tools, when the caller has them -- the TUI
+     *                    passes its own so the tool definitions are not re-read, and their
+     *                    warnings re-printed over its screen; {@code null} discovers them
+     */
+    private static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
+                                                   Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
+                                                   Consumer<String> progress, Consumer<String> warnings) {
         try {
-            var config = SpawnConfig.load();
-            var stale = AccountSelection.staleIdentities(config, incus, name);
+            var stale = AccountSelection.staleIdentities(config, incus, name, knownSetups);
             if (stale.isEmpty()) return;
 
             // Re-deriving goes out through the proxy, and a just-started instance may not have
@@ -281,12 +305,12 @@ public final class InstanceLifecycle {
             }
 
             var container = new Container(incus, name);
-            var setups = AccountSelection.namespaceSetups(config);
+            var setups = knownSetups != null ? knownSetups : AccountSelection.namespaceSetups(config);
             var updates = new LinkedHashMap<String, String>();
             stale.forEach((namespace, identity) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
-                BuildOutput.step("Updating " + namespace + " identity for account '"
+                progress.accept("Updating " + namespace + " identity for account '"
                         + identity + "'...");
                 setup.rebakeForAccount(container, identity);
                 updates.put(Metadata.accountIdentityKey(namespace), identity);
@@ -295,9 +319,102 @@ public final class InstanceLifecycle {
         } catch (Exception e) {
             // Best effort: a stale identity is a wrong commit author, not a broken instance,
             // and the next use tries again because the stamp is only updated on success.
-            System.err.println("Warning: could not update credential identity for " + name
+            warnings.accept("could not update credential identity for " + name
                     + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * Refuse an account change {@link #changeAccounts} would refuse, without making it -- for a
+     * front end that wants to say no while the user is still choosing and make the change
+     * elsewhere (the TUI, off its event thread).
+     *
+     * @param setups the credential namespaces' tools ({@link AccountSelection#namespaceSetups})
+     * @throws AccountSelection.InvalidSelectionException  when the built instance cannot honour it
+     * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException  for an unknown or
+     *         incomplete account
+     */
+    public static void checkAccountChange(IncusClient incus, String instance, SpawnConfig config,
+                                          Map<String, dev.incusspawn.tool.ToolSetup> setups,
+                                          Map<String, String> changes) {
+        checkAccountChange(incus, instance, config, setups, changes, AccountSelection.read(incus, instance));
+    }
+
+    /**
+     * Only the namespaces being changed are checked. A pin the change does not touch is not the
+     * user's question right now -- and one naming an account since removed would otherwise
+     * refuse every change to anything else on the instance, including the one that repairs it.
+     *
+     * @return the pins the change would leave
+     */
+    private static Map<String, String> checkAccountChange(IncusClient incus, String instance, SpawnConfig config,
+                                                          Map<String, dev.incusspawn.tool.ToolSetup> setups,
+                                                          Map<String, String> changes,
+                                                          Map<String, String> current) {
+        var pins = new LinkedHashMap<String, String>();
+        changes.forEach((ns, account) -> { if (account != null) pins.put(ns, account); });
+        AccountSelection.validate(config, pins, setups);
+
+        // The check reads a null account as "the default": the default may be a Claude auth
+        // mode the build did not bake, so unpinning is refused on the same grounds as pinning.
+        var reason = AccountSelection.incompatibilityReason(config, incus, instance,
+                new LinkedHashMap<>(changes), setups);
+        if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
+
+        var merged = new LinkedHashMap<>(current);
+        changes.forEach((ns, account) -> {
+            if (account == null) merged.remove(ns); else merged.put(ns, account);
+        });
+        return merged;
+    }
+
+    /**
+     * Change which credential accounts an instance uses. {@code changes} maps a namespace to the
+     * account to pin, or to {@code null} to remove the pin so the instance follows the default;
+     * namespaces it does not name keep what they had -- naming one must never silently unpin
+     * another.
+     *
+     * <p>The one path for every front end ({@code isx account set/unset}, the TUI), so none can
+     * skip a step: validate, refuse what the built instance could not honour, stamp, tell the
+     * proxy, and re-derive what the build baked while the instance is running (a stopped one
+     * is reconciled by its next use). Refusing happens while the user is still choosing, rather
+     * than surfacing later as a failing request inside.
+     *
+     * @param setups the credential namespaces' tools ({@link AccountSelection#namespaceSetups});
+     *               the TUI passes those it already loaded, so nothing here re-reads the tool
+     *               definitions and prints their warnings over its screen
+     * @return the instance's pins afterwards
+     * @throws AccountSelection.InvalidSelectionException  when the built instance cannot honour it
+     * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException  for an unknown or
+     *         incomplete account
+     */
+    public static Map<String, String> changeAccounts(IncusClient incus, String instance, SpawnConfig config,
+                                                     Map<String, dev.incusspawn.tool.ToolSetup> setups,
+                                                     Map<String, String> changes,
+                                                     Consumer<String> progress, Consumer<String> warnings) {
+        var current = AccountSelection.read(incus, instance);
+        var merged = checkAccountChange(incus, instance, config, setups, changes, current);
+
+        // Untouched pins keep who chose them; every pin made here is an explicit choice --
+        // including re-choosing the account a template pinned, which from now on is the user's
+        // and no longer the template's.
+        var currentOrigins = AccountSelection.readOrigins(incus, instance);
+        var origins = new LinkedHashMap<>(currentOrigins);
+        changes.forEach((ns, account) -> {
+            if (account == null) origins.remove(ns); else origins.put(ns, dev.incusspawn.config.AccountOrigin.EXPLICIT);
+        });
+        if (merged.equals(current) && origins.equals(currentOrigins)) return merged;
+        AccountSelection.stamp(incus, instance, merged, origins, current);
+        if (merged.equals(current)) return merged; // only who chose it changed: nothing to re-derive
+        dev.incusspawn.proxy.ProxyService.signalAccountRefresh();
+
+        // The token swaps live, but anything the build *baked* from the old account -- the
+        // git identity -- would still be the old one, so the instance would push with one
+        // account and commit as another.
+        if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(instance))) {
+            reconcileAccountIdentities(incus, instance, config, setups, progress, warnings);
+        }
+        return merged;
     }
 
     /**

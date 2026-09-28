@@ -132,7 +132,9 @@ for ns in claude github bob openai testProxyTool; do
 import sys
 ns, lines = sys.argv[1], sys.stdin.read().splitlines()
 i = lines.index(ns + ':')
-sys.exit(0 if lines[i + 1].strip() == 'default  (default)' else 1)" "$ns" 2>/dev/null; then
+# The account's name, then what it is (when the tool can say), then its [default] tag.
+line = lines[i + 1].strip()
+sys.exit(0 if line.split()[0] == 'default' and line.endswith('[default]') else 1)" "$ns" 2>/dev/null; then
         pass "$ns lists its flat credential as 'default'"
     else
         fail "$ns lists its flat credential as 'default'"

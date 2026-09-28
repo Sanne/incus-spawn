@@ -47,9 +47,42 @@ class AccountMenuTest {
               default: personal
             """;
 
+    /**
+     * InitCommand with its Incus and template lookups replaced: what is pinned where, which
+     * templates name which account, and a record of the renames it would push to instances.
+     */
+    static final class StubbedInit extends InitCommand {
+        final java.util.Map<String, java.util.Map<String, String>> pins = new java.util.LinkedHashMap<>();
+        final java.util.Map<String, List<String>> templates = new java.util.LinkedHashMap<>();
+        final List<String> renames = new java.util.ArrayList<>();
+
+        StubbedInit pin(String instance, String namespace, String account) {
+            pins.computeIfAbsent(instance, k -> new java.util.LinkedHashMap<>()).put(namespace, account);
+            return this;
+        }
+
+        @Override
+        java.util.Map<String, java.util.Map<String, String>> instanceAccountPins() { return pins; }
+
+        @Override
+        List<String> renameInInstances(SpawnConfig config, String namespace, String from, String to) {
+            renames.add(namespace + ":" + from + "->" + to);
+            return dev.incusspawn.config.AccountUsage.pinnedTo(pins, namespace, from);
+        }
+
+        @Override
+        List<String> templatesNaming(String namespace, String account) {
+            return templates.getOrDefault(namespace + "=" + account, List.of());
+        }
+    }
+
     /** Drives the menu with canned keystrokes; account names come from the same queue. */
     private static InitCommand.AccountTarget choose(SpawnConfig config, String... input) {
-        return new InitCommand().chooseAccountTarget(config, "github", "GitHub",
+        return choose(new StubbedInit(), config, input);
+    }
+
+    private static InitCommand.AccountTarget choose(InitCommand init, SpawnConfig config, String... input) {
+        return init.chooseAccountTarget(config, "github", "GitHub",
                 ScriptedPrompts.lines(input)).orElse(null);
     }
 
@@ -229,5 +262,111 @@ class AccountMenuTest {
         assertFalse(InitCommand.hasAccountsToPreserve(
                 YAML.readValue("github:\n  email: \"x@example.com\"\n", SpawnConfig.class), "github"),
                 "a leftover email is not an account, so a first credential needs no menu");
+    }
+
+    // ── accounts that instances or templates still use ───────────────────────────
+
+    /** Removing an account an instance is pinned to asks first; declining keeps it. */
+    @Test
+    void removingAPinnedAccountAsksAndCanBeDeclined() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "acme");
+        assertNull(choose(init, config, "x", "acme", "n", ""));
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+    }
+
+    @Test
+    void removingAPinnedAccountProceedsWhenConfirmed() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "acme");
+        assertNull(choose(init, config, "x", "acme", "y", ""));
+        assertEquals(List.of("personal"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** A template naming the account counts too: it could no longer be branched. */
+    @Test
+    void removingAnAccountATemplateNamesAsks() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit();
+        init.templates.put("github=acme", List.of("tpl-acme"));
+        assertNull(choose(init, config, "x", "acme", "", ""), "Enter declines");
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** Nobody uses it: removed without a question, as before. */
+    @Test
+    void removingAnUnusedAccountDoesNotAsk() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "personal");
+        assertNull(choose(init, config, "x", "acme", ""));
+        assertEquals(List.of("personal"), NamespaceAccounts.names(config, "github"));
+    }
+
+    /** "Replace all" drops every other account, so pins to them are the same question. */
+    @Test
+    void replaceAllAsksWhenAnInstanceIsPinnedToAnAccountThatGoes() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "acme");
+        assertNull(choose(init, config, "r", "n", ""), "declining returns to the menu");
+        assertEquals(target("default", true), choose(init, config, "r", "y"));
+    }
+
+    @Test
+    void renamingKeepsTheAccountAndItsPlaceAndMovesTheDefault() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "personal");
+        assertNull(choose(init, config, "n", "personal", "me", ""));
+
+        assertEquals(List.of("me", "acme"), NamespaceAccounts.names(config, "github"),
+                "file order decides which account serves when the default is unusable");
+        assertEquals("ghp_personal", value(config, "github.accounts.me.token"));
+        assertEquals("me", value(config, "github.default"));
+        assertEquals(List.of("github:personal->me"), init.renames, "pinned instances are followed");
+        assertEquals("me", SpawnConfig.load().tree().path("github").path("default").asText(),
+                "saved, not only changed in memory");
+    }
+
+    @Test
+    void renamingOntoAnExistingNameIsRefused() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit();
+        // The taken name is re-asked; Enter then cancels the rename.
+        assertNull(choose(init, config, "n", "personal", "acme", "", ""));
+        assertEquals(List.of("personal", "acme"), NamespaceAccounts.names(config, "github"));
+        assertTrue(init.renames.isEmpty());
+    }
+
+    /** Claude accounts are typed; a rename must keep the type and credential intact. */
+    @Test
+    void renamingAClaudeAccountKeepsItsType() throws Exception {
+        var config = YAML.readValue("""
+                claude:
+                  accounts:
+                    personal:
+                      type: oauth
+                      oauthToken: "sk-ant-oat01-x"
+                    acme:
+                      type: vertex
+                      cloudMlRegion: europe-west1
+                      vertexProjectId: acme-prod
+                  default: personal
+                """, SpawnConfig.class);
+        NamespaceAccounts.rename(config, "claude", "acme", "client");
+        var renamed = config.getClaude().allAccounts().get("client");
+        assertNotNull(renamed);
+        assertEquals("acme-prod", renamed.getVertexProjectId());
+        assertEquals(SpawnConfig.ClaudeAccountType.VERTEX, renamed.effectiveType());
+        assertEquals("personal", config.getClaude().accountName());
+    }
+
+    /** A pre-accounts flat credential is the account 'default', and can be renamed like one. */
+    @Test
+    void renamingAFlatCredentialMaterializesItFirst() throws Exception {
+        var config = YAML.readValue(ONE_FLAT_CREDENTIAL, SpawnConfig.class);
+        NamespaceAccounts.rename(config, "github", "default", "me");
+        assertEquals(List.of("me"), NamespaceAccounts.names(config, "github"));
+        assertEquals("ghp_flat", value(config, "github.accounts.me.token"));
+        assertEquals("me@example.com", value(config, "github.accounts.me.email"));
+        assertEquals("me", value(config, "github.default"));
     }
 }
