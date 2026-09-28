@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,8 +11,8 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,10 +38,8 @@ class ConfigDriftTest {
         System.setProperty("user.home", originalHome);
     }
 
-    private static MitmProxy proxy(ConfigFingerprint fingerprint) {
-        var creds = new ProxyCredentials("", "", false, "", "", List.of());
-        return new MitmProxy(null, "127.0.0.1", 0, 0, "127.0.0.1",
-                creds, creds.toolProxies(), fingerprint);
+    private static MitmProxy proxy(ConfigFingerprint.Loaded loaded) {
+        return new MitmProxy(null, "127.0.0.1", 0, 0, "127.0.0.1", loaded);
     }
 
     @Test
@@ -50,13 +49,13 @@ class ConfigDriftTest {
         var config = Files.writeString(configDir.resolve("config.yaml"), "a: 1\n");
         Files.setLastModifiedTime(config, FileTime.from(Instant.now().plus(Duration.ofHours(1))));
 
-        assertFalse(proxy(ConfigFingerprint.load().fingerprint()).hasConfigChangedSinceLoad());
+        assertFalse(proxy(ConfigFingerprint.load()).hasConfigChangedSinceLoad());
     }
 
     @Test
     void anEditAfterLoadIsDrift() throws Exception {
         var config = Files.writeString(configDir.resolve("config.yaml"), "a: 1\n");
-        var proxy = proxy(ConfigFingerprint.load().fingerprint());
+        var proxy = proxy(ConfigFingerprint.load());
 
         // Dated in the past, as a restored backup or a stepped-back clock would leave it.
         Files.writeString(config, "a: 2\n");
@@ -66,8 +65,21 @@ class ConfigDriftTest {
     }
 
     @Test
+    void theProxyServesTheConfigItWasGivenNotALaterRead() throws Exception {
+        // #837: startup used to leave the per-account state to a lazy read of config.yaml,
+        // which escaped the fingerprint and could land after a reload, reverting it.
+        Files.writeString(configDir.resolve("config.yaml"), "claude:\n  oauthToken: sk-ant-oat01-on-disk\n");
+        var config = new SpawnConfig();
+        config.getClaude().setOauthToken("sk-ant-oat01-loaded");
+
+        var proxy = proxy(new ConfigFingerprint.Loaded(config, ConfigFingerprint.capture()));
+
+        assertEquals("sk-ant-oat01-loaded", proxy.credentials().oauthToken());
+    }
+
+    @Test
     void aMissingFingerprintIsRefused() {
         // Null compares unequal to every capture: the proxy would report drift forever.
-        assertThrows(NullPointerException.class, () -> proxy(null));
+        assertThrows(NullPointerException.class, () -> proxy(new ConfigFingerprint.Loaded(new SpawnConfig(), null)));
     }
 }

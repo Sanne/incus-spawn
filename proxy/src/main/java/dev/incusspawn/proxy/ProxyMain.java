@@ -71,7 +71,6 @@ public class ProxyMain implements QuarkusApplication {
         var loaded = ConfigFingerprint.load();
         var config = loaded.config();
         var claude = config.getClaude();
-        var creds = ProxyCredentials.fromConfig(config);
 
         if (claude.isUseVertex()) {
             if (claude.getCloudMlRegion().isBlank() || claude.getVertexProjectId().isBlank()) {
@@ -100,6 +99,13 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
 
+        // Everything the proxy serves is derived from this one read, the same way reload()
+        // derives it -- so no later read escapes the fingerprint taken ahead of it (#837).
+        var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
+        var vertx = Arc.container().instance(Vertx.class).get();
+        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, loaded);
+        var creds = proxy.credentials();
+
         var build = BuildInfo.instance();
         ProxyLog.info("Starting proxy " + build.version() + " (" + build.gitSha() + ") " + build.runtime());
         System.out.println("Starting MITM authentication proxy...");
@@ -125,7 +131,7 @@ public class ProxyMain implements QuarkusApplication {
         if (!toolProxyNames.isEmpty()) {
             System.out.println("  Tool proxies:  " + String.join(", ", toolProxyNames));
         }
-        var unresolved = ToolProxyResolver.findUnresolved(config);
+        var unresolved = ToolProxyResolver.findUnresolved(config, proxy.toolSetups());
         if (!unresolved.isEmpty()) {
             var unresolvedNames = unresolved.stream()
                     .map(ToolProxyResolver.UnresolvedToolProxy::toolName)
@@ -136,12 +142,7 @@ public class ProxyMain implements QuarkusApplication {
         System.out.println("  Log file:      " + Environment.proxyLogFile());
         System.out.println();
 
-        var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
-        var vertx = Arc.container().instance(Vertx.class).get();
-        var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress,
-                creds, creds.toolProxies(), loaded.fingerprint());
         proxy.setIncusClient(incus);
-        proxy.useConfig(config);
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {

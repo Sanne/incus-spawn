@@ -210,44 +210,40 @@ public class MitmProxy {
     private volatile InstanceRegistry instanceRegistry;
 
     /**
-     * Per-account-selection credentials, keyed by the selection itself so two instances
-     * pinned the same way share one entry. Built lazily off {@link #configSnapshot} and
-     * cleared whenever config.yaml changes, so a rotated token is never served from here.
+     * Everything derived from one read of the config that a pinned instance's request needs.
+     * Published whole, and replaced -- never mutated -- by a reload, so a request never mixes
+     * two configs. The caches live inside it: a request that read the old state and finishes
+     * after a reload writes into the old state's caches, which nothing reads any more, so a
+     * rotated token or a changed default is never put back (#837).
+     *
+     * <p>Built eagerly, off the event loop, from the config ProxyMain or reload() already
+     * read: discovering tool setups scans the filesystem, and every file read here must be
+     * one the fingerprint was taken ahead of.
+     *
+     * @param credentialsBySelection keyed by the selection itself, so two instances pinned the
+     *                               same way share one entry
+     * @param mismatchesByInstance   per instance, the credentials it cannot be served because
+     *                               its build does not match the account it would get (a Claude
+     *                               auth mode) -- see {@code AccountSelection.servingMismatches}.
+     *                               Keyed by the registry record, so a re-pinned or rebuilt
+     *                               instance is looked up afresh
      */
-    private final Map<Map<String, String>, AccountBundle> credentialsBySelection = new ConcurrentHashMap<>();
-    /**
-     * Per instance, the credentials it cannot be served because its build does not match the
-     * account it would get (a Claude auth mode) -- see {@code AccountSelection.servingMismatches}.
-     * Keyed by the registry record, so a re-pinned or rebuilt instance is looked up afresh;
-     * cleared on every config reload, since a default change is what usually causes one.
-     */
-    private final Map<InstanceRegistry.InstanceAccounts, Mismatches> mismatchesByInstance =
-            new ConcurrentHashMap<>();
-    /**
-     * Bumped by every reload, after the new config is published. A mismatch result carries the
-     * generation it was computed under and is ignored once that is out of date: a request that
-     * read the old config can finish after reload() cleared the cache and put its result back,
-     * which would otherwise keep serving (or refusing) by the old default until the next reload.
-     */
-    private volatile long configGeneration;
+    private record ConfigState(
+            dev.incusspawn.config.SpawnConfig config,
+            Map<String, dev.incusspawn.tool.ToolSetup> toolSetups,
+            Map<String, java.util.Set<String>> namespacesByDomain,
+            Map<Map<String, String>, AccountBundle> credentialsBySelection,
+            Map<InstanceRegistry.InstanceAccounts, Map<String, String>> mismatchesByInstance) {
 
-    private record Mismatches(long generation, Map<String, String> byNamespace) {}
-    /** Which credential each intercepted domain spends; rebuilt from the tool setups on reload. */
-    private volatile Map<String, java.util.Set<String>> namespacesByDomain;
+        static ConfigState of(dev.incusspawn.config.SpawnConfig config,
+                              Map<String, dev.incusspawn.tool.ToolSetup> toolSetups) {
+            return new ConfigState(config, toolSetups,
+                    dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups),
+                    new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
+        }
+    }
 
-    /**
-     * The parsed config.yaml behind {@link #credentialsBySelection}. Held rather than
-     * re-read because resolving a selection happens on the event loop, where
-     * {@code SpawnConfig.load()}'s file read does not belong.
-     */
-    private volatile dev.incusspawn.config.SpawnConfig configSnapshot;
-
-    /**
-     * Tool setups behind {@link #credentialsBySelection}. Discovering these scans the filesystem
-     * for tool YAMLs, so they are loaded once per config reload rather than per request --
-     * resolving a selection happens on the event loop.
-     */
-    private volatile Map<String, dev.incusspawn.tool.ToolSetup> toolSetupsSnapshot;
+    private volatile ConfigState configState;
 
     private final java.util.concurrent.atomic.AtomicBoolean registryRefreshInFlight =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -291,26 +287,37 @@ public class MitmProxy {
         unreachableSince.clear();
     }
 
+    /**
+     * The proxy as {@code isx-proxy} runs it: credentials, routing and the per-account state
+     * are all derived from {@code loaded}, the same way {@link #reload()} derives them.
+     */
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
-                     String healthBindAddress, ProxyCredentials credentials) {
-        // Tests construct without a config in hand, so the default account's entries stand in
-        // for the across-accounts domain set, and there is no config read to capture ahead of.
-        this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress,
-                credentials, credentials.toolProxies(), ConfigFingerprint.capture());
+                     String healthBindAddress, ConfigFingerprint.Loaded loaded) {
+        this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, loaded.fingerprint());
+        useConfig(loaded.config());
     }
 
-    /** @param configFingerprint from the {@link ConfigFingerprint#load()} that read the config */
+    /**
+     * For tests, which hand in credentials rather than a config: every caller gets them, the
+     * default account's entries stand in for the across-accounts domain set, and there is no
+     * config read to capture ahead of. No config means no named accounts, so a pinned
+     * instance fails closed rather than falling back to a read of the real config.
+     */
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
-                     String healthBindAddress, ProxyCredentials credentials,
-                     List<ResolvedToolProxy> proxiesAcrossAccounts,
-                     ConfigFingerprint configFingerprint) {
+                     String healthBindAddress, ProxyCredentials credentials) {
+        this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
+        this.credentials = credentials;
+        this.configState = ConfigState.of(new dev.incusspawn.config.SpawnConfig(), Map.of());
+        applyToolProxies(credentials.toolProxies(), credentials.toolProxies());
+    }
+
+    private MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
+                      String healthBindAddress, ConfigFingerprint configFingerprint) {
         this.vertx = vertx;
         this.bindAddress = bindAddress;
         this.healthBindAddress = healthBindAddress;
         this.mitmPort = mitmPort;
         this.healthPort = healthPort;
-        this.credentials = credentials;
-        applyToolProxies(credentials.toolProxies(), proxiesAcrossAccounts);
         // Null would compare unequal to every capture: permanent drift, a restart per command.
         this.configFingerprint = java.util.Objects.requireNonNull(configFingerprint, "configFingerprint");
     }
@@ -364,11 +371,12 @@ public class MitmProxy {
         // Plain get() first: this runs on the event loop for every intercepted request, and
         // computeIfAbsent would allocate a capturing lambda even on a hit. The map is an
         // immutable copy, so it is a sound key -- content-based and order-independent.
-        var bundle = credentialsBySelection.get(selection);
+        var state = configState;
+        var bundle = state.credentialsBySelection().get(selection);
         if (bundle == null) {
-            var creds = ProxyCredentials.forAccounts(configSnapshot(), selection, toolSetups());
+            var creds = ProxyCredentials.forAccounts(state.config(), selection, state.toolSetups());
             bundle = new AccountBundle(creds, buildRouting(creds.toolProxies(), creds.toolProxies(), false));
-            credentialsBySelection.putIfAbsent(selection, bundle);
+            state.credentialsBySelection().putIfAbsent(selection, bundle);
         }
         return new RequestContext(domain, instance.instanceName(),
                 bundle.creds(), bundle.routing(), false);
@@ -380,26 +388,17 @@ public class MitmProxy {
      * Scoped to that credential's domains: the instance's other services keep working.
      */
     private void refuseIfUnservable(InstanceRegistry.InstanceAccounts instance, String domain) {
-        // The generation is read before the config, so a result is never labelled newer than
-        // the config it was computed from.
-        var generation = configGeneration;
-        var cached = mismatchesByInstance.get(instance);
-        Map<String, String> mismatches;
-        if (cached != null && cached.generation() == generation) {
-            mismatches = cached.byNamespace();
-        } else {
-            mismatches = dev.incusspawn.config.AccountSelection.servingMismatches(configSnapshot(),
-                    dev.incusspawn.config.AccountSelection.byNamespace(toolSetups()), instance.instanceName(),
+        var state = configState;
+        var mismatches = state.mismatchesByInstance().get(instance);
+        if (mismatches == null) {
+            mismatches = dev.incusspawn.config.AccountSelection.servingMismatches(state.config(),
+                    dev.incusspawn.config.AccountSelection.byNamespace(state.toolSetups()), instance.instanceName(),
                     instance.accountsByNamespace(), instance.bakedIdentities());
-            mismatchesByInstance.put(instance, new Mismatches(generation, mismatches));
+            state.mismatchesByInstance().put(instance, mismatches);
         }
         if (mismatches.isEmpty()) return;
-        var byDomain = namespacesByDomain;
-        if (byDomain == null) {
-            byDomain = dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups());
-            namespacesByDomain = byDomain;
-        }
-        for (var namespace : dev.incusspawn.config.AccountSelection.namespacesForDomain(byDomain, domain)) {
+        for (var namespace : dev.incusspawn.config.AccountSelection.namespacesForDomain(
+                state.namespacesByDomain(), domain)) {
             var message = mismatches.get(namespace);
             if (message != null) {
                 throw new dev.incusspawn.config.AccountSelection.UnservableAccountException(namespace, message);
@@ -407,30 +406,29 @@ public class MitmProxy {
         }
     }
 
-    private Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
-        var snapshot = toolSetupsSnapshot;
-        if (snapshot == null) {
-            snapshot = ToolProxyResolver.proxyToolSetups(configSnapshot());
-            toolSetupsSnapshot = snapshot;
-        }
-        return snapshot;
-    }
-
-    /** Take on the settings of config.yaml: at start (ProxyMain) and on every reload. */
-    void useConfig(dev.incusspawn.config.SpawnConfig config) {
-        configSnapshot = config;
+    /**
+     * Take on everything derived from config.yaml and the tool definitions: at construction
+     * and on every reload, the one path both go through. Resolves the tool setups once, and
+     * publishes the per-account state whole, with fresh caches, so no entry built off the
+     * previous config survives it.
+     */
+    private void useConfig(dev.incusspawn.config.SpawnConfig config) {
+        var setups = ToolProxyResolver.proxyToolSetups(config);
+        var creds = ProxyCredentials.forAccounts(config, Map.of(), setups);
+        configState = ConfigState.of(config, setups);
+        credentials = creds;
         artifactCacheTiers = ArtifactCacheTiers.from(config);
+        applyToolProxies(creds.toolProxies(), ToolProxyResolver.resolveAcrossAccounts(config, setups));
     }
 
-    private dev.incusspawn.config.SpawnConfig configSnapshot() {
-        var snapshot = configSnapshot;
-        if (snapshot == null) {
-            // Only for a proxy nobody gave a config (useConfig(), which ProxyMain calls at
-            // start): tests, which construct MitmProxy directly.
-            snapshot = dev.incusspawn.config.SpawnConfig.load();
-            configSnapshot = snapshot;
-        }
-        return snapshot;
+    /** The default account's credentials, as of the last config read. */
+    ProxyCredentials credentials() {
+        return credentials;
+    }
+
+    /** The tool setups resolved from the last config read. */
+    Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
+        return configState.toolSetups();
     }
 
     private void scheduleRegistryRefresh(InstanceRegistry registry) {
@@ -637,22 +635,9 @@ public class MitmProxy {
         System.out.println("Reloading configuration...");
         try {
             var loaded = ConfigFingerprint.load();
-            var newConfig = loaded.config();
-            var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
-            var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
-            var oldConfig = configSnapshot;
-            useConfig(newConfig);
-            toolSetupsSnapshot = newSetups;
-            credentials = newCreds;
-            // Drop per-selection credentials before publishing the new defaults: a rotated
-            // token must not keep being served from a cache entry built off the old file.
-            credentialsBySelection.clear();
-            configGeneration++;
-            mismatchesByInstance.clear();
-            namespacesByDomain = null;
-            if (oldConfig != null) logDefaultChanges(oldConfig, newConfig, newSetups);
-            applyToolProxies(newCreds.toolProxies(),
-                    ToolProxyResolver.resolveAcrossAccounts(newConfig, newSetups));
+            var oldConfig = configState.config();
+            useConfig(loaded.config());
+            logDefaultChanges(oldConfig, loaded.config(), configState.toolSetups());
             invalidateVertexToken();
             // Account pinning is instance state, not config state, but a reload is the one
             // moment isx reliably signals -- so take the opportunity to re-read it too.
