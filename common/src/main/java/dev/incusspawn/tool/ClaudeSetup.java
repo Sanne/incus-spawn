@@ -38,6 +38,22 @@ public class ClaudeSetup implements ToolSetup {
     }
 
     @Override
+    public String credentialProblem(SpawnConfig config, Map<String, String> resolvedParams,
+                                    Map<String, String> selection) {
+        return missingAccount(config, selection);
+    }
+
+    /**
+     * {@code ""} when the Claude account {@code selection} resolves to is complete, else what is
+     * missing. Complete, not merely present: a pre-accounts 'useVertex: true' with no region or
+     * project still presents as an account, and fails every request.
+     */
+    static String missingAccount(SpawnConfig config, Map<String, String> selection) {
+        var account = config.getClaude().accountNamed(selection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
+        return account != null && account.isComplete() ? "" : "Anthropic API key, OAuth token, or Vertex AI";
+    }
+
+    @Override
     public ToolDef.ProxyDef proxy() {
         var apiKey = new ToolDef.ConfigEntry();
         apiKey.setConfigPath("apiKey");

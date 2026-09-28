@@ -198,9 +198,7 @@ public final class ToolProxyResolver {
             var proxyDef = tool.proxy();
             if (proxyDef == null) continue;
 
-            boolean hasNonAnthropicAuth = proxyDef.getAuth().stream()
-                    .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
-            if (!hasNonAnthropicAuth) continue;
+            if (!servesNonAnthropicAuth(proxyDef)) continue;
 
             for (var configEntry : proxyDef.getConfiguration().entrySet()) {
                 var configKey = configEntry.getKey();
@@ -218,13 +216,22 @@ public final class ToolProxyResolver {
         return result;
     }
 
-    /** A declared secret some tool needs that resolves to nothing; {@code path} is its flat config path. */
-    public record MissingSecret(String toolName, String path, String description) {}
+    /** A declared secret that resolves to nothing; {@code path} is its flat config path. */
+    public record MissingSecret(String path, String description) {}
+
+    /**
+     * Whether the generic resolution applies: {@code type: anthropic} is served by MitmProxy's own
+     * Claude logic from a typed account, not from these entries.
+     */
+    private static boolean servesNonAnthropicAuth(ToolDef.ProxyDef proxyDef) {
+        return proxyDef.getAuth().stream()
+                .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
+    }
 
     /**
      * The {@code secret: true} entries of {@code toolNames} that resolve to nothing for the given
      * account selection -- "does this instance have the credentials its tools need". A secret
-     * several tools share (Copilot borrows {@code github.token}) is reported once, for the first.
+     * several tools share (Copilot borrows {@code github.token}) is reported once.
      * Tools absent from {@code toolSetups} are skipped, as are those whose only auth is
      * {@code type: anthropic}: Claude's credential is a typed account, not one key.
      *
@@ -237,18 +244,16 @@ public final class ToolProxyResolver {
         for (var toolName : toolNames) {
             var tool = toolSetups.get(toolName);
             var proxyDef = tool == null ? null : tool.proxy();
-            if (proxyDef == null) continue;
-            boolean hasNonAnthropicAuth = proxyDef.getAuth().stream()
-                    .anyMatch(a -> a.getType() != null && !"anthropic".equals(a.getType()));
-            if (!hasNonAnthropicAuth) continue;
+            if (proxyDef == null || !servesNonAnthropicAuth(proxyDef)) continue;
 
             for (var configDef : proxyDef.getConfiguration().values()) {
-                if (!configDef.isSecret()) continue;
+                // What SecretRegistry counts as a secret: a confirm entry is a consent, not a key.
+                if (!configDef.isSecret() || configDef.isConfirm()) continue;
                 var path = proxyDef.fullConfigPath(configDef);
                 if (result.containsKey(path)) continue;
                 var value = resolveConfigValue(proxyDef, configDef, configTree, toolSetups, accountsByNamespace);
                 if (value == null || value.isBlank()) {
-                    result.put(path, new MissingSecret(toolName, path, configDef.getDescription()));
+                    result.put(path, new MissingSecret(path, configDef.getDescription()));
                 }
             }
         }

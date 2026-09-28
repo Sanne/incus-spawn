@@ -72,6 +72,26 @@ public interface ToolSetup {
     }
 
     /**
+     * As {@link #credentialNamespaces()}, for a template that sets {@code resolvedParams} --
+     * override for a tool whose parameters decide which credential it spends.
+     */
+    default java.util.Set<String> credentialNamespaces(java.util.Map<String, String> resolvedParams) {
+        return credentialNamespaces();
+    }
+
+    /**
+     * What an instance with this tool would be missing, for its account {@code selection}, beyond
+     * the declared {@code secret: true} entries of its credential namespaces -- which are checked
+     * for every tool regardless. {@code ""} when nothing. Override when being ready takes more
+     * than a key being set, as Claude's typed accounts do.
+     */
+    default String credentialProblem(dev.incusspawn.config.SpawnConfig config,
+                                     java.util.Map<String, String> resolvedParams,
+                                     java.util.Map<String, String> selection) {
+        return "";
+    }
+
+    /**
      * A short, secret-free description of one of this tool's accounts -- what kind of
      * credential it is, or whose -- for listings such as {@code isx account list}; {@code ""}
      * when there is nothing to say beyond its name. Never include the credential itself.

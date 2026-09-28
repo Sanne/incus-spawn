@@ -19,6 +19,7 @@ import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
 import dev.incusspawn.tool.ToolDefLoader;
+import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
 
 import java.nio.file.Path;
@@ -124,9 +125,11 @@ public final class BranchFlow {
         // Resolve and validate the account selection before anything is created: a typo
         // should be reported now, not as a failed API call inside the container later.
         var config = SpawnConfig.load();
+        var loader = new ToolDefLoader();
+        var setups = AccountSelection.namespaceSetups(config, loader);
         ResolvedAccounts accounts;
         try {
-            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config);
+            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config, setups);
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             throw new BranchException(e.getMessage());
@@ -140,7 +143,7 @@ public final class BranchFlow {
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             checkCaMismatch(incus, req.source());
-            var credError = missingCredentials(config, accounts, defs, new ToolDefLoader());
+            var credError = missingCredentials(config, accounts.template(), accounts.accounts(), defs, loader);
             if (!credError.isEmpty()) throw new BranchException(credError);
         }
 
@@ -250,18 +253,23 @@ public final class BranchFlow {
     }
 
     /**
-     * The credentials a branch of {@code source} would be missing, or why its account selection
-     * is refused, as a message; {@code ""} when neither. The same check {@link #preflight} makes,
-     * for the TUI's branch dialog to report before it hands the terminal back.
+     * The credentials a branch would be missing, or why its account selection is refused, as a
+     * message; {@code ""} when neither. The check {@link #preflight} makes, from an
+     * {@link #inheritedAccounts} the caller already read -- for the TUI's branch dialog, which
+     * must not wait on Incus from its event thread, to report before it hands the terminal back.
+     * Not the auth-mode compatibility check, which needs the source's live state; preflight
+     * still makes that one.
      *
      * @param accountOverrides {@code <ns>=<account>} selections, as {@code --account} takes them
      */
-    public static String credentialProblem(IncusClient incus, String source, List<String> accountOverrides,
+    public static String credentialProblem(Inherited inherited, List<String> accountOverrides,
                                            Map<String, ImageDef> defs, ToolDefLoader loader) {
         var config = SpawnConfig.load();
         try {
-            return missingCredentials(config,
-                    resolveAccountSelection(incus, source, accountOverrides, defs, config), defs, loader);
+            var selection = new java.util.LinkedHashMap<>(inherited.accounts());
+            selection.putAll(AccountSelection.parse(accountOverrides));
+            AccountSelection.validate(config, selection, AccountSelection.namespaceSetups(config, loader));
+            return missingCredentials(config, inherited.template(), selection, defs, loader);
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             return e.getMessage();
@@ -272,11 +280,12 @@ public final class BranchFlow {
      * Checked against the template the branch inherits from -- for a branch of a branch, the leaf
      * template recorded on the source -- and the selection it will actually be stamped with.
      */
-    private static String missingCredentials(SpawnConfig config, ResolvedAccounts accounts,
+    private static String missingCredentials(SpawnConfig config, String templateName,
+                                             Map<String, String> selection,
                                              Map<String, ImageDef> defs, ToolDefLoader loader) {
-        var template = defs.get(accounts.template());
+        var template = defs.get(templateName);
         if (template == null) return "";
-        return CredentialCheck.check(config, template, defs, accounts.accounts(), loader);
+        return CredentialCheck.check(config, template, defs, selection, loader);
     }
 
     /**
@@ -286,7 +295,8 @@ public final class BranchFlow {
      */
     private static ResolvedAccounts resolveAccountSelection(IncusClient incus, String source,
                                                             List<String> accountOverrides,
-                                                            Map<String, ImageDef> defs, SpawnConfig config) {
+                                                            Map<String, ImageDef> defs, SpawnConfig config,
+                                                            Map<String, ToolSetup> setups) {
         var inherited = inheritedAccounts(incus, source, defs);
         var selection = new java.util.LinkedHashMap<>(inherited.accounts());
         var origins = new java.util.LinkedHashMap<>(inherited.origins());
@@ -295,13 +305,13 @@ public final class BranchFlow {
         selection.putAll(overrides);
         overrides.keySet().forEach(ns -> origins.put(ns, AccountOrigin.EXPLICIT));
 
-        AccountSelection.validate(config, selection);
+        AccountSelection.validate(config, selection, setups);
 
         // A branch is a CoW copy of an already-built template, so its environment is already
         // baked -- an --account that crosses auth modes is exactly as unhonourable here as it
         // is in 'isx account set', and must be refused the same way. Checked against the
         // source, whose env class the copy inherits.
-        var reason = AccountSelection.incompatibilityReason(config, incus, source, selection);
+        var reason = AccountSelection.incompatibilityReason(config, incus, source, selection, setups);
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
         return new ResolvedAccounts(inherited.template(), selection, origins);

@@ -75,8 +75,33 @@ public class PiSetup implements ToolSetup {
         return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai"));
     }
 
+    /** Only the one its {@code provider} spends, once the template has said which. */
+    @Override
+    public java.util.Set<String> credentialNamespaces(java.util.Map<String, String> resolvedParams) {
+        return switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC, VERTEX -> java.util.Set.of(SpawnConfig.ClaudeConfig.NAMESPACE);
+            case OPENAI -> java.util.Set.of("openai");
+            case NONE -> java.util.Set.of();
+        };
+    }
+
+    @Override
+    public String credentialProblem(SpawnConfig config, java.util.Map<String, String> resolvedParams,
+                                    java.util.Map<String, String> selection) {
+        return switch (credentialFor(resolvedParams)) {
+            case ANTHROPIC -> ClaudeSetup.missingAccount(config, selection);
+            case VERTEX -> {
+                var account = config.getClaude().accountNamed(selection.get(SpawnConfig.ClaudeConfig.NAMESPACE));
+                yield account != null && account.isComplete()
+                        && account.effectiveType() == SpawnConfig.ClaudeAccountType.VERTEX
+                        ? "" : "Vertex AI configuration";
+            }
+            case OPENAI, NONE -> "";
+        };
+    }
+
     /** The isx-managed credential a pi provider spends. */
-    public enum Credential {
+    private enum Credential {
         /** Claude's account, whatever its type. */
         ANTHROPIC,
         /** Claude's account, which must be a Vertex AI one. */
@@ -88,7 +113,7 @@ public class PiSetup implements ToolSetup {
     }
 
     /** Which credential pi spends for the {@code provider} in its resolved parameters. */
-    public static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
+    private static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
         return switch (resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER)) {
             case "anthropic" -> Credential.ANTHROPIC;
             case "vertex", "google" -> Credential.VERTEX;

@@ -46,7 +46,8 @@ class BranchFlowCredentialsTest {
 
     private static String problem(FakeIncusDaemon daemon, String source, List<String> overrides,
                                   Map<String, ImageDef> defs) {
-        return BranchFlow.credentialProblem(daemon.client(), source, overrides, defs, new ToolDefLoader());
+        var inherited = BranchFlow.inheritedAccounts(daemon.client(), source, defs);
+        return BranchFlow.credentialProblem(inherited, overrides, defs, new ToolDefLoader());
     }
 
     private static FakeIncusDaemon template() {
