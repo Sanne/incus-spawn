@@ -1695,13 +1695,18 @@ public class ListCommand extends BaseCommand {
      * each credential its template's tools use could be pinned to instead. Best effort -- the
      * dialog is still worth opening without them, and {@code BranchFlow} validates what it gets.
      */
+    /** What the open branch dialog's source inherits, or null when it could not be read. */
+    private BranchFlow.Inherited branchInherited;
+
     private BranchAccountChoices branchAccountChoicesFor(String source) {
         List<BranchAccountChoices.Row> rows;
+        branchInherited = null;
         try {
             var config = SpawnConfig.load();
             // The TUI's own loader: a fresh one would re-read the tool definitions from disk.
             var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
             var inherited = BranchFlow.inheritedAccounts(incus, source, imageDefs);
+            branchInherited = inherited;
             // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
             var namespaces = dev.incusspawn.config.AccountSelection.templateNamespaces(
                     imageDefs.get(inherited.template()), imageDefs, toolDefLoader.allToolSetups()::get);
@@ -1750,9 +1755,10 @@ public class ListCommand extends BaseCommand {
             }
             if (branchNetworkMode() != NetworkMode.AIRGAP) {
                 if (showProxyError()) return true;
-                // With the accounts chosen above, as BranchFlow.preflight will check them.
-                var credError = BranchFlow.credentialProblem(incus, branchSourceName,
-                        branchAccounts.overrides(), imageDefs, toolDefLoader);
+                // With the accounts chosen above, from what the dialog read when it opened: no
+                // Incus round trip on the event thread. BranchFlow.preflight re-checks live state.
+                var credError = branchInherited == null ? "" : BranchFlow.credentialProblem(
+                        branchInherited, branchAccounts.overrides(), imageDefs, toolDefLoader);
                 if (!credError.isEmpty()) {
                     statusMessage = credError;
                     mode = Mode.BROWSE;
