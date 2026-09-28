@@ -4522,6 +4522,7 @@ public class ListCommand extends BaseCommand {
         var repos = new ArrayList<ActionContext.RepoInfo>();
         var templateName = resolveTemplateName(instance);
         if (templateName == null) return repos;
+        var config = dev.incusspawn.config.SpawnConfig.load();
         var chain = getInheritanceChain(templateName);
         for (var def : chain) {
             for (var repo : def.getRepos()) {
@@ -4530,7 +4531,12 @@ public class ListCommand extends BaseCommand {
                 var repoPath = path.startsWith("~/")
                         ? "/home/agentuser" + path.substring(1) : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
-                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
+                String hostPath = null;
+                try {
+                    var hp = dev.incusspawn.git.GitRemoteUtils.resolveHostRepoPath(name, config);
+                    if (hp != null) hostPath = hp.toString();
+                } catch (Exception ignored) {}
+                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl(), hostPath));
             }
         }
         return repos;
@@ -4544,6 +4550,50 @@ public class ListCommand extends BaseCommand {
                 tools, repos,
                 new ActionContext.InstanceState(instance.ipv4, instance.status,
                         instance.parent, instance.networkMode));
+    }
+
+    private record ShellMenuResult(java.util.List<ToolAction> actions, ActionContext context) {}
+
+    private ShellMenuResult resolveShellMenuActions(String instanceName) {
+        var instance = allEntries != null
+                ? allEntries.stream().filter(i -> i.name.equals(instanceName)).findFirst().orElse(null)
+                : null;
+        if (instance == null) {
+            return new ShellMenuResult(java.util.List.of(), null);
+        }
+
+        var allActions = actionsCache.getOrDefault(instanceName, java.util.List.of());
+
+        var workdir = incus.configGet(instanceName, dev.incusspawn.incus.Metadata.WORKDIR);
+        var effectiveWorkdir = workdir.isBlank() ? "/home/agentuser" : workdir;
+
+        var candidates = allActions.stream()
+                .filter(ToolAction::isShellMenu)
+                .filter(a -> a.type().map(t -> "url".equals(t) || "command".equals(t)).orElse(false))
+                .toList();
+
+        var menuActions = new ArrayList<ToolAction>();
+        var seen = new java.util.HashSet<String>();
+        for (var action : candidates) {
+            if (action.repoPath().isPresent()) {
+                var groupKey = action.toolName();
+                if (!seen.add(groupKey)) continue;
+                var match = candidates.stream()
+                        .filter(a -> a.toolName().equals(groupKey))
+                        .filter(a -> a.repoPath().map(effectiveWorkdir::equals).orElse(false))
+                        .findFirst()
+                        .orElse(action);
+                menuActions.add(match);
+            } else {
+                var key = action.toolName() + ":" + action.id().orElse("");
+                if (seen.add(key)) {
+                    menuActions.add(action);
+                }
+            }
+        }
+
+        var context = buildActionContext(instance);
+        return new ShellMenuResult(menuActions, context);
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5352,7 +5402,9 @@ public class ListCommand extends BaseCommand {
         if (defaultCmd != null) {
             shellPrep = shellPrep.withActionCommand(defaultCmd);
         }
-        incus.interactiveShell(name, "agentuser", shellPrep);
+        var shellMenuActions = resolveShellMenuActions(name);
+        incus.interactiveShell(name, "agentuser", shellPrep,
+                shellMenuActions.actions(), shellMenuActions.context());
         System.out.println();
     }
 
@@ -5539,13 +5591,18 @@ public class ListCommand extends BaseCommand {
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
+
+        var shellMenuActions = resolveShellMenuActions(name);
         var titleMonitor = startAuthTitleMonitor(name);
         try {
             if (commandOverride != null) {
                 var prep = IncusClient.ShellPrep.from(incus, name).withActionCommand(commandOverride);
-                incus.interactiveShell(name, "agentuser", prep);
+                incus.interactiveShell(name, "agentuser", prep,
+                        shellMenuActions.actions(), shellMenuActions.context());
             } else {
-                incus.interactiveShell(name, "agentuser");
+                var prep = IncusClient.ShellPrep.from(incus, name);
+                incus.interactiveShell(name, "agentuser", prep,
+                        shellMenuActions.actions(), shellMenuActions.context());
             }
         } finally {
             titleMonitor.interrupt();
