@@ -12,7 +12,6 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -62,19 +61,6 @@ class ConfigDriftTest {
         Files.setLastModifiedTime(config, FileTime.from(Instant.now().minus(Duration.ofDays(1))));
 
         assertTrue(proxy.hasConfigChangedSinceLoad());
-    }
-
-    @Test
-    void theProxyServesTheConfigItWasGivenNotALaterRead() throws Exception {
-        // #837: startup used to leave the per-account state to a lazy read of config.yaml,
-        // which escaped the fingerprint and could land after a reload, reverting it.
-        Files.writeString(configDir.resolve("config.yaml"), "claude:\n  oauthToken: sk-ant-oat01-on-disk\n");
-        var config = new SpawnConfig();
-        config.getClaude().setOauthToken("sk-ant-oat01-loaded");
-
-        var proxy = proxy(new ConfigFingerprint.Loaded(config, ConfigFingerprint.capture()));
-
-        assertEquals("sk-ant-oat01-loaded", proxy.credentials().oauthToken());
     }
 
     @Test

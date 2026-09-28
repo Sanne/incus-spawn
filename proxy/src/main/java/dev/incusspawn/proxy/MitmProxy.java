@@ -212,8 +212,9 @@ public class MitmProxy {
      * rotated token or a changed default is never put back (#837).
      *
      * <p>Built eagerly, off the event loop, from the config ProxyMain or reload() already
-     * read: discovering tool setups scans the filesystem, and every file read here must be
-     * one the fingerprint was taken ahead of.
+     * read, never from a later read: discovering tool setups scans the filesystem, and a
+     * later read of config.yaml would escape the fingerprint taken ahead of that one. (Tool
+     * YAMLs under configured search paths are not fingerprinted yet -- see #890.)
      *
      * @param routing                credentials from the default account, but the intercepted
      *                               domain set from every configured account. The two differ on
@@ -308,17 +309,21 @@ public class MitmProxy {
     }
 
     /**
-     * For tests, which hand in credentials rather than a config: every caller gets them, the
+     * Tests only: a proxy that serves {@code credentials} with no config behind them. The
      * default account's entries stand in for the across-accounts domain set, and there is no
-     * config read to capture ahead of. No config means no named accounts, so a pinned
-     * instance fails closed rather than falling back to a read of the real config.
+     * config read to capture ahead of. Per-account selection is not modelled: there are no
+     * accounts and no tool setups, so a pinned Claude account fails closed but a pin in any
+     * other namespace gets no credential at all. Tests of pinning build a config and use the
+     * {@link ConfigFingerprint.Loaded} constructor.
      */
     public MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                      String healthBindAddress, ProxyCredentials credentials) {
         this(vertx, bindAddress, mitmPort, healthPort, healthBindAddress, ConfigFingerprint.capture());
-        this.configState = new ConfigState(new dev.incusspawn.config.SpawnConfig(), Map.of(),
-                credentials, credentials.toolProxies());
+        this.configState = new ConfigState(NO_CONFIG, Map.of(), credentials, credentials.toolProxies());
     }
+
+    /** The config of a proxy built from credentials alone: empty, and never compared on reload. */
+    private static final dev.incusspawn.config.SpawnConfig NO_CONFIG = new dev.incusspawn.config.SpawnConfig();
 
     private MitmProxy(Vertx vertx, String bindAddress, int mitmPort, int healthPort,
                       String healthBindAddress, ConfigFingerprint configFingerprint) {
@@ -333,6 +338,11 @@ public class MitmProxy {
 
     public void setDnsConfigured(boolean configured) {
         this.dnsConfigured = configured;
+    }
+
+    /** Tests only: serve callers from {@code registry}, populated by the caller, without Vert.x. */
+    void useInstanceRegistry(InstanceRegistry registry) {
+        this.instanceRegistry = registry;
     }
 
     public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
@@ -357,7 +367,7 @@ public class MitmProxy {
      *
      * <p>Never blocks: reads the registry snapshot and schedules a refresh when it is stale.
      */
-    private RequestContext contextFor(String domain, String sourceAddress) {
+    RequestContext contextFor(String domain, String sourceAddress) {
         var state = configState;
         var registry = instanceRegistry;
         if (registry == null) return new RequestContext(domain, null, state.credentials(), state.routing(), true);
@@ -371,7 +381,7 @@ public class MitmProxy {
         }
 
         if (instance != null && !instance.bakedIdentities().isEmpty()) {
-            refuseIfUnservable(instance, domain);
+            refuseIfUnservable(state, instance, domain);
         }
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain,
@@ -396,8 +406,8 @@ public class MitmProxy {
      * for -- typically because the global default it follows moved to another Claude auth mode.
      * Scoped to that credential's domains: the instance's other services keep working.
      */
-    private void refuseIfUnservable(InstanceRegistry.InstanceAccounts instance, String domain) {
-        var state = configState;
+    private void refuseIfUnservable(ConfigState state, InstanceRegistry.InstanceAccounts instance,
+                                    String domain) {
         var mismatches = state.mismatchesByInstance().get(instance);
         if (mismatches == null) {
             mismatches = dev.incusspawn.config.AccountSelection.servingMismatches(state.config(),
@@ -449,10 +459,6 @@ public class MitmProxy {
     public void refreshInstanceRegistry() {
         var registry = instanceRegistry;
         if (registry != null) registry.refresh();
-    }
-
-    private String vertexHost() {
-        return vertexHost(configState.credentials());
     }
 
     /** Vertex endpoint for one request's account -- the region is part of the account. */
@@ -625,7 +631,8 @@ public class MitmProxy {
         try {
             var loaded = ConfigFingerprint.load();
             var oldState = useConfig(loaded.config());
-            logDefaultChanges(oldState, configState);
+            // A proxy built from credentials alone had no config to compare against.
+            if (oldState.config() != NO_CONFIG) logDefaultChanges(oldState, configState);
             invalidateVertexToken();
             // Account pinning is instance state, not config state, but a reload is the one
             // moment isx reliably signals -- so take the opportunity to re-read it too.
@@ -802,7 +809,7 @@ public class MitmProxy {
         var credentials = configState.credentials();
         if (credentials.useVertex()) {
             System.out.println("Vertex AI mode: translating api.anthropic.com requests" +
-                    " to " + vertexHost() +
+                    " to " + vertexHost(credentials) +
                     " (region: " + credentials.vertexRegion() + ", project: " + credentials.vertexProjectId() + ")");
         } else if (!credentials.oauthToken().isBlank()) {
             System.out.println("OAuth mode: injecting Bearer token for api.anthropic.com");
