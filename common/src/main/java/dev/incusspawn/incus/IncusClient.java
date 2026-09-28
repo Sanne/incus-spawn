@@ -799,7 +799,11 @@ public class IncusClient {
     }
 
     public CopyPlan planCopy(String source) {
-        var sourceInstance = instanceMetadata(source);
+        return planCopy(instanceMetadata(source));
+    }
+
+    /** As {@link #planCopy(String)}, from the source's metadata the caller already read. */
+    public CopyPlan planCopy(JsonNode sourceInstance) {
         var sourcePool = rootDiskPoolFromDevices(sourceInstance.path("expanded_devices"));
         var addressedNics = withoutStaticAddress(sourceInstance.path("devices"));
         var pools = listPools();
@@ -1988,14 +1992,29 @@ public class IncusClient {
         if (!resp.isSuccess()) {
             throw new IncusException("Failed to read config from " + name);
         }
+        return configByPrefix(resp.body().path("metadata").path("config"), prefix);
+    }
+
+    /**
+     * As {@link #configByPrefix(String, String)}, from the {@code config} of instance metadata the
+     * caller already read ({@link #instanceMetadata}) -- for a flow that needs several keys of one
+     * instance and should not pay a round trip for each.
+     */
+    public static Map<String, String> configByPrefix(JsonNode config, String prefix) {
         var result = new java.util.LinkedHashMap<String, String>();
-        resp.body().path("metadata").path("config").properties().forEach(entry -> {
+        config.properties().forEach(entry -> {
             if (!entry.getKey().startsWith(prefix)) return;
             var value = entry.getValue();
             if (value == null || value.isNull()) return;
             result.put(entry.getKey().substring(prefix.length()), value.asText(""));
         });
         return result;
+    }
+
+    /** As {@link #configGet}, from the {@code config} of instance metadata already read: "" when unset. */
+    public static String configValue(JsonNode config, String key) {
+        var value = config.path(key);
+        return value.isMissingNode() || value.isNull() ? "" : value.asText();
     }
 
     /**

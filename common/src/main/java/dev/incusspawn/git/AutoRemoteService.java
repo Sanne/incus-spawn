@@ -1,10 +1,13 @@
 package dev.incusspawn.git;
 
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.IncusClient;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class AutoRemoteService {
 
@@ -15,10 +18,25 @@ public final class AutoRemoteService {
     }
 
     public static void addRemotes(IncusClient incus, String instanceName, Consumer<String> output) {
+        addRemotes(instanceName, () -> GitRemoteUtils.collectReposForInstance(instanceName, incus), output);
+    }
+
+    /**
+     * As {@link #addRemotes(IncusClient, String, Consumer)}, for the repos the instance's template
+     * declares as the caller already resolved them ({@link GitRemoteUtils#collectRepos}): no
+     * instance read, no rescan of the template definitions.
+     */
+    public static void addRemotes(String instanceName, List<ImageDef.RepoEntry> repos, Consumer<String> output) {
+        addRemotes(instanceName, () -> repos, output);
+    }
+
+    // Repos are only looked up once there are host directories to add remotes in.
+    private static void addRemotes(String instanceName, Supplier<List<ImageDef.RepoEntry>> repoLookup,
+                                   Consumer<String> output) {
         var config = SpawnConfig.load();
         if (config.getHostPaths().isEmpty() && config.getRepoPaths().isEmpty()) return;
 
-        var repos = GitRemoteUtils.collectReposForInstance(instanceName, incus);
+        var repos = repoLookup.get();
         if (repos.isEmpty()) return;
 
         var candidateDirs = GitRemoteUtils.findAllCandidateRepoDirs(config);

@@ -410,10 +410,12 @@ public final class HostResourceSetup {
      * Refuses to branch from a template whose stored host resources include a mount target that
      * is no longer allowed, before anything is copied. Such a template predates the rule, so the
      * error says a rebuild is what fixes it.
+     *
+     * @param hostResourcesJson the template's {@link Metadata#HOST_RESOURCES}, as stored on it
      */
-    public static void requireBranchableTemplate(IncusClient incus, String template) {
+    public static void requireBranchableTemplate(String template, String hostResourcesJson) {
         try {
-            deserialize(incus.configGet(template, Metadata.HOST_RESOURCES))
+            deserialize(hostResourcesJson)
                     .forEach(HostResourceSetup::requireAllowedMountTarget);
         } catch (ForbiddenMountTargetException e) {
             throw new ForbiddenMountTargetException("Cannot branch from '" + template + "': "

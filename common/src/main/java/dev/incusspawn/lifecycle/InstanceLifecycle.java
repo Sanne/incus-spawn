@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.HostResourceSetup;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.AutoRemoteService;
@@ -86,9 +87,19 @@ public final class InstanceLifecycle {
      * airgapped instance overwrites those masks with the profile's NICs, in the same write too.
      */
     public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
+        configureBranch(incus, name, settings, incus.instanceMetadata(name), null);
+    }
+
+    /**
+     * As {@link #configureBranch(IncusClient, String, BranchSettings)}, against what the caller
+     * already read: the new instance's metadata, and the bridge's {@code ipv4.address} (null to
+     * read it here, if the network mode needs it).
+     */
+    public static void configureBranch(IncusClient incus, String name, BranchSettings settings,
+                                       JsonNode instance, String bridgeCidr) {
         var mode = settings.networkMode();
-        var instance = incus.instanceMetadata(name);
-        if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
+        // Not isMissingNode(): Incus answers a missing instance with "metadata": null.
+        if (!instance.isObject()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
         if (mode != NetworkMode.AIRGAP && isAirgapped(instance)) {
             instance = unmaskNics(incus, instance, update);
@@ -112,7 +123,7 @@ public final class InstanceLifecycle {
             update.unset(Metadata.STATIC_GATEWAY);
         } else {
             // One read gives the gateway, the subnet to allocate from and the prefix to push
-            bridge = BridgeAddress.require(incus);
+            bridge = bridgeCidr != null ? BridgeAddress.require(bridgeCidr) : BridgeAddress.require(incus);
             if (mode == NetworkMode.PROXY_ONLY) BuildOutput.step("Configuring proxy-only network.");
             nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
             if (nicDevice == null) {
@@ -797,19 +808,24 @@ public final class InstanceLifecycle {
 
     /**
      * Apply host resource devices and (for instances) add git remotes.
+     *
+     * @param instance the instance's metadata as already read; only keys the branch copied from
+     *                 its source are used (host resources, build source, type)
+     * @param repos    the repos its template chain declares ({@link dev.incusspawn.git.GitRemoteUtils#collectRepos})
      */
-    public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType) {
-        var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
-        var hostResources = HostResourceSetup.deserialize(hrJson);
+    public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType,
+                                         JsonNode instance, List<ImageDef.RepoEntry> repos) {
+        var config = instance.path("config");
+        var hostResources = HostResourceSetup.deserialize(IncusClient.configValue(config, Metadata.HOST_RESOURCES));
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
-            HostResourceSetup.applyForInstance(incus, name, hostResources, incus.isVm(name));
+            HostResourceSetup.applyForInstance(incus, name, hostResources, IncusClient.isVm(instance));
         }
 
         if (instanceType == InstanceType.INSTANCE) {
-            AutoRemoteService.addRemotes(incus, name, BuildOutput::step);
+            AutoRemoteService.addRemotes(name, repos, BuildOutput::step);
 
-            var buildSourceJson = incus.configGet(name, Metadata.BUILD_SOURCE);
+            var buildSourceJson = IncusClient.configValue(config, Metadata.BUILD_SOURCE);
             if (ZmxSocketForward.isZmxInstalled(buildSourceJson)) {
                 ZmxSocketForward.configure(incus, name);
             }
@@ -826,10 +842,19 @@ public final class InstanceLifecycle {
      */
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, boolean isVm) {
         var prefetched = prefetchRuntimeConfig(incus, name);
+        startShowingProgress(incus, name, isVm);
+        return prefetched;
+    }
+
+    /**
+     * Start a stopped instance as one progress step. For a caller that read its
+     * {@link RuntimeConfig} already ({@link #runtimeConfig}); the same rule holds -- nothing may
+     * be pushed into the instance between that read and this.
+     */
+    public static void startShowingProgress(IncusClient incus, String name, boolean isVm) {
         BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
         startInstance(incus, name);
         BuildOutput.stepDone();
-        return prefetched;
     }
 
     /**
@@ -839,13 +864,24 @@ public final class InstanceLifecycle {
      */
     public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
         // One read for all four keys: configGet is a full instance GET per key.
-        var config = incus.configByPrefix(name, "");
+        return runtimeConfig(incus.configByPrefix(name, ""), BridgeSubnetCheck.detectConflictDiagnostic(incus));
+    }
+
+    /**
+     * As {@link #prefetchRuntimeConfig}, from what a caller already read: the instance's
+     * {@code config} and the bridge's {@code ipv4.address}.
+     */
+    public static RuntimeConfig runtimeConfig(JsonNode instanceConfig, String bridgeCidr) {
+        return runtimeConfig(IncusClient.configByPrefix(instanceConfig, ""),
+                BridgeSubnetCheck.detectConflictDiagnostic(bridgeCidr));
+    }
+
+    private static RuntimeConfig runtimeConfig(Map<String, String> config, String subnetDiag) {
         var buildSourceJson = config.getOrDefault(Metadata.BUILD_SOURCE, "");
         var hasSshKeys = !config.getOrDefault("user.incus-spawn.ssh-setup", "").isEmpty()
                 || hasSshdTool(buildSourceJson);
         var workdir = config.getOrDefault(Metadata.WORKDIR, "");
         var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
-        var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
                 subnetDiag, terminfo);

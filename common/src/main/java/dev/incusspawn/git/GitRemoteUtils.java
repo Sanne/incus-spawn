@@ -183,24 +183,28 @@ public final class GitRemoteUtils {
     }
 
     public static List<ImageDef.RepoEntry> collectReposForInstance(String instanceName, IncusClient incus) {
-        var repos = new ArrayList<ImageDef.RepoEntry>();
         try {
             // Prefer PROFILE (always the leaf template name) for chain resolution;
             // PARENT may point to a clone when branching from another clone.
-            var profile = incus.configGet(instanceName, Metadata.PROFILE);
-            var parent = incus.configGet(instanceName, Metadata.PARENT);
-            var templateName = (profile != null && !profile.isEmpty()) ? profile : parent;
-            if (templateName.isEmpty()) return repos;
-
-            var allDefs = ImageDef.loadAll();
-            var current = allDefs.get(templateName);
-            while (current != null) {
-                repos.addAll(current.getRepos());
-                if (current.isRoot() || current.getParent() == null) break;
-                current = allDefs.get(current.getParent());
-            }
+            var config = incus.instanceMetadata(instanceName).path("config");
+            var profile = IncusClient.configValue(config, Metadata.PROFILE);
+            var templateName = !profile.isEmpty() ? profile : IncusClient.configValue(config, Metadata.PARENT);
+            if (templateName.isEmpty()) return new ArrayList<>();
+            return collectRepos(templateName, ImageDef.loadAll());
         } catch (Exception e) {
             // Instance might not have parent metadata — that's fine
+            return new ArrayList<>();
+        }
+    }
+
+    /** The repos a template's chain declares, leaf first, for a caller that already resolved both. */
+    public static List<ImageDef.RepoEntry> collectRepos(String templateName, Map<String, ImageDef> defs) {
+        var repos = new ArrayList<ImageDef.RepoEntry>();
+        var current = defs.get(templateName);
+        while (current != null) {
+            repos.addAll(current.getRepos());
+            if (current.isRoot() || current.getParent() == null) break;
+            current = defs.get(current.getParent());
         }
         return repos;
     }

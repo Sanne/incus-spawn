@@ -89,9 +89,17 @@ public final class GuiPassthrough {
      * Clears devices, environment keys, metadata, and profile.d/tmpfiles.d scripts.
      */
     public static void removeGui(IncusClient incus, String name) {
+        removeGui(incus, name, incus.instanceMetadata(name));
+    }
+
+    /**
+     * As {@link #removeGui(IncusClient, String)}, against the instance's metadata as the caller
+     * already read it. Returns whether anything was written, so the caller knows its copy is stale.
+     */
+    public static boolean removeGui(IncusClient incus, String name, JsonNode instance) {
         // Every branch without --gui comes through here, and most templates never had GUI:
-        // one read then, instead of a device rewrite, a config write and two file pushes.
-        if (!hasGui(incus.instanceMetadata(name))) return;
+        // no request at all then, instead of a device rewrite, a config write and two file pushes.
+        if (!hasGui(instance)) return false;
 
         incus.devicesRemoveAll(name, java.util.List.of("gpu", "xdg-runtime"));
 
@@ -111,6 +119,7 @@ public final class GuiPassthrough {
         } catch (IOException | RuntimeException e) {
             // Best-effort: files may not exist if GUI was never fully configured
         }
+        return true;
     }
 
     /**

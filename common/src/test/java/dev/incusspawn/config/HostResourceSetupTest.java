@@ -245,18 +245,15 @@ class HostResourceSetupTest {
 
     @Test
     void branchingFromATemplateBuiltWithASystemMountFailsBeforeCopying() {
-        var incus = org.mockito.Mockito.mock(dev.incusspawn.incus.IncusClient.class);
-        org.mockito.Mockito.when(incus.configGet("tpl-old", dev.incusspawn.incus.Metadata.HOST_RESOURCES))
-                .thenReturn(HostResourceSetup.serialize(List.of(
-                        new ImageDef.HostResource("~/src", "/var/lib/foo", "readonly"))));
-        org.mockito.Mockito.when(incus.configGet("tpl-ok", dev.incusspawn.incus.Metadata.HOST_RESOURCES))
-                .thenReturn(HostResourceSetup.serialize(List.of(
-                        new ImageDef.HostResource("~/src", "/opt/foo", "readonly"))));
+        var old = HostResourceSetup.serialize(List.of(
+                new ImageDef.HostResource("~/src", "/var/lib/foo", "readonly")));
+        var ok = HostResourceSetup.serialize(List.of(
+                new ImageDef.HostResource("~/src", "/opt/foo", "readonly")));
 
         var e = assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
-                () -> HostResourceSetup.requireBranchableTemplate(incus, "tpl-old"));
+                () -> HostResourceSetup.requireBranchableTemplate("tpl-old", old));
         assertTrue(e.getMessage().contains("isx build tpl-old"), e.getMessage());
-        assertDoesNotThrow(() -> HostResourceSetup.requireBranchableTemplate(incus, "tpl-ok"));
+        assertDoesNotThrow(() -> HostResourceSetup.requireBranchableTemplate("tpl-ok", ok));
     }
 
     @Test

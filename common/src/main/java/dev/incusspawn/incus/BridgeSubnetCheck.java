@@ -106,7 +106,16 @@ public final class BridgeSubnetCheck {
 
     public static boolean warnIfConflict(IncusClient incus) {
         try {
-            var diagnostic = detectConflictDiagnostic(incus);
+            return warnIfConflict(resolveBridgeCidr(incus));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** As {@link #warnIfConflict(IncusClient)}, for the bridge's {@code ipv4.address} already read. */
+    public static boolean warnIfConflict(String bridgeCidr) {
+        try {
+            var diagnostic = detectConflictDiagnostic(bridgeCidr);
             if (diagnostic == null) return false;
             BuildOutput.warnBanner("Bridge subnet conflict detected:", diagnostic);
             return true;
@@ -117,7 +126,15 @@ public final class BridgeSubnetCheck {
 
     public static String detectConflictDiagnostic(IncusClient incus) {
         try {
-            var bridgeCidr = resolveBridgeCidr(incus);
+            return detectConflictDiagnostic(resolveBridgeCidr(incus));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** As {@link #detectConflictDiagnostic(IncusClient)}, for the bridge's {@code ipv4.address} already read. */
+    public static String detectConflictDiagnostic(String bridgeCidr) {
+        try {
             var routes = getHostRoutes();
             var conflict = findConflictingRoute(bridgeCidr, routes);
             if (conflict == null) return null;

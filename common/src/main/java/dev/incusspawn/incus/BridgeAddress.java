@@ -18,7 +18,12 @@ public record BridgeAddress(String gateway, CidrUtils.Cidr subnet) {
 
     /** The bridge's address; throws if it has none, since nothing can be addressed without it. */
     public static BridgeAddress require(IncusClient incus) {
-        return read(incus).orElseThrow(() ->
+        return require(incus.networkConfigGet(BRIDGE, "ipv4.address"));
+    }
+
+    /** As {@link #require(IncusClient)}, for the bridge's {@code ipv4.address} already read. */
+    public static BridgeAddress require(String cidr) {
+        return parse(cidr).orElseThrow(() ->
                 new IncusException("Bridge " + BRIDGE + " has no ipv4.address configured"));
     }
 

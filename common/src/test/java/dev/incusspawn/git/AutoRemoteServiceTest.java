@@ -72,8 +72,7 @@ class AutoRemoteServiceTest {
 
         // Mock IncusClient to return parent template
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("test-instance"), eq(Metadata.PARENT)))
-                .thenReturn("tpl-incus-spawn");
+        withParent(incus, "test-instance", "tpl-incus-spawn");
 
         // Call AutoRemoteService.addRemotes - this should add the remote despite origin not matching
         AutoRemoteService.addRemotes(incus, "test-instance");
@@ -119,7 +118,7 @@ class AutoRemoteServiceTest {
                 """);
 
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("my-fix"), eq(Metadata.PARENT))).thenReturn("tpl-cxf");
+        withParent(incus, "my-fix", "tpl-cxf");
 
         var messages = new ArrayList<String>();
         AutoRemoteService.addRemotes(incus, "my-fix", messages::add);
@@ -162,7 +161,7 @@ class AutoRemoteServiceTest {
                 """);
 
         var incus = mock(IncusClient.class);
-        when(incus.configGet(eq("my-branch"), eq(Metadata.PARENT))).thenReturn("tpl-cq");
+        withParent(incus, "my-branch", "tpl-cq");
 
         var messages = new ArrayList<String>();
         AutoRemoteService.addRemotes(incus, "my-branch", messages::add);
@@ -172,5 +171,12 @@ class AutoRemoteServiceTest {
         assertThat(remotes)
                 .contains("my-branch")
                 .contains("isx://my-branch/home/agentuser/camel-quarkus");
+    }
+
+    /** The instance's metadata, as Incus returns it, recording which template it came from. */
+    private static void withParent(IncusClient incus, String instance, String parent) {
+        var metadata = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        metadata.putObject("config").put(Metadata.PARENT, parent);
+        when(incus.instanceMetadata(eq(instance))).thenReturn(metadata);
     }
 }

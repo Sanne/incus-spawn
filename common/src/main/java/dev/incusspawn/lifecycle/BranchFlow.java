@@ -1,5 +1,6 @@
 package dev.incusspawn.lifecycle;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
@@ -8,6 +9,7 @@ import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
@@ -46,6 +48,9 @@ public final class BranchFlow {
     /** Tells the proxy to re-read the instance list; replaced by tests, which have no proxy. */
     static Runnable proxyRefresh = ProxyService::signalAccountRefresh;
 
+    /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
+    static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
+
     /**
      * What to branch. {@code kvm} null means "whatever the source template was built with";
      * null {@code cpu}/{@code memory}/{@code disk} mean the adaptive defaults.
@@ -73,12 +78,25 @@ public final class BranchFlow {
         }
     }
 
-    /** A request that passed {@link #preflight}: nothing has been created yet. */
+    /**
+     * A request that passed {@link #preflight}: nothing has been created yet.
+     *
+     * <p>It carries what preflight read, so {@link #create} -- which runs straight after -- does
+     * not ask Incus again: each round trip is paid in sequence before the user gets a prompt.
+     *
+     * @param template   the leaf template the source was built from ({@link Inherited#template})
+     * @param source     the source's instance metadata, read once ({@link IncusClient#instanceMetadata})
+     * @param bridgeCidr the bridge's {@code ipv4.address}, or null when preflight had no need to read it
+     */
     public record Preflight(Request request, Map<String, ImageDef> defs,
-                            Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins) {}
+                            Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
+                            String template, JsonNode source, String bridgeCidr) {}
 
-    /** An account selection and who chose each pin in it. */
-    /** @param template the leaf template the source was built from ({@link Inherited#template}) */
+    /**
+     * An account selection and who chose each pin in it.
+     *
+     * @param template the leaf template the source was built from ({@link Inherited#template})
+     */
     private record ResolvedAccounts(String template, Map<String, String> accounts,
                                     Map<String, AccountOrigin> origins) {}
 
@@ -121,6 +139,12 @@ public final class BranchFlow {
         if (incus.exists(req.name())) {
             throw new BranchException("an instance named '" + req.name() + "' already exists.");
         }
+        // The one read of the source: every check below, and create(), work from it.
+        var source = incus.instanceMetadata(req.source());
+        if (!source.isObject()) { // Incus answers a missing instance with "metadata": null
+            throw new BranchException("'" + req.source() + "' does not exist.");
+        }
+        var sourceConfig = source.path("config");
 
         // Resolve and validate the account selection before anything is created: a typo
         // should be reported now, not as a failed API call inside the container later.
@@ -129,30 +153,35 @@ public final class BranchFlow {
         var setups = AccountSelection.namespaceSetups(config, loader);
         ResolvedAccounts accounts;
         try {
-            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config, setups);
+            accounts = resolveAccountSelection(req.source(), sourceConfig, req.accountOverrides(), defs, config, setups);
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             throw new BranchException(e.getMessage());
         }
 
+        String bridgeCidr = null;
         if (req.networkMode() != NetworkMode.AIRGAP) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) {
+            if (!proxyHealthCheck.test(incus)) {
                 throw new BranchException("the isx proxy is not running; "
                         + "run 'isx doctor' to diagnose.", true);
             }
-            BridgeSubnetCheck.warnIfConflict(incus);
+            // Read once: create() configures the branch's address and its start diagnostics from it.
+            bridgeCidr = BridgeSubnetCheck.resolveBridgeCidr(incus);
+            BridgeSubnetCheck.warnIfConflict(bridgeCidr);
             FirewallDetector.warnIfNotRunning();
-            checkCaMismatch(incus, req.source());
+            checkCaMismatch(sourceConfig, req.source());
             var credError = missingCredentials(config, accounts.template(), accounts.accounts(), defs, loader);
             if (!credError.isEmpty()) throw new BranchException(credError);
         }
 
         try {
-            HostResourceSetup.requireBranchableTemplate(incus, req.source());
+            HostResourceSetup.requireBranchableTemplate(req.source(),
+                    IncusClient.configValue(sourceConfig, Metadata.HOST_RESOURCES));
         } catch (HostResourceSetup.ForbiddenMountTargetException e) {
             throw new BranchException(e.getMessage());
         }
-        return new Preflight(req, defs, accounts.accounts(), accounts.origins());
+        return new Preflight(req, defs, accounts.accounts(), accounts.origins(),
+                accounts.template(), source, bridgeCidr);
     }
 
     /**
@@ -165,10 +194,14 @@ public final class BranchFlow {
         var source = req.source();
         var defs = preflight.defs();
         var networkMode = req.networkMode();
+        // What preflight read of the source stands for it throughout: a template is not
+        // changed while it is branched from, and the copy is of the same type.
+        var sourceConfig = preflight.source().path("config");
+        boolean isVm = IncusClient.isVm(preflight.source());
 
         BuildOutput.branchHeader(name, source);
 
-        var copyPlan = incus.planCopy(source);
+        var copyPlan = incus.planCopy(preflight.source());
         if (!copyPlan.cow()) {
             BuildOutput.warn("This branch will be a full copy, not a CoW clone: "
                     + copyPlan.fullCopyReason() + ". Run 'isx doctor' for details.");
@@ -176,6 +209,10 @@ public final class BranchFlow {
         BuildOutput.stepStart("Copying from template...");
         incus.copy(source, name, copyPlan, req.extraConfig());
         BuildOutput.stepDone();
+
+        // The one read of the new branch until it starts. Re-read only after a step that wrote
+        // to it; configureBranch's own write is the last thing that reads it.
+        var branch = incus.instanceMetadata(name);
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
         // it may push files: any push lands well before the start (see prefetchAndStart).
@@ -186,34 +223,37 @@ public final class BranchFlow {
                 GuiPassthrough.removeGui(incus, name);
                 System.err.println("Continuing without GUI passthrough.");
             }
+            branch = incus.instanceMetadata(name);
         } else {
             // Clean up inherited GUI devices/env from incus copy
-            GuiPassthrough.removeGui(incus, name);
-            warnIfTemplateWantsGui(incus, source, defs);
+            if (GuiPassthrough.removeGui(incus, name, branch)) branch = incus.instanceMetadata(name);
+            warnIfTemplateWantsGui(sourceConfig, source, defs);
         }
 
-        boolean sourceIsVm = incus.isVm(source);
         String cpu;
         if (req.cpu() != null) {
             cpu = String.valueOf(req.cpu());
-        } else if (sourceIsVm) {
+        } else if (isVm) {
             cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
         } else {
             cpu = null;
         }
         var memory = req.memory() != null ? req.memory()
-                : sourceIsVm ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
+                : isVm ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
         var disk = req.disk() != null ? req.disk() : ResourceLimits.defaultDiskLimit();
 
         BuildOutput.step("Resource limits: " +
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
         var enableKvm = req.kvm() != null ? req.kvm()
-                : "kvm".equals(incus.configGet(source, Metadata.INSTANCE_MODE));
+                : "kvm".equals(IncusClient.configValue(sourceConfig, Metadata.INSTANCE_MODE));
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
-                preflight.accountOrigins(), enableKvm, req.extraConfig()));
+                preflight.accountOrigins(), enableKvm, req.extraConfig()), branch, preflight.bridgeCidr());
         announceAccountSelection(preflight.accounts());
-        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
+        // Past configureBranch's write, the snapshot still holds everything read from here on:
+        // keys the branch copied from its source, which that write does not touch.
+        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, branch,
+                GitRemoteUtils.collectRepos(preflight.template(), defs));
 
         // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
         if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
@@ -226,10 +266,12 @@ public final class BranchFlow {
 
         if (!req.start()) return null;
 
-        // Pre-fetch config while instance is stopped — the Incus daemon blocks
-        // API calls after start due to seccomp_notify lock contention.
-        boolean isVm = incus.isVm(name);
-        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
+        // Read nothing more once it starts: the Incus daemon blocks API calls after start due
+        // to seccomp_notify lock contention. The bridge is read here only if preflight did not.
+        var bridgeCidr = preflight.bridgeCidr() != null ? preflight.bridgeCidr()
+                : BridgeSubnetCheck.resolveBridgeCidr(incus);
+        var prefetched = InstanceLifecycle.runtimeConfig(branch.path("config"), bridgeCidr);
+        InstanceLifecycle.startShowingProgress(incus, name, isVm);
 
         if (isVm) {
             BuildOutput.stepStart("Waiting for VM agent...");
@@ -293,11 +335,11 @@ public final class BranchFlow {
      * {@code --account} override applied on top, validated and checked against what the source
      * was built for.
      */
-    private static ResolvedAccounts resolveAccountSelection(IncusClient incus, String source,
+    private static ResolvedAccounts resolveAccountSelection(String source, JsonNode sourceConfig,
                                                             List<String> accountOverrides,
                                                             Map<String, ImageDef> defs, SpawnConfig config,
                                                             Map<String, ToolSetup> setups) {
-        var inherited = inheritedAccounts(incus, source, defs);
+        var inherited = inheritedAccounts(source, sourceConfig, defs);
         var selection = new java.util.LinkedHashMap<>(inherited.accounts());
         var origins = new java.util.LinkedHashMap<>(inherited.origins());
 
@@ -311,7 +353,7 @@ public final class BranchFlow {
         // baked -- an --account that crosses auth modes is exactly as unhonourable here as it
         // is in 'isx account set', and must be refused the same way. Checked against the
         // source, whose env class the copy inherits.
-        var reason = AccountSelection.incompatibilityReason(config, incus, source, selection, setups);
+        var reason = AccountSelection.incompatibilityReason(config, sourceConfig, source, selection, setups);
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
         return new ResolvedAccounts(inherited.template(), selection, origins);
@@ -340,15 +382,20 @@ public final class BranchFlow {
      * branch dialog, which offers exactly this as the choice that changes nothing.
      */
     public static Inherited inheritedAccounts(IncusClient incus, String source, Map<String, ImageDef> defs) {
-        var profile = incus.configGet(source, Metadata.PROFILE);
-        var templateName = (profile != null && !profile.isEmpty()) ? profile : source;
+        return inheritedAccounts(source, incus.instanceMetadata(source).path("config"), defs);
+    }
+
+    /** As {@link #inheritedAccounts(IncusClient, String, Map)}, from the source's {@code config} already read. */
+    public static Inherited inheritedAccounts(String source, JsonNode sourceConfig, Map<String, ImageDef> defs) {
+        var profile = IncusClient.configValue(sourceConfig, Metadata.PROFILE);
+        var templateName = !profile.isEmpty() ? profile : source;
 
         var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
         var origins = new java.util.LinkedHashMap<String, AccountOrigin>();
         selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(templateName)));
 
-        var sourcePins = AccountSelection.read(incus, source);
-        var sourceOrigins = AccountSelection.readOrigins(incus, source);
+        var sourcePins = AccountSelection.fromConfig(sourceConfig);
+        var sourceOrigins = AccountSelection.originsFromConfig(sourceConfig);
         sourcePins.forEach((ns, account) -> {
             // A pin the source recorded no origin for, but which is what the template chooses,
             // is the template's: that is how every pre-origin template build stamped it.
@@ -375,9 +422,9 @@ public final class BranchFlow {
         proxyRefresh.run();
     }
 
-    private static void warnIfTemplateWantsGui(IncusClient incus, String source,
+    private static void warnIfTemplateWantsGui(JsonNode sourceConfig, String source,
                                                Map<String, ImageDef> defs) {
-        if ("true".equals(incus.configGet(source, Metadata.GUI_ENABLED))) {
+        if ("true".equals(IncusClient.configValue(sourceConfig, Metadata.GUI_ENABLED))) {
             System.err.println("Note: '" + source + "' has GUI passthrough — consider using --gui.");
             return;
         }
@@ -387,11 +434,11 @@ public final class BranchFlow {
         }
     }
 
-    private static void checkCaMismatch(IncusClient incus, String source) {
+    private static void checkCaMismatch(JsonNode sourceConfig, String source) {
         var status = CertificateAuthority.CaTrust.snapshot()
-                .classify(incus.configGet(source, Metadata.CA_FINGERPRINT));
+                .classify(IncusClient.configValue(sourceConfig, Metadata.CA_FINGERPRINT));
         if (status != CaStatus.FOREIGN && status != CaStatus.REPAIRABLE) return;
-        var profile = incus.configGet(source, Metadata.PROFILE);
+        var profile = IncusClient.configValue(sourceConfig, Metadata.PROFILE);
 
         // REPAIRABLE is let through, FOREIGN is not — and the difference is provenance, not
         // repairability: InstancePrep pushes the current CA into the instance on first use

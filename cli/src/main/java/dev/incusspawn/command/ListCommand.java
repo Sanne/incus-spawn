@@ -1705,13 +1705,15 @@ public class ListCommand extends BaseCommand {
             var config = SpawnConfig.load();
             // The TUI's own loader: a fresh one would re-read the tool definitions from disk.
             var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
-            var inherited = BranchFlow.inheritedAccounts(incus, source, imageDefs);
+            // One read of the source for both the pins and the identities it was built for.
+            var sourceConfig = incus.instanceMetadata(source).path("config");
+            var inherited = BranchFlow.inheritedAccounts(source, sourceConfig, imageDefs);
             branchInherited = inherited;
             // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
             var namespaces = dev.incusspawn.config.AccountSelection.templateNamespaces(
                     imageDefs.get(inherited.template()), imageDefs, toolDefLoader.allToolSetups()::get);
             rows = BranchAccountChoices.rowsFor(config, setups, namespaces, inherited,
-                    incus.configByPrefix(source, Metadata.ACCOUNT_IDENTITY_PREFIX));
+                    IncusClient.configByPrefix(sourceConfig, Metadata.ACCOUNT_IDENTITY_PREFIX));
         } catch (RuntimeException e) {
             rows = List.of();
         }

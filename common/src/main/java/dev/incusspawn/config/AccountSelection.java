@@ -189,9 +189,29 @@ public final class AccountSelection {
     /** As {@link #incompatibilityReason(SpawnConfig, IncusClient, String, Map)}, against known setups. */
     public static String incompatibilityReason(SpawnConfig config, IncusClient incus, String instance,
                                                Map<String, String> selection, Map<String, ToolSetup> setups) {
+        return incompatibilityReason(config,
+                () -> incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX), instance, selection, setups);
+    }
+
+    /**
+     * As {@link #incompatibilityReason(SpawnConfig, IncusClient, String, Map, Map)}, against the
+     * instance's {@code config} as the caller already read it.
+     */
+    public static String incompatibilityReason(SpawnConfig config, JsonNode instanceConfig, String instance,
+                                               Map<String, String> selection, Map<String, ToolSetup> setups) {
+        return incompatibilityReason(config,
+                () -> IncusClient.configByPrefix(instanceConfig, Metadata.ACCOUNT_IDENTITY_PREFIX),
+                instance, selection, setups);
+    }
+
+    // The baked identities are read only when some selected account bakes one.
+    private static String incompatibilityReason(SpawnConfig config,
+                                                java.util.function.Supplier<Map<String, String>> readBaked,
+                                                String instance, Map<String, String> selection,
+                                                Map<String, ToolSetup> setups) {
         var wanted = bakedIdentities(config, selection, setups);
         if (wanted.isEmpty()) return "";
-        var baked = incus.configByPrefix(instance, Metadata.ACCOUNT_IDENTITY_PREFIX);
+        var baked = readBaked.get();
         for (var entry : wanted.entrySet()) {
             var namespace = entry.getKey();
             var wasBaked = baked.get(namespace);

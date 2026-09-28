@@ -47,6 +47,7 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> shutdownIgnored = new ArrayList<>();
     private final List<String> stateActions = new ArrayList<>();
     private boolean refuseNextWrite;
+    private boolean diesOnStart;
     private int nextOperation = 1;
     private long nextPid = 1000;
 
@@ -173,6 +174,16 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** The mode a file was last pushed into an instance with, or null if it never was. */
     public String pushedMode(String instanceName, String path) {
         return pushedModes.get(instanceName + path);
+    }
+
+    /**
+     * Every instance stops again the moment it is started, as a container whose init fails does.
+     * The fake cannot answer exec, so this is what lets a test run a flow through its start: the
+     * readiness wait sees the instance die on its first poll rather than retrying for its timeout.
+     */
+    public FakeIncusDaemon diesOnStart() {
+        diesOnStart = true;
+        return this;
     }
 
     /** Every request so far, as {@code "METHOD path"}, in order. */
@@ -315,7 +326,7 @@ public final class FakeIncusDaemon implements IncusTransport {
             boolean force = request.path("force").asBoolean(false);
             stateActions.add(name + " " + action + (force ? " force" : ""));
             if (action.equals("stop") && !force && shutdownIgnored.contains(name)) return badRequest();
-            if (action.equals("start")) {
+            if (action.equals("start") && !diesOnStart) {
                 instance.put("status", "Running");
                 pids.put(name, nextPid++);
             } else {
@@ -404,6 +415,8 @@ public final class FakeIncusDaemon implements IncusTransport {
         body.put("type", "error");
         body.put("error", "Not Found");
         body.put("error_code", 404);
+        // As Incus sends it: present and null, so a missing instance reads as a NullNode.
+        body.putNull("metadata");
         return new RawResponse(404, bytes(body));
     }
 
