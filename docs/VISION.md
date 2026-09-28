@@ -19,9 +19,9 @@ isx's answer: **onboard agents the way you'd onboard a new teammate.** Each agen
 
 An agent should not act *as you*. It should have its own identity: its own scoped API token, its own GitHub identity, its own commit-signing key — held outside the environment it works in, so even a fully compromised agent cannot exfiltrate them, and every action is attributable to the specific agent that performed it.
 
-The MITM credential-isolation proxy already guarantees the "held outside" half: no key, token, or credential ever enters a container in any form. The per-container identity half is designed in [#271](https://github.com/Sanne/incus-spawn/issues/271): per-container proxy profiles (each instance mapped to its own tokens and keys), and SSH-agent-filtered commit signing where the container can request a signature for exactly one designated key — namespace-checked to git signing only, audited per request — without the private key ever leaving the host (or the hardware enclave).
+The MITM credential-isolation proxy already guarantees the "held outside" half: no key, token, or credential ever enters a container in any form. The per-container identity half is partly delivered: credential accounts let each instance be mapped to its own tokens (e.g. its own Claude API key and GitHub identity), chosen at branch time and resolved by the proxy from the caller's address. Still to come is [#271](https://github.com/Sanne/incus-spawn/issues/271): SSH-agent-filtered commit signing where the container can request a signature for exactly one designated key — namespace-checked to git signing only, audited per request — without the private key ever leaving the host (or the hardware enclave).
 
-The per-container profile mechanism (#271 Phase 1) is deliberately general: signing keys are the first consumer, but per-agent API keys, GitHub identities, and budgets all ride on the same foundation.
+The per-instance account mechanism is deliberately general: per-agent API keys and GitHub identities are its first consumers, and signing keys and budgets ride on the same foundation.
 
 ### 2. The proxy is the control plane
 
@@ -42,7 +42,7 @@ isx's primitives map one-to-one onto the dispatch-and-review workflow:
 |---|---|
 | Template | The standardized workstation issued to every agent |
 | Branch | One agent, one task, one disposable machine |
-| Per-container profile | The agent's identity: its token, its signing key, its budget |
+| Credential accounts | The agent's identity: its token, its signing key, its budget |
 | `isx://` remote | The deliverable — an immutable commit you review before merging |
 | Destroy | Offboarding: workstation, credentials, and remotes cleaned up atomically |
 
@@ -58,10 +58,10 @@ Local-first does not mean local-only. The same control plane — templates, iden
 
 Priorities, in order — each stage unblocks the next:
 
-1. **Stability and supportability.** Full-stack `isx doctor` and a redacted support bundle ([#321](https://github.com/Sanne/incus-spawn/issues/321)). A tool that promises safety must be dependable, and a project seeking adoption must be supportable without screen-sharing.
-2. **Identity foundation.** Per-container proxy profiles and filtered commit signing ([#271](https://github.com/Sanne/incus-spawn/issues/271)); also resolves per-container GitHub identities ([#281](https://github.com/Sanne/incus-spawn/issues/281)).
+1. **Stability and supportability** — *done.* Full-stack `isx doctor` and a redacted support bundle ([#321](https://github.com/Sanne/incus-spawn/issues/321)). A tool that promises safety must be dependable, and a project seeking adoption must be supportable without screen-sharing.
+2. **Identity foundation** — *in progress.* Per-instance credential accounts, covering API keys and GitHub identities, have shipped (resolving [#281](https://github.com/Sanne/incus-spawn/issues/281)); filtered commit signing ([#271](https://github.com/Sanne/incus-spawn/issues/271)) remains.
 3. **Observability.** Proxy-derived status, activity, and spend surfaced in the TUI — the first visible slice of mission control ([#322](https://github.com/Sanne/incus-spawn/issues/322)).
-4. **Dispatch and review.** Task dispatch onto fresh branches; diff review and accept/reject from the TUI.
+4. **Dispatch and review.** Task dispatch onto fresh branches; diff review and accept/reject from the TUI. Dispatch also has a second consumer: a coordinating agent on the host, through the experimental `isx mcp` server — create instances from user-approved templates, run commands in them, delegate tasks to the agents inside, and read back their diffs ([#859](https://github.com/Sanne/incus-spawn/issues/859); what a coordinator further needs, including proxy-derived activity per instance, in [#898](https://github.com/Sanne/incus-spawn/issues/898)).
 5. **Policy.** Per-agent domain sets, network modes, and budget caps as dispatch-time knobs.
 
 Throughout: the character defined in [CHARACTER.md](CHARACTER.md) holds — strong opinions on the core (security, fidelity, speed), flexibility at the edges (tools, templates, integrations).

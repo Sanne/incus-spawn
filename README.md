@@ -15,11 +15,11 @@ Runs on Linux and macOS, on your hardware. Your code and credentials never leave
 
 Agents are the headline, not the limit: the same disposable machines are ideal for triaging untrusted patches, reproducing bug reports, and testing on a clean system — anything you'd rather not run on your host.
 
-Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), powered by [Incus](https://linuxcontainers.org/incus/) system containers. *(isx was formerly known as incus-spawn.)*
+Built with [Quarkus](https://quarkus.io/) and [Tamboui](https://tamboui.dev/), powered by [Incus](https://linuxcontainers.org/incus/) system containers. Written in Java, compiled to native binaries with [GraalVM](https://www.graalvm.org/). *(isx was formerly known as incus-spawn.)*
 
 ## Quick Start
 
-Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not yet supported.
+Requires **Linux or macOS**. On Linux, [Incus](https://linuxcontainers.org/incus/) runs natively and `isx init` auto-installs it via your package manager. On macOS, `isx init` provisions a lightweight Linux VM automatically via [vfkit](https://github.com/crc-org/vfkit). The VM starts automatically when needed and can be managed with `isx vm start|stop|restart|status|resize|reset`. Windows is not supported.
 
 **macOS limitations**: GUI/audio passthrough (Wayland + PipeWire) and `overlay` mode for host-resources are Linux-only features. On macOS, use `readonly` or `copy` modes for host-resources instead.
 
@@ -926,7 +926,7 @@ All caches live under `~/.cache/incus-spawn/`. Nothing expires by age or size; a
 
 ## Roadmap
 
-isx is evolving from a container manager into **mission control for parallel coding agents**: per-agent identities and audited commit signing ([#271](https://github.com/Sanne/incus-spawn/issues/271)), proxy-derived monitoring of agent status and spend, task dispatch, and an in-TUI review lane ([#322](https://github.com/Sanne/incus-spawn/issues/322)). Local-first stays the core conviction — your hardware, your network, your repos. See [docs/VISION.md](docs/VISION.md) for the full direction.
+isx is evolving from a container manager into **mission control for parallel coding agents**. Per-instance identities have begun with [credential accounts](#credential-accounts) — each instance can use its own Claude and GitHub accounts; next come audited commit signing without exposing private keys ([#271](https://github.com/Sanne/incus-spawn/issues/271)), proxy-derived monitoring of agent status and spend, task dispatch, and an in-TUI review lane ([#322](https://github.com/Sanne/incus-spawn/issues/322)). Dispatch is also coming to agents themselves: an experimental `isx mcp` server lets an agent on your host create instances from templates you approved, run builds and tests in them, and delegate whole tasks to the agents inside ([#859](https://github.com/Sanne/incus-spawn/issues/859), [#898](https://github.com/Sanne/incus-spawn/issues/898)). Local-first stays the core conviction — your hardware, your network, your repos. See [docs/VISION.md](docs/VISION.md) for the full direction.
 
 ## Installation
 
