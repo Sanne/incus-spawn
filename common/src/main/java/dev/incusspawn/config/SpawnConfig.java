@@ -749,7 +749,12 @@ public class SpawnConfig {
      */
     public static String checkCredentials(ImageDef imageDef, java.util.Map<String, ImageDef> allDefs,
                                            java.util.function.Predicate<String> existsCheck) {
-        var config = load();
+        return checkCredentials(load(), imageDef, allDefs, existsCheck);
+    }
+
+    static String checkCredentials(SpawnConfig config, ImageDef imageDef,
+                                   java.util.Map<String, ImageDef> allDefs,
+                                   java.util.function.Predicate<String> existsCheck) {
         var missing = new java.util.LinkedHashSet<String>();
 
         // Collect tools from this image and any unbuilt ancestors (first occurrence wins,
@@ -765,30 +770,11 @@ public class SpawnConfig {
         }
         var tools = toolRefs.keySet();
 
-        if (tools.contains("claude")) {
-            if (!config.getClaude().hasAuth()) {
-                missing.add("Anthropic API key, OAuth token, or Vertex AI");
-            }
-        }
-        if (tools.contains("pi")) {
-            var piProvider = toolRefs.get("pi").getParams().getOrDefault("provider", "anthropic");
-            if ("openai".equals(piProvider)) {
-                if (!config.getOpenai().hasAuth()) {
-                    missing.add("OpenAI API key");
-                }
-            } else if ("vertex".equals(piProvider) || "google".equals(piProvider)) {
-                if (!config.getClaude().isUseVertex()) {
-                    missing.add("Vertex AI configuration");
-                }
-            } else {
-                if (!config.getClaude().hasAuth()) {
-                    missing.add("Anthropic API key, OAuth token, or Vertex AI");
-                }
-            }
-        }
         // Account-aware: a credential may live under the template's account rather than the flat
-        // field, and AccountResolver.value falls back to the flat one either way. A pin to an
-        // account that does not exist is reported below, so it does not also count as missing.
+        // field, and AccountResolver.value falls back to the flat one either way. Every check
+        // below answers for the account the template pins, never just the namespace default
+        // (#793). A pin to an account that does not exist is reported below, so it does not
+        // also count as missing.
         var selection = ImageDef.resolveAccounts(imageDef, allDefs);
         java.util.function.BiPredicate<String, String> configured = (namespace, key) -> {
             try {
@@ -798,6 +784,36 @@ public class SpawnConfig {
                 return true;
             }
         };
+        // Claude's credential is a typed account rather than one key, and pi's Vertex provider
+        // needs to know which kind it is, so it is asked of the account itself.
+        java.util.function.Predicate<java.util.function.Predicate<ClaudeAccount>> claudeAccount = usable -> {
+            try {
+                var account = config.getClaude().accountNamed(selection.get(ClaudeConfig.NAMESPACE));
+                return account != null && usable.test(account);
+            } catch (AccountResolver.UnknownAccountException e) {
+                return true;
+            }
+        };
+
+        if (tools.contains("claude") && !claudeAccount.test(a -> true)) {
+            missing.add("Anthropic API key, OAuth token, or Vertex AI");
+        }
+        if (tools.contains("pi")) {
+            var piProvider = toolRefs.get("pi").getParams().getOrDefault("provider", "anthropic");
+            if ("openai".equals(piProvider)) {
+                if (!configured.test("openai", "apiKey")) {
+                    missing.add("OpenAI API key");
+                }
+            } else if ("vertex".equals(piProvider) || "google".equals(piProvider)) {
+                if (!claudeAccount.test(a -> a.effectiveType() == ClaudeAccountType.VERTEX)) {
+                    missing.add("Vertex AI configuration");
+                }
+            } else {
+                if (!claudeAccount.test(a -> true)) {
+                    missing.add("Anthropic API key, OAuth token, or Vertex AI");
+                }
+            }
+        }
         if (tools.contains("gh") && !configured.test("github", "token")) {
             missing.add("GitHub token");
         }
@@ -813,7 +829,7 @@ public class SpawnConfig {
         // Reported on its own because it already explains itself, and because the fix is to
         // correct the template or add the account, not simply to run 'isx init'.
         try {
-            AccountSelection.validate(config, ImageDef.resolveAccounts(imageDef, allDefs));
+            AccountSelection.validate(config, selection);
         } catch (AccountResolver.UnknownAccountException e) {
             return e.getMessage();
         }
