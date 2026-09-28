@@ -179,4 +179,11 @@ class CredentialCheckTest {
         @Override public List<String> requires() { return List.of(requirement); }
         @Override public void install(dev.incusspawn.incus.Container c, Map<String, String> params) { }
     }
+
+    @Test
+    void piWithAnEmptyProviderTakesItsDefault() throws Exception {
+        // As the build resolves it: a null provider is the default, anthropic, not a crash.
+        var result = check("{}", "name: tpl-pi\ntools:\n  - pi: {provider: ~}\n");
+        assertTrue(result.contains("Anthropic API key"), result);
+    }
 }

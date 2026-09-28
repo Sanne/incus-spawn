@@ -114,7 +114,8 @@ public class PiSetup implements ToolSetup {
 
     /** Which credential pi spends for the {@code provider} in its resolved parameters. */
     private static Credential credentialFor(java.util.Map<String, String> resolvedParams) {
-        return switch (resolvedParams.getOrDefault("provider", DEFAULT_PROVIDER)) {
+        var provider = resolvedParams.get("provider");
+        return switch (provider != null ? provider : DEFAULT_PROVIDER) {
             case "anthropic" -> Credential.ANTHROPIC;
             case "vertex", "google" -> Credential.VERTEX;
             case "openai" -> Credential.OPENAI;

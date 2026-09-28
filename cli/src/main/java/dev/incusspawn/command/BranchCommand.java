@@ -1,6 +1,7 @@
 package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
+import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.ProjectConfig;
 import dev.incusspawn.incus.IncusClient;
@@ -91,8 +92,13 @@ public class BranchCommand extends BaseCommand {
         BranchFlow.Preflight preflight;
         InstanceLifecycle.RuntimeConfig prefetched;
         try {
-            preflight = BranchFlow.preflight(incus, request);
+            preflight = BranchFlow.preflight(incus, request, ImageDef.loadAll(), RuntimeServices.toolDefLoader());
             prefetched = BranchFlow.create(incus, preflight);
+        } catch (BranchFlow.SourceNotFoundException e) {
+            System.err.println(source == null
+                    ? "Error: auto-detected source '" + resolvedSource + "' does not exist."
+                    : "Error: " + e.getMessage());
+            return CommandResult.valueOf(1);
         } catch (BranchFlow.BranchException e) {
             if (!e.reported()) System.err.println("Error: " + e.getMessage());
             return CommandResult.valueOf(1);

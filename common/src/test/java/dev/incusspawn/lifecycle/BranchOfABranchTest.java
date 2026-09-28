@@ -28,7 +28,7 @@ class BranchOfABranchTest {
     void theCopyCarriesNoAddressUntilItClaimsItsOwn() {
         var daemon = new FakeIncusDaemon().container("dev-1", Map.of());
         var incus = daemon.client();
-        InstanceLifecycle.configureBranch(incus, "dev-1", settings("tpl"));
+        configure(incus, "dev-1", settings("tpl"));
         assertEquals("10.166.11.2", daemon.instance("dev-1").path("devices").path("eth0")
                 .path("ipv4.address").asText());
         // Readable by systemd-networkd whether or not the template shipped the file
@@ -53,7 +53,7 @@ class BranchOfABranchTest {
         assertEquals("10.166.11.2", daemon.instance("dev-1").path("config")
                 .path(Metadata.STATIC_IP).asText(), "the source keeps its own");
 
-        InstanceLifecycle.configureBranch(incus, "dev-2", settings("dev-1"));
+        configure(incus, "dev-2", settings("dev-1"));
         assertEquals("10.166.11.3", daemon.instance("dev-2").path("config")
                 .path(Metadata.STATIC_IP).asText());
     }
@@ -65,5 +65,11 @@ class BranchOfABranchTest {
         var copy = daemon.instance("dev-1");
         assertEquals(0, copy.path("devices").size(), "the profile's NIC stays the profile's");
         assertEquals("nic", copy.path("expanded_devices").path("eth0").path("type").asText());
+    }
+
+    /** Configure a branch as {@code BranchFlow} does: from one read of it, the bridge read here. */
+    private static void configure(dev.incusspawn.incus.IncusClient incus, String name,
+                                  InstanceLifecycle.BranchSettings settings) {
+        InstanceLifecycle.configureBranch(incus, name, settings, incus.instanceMetadata(name), null);
     }
 }

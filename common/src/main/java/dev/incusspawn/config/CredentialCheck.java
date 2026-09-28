@@ -40,12 +40,15 @@ public final class CredentialCheck {
     }
 
     /**
+     * As {@link #check(SpawnConfig, ImageDef, Map, Map, ToolDefLoader)}, from the tool setups a
+     * caller already resolved.
+     *
      * @param allTools every known tool, to follow {@code requires:}
      * @param served   the tools the proxy serves credentials for ({@link ToolProxyResolver#proxyToolSetups})
      */
-    static String check(SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
-                        Map<String, String> selection, Map<String, ToolSetup> allTools,
-                        Map<String, ToolSetup> served) {
+    public static String check(SpawnConfig config, ImageDef template, Map<String, ImageDef> allDefs,
+                               Map<String, String> selection, Map<String, ToolSetup> allTools,
+                               Map<String, ToolSetup> served) {
         // Leaf first, so a child's params win over an ancestor's for the same tool.
         var toolRefs = new LinkedHashMap<String, ToolDef.ToolRef>();
         for (var layer : ImageDef.chain(template, allDefs).reversed()) {
@@ -62,7 +65,10 @@ public final class CredentialCheck {
                 var tool = allTools.get(name);
                 if (tool == null) continue;
                 var ref = toolRefs.get(name);
-                Map<String, String> params = ref == null ? Map.of() : ref.getParams();
+                // Resolved as the build resolves them: defaults applied, a null value included.
+                // An invalid value is the build's to report, so what did resolve is used.
+                var params = dev.incusspawn.tool.ParameterResolver.resolve(tool.parameters(),
+                        ref == null ? Map.of() : ref.getParams()).resolvedValues();
                 for (var namespace : tool.credentialNamespaces(params)) {
                     var owner = owners.get(namespace);
                     if (owner != null) secretsOf.add(owner.name());

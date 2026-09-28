@@ -63,40 +63,32 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
-    void prefetchingRuntimeConfig() {
-        // One instance read for every config key, plus the bridge lookup.
+    void theRuntimeConfigAsksIncusNothing() {
+        // Read from the branch's config as create() already holds it: nothing more is asked
+        // between the one write and the start.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.WORKDIR, "/home/agentuser/project",
                 Metadata.SHELL_COMMAND, "zsh",
                 "user.incus-spawn.ssh-setup", "done"));
-        var config = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
-        assertBudget(2, daemon, "prefetchRuntimeConfig");
+        var instanceConfig = daemon.instance(NAME).path("config");
+        var config = InstanceLifecycle.runtimeConfig(instanceConfig, "a subnet conflict");
+        assertBudget(0, daemon, "runtimeConfig");
 
         assertEquals("/home/agentuser/project", config.workdir());
         assertEquals("zsh", config.shellCommand());
         assertEquals("", config.buildSourceJson());
         assertTrue(config.hasSshKeys());
+        assertEquals("a subnet conflict", config.subnetDiagnostic());
     }
 
     @Test
-    void prefetchingRuntimeConfigOfAMissingInstanceFails() {
-        var daemon = new FakeIncusDaemon();
-        assertThrows(IncusException.class,
-                () -> InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME));
-    }
-
-    @Test
-    void branchStartPushesNothingIntoTheStoppedInstance() {
+    void theStartIsTheStateChangeAndItsWait() {
         // Incus stops its forkfile file server on start, and one still finishing a push makes
-        // the start wait a full second. The config read, the bridge lookup, then the start.
+        // the start wait a full second: nothing is pushed here.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.prefetchAndStart(daemon.client(), NAME, false);
-        assertBudget(4, daemon, "prefetchAndStart");
-
-        var requests = daemon.requests();
-        assertTrue(requests.stream().noneMatch(r -> r.contains("/files")),
-                () -> "nothing may be pushed between prefetch and start: " + requests);
-        assertEquals("PUT /1.0/instances/" + NAME + "/state", requests.get(requests.size() - 2));
+        InstanceLifecycle.startShowingProgress(daemon.client(), NAME, false);
+        assertBudget(2, daemon, "startShowingProgress");
+        assertTrue(daemon.requests().stream().noneMatch(r -> r.contains("/files")));
     }
 
     @Test
@@ -143,7 +135,7 @@ class InstanceLifecycleRequestBudgetTest {
         // PATCH: the instance read, one bridge read (gateway, subnet and prefix length together),
         // the listing that finds free addresses, and the push of the static network config.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of("limits.cpu", "4"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertBudget(5, daemon, "configureBranch");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
@@ -169,7 +161,7 @@ class InstanceLifecycleRequestBudgetTest {
         // A VM gets no static network config pushed before start: one request fewer than a
         // container.
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped", Map.of());
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertBudget(4, daemon, "configureBranch (VM)");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
         assertEquals(InstanceLifecycle.FREE_PAGE_REPORTING_CONF, daemon.instance(NAME)
@@ -181,7 +173,7 @@ class InstanceLifecycleRequestBudgetTest {
         var custom = "[machine]\nfoo = \"bar\"\n";
         var daemon = new FakeIncusDaemon().instance(NAME, "virtual-machine", "Stopped",
                 Map.of(InstanceLifecycle.RAW_QEMU_CONF, custom));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertEquals(custom, daemon.instance(NAME)
                 .path("config").path(InstanceLifecycle.RAW_QEMU_CONF).asText());
     }
@@ -189,7 +181,7 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void aContainerBranchGetsNoRawQemuConf() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertFalse(daemon.instance(NAME).path("config").has(InstanceLifecycle.RAW_QEMU_CONF));
     }
 
@@ -202,7 +194,7 @@ class InstanceLifecycleRequestBudgetTest {
                         Metadata.accountKey("github"), "work",
                         Metadata.accountKey("claude"), "personal"))
                 .device(NAME, "kvm", Map.of("type", "unix-char", "source", "/dev/kvm"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME,
+        configure(daemon.client(), NAME,
                 branch(NetworkMode.PROXY_ONLY, Map.of("github", "oss")));
         assertEquals(List.of("PUT /1.0/instances/" + NAME), writes(daemon));
 
@@ -239,7 +231,7 @@ class InstanceLifecycleRequestBudgetTest {
     @Test
     void extraConfigRidesInTheBranchsOneWrite() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, new InstanceLifecycle.BranchSettings(
+        configure(daemon.client(), NAME, new InstanceLifecycle.BranchSettings(
                 null, "8GiB", "20GiB", NetworkMode.FULL, "tpl-java", Map.of(), Map.of(), false,
                 Map.of(OWNER, "someone", Metadata.PREFIX + "note", "x")));
         assertBudget(5, daemon, "configureBranch with extra config");
@@ -253,7 +245,7 @@ class InstanceLifecycleRequestBudgetTest {
     void anEmptyAccountSelectionKeepsTheCopiedPins() {
         // A caller passing no selection must not wipe what the copy carried.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(Metadata.accountKey("github"), "work"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertEquals("work", daemon.instance(NAME).path("config")
                 .path(Metadata.accountKey("github")).asText());
     }
@@ -279,7 +271,7 @@ class InstanceLifecycleRequestBudgetTest {
         // #813: override-then-remove only dropped the override, and the default profile's eth0
         // came back. A type: none device of the same name is what masks it.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
         assertBudget(2, daemon, "configureBranch (airgap)");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
@@ -302,7 +294,7 @@ class InstanceLifecycleRequestBudgetTest {
                 .device(NAME, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0",
                         "ipv4.address", "10.166.11.7", "security.ipv4_filtering", "true"))
                 .device(NAME, "eth1", Map.of("type", "nic", "nictype", "macvlan", "parent", "enp1s0"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.AIRGAP, Map.of()));
 
         assertEquals(List.of(), attachedNics(daemon));
         var config = daemon.instance(NAME).path("config");
@@ -320,7 +312,7 @@ class InstanceLifecycleRequestBudgetTest {
                 .container(NAME, Map.of(Metadata.NETWORK_MODE, NetworkMode.AIRGAP.name()))
                 .device(NAME, "eth0", Map.of("type", "none"))
                 .device(NAME, "cache", Map.of("type", "none"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertBudget(6, daemon, "configureBranch (full, from an airgapped instance)");
         assertEquals(List.of("PATCH /1.0/instances/" + NAME), writes(daemon));
 
@@ -338,7 +330,7 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.NETWORK_MODE, NetworkMode.PROXY_ONLY.name(),
                 Metadata.PROXY_GATEWAY, "10.166.11.1"));
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         var config = daemon.instance(NAME).path("config");
         assertFalse(config.has(Metadata.NETWORK_MODE));
         assertFalse(config.has(Metadata.PROXY_GATEWAY));
@@ -348,7 +340,7 @@ class InstanceLifecycleRequestBudgetTest {
     void refusedIpFilteringStillPinsTheAddress() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())
                 .refuseWritesContaining("security.ipv4_filtering");
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         assertEquals(3, writes(daemon).size(),
                 "the refused write, one without filtering, then filtering alone, refused again");
 
@@ -364,7 +356,7 @@ class InstanceLifecycleRequestBudgetTest {
         // A first write refused for a reason unrelated to filtering must not leave the branch
         // without spoofing protection: the proxy identifies callers by source address.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of()).refuseNextWrite();
-        InstanceLifecycle.configureBranch(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
+        configure(daemon.client(), NAME, branch(NetworkMode.FULL, Map.of()));
         var nic = daemon.instance(NAME).path("devices").path("eth0");
         assertEquals("10.166.11.2", nic.path("ipv4.address").asText());
         assertEquals("true", nic.path("security.ipv4_filtering").asText());
@@ -374,7 +366,7 @@ class InstanceLifecycleRequestBudgetTest {
     void anyOtherRefusalFailsTheBranch() {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of())
                 .refuseWritesContaining("limits.memory");
-        assertThrows(IncusException.class, () -> InstanceLifecycle.configureBranch(
+        assertThrows(IncusException.class, () -> configure(
                 daemon.client(), NAME, branch(NetworkMode.FULL, Map.of())));
         assertFalse(daemon.instance(NAME).path("config").has(Metadata.STATIC_IP));
     }
@@ -422,5 +414,11 @@ class InstanceLifecycleRequestBudgetTest {
             InstanceLifecycle.findStaleSubnetInstances(daemon.client());
             assertBudget(2, daemon, "findStaleSubnetInstances with " + n + " instance(s)");
         }
+    }
+
+    /** Configure a branch as {@code BranchFlow} does: from one read of it, the bridge read here. */
+    private static void configure(dev.incusspawn.incus.IncusClient incus, String name,
+                                  InstanceLifecycle.BranchSettings settings) {
+        InstanceLifecycle.configureBranch(incus, name, settings, incus.instanceMetadata(name), null);
     }
 }

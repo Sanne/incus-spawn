@@ -295,6 +295,12 @@ class ProxyHealthCheckTest {
             assertTrue(ProxyHealthCheck.checkOrWarn(incus, "127.0.0.2"));
             assertEquals(1, asked.get(), "one /health request for the check and the drift check together");
             verifyNoInteractions(incus);
+
+            // A cached status may predate a restart another isx process made (#798): the drift
+            // check never judges from it, only from what its own caller just fetched.
+            asked.set(0);
+            assertTrue(ProxyHealthCheck.checkOrWarn(incus, "127.0.0.2"));
+            assertEquals(1, asked.get(), "the status comes from the cache, the drift check asks afresh");
         } finally {
             server.stop(0);
         }

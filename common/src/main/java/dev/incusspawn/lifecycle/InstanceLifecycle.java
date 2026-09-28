@@ -85,15 +85,10 @@ public final class InstanceLifecycle {
      * <p>Airgap masks every NIC with {@code type: none} in that same write, which is the only way
      * to take a profile's NIC away from one instance (#813). Branching with network from an
      * airgapped instance overwrites those masks with the profile's NICs, in the same write too.
-     */
-    public static void configureBranch(IncusClient incus, String name, BranchSettings settings) {
-        configureBranch(incus, name, settings, incus.instanceMetadata(name), null);
-    }
-
-    /**
-     * As {@link #configureBranch(IncusClient, String, BranchSettings)}, against what the caller
-     * already read: the new instance's metadata, and the bridge's {@code ipv4.address} (null to
-     * read it here, if the network mode needs it).
+     *
+     * @param instance   the new instance's metadata, as the caller read it after the copy
+     * @param bridgeCidr the bridge's {@code ipv4.address} as already read, or null to read it
+     *                   here if the network mode needs it
      */
     public static void configureBranch(IncusClient incus, String name, BranchSettings settings,
                                        JsonNode instance, String bridgeCidr) {
@@ -833,23 +828,13 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Read what {@link #setupRuntime} needs while the new instance is still stopped, then
-     * start it. Used by {@link BranchFlow}, behind both {@code isx branch} and the TUI.
+     * Start a stopped instance as one progress step. Used by {@link BranchFlow}, behind both
+     * {@code isx branch} and the TUI, once it has what {@link #setupRuntime} needs
+     * ({@link #runtimeConfig}).
      *
-     * <p>Nothing is pushed into the instance between the two: Incus stops its forkfile file
+     * <p>Nothing may be pushed into the instance just before this: Incus stops its forkfile file
      * server on start, and one still finishing a push makes the start wait a full second.
      * Anything the instance needs goes into the post-start setup script instead.
-     */
-    public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, boolean isVm) {
-        var prefetched = prefetchRuntimeConfig(incus, name);
-        startShowingProgress(incus, name, isVm);
-        return prefetched;
-    }
-
-    /**
-     * Start a stopped instance as one progress step. For a caller that read its
-     * {@link RuntimeConfig} already ({@link #runtimeConfig}); the same rule holds -- nothing may
-     * be pushed into the instance between that read and this.
      */
     public static void startShowingProgress(IncusClient incus, String name, boolean isVm) {
         BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
@@ -858,25 +843,13 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Pre-fetch instance metadata that setupRuntime needs, while the container
-     * is still stopped. Reading config from a stopped container avoids lock
-     * contention with the seccomp_notify handler that activates on start.
+     * What {@link #setupRuntime} needs, from the instance's {@code config} as read while it was
+     * still stopped: once it starts, the seccomp_notify handler contends with API reads.
+     *
+     * @param subnetDiagnostic a bridge subnet conflict to explain a DNS failure with, or null
      */
-    public static RuntimeConfig prefetchRuntimeConfig(IncusClient incus, String name) {
-        // One read for all four keys: configGet is a full instance GET per key.
-        return runtimeConfig(incus.configByPrefix(name, ""), BridgeSubnetCheck.detectConflictDiagnostic(incus));
-    }
-
-    /**
-     * As {@link #prefetchRuntimeConfig}, from what a caller already read: the instance's
-     * {@code config} and the bridge's {@code ipv4.address}.
-     */
-    public static RuntimeConfig runtimeConfig(JsonNode instanceConfig, String bridgeCidr) {
-        return runtimeConfig(IncusClient.configByPrefix(instanceConfig, ""),
-                BridgeSubnetCheck.detectConflictDiagnostic(bridgeCidr));
-    }
-
-    private static RuntimeConfig runtimeConfig(Map<String, String> config, String subnetDiag) {
+    public static RuntimeConfig runtimeConfig(JsonNode instanceConfig, String subnetDiagnostic) {
+        var config = IncusClient.configByPrefix(instanceConfig, "");
         var buildSourceJson = config.getOrDefault(Metadata.BUILD_SOURCE, "");
         var hasSshKeys = !config.getOrDefault("user.incus-spawn.ssh-setup", "").isEmpty()
                 || hasSshdTool(buildSourceJson);
@@ -884,7 +857,7 @@ public final class InstanceLifecycle {
         var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiagnostic, terminfo);
     }
 
     private static String captureHostTerminfo() {

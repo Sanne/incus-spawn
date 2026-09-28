@@ -20,6 +20,7 @@ import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
 import dev.incusspawn.proxy.ProxyService;
+import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
 import dev.incusspawn.util.BuildOutput;
@@ -27,6 +28,7 @@ import dev.incusspawn.util.BuildOutput;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Creating a branch from a source instance, without a terminal: everything {@code isx branch}
@@ -93,10 +95,11 @@ public final class BranchFlow {
      * @param template   the leaf template the source was built from ({@link Inherited#template})
      * @param source     the source's instance metadata, read once ({@link IncusClient#instanceMetadata})
      * @param bridgeCidr the bridge's {@code ipv4.address}, or null when preflight had no need to read it
+     * @param subnetDiagnostic the bridge subnet conflict found, "" for none, or null when not looked for
      */
     public record Preflight(Request request, Map<String, ImageDef> defs,
                             Map<String, String> accounts, Map<String, AccountOrigin> accountOrigins,
-                            String template, JsonNode source, String bridgeCidr) {}
+                            String template, JsonNode source, String bridgeCidr, String subnetDiagnostic) {}
 
     /**
      * An account selection and who chose each pin in it.
@@ -111,7 +114,7 @@ public final class BranchFlow {
      * proxy's own diagnosis), so a CLI caller should not print it again; the message is always
      * a complete sentence for callers that did not see that output.
      */
-    public static final class BranchException extends RuntimeException {
+    public static class BranchException extends RuntimeException {
         private final boolean reported;
 
         public BranchException(String message) {
@@ -125,6 +128,13 @@ public final class BranchFlow {
 
         public boolean reported() {
             return reported;
+        }
+    }
+
+    /** The source named does not exist -- a refusal a caller may word for how it chose the source. */
+    public static final class SourceNotFoundException extends BranchException {
+        public SourceNotFoundException(String source) {
+            super("source instance '" + source + "' does not exist.");
         }
     }
 
@@ -142,30 +152,24 @@ public final class BranchFlow {
      * that must not see all of them (e.g. none from the working directory's project).
      */
     public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs) {
+        return preflight(incus, req, defs, new ToolDefLoader());
+    }
+
+    /**
+     * As {@link #preflight(IncusClient, Request, Map)}, with the caller's tool definitions, so
+     * they are not scanned from disk again.
+     */
+    public static Preflight preflight(IncusClient incus, Request req, Map<String, ImageDef> defs,
+                                      ToolDefLoader loader) {
         if (incus.exists(req.name())) {
             throw new BranchException("an instance named '" + req.name() + "' already exists.");
         }
-        // The one read of the source: every check below, and create(), work from it.
-        var source = incus.instanceMetadata(req.source());
-        if (!source.isObject()) { // Incus answers a missing instance with "metadata": null
-            throw new BranchException("source instance '" + req.source() + "' does not exist.");
-        }
-        var sourceConfig = source.path("config");
-
-        // Resolve and validate the account selection before anything is created: a typo
-        // should be reported now, not as a failed API call inside the container later.
         var config = SpawnConfig.load();
-        var loader = new ToolDefLoader();
-        var setups = AccountSelection.namespaceSetups(config, loader);
-        ResolvedAccounts accounts;
-        try {
-            accounts = resolveAccountSelection(req.source(), sourceConfig, req.accountOverrides(), defs, config, setups);
-        } catch (AccountSelection.InvalidSelectionException
-                 | AccountResolver.UnknownAccountException e) {
-            throw new BranchException(e.getMessage());
-        }
+        var served = ToolProxyResolver.proxyToolSetups(config, loader);
+        var setups = AccountSelection.byNamespace(served);
 
         String bridgeCidr = null;
+        String subnetDiagnostic = null;
         if (req.networkMode() != NetworkMode.AIRGAP) {
             // Read once: the proxy's health address, and in create() the branch's own address,
             // the proxy refresh and the start diagnostics, all come from it.
@@ -174,11 +178,36 @@ public final class BranchFlow {
                 throw new BranchException("the isx proxy is not running; "
                         + "run 'isx doctor' to diagnose.", true);
             }
-            BridgeSubnetCheck.warnIfConflict(bridgeCidr);
+            subnetDiagnostic = Objects.requireNonNullElse(BridgeSubnetCheck.warnIfConflict(bridgeCidr), "");
             FirewallDetector.warnIfNotRunning();
+        }
+
+        // The one read of the source: every check below, and create(), work from it. After the
+        // proxy check, which may wait a minute on a restart, so create() gets no older a copy.
+        var source = incus.instanceMetadata(req.source());
+        if (!source.isObject()) { // Incus answers a missing instance with "metadata": null
+            throw new SourceNotFoundException(req.source());
+        }
+        var sourceConfig = source.path("config");
+
+        // Resolve and validate the account selection before anything is created: a typo
+        // should be reported now, not as a failed API call inside the container later.
+        ResolvedAccounts accounts;
+        try {
+            accounts = resolveAccountSelection(req.source(), sourceConfig, req.accountOverrides(), defs, config, setups);
+        } catch (AccountSelection.InvalidSelectionException
+                 | AccountResolver.UnknownAccountException e) {
+            throw new BranchException(e.getMessage());
+        }
+
+        if (req.networkMode() != NetworkMode.AIRGAP) {
             checkCaMismatch(sourceConfig, req.source());
-            var credError = missingCredentials(config, accounts.template(), accounts.accounts(), defs, loader);
-            if (!credError.isEmpty()) throw new BranchException(credError);
+            var template = defs.get(accounts.template());
+            if (template != null) {
+                var credError = CredentialCheck.check(config, template, defs, accounts.accounts(),
+                        loader.allToolSetups(), served);
+                if (!credError.isEmpty()) throw new BranchException(credError);
+            }
         }
 
         try {
@@ -188,7 +217,7 @@ public final class BranchFlow {
             throw new BranchException(e.getMessage());
         }
         return new Preflight(req, defs, accounts.accounts(), accounts.origins(),
-                accounts.template(), source, bridgeCidr);
+                accounts.template(), source, bridgeCidr, subnetDiagnostic);
     }
 
     /**
@@ -224,7 +253,7 @@ public final class BranchFlow {
         var branch = incus.instanceMetadata(name);
 
         // Configure GUI before start so environment.* keys are visible to init. First, because
-        // it may push files: any push lands well before the start (see prefetchAndStart).
+        // it may push files: any push lands well before the start (see InstanceLifecycle.startShowingProgress).
         if (req.gui()) {
             if (GuiPassthrough.configureGui(incus, name)) {
                 incus.configSet(name, Metadata.GUI_ENABLED, "true");
@@ -258,9 +287,7 @@ public final class BranchFlow {
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
                 preflight.accountOrigins(), enableKvm, req.extraConfig()), branch, bridgeCidr);
-        var gateway = gatewayOf(bridgeCidr);
-        announceAccountSelection(preflight.accounts(), gateway != null
-                ? ProxyHealthCheck.healthAddress(gateway) : ProxyHealthCheck.healthAddress(incus));
+        announceAccountSelection(preflight.accounts(), healthAddress(incus, bridgeCidr));
         // Past configureBranch's write, the snapshot still holds everything read from here on:
         // keys the branch copied from its source, which that write does not touch.
         InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, branch,
@@ -279,7 +306,10 @@ public final class BranchFlow {
 
         // Read nothing more once it starts: the Incus daemon blocks API calls after start due
         // to seccomp_notify lock contention.
-        var prefetched = InstanceLifecycle.runtimeConfig(branch.path("config"), bridgeCidr);
+        var subnetDiagnostic = preflight.subnetDiagnostic() != null
+                ? preflight.subnetDiagnostic() : BridgeSubnetCheck.detectConflictDiagnostic(bridgeCidr);
+        var prefetched = InstanceLifecycle.runtimeConfig(branch.path("config"),
+                subnetDiagnostic == null || subnetDiagnostic.isEmpty() ? null : subnetDiagnostic);
         InstanceLifecycle.startShowingProgress(incus, name, isVm);
 
         if (isVm) {
@@ -447,6 +477,21 @@ public final class BranchFlow {
     private static String readBridgeCidr(IncusClient incus) {
         try {
             return BridgeSubnetCheck.resolveBridgeCidr(incus);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Where to ask the proxy for its PID, or null when that cannot be found out -- the refresh then
+     * falls back to finding the proxy by its port. Never throws: by the time it is asked, the
+     * branch exists, and a refresh that cannot run must not leave it half configured.
+     */
+    private static String healthAddress(IncusClient incus, String bridgeCidr) {
+        var gateway = gatewayOf(bridgeCidr);
+        if (gateway != null) return ProxyHealthCheck.healthAddress(gateway);
+        try {
+            return ProxyHealthCheck.healthAddress(incus);
         } catch (RuntimeException e) {
             return null;
         }

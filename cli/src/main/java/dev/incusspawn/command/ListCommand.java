@@ -1670,10 +1670,12 @@ public class ListCommand extends BaseCommand {
         branchSourceName = sourceName;
         branchNameInput = new TextInputState(suggestBranchName(sourceName));
         var def = imageDefs.get(sourceName);
+        // One read of the source on the event thread, for every field that depends on it.
+        var sourceConfig = incus.instanceMetadata(sourceName).path("config");
         branchGuiCheck = new CheckboxState((def != null && def.isGui())
-                || "true".equals(incus.configGet(sourceName, Metadata.GUI_ENABLED)));
+                || "true".equals(IncusClient.configValue(sourceConfig, Metadata.GUI_ENABLED)));
         branchKvmCheck = new CheckboxState((def != null && def.isKvm())
-                || "kvm".equals(incus.configGet(sourceName, Metadata.INSTANCE_MODE)));
+                || "kvm".equals(IncusClient.configValue(sourceConfig, Metadata.INSTANCE_MODE)));
         branchNetworkModes = NetworkMode.values();
         branchNetworkSelect = new SelectState(java.util.Arrays.stream(branchNetworkModes)
                 .map(NetworkMode::label).toArray(String[]::new));
@@ -1685,30 +1687,33 @@ public class ListCommand extends BaseCommand {
         vmCpuInput = new TextInputState(String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2)));
         vmMemoryInput = new TextInputState(adaptiveMemory);
         vmDiskInput = new TextInputState(adaptiveDisk);
-        branchAccounts = branchAccountChoicesFor(sourceName);
+        try {
+            branchInherited = BranchFlow.inheritedAccounts(sourceName, sourceConfig, imageDefs);
+        } catch (RuntimeException e) {
+            branchInherited = null;
+        }
+        branchAccounts = branchAccountChoicesFor(branchInherited, sourceConfig);
         branchFieldIndex = 0;
         mode = Mode.BRANCH;
     }
 
-    /**
-     * The account rows for a branch of {@code source}: what it would inherit, and every account
-     * each credential its template's tools use could be pinned to instead. Best effort -- the
-     * dialog is still worth opening without them, and {@code BranchFlow} validates what it gets.
-     */
     /** What the open branch dialog's source inherits, or null when it could not be read. */
     private BranchFlow.Inherited branchInherited;
 
-    private BranchAccountChoices branchAccountChoicesFor(String source) {
+    /**
+     * The account rows for a branch of a source that inherits {@code inherited} (null: none could
+     * be read): what it would inherit, and every account each credential its template's tools use
+     * could be pinned to instead. Best effort -- the dialog is still worth opening without them,
+     * and {@code BranchFlow} validates what it gets.
+     */
+    private BranchAccountChoices branchAccountChoicesFor(BranchFlow.Inherited inherited,
+                                                         com.fasterxml.jackson.databind.JsonNode sourceConfig) {
         List<BranchAccountChoices.Row> rows;
-        branchInherited = null;
         try {
+            if (inherited == null) return new BranchAccountChoices(modal, theme, List.of());
             var config = SpawnConfig.load();
             // The TUI's own loader: a fresh one would re-read the tool definitions from disk.
             var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
-            // One read of the source for both the pins and the identities it was built for.
-            var sourceConfig = incus.instanceMetadata(source).path("config");
-            var inherited = BranchFlow.inheritedAccounts(source, sourceConfig, imageDefs);
-            branchInherited = inherited;
             // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
             var namespaces = dev.incusspawn.config.AccountSelection.templateNamespaces(
                     imageDefs.get(inherited.template()), imageDefs, toolDefLoader.allToolSetups()::get);
@@ -5344,7 +5349,7 @@ public class ListCommand extends BaseCommand {
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
                 cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
 
-        var prefetched = BranchFlow.create(incus, BranchFlow.preflight(incus, request, imageDefs));
+        var prefetched = BranchFlow.create(incus, BranchFlow.preflight(incus, request, imageDefs, toolDefLoader));
 
         BuildOutput.success(name + " is ready.");
         var shellPrep = prefetched.toShellPrep();

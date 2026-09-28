@@ -91,11 +91,22 @@ public final class ProxyHealthCheck {
      * (null to read it here), since finding it is a request to Incus.
      */
     public static ProxyStatus check(IncusClient incus, String gatewayIp) {
+        return checked(incus, gatewayIp).status();
+    }
+
+    /**
+     * A status, with the {@code /health} this call fetched to decide it -- null when the answer
+     * came from the cache or the proxy did not answer. Only a caller's own fetch may stand in
+     * for a later one: a cached answer may predate a restart some other isx process made (#798).
+     */
+    private record Checked(ProxyStatus status, ProxyInfo fetched) {}
+
+    private static Checked checked(IncusClient incus, String gatewayIp) {
         var entry = freshEntry(incus);
-        if (entry != null) return entry.status;
+        if (entry != null) return new Checked(entry.status(), null);
         entry = checkUncached(incus, gatewayIp);
         cache = entry;
-        return entry.status;
+        return new Checked(entry.status(), entry.info());
     }
 
     private static CacheEntry freshEntry(IncusClient incus) {
@@ -336,21 +347,7 @@ public final class ProxyHealthCheck {
     }
 
     public static void requireProxy(IncusClient incus) {
-        var status = check(incus);
-        if (status == ProxyStatus.RUNNING) {
-            warnIfDrifted(incus);
-            return;
-        }
-        if (status == ProxyStatus.WAITING_FOR_DNS) {
-            if (waitForDns(incus)) { warnIfDrifted(incus); return; }
-            System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
-            System.exit(1);
-        }
-        if (tryAutoRestart(incus)) {
-            if (waitForDns(incus)) { warnIfDrifted(incus); return; }
-        }
-        System.err.println(formatError(check(incus)));
-        System.exit(1);
+        if (!ensureRunning(incus, null)) System.exit(1);
     }
 
     public static boolean checkOrWarn(IncusClient incus) {
@@ -359,20 +356,35 @@ public final class ProxyHealthCheck {
 
     /** As {@link #checkOrWarn(IncusClient)}, given the bridge gateway when the caller already read it. */
     public static boolean checkOrWarn(IncusClient incus, String gatewayIp) {
-        var status = check(incus, gatewayIp);
-        if (status == ProxyStatus.RUNNING) {
-            warnIfDrifted(incus);
+        return ensureRunning(incus, gatewayIp);
+    }
+
+    /**
+     * Whether the proxy runs, restarting it or waiting for its DNS as needed, and warning about
+     * drift once it does. Every step works from {@code gatewayIp} when given, rather than
+     * looking the bridge up again. On failure the reason has been printed.
+     */
+    private static boolean ensureRunning(IncusClient incus, String gatewayIp) {
+        java.util.function.Supplier<String> address =
+                () -> gatewayIp != null ? healthAddress(gatewayIp) : healthAddress(incus);
+        var checked = checked(incus, gatewayIp);
+        if (checked.status() == ProxyStatus.RUNNING) {
+            warnIfDrifted(incus, checked.fetched(), address);
             return true;
         }
-        if (status == ProxyStatus.WAITING_FOR_DNS) {
-            if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
+        if (checked.status() == ProxyStatus.WAITING_FOR_DNS) {
+            if (waitForDns(address.get(), System.err::println)) {
+                warnIfDrifted(incus, null, address);
+                return true;
+            }
             System.err.println(formatError(ProxyStatus.WAITING_FOR_DNS));
             return false;
         }
-        if (tryAutoRestart(incus)) {
-            if (waitForDns(incus)) { warnIfDrifted(incus); return true; }
+        if (tryAutoRestart(address, System.err::println) && waitForDns(address.get(), System.err::println)) {
+            warnIfDrifted(incus, null, address);
+            return true;
         }
-        System.err.println(formatError(check(incus)));
+        System.err.println(formatError(check(incus, gatewayIp)));
         return false;
     }
 
@@ -381,10 +393,15 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean tryAutoRestart(IncusClient incus, java.util.function.Consumer<String> log) {
+        return tryAutoRestart(() -> healthAddress(incus), log);
+    }
+
+    private static boolean tryAutoRestart(java.util.function.Supplier<String> address,
+                                          java.util.function.Consumer<String> log) {
         if (!ProxyService.isInstalled()) return false;
         log.accept("Proxy is not running, restarting service...");
         ProxyService.restart(log);
-        var addr = healthAddress(incus);
+        var addr = address.get();
         for (int i = 0; i < 30; i++) {
             try { Thread.sleep(500); } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -411,7 +428,10 @@ public final class ProxyHealthCheck {
     }
 
     public static boolean waitForDns(IncusClient incus, java.util.function.Consumer<String> log) {
-        var addr = healthAddress(incus);
+        return waitForDns(healthAddress(incus), log);
+    }
+
+    private static boolean waitForDns(String addr, java.util.function.Consumer<String> log) {
         var result = checkHealth(addr);
         if (result.healthy() && result.dnsConfigured()) return true;
         if (!result.healthy()) return false;
@@ -434,11 +454,17 @@ public final class ProxyHealthCheck {
     }
 
     static void warnIfDrifted(IncusClient incus) {
+        warnIfDrifted(incus, null, () -> healthAddress(incus));
+    }
+
+    /**
+     * @param fetched the {@code /health} the caller's own check just fetched, or null to fetch it
+     *                here -- never a cached one, which may predate a restart (#798)
+     */
+    private static void warnIfDrifted(IncusClient incus, ProxyInfo fetched,
+                                      java.util.function.Supplier<String> address) {
         try {
-            // What check() just fetched, when it did: every caller checks first, and asking the
-            // proxy again would cost the bridge lookup and the /health request a second time.
-            var entry = freshEntry(incus);
-            var info = entry != null && entry.info() != null ? entry.info() : fetchProxyInfo(healthAddress(incus));
+            var info = fetched != null ? fetched : fetchProxyInfo(address.get());
             var report = assessDrift(info);
             if (report.isEmpty()) return;
             var sep = "\033[33m" + "─".repeat(60) + "\033[0m";
@@ -451,6 +477,8 @@ public final class ProxyHealthCheck {
                     // Not a bare restart: the service files may still exec a binary from a
                     // previous installation, and restarting that would leave the drift in place.
                     ProxyService.reinstallIfChanged(incus, info);
+                    // What was cached describes the proxy before this restart.
+                    invalidateCache();
                 }
             } else {
                 System.err.println("Restart the proxy to pick up changes:");

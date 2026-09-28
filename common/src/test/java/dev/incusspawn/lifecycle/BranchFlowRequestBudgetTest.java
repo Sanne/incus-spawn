@@ -17,6 +17,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Pins how many Incus round trips a whole branch costs, from preflight to its start, as
@@ -130,13 +131,19 @@ class BranchFlowRequestBudgetTest {
         assertEquals(0, requests.stream().filter(r -> r.startsWith("GET /1.0/networks/")).count(),
                 "the bridge preflight read serves the branch's address, the refresh and the start");
         assertEquals(List.of("10.166.11.1"), refreshedAt);
+        assertTrue(!requests.get(started - 1).contains("/files"),
+                "no push right before the start: it would make the start wait a full second");
     }
 
     @Test
-    void addingGitRemotesReadsNothingMore() throws Exception {
+    void addingGitRemotesReadsNothingMore(@org.junit.jupiter.api.io.TempDir java.nio.file.Path hostDir)
+            throws Exception {
         // With a host path configured, the template's repos are looked for in it: from the
         // definitions preflight already had, not by reading the branch and rescanning them.
-        var hostDir = Files.createTempDirectory("isx-host");
+        var clone = hostDir.resolve("project");
+        Files.createDirectories(clone);
+        git(clone, "init", "-q");
+        git(clone, "remote", "add", "origin", "https://github.com/example/project.git");
         writeConfig("host-paths: ['" + hostDir + "']\n"
                 + "github:\n  accounts:\n    work: { token: ghp_w }\n  default: work\n");
         var daemon = template();
@@ -145,6 +152,17 @@ class BranchFlowRequestBudgetTest {
         daemon.clearRequests();
         BranchFlow.create(incus, preflight);
         assertBudget(6, daemon.requests(), "create (airgap, not started, with a host path)");
+        assertTrue(git(clone, "remote").lines().anyMatch(NAME::equals),
+                "the template's repo was found in the host path, and the branch added as its remote");
+    }
+
+    private static String git(java.nio.file.Path dir, String... args) throws Exception {
+        var command = new java.util.ArrayList<>(List.of("git", "-C", dir.toString()));
+        command.addAll(List.of(args));
+        var process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        var output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), () -> String.join(" ", command) + ": " + output);
+        return output;
     }
 
     @Test
@@ -154,5 +172,17 @@ class BranchFlowRequestBudgetTest {
                 BranchFlow.preflight(daemon.client(), request(NetworkMode.AIRGAP, false), defs()));
         assertEquals("source instance '" + SOURCE + "' does not exist.", e.getMessage());
         assertBudget(2, daemon.requests(), "preflight (source gone)");
+    }
+
+    @Test
+    void anAirgappedBranchWithNoBridgeAddressStillCompletes() throws Exception {
+        // The proxy refresh runs after the copy: not finding the proxy must not leave the branch
+        // half configured. It is signalled without an address, and finds the proxy by its port.
+        var daemon = template().network("incusbr0", Map.of("ipv4.address", "none"));
+        var incus = daemon.client();
+        var preflight = BranchFlow.preflight(incus, request(NetworkMode.AIRGAP, false), defs());
+        BranchFlow.create(incus, preflight);
+        assertEquals(java.util.Collections.singletonList(null), refreshedAt);
+        assertEquals("clone", daemon.instance(NAME).path("config").path(Metadata.TYPE).asText());
     }
 }
