@@ -70,6 +70,12 @@ class ArtifactCacheProxyTest {
     /** The same routes on a listener without ALPN, like an upstream that only speaks HTTP/1.1. */
     static HttpServer h1Upstream;
     static HttpClient client;
+    // Every request of the test client goes out from this one context. Issued from the
+    // test thread instead, each got a context of its own, and under load responses lost
+    // their bodies and the client's TLS stream was corrupted (bad_record_mac, records of
+    // zeros): seen in CI, and reproduced by running this class repeatedly in one JVM on
+    // two CPUs, where it no longer happens this way.
+    static io.vertx.core.Context clientContext;
     static int mitmPort;
     static int upstreamPort;
     static int h1UpstreamPort;
@@ -142,6 +148,7 @@ class ArtifactCacheProxyTest {
         thread.start();
         assertTrue(ready.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
 
+        clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
                 .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false).setMaxPoolSize(16));
     }
@@ -276,10 +283,13 @@ class ArtifactCacheProxyTest {
                 .setHost(host)
                 .setPort(443)
                 .setURI(path);
-        return client.request(options)
+        var result = io.vertx.core.Promise.<Response>promise();
+        clientContext.runOnContext(v -> client.request(options)
                 .compose(HttpClientRequest::send)
                 .compose(resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
-                        resp.getHeader("X-Checksum-SHA1"))));
+                        resp.getHeader("X-Checksum-SHA1"))))
+                .onComplete(result));
+        return result.future();
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
