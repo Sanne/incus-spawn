@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -73,6 +74,18 @@ record McpTool(String name, String description, ObjectNode inputSchema, ObjectNo
             if (v == null || v.isNull()) return false;
             if (!v.isBoolean()) throw new ToolError("argument '" + name + "' must be a boolean");
             return v.asBoolean();
+        }
+
+        List<String> stringList(String name) {
+            var v = node.get(name);
+            var list = new java.util.ArrayList<String>();
+            if (v == null || v.isNull()) return list;
+            if (!v.isArray()) throw new ToolError("argument '" + name + "' must be an array of strings");
+            for (var e : v) {
+                if (!e.isTextual()) throw new ToolError("argument '" + name + "' must be an array of strings");
+                list.add(e.asText());
+            }
+            return list;
         }
 
         Map<String, String> stringMap(String name) {

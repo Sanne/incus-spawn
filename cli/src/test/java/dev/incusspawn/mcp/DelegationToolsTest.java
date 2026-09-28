@@ -34,6 +34,12 @@ class DelegationToolsTest {
     private volatile java.util.concurrent.CountDownLatch launchEntered;
     private volatile java.util.concurrent.CountDownLatch launchRelease;
     private volatile boolean failLaunch;
+    /** When set, the status script reports a person's Claude Code on the task's conversation. */
+    private volatile boolean attached;
+    /** When set, the events a finished agent's status reports instead of {@link #EVENTS}. */
+    private volatile String finishedEvents;
+    /** What the tasks listing of an adopted instance answers. */
+    private volatile String taskListing = "";
 
     private static final String EVENTS = """
             {"type":"system","subtype":"init","session_id":"s1"}
@@ -46,7 +52,8 @@ class DelegationToolsTest {
         realHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         config.setTemplates(List.of("tpl-agent", "tpl-plain"));
-        var session = new McpSession(new SessionId(7, 1), "alice", 1, "/work", backend, () -> config);
+        // Every other session is dead: another session's instance is an orphan.
+        var session = new McpSession(new SessionId(7, 1), "alice", 1, "/work", backend, () -> config, s -> false);
         var tasks = new Tasks(session, backend, () -> config);
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
@@ -72,12 +79,18 @@ class DelegationToolsTest {
                 if (failLaunch) throw new ToolError("launch failed");
                 return "";
             }
+            if (script.startsWith("for d in")) return taskListing;
+            if (script.startsWith("f=$(mktemp)")) return "exit=0\nsummarised=12 lines, 345 bytes\n---\nIt touches A.java only.\n";
+            if (script.contains("--numstat")) return "## /home/agentuser\n3\t1\tsrc/A.java\n 1 file changed\n---\n";
             if (!script.startsWith("D=") || !script.contains("echo run=")) return ""; // cancel
             if (taskState.equals("unknown")) return "run=1\nkind=agent\nunit=\n---\n\n---stderr\n";
+            var who = attached ? "cwd=/home/agentuser\nsession_id=s1\npresence=claude 77 /elsewhere\n"
+                    + "presence=resume 77 s1\n" : "";
             return taskState.equals("running")
-                    ? "run=1\nkind=agent\nunit=active\nevents_bytes=10\n---\n" + EVENTS.lines().limit(2)
+                    ? "run=1\nkind=agent\nunit=active\n" + who + "events_bytes=10\n---\n" + EVENTS.lines().limit(2)
                             .reduce("", (a, b) -> a + b + "\n") + "\n---stderr\n"
-                    : "run=1\nkind=agent\nunit=inactive\nexit=0\nevents_bytes=400\n---\n" + EVENTS + "\n---stderr\n";
+                    : "run=1\nkind=agent\nunit=inactive\nexit=0\n" + who + "events_bytes=400\n---\n"
+                            + (finishedEvents != null ? finishedEvents : EVENTS) + "\n---stderr\n";
         };
     }
 
@@ -309,5 +322,134 @@ class DelegationToolsTest {
     void anotherSessionsTaskIdIsUnknown() throws Exception {
         assertTrue(call("task_status", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean());
         assertTrue(call("cancel_task", "{\"task_id\":\"t1-zz\"}").path("isError").asBoolean());
+    }
+
+    @Test
+    void theDelegatesPermissionModeIsExplicitAndPerTemplate() throws Exception {
+        delegateFresh();
+        assertTrue(runScript(1).contains("--permission-mode 'bypassPermissions'"), runScript(1));
+        config.setDelegatePermissionModes(java.util.Map.of("tpl-agent", "plan"));
+        var listed = text(call("list_templates", "{}"));
+        assertTrue(listed.contains("\"delegate_permission_mode\" : \"plan\""), listed);
+        config.setMaxConcurrentTasks(5);
+        var r = call("delegate", "{\"instruction\":\"review\",\"template\":\"tpl-agent\"}");
+        assertTrue(text(r).contains("\"permission_mode\" : \"plan\""), text(r));
+        assertTrue(runScript(1).contains("--permission-mode 'plan'"), runScript(1));
+    }
+
+    @Test
+    void aSkillIsRunAsItsSlashCommand() throws Exception {
+        var r = call("delegate", "{\"skill\":\"fix-issue\",\"args\":\"#870 --careful\",\"template\":\"tpl-agent\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        var launch = backend.scripts.indexOf(backend.scripts.stream().filter(sc -> sc.contains("systemd-run"))
+                .findFirst().orElseThrow());
+        assertEquals("/fix-issue #870 --careful", backend.stdins.get(launch), "the prompt, on stdin");
+
+        for (var bad : List.of("{\"skill\":\"x; rm -rf ~\",\"template\":\"tpl-agent\"}",
+                "{\"skill\":\"/fix\",\"template\":\"tpl-agent\"}",
+                "{\"skill\":\"fix\",\"instruction\":\"x\",\"template\":\"tpl-agent\"}",
+                "{\"instruction\":\"x\",\"args\":\"y\",\"template\":\"tpl-agent\"}")) {
+            assertTrue(call("delegate", bad).path("isError").asBoolean(), bad);
+        }
+    }
+
+    @Test
+    void aPersonInTheConversationIsAStateAndHoldsOffMessages() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        attached = true;
+        var status = text(call("task_status", "{\"task_id\":\"" + task + "\"}"));
+        assertTrue(status.contains("state: attached"), status);
+        assertTrue(status.contains("pid 77"), status);
+        var r = call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}");
+        assertTrue(r.path("isError").asBoolean());
+        assertTrue(text(r).contains("a person is in"), text(r));
+        assertTrue(backend.scripts.stream().noneMatch(sc -> sc.contains("--unit=isx-task-" + task + "-2")));
+
+        attached = false;
+        assertFalse(call("send_message", "{\"task_id\":\"" + task + "\",\"message\":\"push it\"}")
+                .path("isError").asBoolean());
+    }
+
+    @Test
+    void waitAnyReturnsWhenATaskFinishes() throws Exception {
+        assertTrue(text(call("wait_any", "{}")).contains("No task"));
+        var task = delegateFresh();
+        var none = text(call("wait_any", "{\"timeout_seconds\":0}"));
+        assertTrue(none.contains(task + " (agent in ") && none.contains("): running"), none);
+        assertTrue(none.contains("None finished"), none);
+        taskState = "finished";
+        var done = text(call("wait_any", "{\"task_ids\":[\"" + task + "\"],\"timeout_seconds\":30}"));
+        assertTrue(done.contains("): finished, exit 0"), done);
+        assertTrue(done.contains("Finished: " + task), done);
+        assertTrue(call("wait_any", "{\"task_ids\":[\"t9-nope\"]}").path("isError").asBoolean());
+    }
+
+    @Test
+    void resultsStaySmallAndSayWhatTheAgentWasRefused() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        finishedEvents = """
+                {"type":"assistant","message":{"content":[{"type":"text","text":"Trying to push"}]}}
+                {"type":"result","subtype":"success","is_error":false,"result":"%s","num_turns":3,"total_cost_usd":0.1,"permission_denials":[{"tool_name":"Bash","tool_use_id":"x","tool_input":{}}]}
+                """.formatted("r".repeat(2000));
+        var result = text(call("task_result", "{\"task_id\":\"" + task + "\",\"max_bytes\":300}"));
+        assertTrue(result.contains("(first 300 of 2000 bytes"), result);
+        assertTrue(result.contains("permission_denials: 1 (Bash)"), result);
+        assertFalse(result.contains("Trying to push"), "the event tail is behind a flag");
+        var withEvents = text(call("task_result", "{\"task_id\":\"" + task + "\",\"events\":true}"));
+        assertTrue(withEvents.contains("- said: Trying to push"), withEvents);
+        assertTrue(text(call("task_status", "{\"task_id\":\"" + task + "\"}")).contains("permission_denials: 1"));
+    }
+
+    @Test
+    void askAnswersInsteadOfReturningTheText() throws Exception {
+        var task = delegateFresh();
+        taskState = "finished";
+        var result = text(call("task_result", "{\"task_id\":\"" + task + "\",\"ask\":\"what broke?\"}"));
+        assertTrue(result.contains("summarised: 12 lines, 345 bytes"), result);
+        assertTrue(result.contains("It touches A.java only."), result);
+        assertFalse(result.contains("--- report ---"), result);
+        var ask = backend.scripts.indexOf(backend.scripts.stream().filter(sc -> sc.startsWith("f=$(mktemp)"))
+                .findFirst().orElseThrow());
+        assertEquals("Fixed the race in A.java; tests pass.", backend.stdins.get(ask), "the report is read inside the instance");
+
+        var diff = text(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"which areas?\"}"));
+        assertTrue(diff.contains("It touches A.java only."), diff);
+        assertTrue(call("get_diff", "{\"task_id\":\"" + task + "\",\"ask\":\"x\",\"stat\":true}").path("isError").asBoolean());
+    }
+
+    @Test
+    void aStatDiffIsJustTheFilesTouched() throws Exception {
+        var task = delegateFresh();
+        var stat = text(call("get_diff", "{\"task_id\":\"" + task + "\",\"stat\":true}"));
+        assertTrue(stat.contains("3\t1\tsrc/A.java"), stat);
+    }
+
+    @Test
+    void anOrphanAndItsTasksAreAdopted() throws Exception {
+        backend.instance("mcp-agent-870-impl-abcde", java.util.Map.of(
+                dev.incusspawn.incus.Metadata.TYPE, dev.incusspawn.incus.Metadata.TYPE_CLONE,
+                dev.incusspawn.incus.Metadata.PARENT, "tpl-agent",
+                dev.incusspawn.incus.Metadata.MCP_SESSION, "9-9",
+                dev.incusspawn.incus.Metadata.MCP_OWNER, "alice",
+                dev.incusspawn.incus.Metadata.MCP_PURPOSE, "#870 implement",
+                dev.incusspawn.incus.Metadata.MCP_ORPHANED, "2026-09-28T10:00:00Z"));
+        var listed = text(call("list_instances", "{}"));
+        assertTrue(listed.contains("\"status\" : \"orphaned\""), listed);
+        assertTrue(listed.contains("#870 implement"), listed);
+        assertTrue(listed.contains("destroyed_after"), listed);
+        assertTrue(call("exec", "{\"instance\":\"mcp-agent-870-impl-abcde\",\"command\":\"ls\"}").path("isError").asBoolean(),
+                "not held until adopted");
+
+        taskListing = "t3-old agent 2 done /home/agentuser/repo dir\nnot a task line\n";
+        var adopted = text(call("adopt_instance", "{\"instance\":\"mcp-agent-870-impl-abcde\"}"));
+        assertTrue(adopted.contains("\"t3-old\""), adopted);
+        taskState = "finished";
+        assertTrue(text(call("task_result", "{\"task_id\":\"t3-old\"}")).contains("Fixed the race"));
+        assertFalse(call("send_message", "{\"task_id\":\"t3-old\",\"message\":\"rebase\"}").path("isError").asBoolean());
+        var run = runScript(3);
+        assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
+        assertTrue(run.contains("--resume"), run);
     }
 }

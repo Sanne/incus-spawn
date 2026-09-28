@@ -119,8 +119,8 @@ final class IncusInstanceBackend implements InstanceBackend {
     }
 
     @Override
-    public void stamp(String name, String key, String value) {
-        incus.configSet(name, key, value);
+    public void stamp(String name, Map<String, String> config) {
+        incus.configUpdate(name, new java.util.HashMap<String, Object>(config));
     }
 
     @Override

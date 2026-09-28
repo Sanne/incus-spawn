@@ -193,29 +193,37 @@ Nothing is available until you approve templates in `~/.config/incus-spawn/confi
 ```yaml
 mcp:
   templates: [tpl-java, tpl-dev]   # the only templates an agent may branch from
-  max-instances: 3                 # per session (default 3)
-  max-concurrent-tasks: 2          # background commands and delegated agents (default 2)
+  max-instances: 3                 # per host user, across sessions (default 3)
+  max-concurrent-tasks: 2          # background commands and delegated agents, per session (default 2)
   delegate-max-turns: 200          # optional cap for delegated agents
+  delegate-permission-mode: bypassPermissions   # the delegates' --permission-mode (default shown)
+  delegate-permission-modes:       # per-template overrides, e.g. a reviewer that only plans
+    tpl-review: plan
+  orphan-grace-hours: 24           # how long an instance outlives its session (default 24)
+  summary-model: haiku             # answers the tools' `ask` inside the instance (default haiku)
 ```
 
 | Tool | What it does |
 |------|--------------|
-| `list_templates` | The approved templates, whether they are built, and which can take a delegated task |
-| `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it |
+| `list_templates` | The approved templates, whether they are built, which can take a delegated task, and in which permission mode |
+| `create_instance` | A fresh CoW branch of an approved template, as `isx branch` would make it, with an optional `purpose` |
+| `list_instances` / `adopt_instance` | Your instances and their tasks, including those an ended session left behind; take one back |
 | `exec` | Run a command as `agentuser`; no time limit unless the agent sets one, or `background: true` for a task |
-| `delegate` | Give an instruction to the Claude Code inside an instance (or a fresh one from a template) |
-| `task_status` / `task_result` | Follow a background task, optionally waiting; read its outcome or the agent's report |
+| `delegate` | Give an instruction, or a skill name and arguments, to the Claude Code inside an instance (or a fresh one from a template) |
+| `task_status` / `wait_any` / `task_result` | Follow a task (optionally waiting), wait for whichever of several finishes first, read its outcome or the agent's report |
 | `send_message` | Continue a delegated agent's conversation (e.g. "push and open a PR") |
-| `get_diff` | What a delegated task changed, committed or not, as a patch the host agent can apply |
+| `get_diff` | What a delegated task changed, committed or not: a patch, or with `stat` just the files and line counts |
 | `cancel_task` / `destroy_instance` | Stop a task, or throw an instance away |
-| `keep_instance` | Hand an instance over to you so it survives the session |
-| `list_instances` | The session's instances and tasks |
+| `keep_instance` | Hand an instance over to you for good |
+
+`exec`, `task_result` and `get_diff` take an optional `ask`: instead of the text, a one-shot Claude Code on `summary-model` reads it *inside the instance* and answers the question ("which tests fail?"), so a long log or patch never fills the host agent's context. The answer is a model's reading -- untrusted and lossy -- so anything that gates a merge stays deterministic: `get_diff(stat)`, CI, a reviewer.
 
 What an agent gets is deliberately narrow:
 
 - **Only approved templates.** Never a project-local (`.incus-spawn/`) definition or an image built from one, and never an unbuilt one -- it is told to ask you to run `isx build`.
 - **Template defaults, no choices.** Network mode, credential accounts, resources: exactly what `isx branch --from <template>` gives. Credentials stay in the host proxy as always; which GitHub account a delegate can push with is the one you pinned on the template.
-- **Its own instances only.** Every instance is stamped with the session that created it, and every tool checks the stamp. When the session ends, its instances are destroyed unless it called `keep_instance`; a session that died without cleaning up is reaped the next time `isx mcp` starts.
+- **Your instances, one session at a time.** Every instance is stamped with your host user, an optional purpose (`#870 implement`), and the session holding it; every tool checks that stamp. Instances outlive their session, because a coordinating agent restarts while its workers wait: when a session ends (or dies), its instances become orphans that any later session of yours can take back with `adopt_instance`, tasks included. An orphan nobody adopts is destroyed by the next `isx mcp` to start once `orphan-grace-hours` have passed -- never while someone is in it with `isx shell`, and never one handed to you with `keep_instance`. Instances are named `mcp-<template>-<hint>-<suffix>`; don't give your own instances `mcp-*` names.
+- **Taking over is safe.** You can join a delegate's conversation yourself: `isx shell` into the instance, then `claude --resume <session>`. While you are in it, `task_status` says `attached` and `send_message` is refused, so the host agent never races you on one conversation.
 - **No host access.** Nothing runs on the host and no host files are read or written: results come back as text, and `get_diff` returns a patch rather than touching your checkout.
 - **An audit trail.** Every call is logged, with credentials scrubbed, to `~/.local/state/incus-spawn/mcp.log`.
 

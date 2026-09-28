@@ -33,6 +33,19 @@ final class StreamJsonEvents {
         boolean isError() {
             return result != null && result.path("is_error").asBoolean(false);
         }
+
+        /**
+         * The tools the agent's permission mode refused, by name, one per refusal. A headless
+         * agent cannot ask for permission, so this is the only place a refusal shows.
+         */
+        List<String> permissionDenials() {
+            if (result == null) return List.of();
+            var names = new ArrayList<String>();
+            for (var denial : result.path("permission_denials")) {
+                names.add(denial.path("tool_name").asText("?"));
+            }
+            return names;
+        }
     }
 
     private StreamJsonEvents() {}

@@ -51,8 +51,8 @@ interface InstanceBackend {
     /** The instance's {@code user.incus-spawn.*} config, or null if it does not exist. */
     Map<String, String> metadata(String name);
 
-    /** Stamp one config key. */
-    void stamp(String name, String key, String value);
+    /** Set config keys in one write; a null value removes the key. */
+    void stamp(String name, Map<String, String> config);
 
     /** Instances whose config carries an MCP session, with their config. */
     Map<String, Map<String, String>> mcpInstances();

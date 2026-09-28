@@ -47,12 +47,14 @@ final class Tasks {
     record Owned(Task task, Map<String, String> metadata) {}
 
     /**
-     * One look at a task. {@code state} is {@code running}, {@code finished}, {@code lost} (its
-     * unit is gone without recording an exit: the instance restarted, or it was killed), or
-     * {@code unknown} when systemd could not be asked.
+     * One look at a task. {@code state} is {@code running}, {@code finished}, {@code attached}
+     * (finished, and a person is now in its conversation: {@code attachedPid} is their Claude
+     * Code), {@code lost} (its unit is gone without recording an exit: the instance restarted,
+     * or it was killed), or {@code unknown} when systemd could not be asked. A person can also
+     * join while a run is still going; the state stays {@code running}, with the pid set.
      */
     record Status(String state, int run, Integer exit, long outputBytes,
-                  long stderrBytes, String output, String stderr) {
+                  long stderrBytes, String output, String stderr, Long attachedPid) {
         boolean running() {
             return "running".equals(state);
         }
@@ -63,6 +65,9 @@ final class Tasks {
     private final Supplier<McpConfig> config;
     private final Map<String, Task> tasks = new LinkedHashMap<>();
     private final AtomicLong counter = new AtomicLong();
+    // Task ids outlive the session that made them (an adopting session takes the tasks over),
+    // so they must not collide with a later session's: a counter alone, or a pid, would.
+    private final String tag = McpSession.randomSuffix(4);
 
     Tasks(McpSession session, InstanceBackend backend, Supplier<McpConfig> config) {
         this.session = session;
@@ -81,7 +86,8 @@ final class Tasks {
             task = tasks.get(id);
         }
         if (task == null) {
-            throw new ToolError("no task '" + id + "' in this session. Tasks are listed by list_instances.");
+            throw new ToolError("no task '" + id + "' in this session. Tasks are listed by list_instances; "
+                    + "a task of an instance another session held becomes yours with adopt_instance.");
         }
         return new Owned(task, session.requireOwned(task.instance()));
     }
@@ -93,18 +99,57 @@ final class Tasks {
     }
 
     /** Start a delegated agent in {@code instance}, which the caller checked is owned. */
-    Task delegate(String instance, String cwd, String instruction) {
+    Task delegate(String instance, String cwd, String instruction, String permissionMode) {
         var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true));
         return launch(task, null,
-                TaskScripts.agentRun(task.id(), 1, cwd, config.get().delegateMaxTurns()), instruction);
+                TaskScripts.agentRun(task.id(), 1, cwd, config.get().delegateMaxTurns(), permissionMode), instruction);
     }
 
-    /** Continue a finished agent task's conversation with a new message, where it started. */
-    Task sendMessage(Task task, String message) {
+    /**
+     * Continue a finished agent task's conversation with a new message, where it started.
+     * Refused while a person is in that conversation: two writers would race on one session.
+     * Checked when sent, so a person joining in the seconds after is not seen.
+     */
+    Task sendMessage(Task task, String message, String permissionMode) {
         if (!AGENT.equals(task.kind())) throw new ToolError("task " + task.id() + " is a command, not a delegated agent.");
+        var attached = status(task, 0).attachedPid();
+        if (attached != null) {
+            throw new ToolError("a person is in task " + task.id() + "'s conversation (Claude Code, pid " + attached
+                    + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
+                    + "no longer says attached, or ask the user.");
+        }
         var reserved = reserve(task.id(), null);
         return launch(reserved, task, TaskScripts.agentRun(task.id(), reserved.runs(), task.cwd(),
-                config.get().delegateMaxTurns()), message);
+                config.get().delegateMaxTurns(), permissionMode), message);
+    }
+
+    /**
+     * Take over the tasks recorded in an instance this session just adopted, so their ids work
+     * here as they did in the session that started them. Returns their ids.
+     */
+    List<String> adopt(String instance) {
+        var adopted = new java.util.ArrayList<String>();
+        for (var line : run(instance, TaskScripts.list(), null).split("\n")) {
+            var parts = line.strip().split(" ", 5);
+            if (parts.length < 4 || !parts[0].matches("[a-z0-9-]+")) continue;
+            var kind = parts[1];
+            if (!AGENT.equals(kind) && !COMMAND.equals(kind)) continue;
+            int runs;
+            try {
+                runs = Integer.parseInt(parts[2]);
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            var cwd = parts.length > 4 && !parts[4].isBlank() ? parts[4] : IncusInstanceBackend.AGENT_HOME;
+            var task = new Task(parts[0], instance, kind, cwd, runs, "running".equals(parts[3]), false);
+            synchronized (this) {
+                tasks.putIfAbsent(task.id(), task);
+            }
+            adopted.add(task.id());
+        }
+        // A run recorded as unfinished may have died with a restart: ask systemd.
+        refreshStates();
+        return adopted;
     }
 
     /**
@@ -119,8 +164,12 @@ final class Tasks {
     }
 
     Status status(Task task) {
-        var status = parse(run(task.instance(),
-                TaskScripts.status(task.id(), AGENT.equals(task.kind()) ? RESULT_TAIL : STATUS_TAIL), null));
+        return status(task, AGENT.equals(task.kind()) ? RESULT_TAIL : STATUS_TAIL);
+    }
+
+    /** {@link #status(Task)} with this much of the end of the output. */
+    Status status(Task task, int tailBytes) {
+        var status = parse(run(task.instance(), TaskScripts.status(task.id(), tailBytes), null));
         // "unknown" says nothing about the task: keep what we last knew rather than free its slot.
         if (!"unknown".equals(status.state())) markRunning(Map.of(task.id(), status.running()));
         return status;
@@ -141,13 +190,42 @@ final class Tasks {
         return status(task);
     }
 
+    /**
+     * Wait until at least one of {@code watched} is no longer running, or {@code seconds} have
+     * passed: one cheap probe per instance every two seconds. Returns each task's last state
+     * ({@code running}, {@code done} or {@code unknown}), in the order given.
+     */
+    Map<String, String> awaitAny(List<Task> watched, int seconds, ToolContext ctx) throws InterruptedException {
+        var deadline = System.nanoTime() + seconds * 1_000_000_000L;
+        var byInstance = watched.stream().collect(Collectors.groupingBy(Task::instance,
+                LinkedHashMap::new, Collectors.mapping(Task::id, Collectors.toList())));
+        while (true) {
+            var states = new HashMap<String, String>();
+            byInstance.forEach((instance, ids) -> {
+                try {
+                    states.putAll(probe(instance, ids));
+                } catch (RuntimeException e) {
+                    // Gone: its tasks are over. Merely unreachable: nothing is known.
+                    var gone = backend.metadata(instance) == null;
+                    ids.forEach(id -> states.put(id, gone ? "done" : "unknown"));
+                    if (gone) forgetInstance(instance);
+                }
+            });
+            var ordered = new LinkedHashMap<String, String>();
+            watched.forEach(t -> ordered.put(t.id(), states.getOrDefault(t.id(), "done")));
+            if (ordered.containsValue("done") || System.nanoTime() >= deadline || ctx.cancelled()) return ordered;
+            ctx.progress(watched.size() + " task(s) still running");
+            Thread.sleep(2000);
+        }
+    }
+
     void cancel(Task task) {
         run(task.instance(), TaskScripts.cancel(task.id()), null);
         markRunning(Map.of(task.id(), false));
     }
 
-    String diff(Task task, String path, int maxBytes) {
-        return run(task.instance(), TaskScripts.diff(task.id(), path, maxBytes), null);
+    String diff(Task task, String path, int maxBytes, boolean statOnly) {
+        return run(task.instance(), TaskScripts.diff(task.id(), path, maxBytes, statOnly), null);
     }
 
     /**
@@ -239,7 +317,6 @@ final class Tasks {
         }
     }
 
-    /** Which of these tasks in one instance are still running, from one cheap exec. */
     /**
      * {@code running}, {@code done} or {@code unknown} for each of these tasks in one instance,
      * from one cheap exec. Records what it learned, except for {@code unknown}.
@@ -262,11 +339,11 @@ final class Tasks {
     }
 
     private String nextId() {
-        return "t" + counter.incrementAndGet() + "-" + Long.toString(session.id.pid(), 36);
+        return "t" + counter.incrementAndGet() + "-" + tag;
     }
 
     /** Run a control script in the instance and return its stdout; stdin null for none. */
-    private String run(String instance, String script, String stdin) {
+    String run(String instance, String script, String stdin) {
         var out = new ByteArrayOutputStream();
         var err = new ByteArrayOutputStream();
         InputStream in = stdin == null ? null : new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8));
@@ -280,14 +357,18 @@ final class Tasks {
 
     static Status parse(String out) {
         var header = new LinkedHashMap<String, String>();
+        var presence = new java.util.ArrayList<String>();
         var lines = out.split("\n", -1);
         int i = 0;
         for (; i < lines.length && !lines[i].equals("---"); i++) {
             var eq = lines[i].indexOf('=');
-            if (eq > 0) header.put(lines[i].substring(0, eq), lines[i].substring(eq + 1));
+            if (eq <= 0) continue;
+            var key = lines[i].substring(0, eq);
+            if (key.equals("presence")) presence.add(lines[i].substring(eq + 1));
+            else header.put(key, lines[i].substring(eq + 1));
         }
         if ("missing".equals(header.get("state"))) {
-            return new Status("lost", 0, null, 0, 0, "", "");
+            return new Status("lost", 0, null, 0, 0, "", "", null);
         }
         var rest = i < lines.length ? String.join("\n", List.of(lines).subList(i + 1, lines.length)) : "";
         var split = rest.indexOf("\n---stderr\n");
@@ -302,10 +383,12 @@ final class Tasks {
         else if (unit.isBlank()) state = "unknown";
         else state = "lost";
         var agent = AGENT.equals(header.get("kind"));
+        var attached = agent ? Presence.parse(presence).holderOf(header.get("session_id"), header.get("cwd")) : null;
+        if (attached != null && state.equals("finished")) state = "attached";
         long outputBytes = parseLong(header.getOrDefault(agent ? "events_bytes" : "stdout_bytes", "0"));
         return new Status(state, (int) parseLong(header.getOrDefault("run", "0")), exit,
                 outputBytes, parseLong(header.getOrDefault("stderr_bytes", "0")),
-                output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr);
+                output.endsWith("\n") ? output.substring(0, output.length() - 1) : output, stderr, attached);
     }
 
     private static long parseLong(String s) {

@@ -19,6 +19,8 @@ class FakeBackend implements InstanceBackend {
     final List<TemplateInfo> templates = new ArrayList<>();
     final List<String> destroyed = new CopyOnWriteArrayList<>();
     final List<String> scripts = new CopyOnWriteArrayList<>();
+    /** What each exec in {@link #scripts} got on stdin ("" for none), in the same order. */
+    final List<String> stdins = new CopyOnWriteArrayList<>();
     volatile String execStdout = "";
     volatile int execExit = 0;
     volatile RuntimeException createFailure;
@@ -51,6 +53,7 @@ class FakeBackend implements InstanceBackend {
         if (createFailure != null) throw createFailure;
         var config = new ConcurrentHashMap<String, String>(stamps);
         config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        config.put(Metadata.PARENT, template);
         instances.put(name, config);
         return new CreatedInstance(name, "10.0.0.2", "/home/agentuser");
     }
@@ -80,8 +83,16 @@ class FakeBackend implements InstanceBackend {
     }
 
     @Override
-    public void stamp(String name, String key, String value) {
-        instances.get(name).put(key, value);
+    public void stamp(String name, Map<String, String> config) {
+        var instance = instances.get(name);
+        config.forEach((k, v) -> {
+            if (v == null) instance.remove(k);
+            else instance.put(k, v);
+        });
+    }
+
+    void stamp(String name, String key, String value) {
+        stamp(name, java.util.Collections.singletonMap(key, value));
     }
 
     @Override
@@ -97,6 +108,11 @@ class FakeBackend implements InstanceBackend {
     public int exec(String name, String script, InputStream stdin, OutputStream stdout, OutputStream stderr) {
         if (!instances.containsKey(name)) throw new IllegalStateException("Instance not found: " + name);
         scripts.add(script);
+        try {
+            stdins.add(stdin == null ? "" : new String(stdin.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
         var answer = responder != null ? responder.apply(script) : execStdout;
         try {
             if (stdout != null) stdout.write(answer.getBytes(StandardCharsets.UTF_8));

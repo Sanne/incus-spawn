@@ -52,13 +52,23 @@ public final class Metadata {
     public static final String DISK_REFERENCED = PREFIX + "disk-referenced";
 
     /**
-     * MCP ownership (see {@code isx mcp}). {@link #MCP_SESSION} is the only key authorization
-     * reads: {@code <pid>-<processStartMillis>} of the {@code isx mcp} process that created the
-     * instance. The rest are for display and for scoping orphan reaping to this host user.
+     * MCP ownership (see {@code isx mcp}). An instance belongs to the host user in
+     * {@link #MCP_OWNER}, and is held by one session at a time: {@link #MCP_SESSION} is
+     * {@code <pid>-<processStartMillis>} of the {@code isx mcp} process holding it, which tells
+     * whether the holder is still alive. Any session of the same user may adopt it once its
+     * holder is gone. The rest are for display.
      */
     public static final String MCP_PREFIX = PREFIX + "mcp-";
     public static final String MCP_SESSION = MCP_PREFIX + "session";
     public static final String MCP_OWNER = MCP_PREFIX + "owner";
+    /** Free text the agent gave at creation, e.g. {@code #870 implement}. */
+    public static final String MCP_PURPOSE = MCP_PREFIX + "purpose";
+    /**
+     * When the instance lost its session (an ISO-8601 instant): stamped when the session ends,
+     * or by the first later session to notice it died. Orphans are destroyed only once
+     * {@code mcp.orphan-grace-hours} have passed since; adoption clears it.
+     */
+    public static final String MCP_ORPHANED = MCP_PREFIX + "orphaned";
     public static final String MCP_CLIENT = MCP_PREFIX + "client";
     public static final String MCP_CLIENT_PID = MCP_PREFIX + "client-pid";
     public static final String MCP_CWD = MCP_PREFIX + "cwd";

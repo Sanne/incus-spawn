@@ -5,25 +5,32 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
- * {@code isx mcp}: serve this session over stdio until the client goes away, then destroy the
- * instances it created and did not keep.
+ * {@code isx mcp}: serve this session over stdio until the client goes away, then release the
+ * instances it holds: they become orphans a later session may adopt, destroyed only once
+ * {@code mcp.orphan-grace-hours} have passed with nobody working in them.
  */
 public final class McpMain {
 
     static final String INSTRUCTIONS = """
             isx gives you disposable Linux instances (full systems, not Docker containers) \
             branched copy-on-write from templates the user approved. Use them to run builds and \
-            tests, or to try risky changes, away from the user's machine. Start with \
-            list_templates, then create_instance, then exec. Instances you create are destroyed \
-            when this session ends unless you keep_instance them. Credentials are injected by a \
-            proxy on the host and never enter an instance.""";
+            tests, to try risky changes away from the user's machine, or to hand whole tasks to \
+            a Claude Code inside one (delegate). Start with list_templates, then create_instance, \
+            then exec. Instances outlive this session: if you restart, list_instances shows the \
+            ones you left and adopt_instance takes them back; orphans nobody adopts are destroyed \
+            after a grace period. Destroy instances you are done with. Credentials are injected by \
+            a proxy on the host and never enter an instance.""";
 
     private McpMain() {}
 
@@ -44,42 +51,57 @@ public final class McpMain {
         var backend = new IncusInstanceBackend(RuntimeServices.incus(), RuntimeServices.lockManager());
         // Read on every use: a person narrowing the config affects a running session at once.
         Supplier<McpConfig> config = () -> SpawnConfig.load().mcp();
-        var session = new McpSession(self, owner, clientPid, cwd, backend, config);
+        var session = new McpSession(self, owner, clientPid, cwd, backend, config, SessionId::isAlive);
         var tasks = new Tasks(session, backend, config);
         var tools = new McpTools(session, backend, new TemplatePolicy(backend, config), tasks);
 
-        var reaped = new AtomicBoolean();
-        Runnable reap = () -> {
-            if (!reaped.compareAndSet(false, true)) return;
-            var names = session.reap();
-            if (!names.isEmpty()) System.err.println("isx mcp: destroyed " + String.join(", ", names));
+        var released = new AtomicBoolean();
+        Runnable release = () -> {
+            if (!released.compareAndSet(false, true)) return;
+            var names = session.release();
+            if (!names.isEmpty()) System.err.println("isx mcp: released " + String.join(", ", names));
         };
-        // A client that is killed rather than closing stdin still gets its instances reaped
-        // when it can deliver SIGTERM; SIGKILL is left to the next session's orphan reaper.
-        Runtime.getRuntime().addShutdownHook(new Thread(reap, "isx-mcp-reaper"));
+        // A client that is killed rather than closing stdin still gets its instances released
+        // when it can deliver SIGTERM; after a SIGKILL, the next session notices the orphans.
+        Runtime.getRuntime().addShutdownHook(new Thread(release, "isx-mcp-release"));
 
         var server = new McpServer(new StdioTransport(guard.protocolIn, guard.protocolOut),
                 requireInit(tools.all(), initialized), BuildInfo.instance().version(), INSTRUCTIONS,
                 clientInfo -> {
                     session.clientName(clientInfo.path("name").asText(""));
                     if (initialized.getAsBoolean()) {
-                        Thread.startVirtualThread(() -> reapOrphans(backend, self, owner));
+                        Thread.startVirtualThread(() -> sweepOrphans(backend, self, owner, config));
                     }
                 });
         server.run();
-        reap.run();
+        release.run();
         return 0;
     }
 
-    private static void reapOrphans(InstanceBackend backend, SessionId self, String owner) {
+    private static void sweepOrphans(InstanceBackend backend, SessionId self, String owner,
+                                     Supplier<McpConfig> config) {
         try {
-            var names = OrphanReaper.reap(backend, self, owner, SessionId::isAlive);
+            var grace = Duration.ofHours(config.get().orphanGraceHours());
+            var names = Orphans.sweep(backend, self, owner, SessionId::isAlive, grace, Instant.now(),
+                    name -> attended(backend, name));
             if (!names.isEmpty()) {
-                System.err.println("isx mcp: destroyed instances of ended sessions: " + String.join(", ", names));
+                System.err.println("isx mcp: destroyed orphaned instances past their grace period: "
+                        + String.join(", ", names));
                 McpAuditLog.record(self, "reap-orphans", null, String.join(",", names), 0, "destroyed");
             }
         } catch (RuntimeException e) {
             System.err.println("isx mcp: could not check for orphaned instances: " + e.getMessage());
+        }
+    }
+
+    /** Whether a person works in the instance; true when it cannot be looked into (e.g. stopped). */
+    private static boolean attended(InstanceBackend backend, String name) {
+        try {
+            var out = new ByteArrayOutputStream();
+            if (backend.exec(name, Presence.script(""), null, out, null) != 0) return true;
+            return Presence.parse(out.toString(StandardCharsets.UTF_8).lines().toList()).attended();
+        } catch (RuntimeException e) {
+            return true;
         }
     }
 

@@ -33,6 +33,14 @@ final class Schema {
         return prop(name, "boolean", description, false);
     }
 
+    Schema stringList(String name, String description) {
+        var p = properties.putObject(name);
+        p.put("type", "array");
+        p.put("description", description);
+        p.putObject("items").put("type", "string");
+        return this;
+    }
+
     Schema stringMap(String name, String description) {
         var p = properties.putObject(name);
         p.put("type", "object");

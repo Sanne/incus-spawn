@@ -80,4 +80,35 @@ class McpConfigTest {
         var mcp = parse("mcp:\n  max-instances: -1\n").mcp();
         assertEquals(0, mcp.maxInstances());
     }
+
+    @Test
+    void theCoordinatorSettingsHaveDefaultsAndLoad() throws Exception {
+        var defaults = parse("mcp:\n  templates: [tpl-java]\n").mcp();
+        assertEquals("bypassPermissions", defaults.delegatePermissionMode("tpl-java"));
+        assertEquals(24, defaults.orphanGraceHours());
+        assertEquals("haiku", defaults.summaryModel());
+
+        var mcp = parse("""
+                mcp:
+                  delegate-permission-mode: acceptEdits
+                  delegate-permission-modes:
+                    tpl-review: plan
+                  orphan-grace-hours: 72
+                  summary-model: claude-haiku-4-5
+                """).mcp();
+        assertEquals("acceptEdits", mcp.delegatePermissionMode("tpl-java"));
+        assertEquals("plan", mcp.delegatePermissionMode("tpl-review"));
+        assertEquals(72, mcp.orphanGraceHours());
+        assertEquals("claude-haiku-4-5", mcp.summaryModel());
+        var out = YAML.writeValueAsString(parse("mcp:\n  templates: [tpl-java]\n"));
+        assertFalse(out.contains("grace") || out.contains("permission") || out.contains("summary"),
+                "unset settings are not written back:\n" + out);
+    }
+
+    @Test
+    void aModeOrModelThatIsNotAPlainNameIsRefused() throws Exception {
+        var mcp = parse("mcp:\n  delegate-permission-mode: \"plan --dangerously\"\n  summary-model: \"haiku; rm\"\n").mcp();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> mcp.delegatePermissionMode("t"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, mcp::summaryModel);
+    }
 }

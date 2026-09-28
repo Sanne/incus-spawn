@@ -36,6 +36,19 @@ final class TaskScripts {
             what you changed, how you verified it, and links to anything you published \
             (branches, pull requests).""";
 
+    /**
+     * Where a task works, as the physical path: after an adoption, later runs resume there, and
+     * a person's Claude Code working in it is found by comparing against {@code /proc/<pid>/cwd}.
+     */
+    private static final String RECORD_CWD = "pwd -P > \"$D/cwd\"\n";
+
+    /**
+     * Set in every run and inherited by everything it starts, so {@link Presence} can tell the
+     * task's own Claude Code from a person's. Not the unit's cgroup: {@code su -} goes through
+     * PAM, which moves the run into a user session scope.
+     */
+    static final String TASK_ENV = "ISX_MCP_TASK";
+
     private TaskScripts() {}
 
     static String dir(String taskId) {
@@ -54,7 +67,9 @@ final class TaskScripts {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
+        sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
         sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { echo 125 > \"$D/exit-1\"; exit 0; }\n");
+        sb.append(RECORD_CWD);
         ExecScript.appendExports(sb, env, "\n");
         sb.append("bash -c ").append(ExecScript.quote(command))
                 .append(" < /dev/null > \"$D/stdout\" 2> \"$D/stderr\"\n");
@@ -66,13 +81,15 @@ final class TaskScripts {
      * The run script of one turn of a delegated agent. Run 1 records, for every git repository
      * at or under {@code cwd}, the commit it started from, which {@link #diff} compares against.
      */
-    static String agentRun(String taskId, int run, String cwd, Integer maxTurns) {
+    static String agentRun(String taskId, int run, String cwd, Integer maxTurns, String permissionMode) {
         var d = dir(taskId);
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
+        sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
         sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { echo 125 > \"$D/exit-").append(run)
                 .append("\"; exit 0; }\n");
         if (run == 1) {
+            sb.append(RECORD_CWD);
             sb.append("""
                     { top=$(git rev-parse --show-toplevel 2>/dev/null) && echo "$top"; \
                     find . -maxdepth 3 -name .git -prune -printf '%h\\n' 2>/dev/null; } \
@@ -83,6 +100,8 @@ final class TaskScripts {
         sb.append("claude -p --output-format stream-json --verbose")
                 .append(" --append-system-prompt \"$(cat \"$D/brief.md\")\"");
         if (maxTurns != null) sb.append(" --max-turns ").append(maxTurns);
+        // Always explicit: a headless agent that meets a permission prompt has nobody to answer it.
+        sb.append(" --permission-mode ").append(ExecScript.quote(permissionMode));
         if (run > 1) sb.append(" --resume \"$(cat \"$D/session_id\")\"");
         sb.append(" < \"$D/prompt-").append(run).append(".md\" > \"$D/events-").append(run)
                 .append(".jsonl\" 2> \"$D/stderr-").append(run).append(".log\"\n");
@@ -129,6 +148,8 @@ final class TaskScripts {
                 + "echo unit=$(sudo -n systemctl is-active " + unit(taskId, "$n") + " 2>/dev/null); "
                 + "[ -f \"$D/exit-$n\" ] && echo exit=$(cat \"$D/exit-$n\"); "
                 + "if [ \"$k\" = agent ]; then "
+                + "echo cwd=$(cat \"$D/cwd\" 2>/dev/null); echo session_id=$(cat \"$D/session_id\" 2>/dev/null); "
+                + Presence.script("presence=") + "; "
                 + "echo events_bytes=$(stat -c %s \"$D/events-$n.jsonl\" 2>/dev/null || echo 0); echo ---; "
                 + "tail -c " + tailBytes + " \"$D/events-$n.jsonl\" 2>/dev/null; echo; echo ---stderr; "
                 + "tail -c 2000 \"$D/stderr-$n.log\" 2>/dev/null; "
@@ -158,6 +179,26 @@ final class TaskScripts {
         return sb.append("exit 0").toString();
     }
 
+    /**
+     * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
+     * <cwd>}. How an adopting session learns the tasks the previous one started; whether a
+     * {@code running} one really is, it then asks systemd with {@link #states}.
+     */
+    static String list() {
+        return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; "
+                + "n=$(cat \"$d/current\" 2>/dev/null); [ -n \"$n\" ] || continue; "
+                + "if [ -f \"$d/exit-$n\" ]; then r=done; else r=running; fi; "
+                + "printf '%s %s %s %s %s\\n' \"$(basename \"$d\")\" \"$(cat \"$d/kind\")\" \"$n\" \"$r\" "
+                + "\"$(cat \"$d/cwd\" 2>/dev/null)\"; done; exit 0";
+    }
+
+    /** All of a command task's output, stdout then stderr, each under a heading. */
+    static String output(String taskId) {
+        var d = dir(taskId);
+        return "D=" + d + "; echo '--- stdout'; cat \"$D/stdout\" 2>/dev/null; "
+                + "echo; echo '--- stderr'; cat \"$D/stderr\" 2>/dev/null; exit 0";
+    }
+
     /** Stop the task's current run, and everything it started. */
     static String cancel(String taskId) {
         var d = dir(taskId);
@@ -173,17 +214,29 @@ final class TaskScripts {
      * {@code --stat} summary, then {@code ---}, then the patch (or {@code (too large)}).
      */
     static String diff(String taskId, String path, int maxBytes) {
+        return diff(taskId, path, maxBytes, false);
+    }
+
+    /**
+     * {@link #diff}, or with {@code statOnly} just what it touched: per repository, a
+     * {@code --numstat} line per file (lines added, removed, path) and the {@code --shortstat}
+     * total, then {@code ---}. Deterministic and small, whatever the size of the patch.
+     */
+    static String diff(String taskId, String path, int maxBytes, boolean statOnly) {
         var d = dir(taskId);
         var pathspec = path == null ? "" : " -- " + ExecScript.quote(path);
+        if (statOnly) {
+            return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
+                    + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
+                    + DIFF_INDEX
+                    + "echo \"## $repo\"; git diff --cached --numstat \"$base\"" + pathspec + "; "
+                    + "git diff --cached --shortstat \"$base\"" + pathspec + "; "
+                    + "rm -f \"$idx\" ); done < \"$D/base.txt\"; echo ---";
+        }
         return "D=" + d + "; [ -s \"$D/base.txt\" ] || { echo 'no git repository was found where the task started'; exit 0; }; "
                 + "out=$(mktemp); stat=$(mktemp); "
                 + "while read -r base repo; do ( cd \"$repo\" || exit 0; "
-                // The repository's own index as a starting point (by --git-path: a worktree or
-                // submodule has a .git file, not a directory); failing that, none -- an empty
-                // file would be a corrupt index, a missing one is an empty index.
-                + "idx=$(mktemp); cp \"$(git rev-parse --git-path index)\" \"$idx\" 2>/dev/null || rm -f \"$idx\"; "
-                + "export GIT_INDEX_FILE=\"$idx\"; "
-                + "git add -A >/dev/null 2>&1; "
+                + DIFF_INDEX
                 + "echo \"## $repo\" >> \"$stat\"; git diff --cached --stat \"$base\"" + pathspec + " >> \"$stat\"; "
                 + "git diff --cached --src-prefix=a/ --dst-prefix=b/ \"$base\"" + pathspec + " >> \"$out\"; "
                 + "rm -f \"$idx\" ); done < \"$D/base.txt\"; "
@@ -192,7 +245,16 @@ final class TaskScripts {
                 + "else cat \"$out\"; fi; rm -f \"$out\" \"$stat\"";
     }
 
-    private static String b64(String text) {
+    /**
+     * A throwaway index holding the working tree, so a diff against it covers uncommitted and
+     * untracked files without touching the repository's own index: a copy of that index (found
+     * by --git-path, as a worktree or submodule has a .git file, not a directory) as a starting
+     * point, failing that none -- an empty file would be a corrupt index, a missing one is empty.
+     */
+    private static final String DIFF_INDEX = "idx=$(mktemp); cp \"$(git rev-parse --git-path index)\" \"$idx\" 2>/dev/null || rm -f \"$idx\"; "
+            + "export GIT_INDEX_FILE=\"$idx\"; git add -A >/dev/null 2>&1; ";
+
+    static String b64(String text) {
         return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
     }
 }

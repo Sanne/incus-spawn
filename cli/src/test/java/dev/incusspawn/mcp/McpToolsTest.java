@@ -39,7 +39,7 @@ class McpToolsTest {
         realHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString()); // the audit log goes here
         config.setTemplates(List.of("tpl-java"));
-        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config);
+        session = new McpSession(new SessionId(4242, 1), "alice", 1, "/work", backend, () -> config, s -> false);
         var tools = new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 new Tasks(session, backend, () -> config));
         server = new McpServer(out, tools.all(), "1", null, null);
@@ -70,7 +70,7 @@ class McpToolsTest {
 
     @Test
     void onlyApprovedTemplatesAreListed() throws Exception {
-        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}")));
+        var listed = JsonRpc.JSON.readTree(text(call("list_templates", "{}"))).path("templates");
         assertEquals(1, listed.size());
         assertEquals("tpl-java", listed.get(0).path("name").asText());
         assertTrue(listed.get(0).path("supports_delegate").asBoolean());
@@ -163,5 +163,29 @@ class McpToolsTest {
         var listed = JsonRpc.JSON.readTree(text(call("list_instances", "{}")));
         assertEquals(1, listed.size());
         assertTrue(listed.get(0).path("kept").asBoolean());
+    }
+
+    @Test
+    void aPurposeIsStampedAndListed() throws Exception {
+        var r = call("create_instance", "{\"template\":\"tpl-java\",\"name_hint\":\"870-impl\",\"purpose\":\"#870 implement\"}");
+        var name = JsonRpc.JSON.readTree(text(r)).path("instance").asText();
+        assertEquals("#870 implement", backend.instances.get(name).get(Metadata.MCP_PURPOSE));
+        assertTrue(text(call("list_instances", "{}")).contains("\"purpose\" : \"#870 implement\""));
+    }
+
+    @Test
+    void execCanAnswerAQuestionInsteadOfReturningItsOutput() throws Exception {
+        var name = createJava();
+        backend.execStdout = "exit=3\nsummarised=900 lines, 40000 bytes\n---\nTwo tests fail: FooTest, BarTest.\n";
+        var result = text(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"mvn verify\","
+                + "\"ask\":\"which tests fail?\"}"));
+        assertTrue(result.startsWith("exit_code: 3\n"), "the command's exit code, not the summary's: " + result);
+        assertTrue(result.contains("summarised: 900 lines, 40000 bytes"), result);
+        assertTrue(result.contains("Two tests fail: FooTest, BarTest."), result);
+        var script = backend.scripts.getLast();
+        assertTrue(script.contains("--model 'haiku'"), script);
+        assertFalse(script.contains("which tests fail"), "the question travels encoded, never as shell text");
+        assertTrue(call("exec", "{\"instance\":\"" + name + "\",\"command\":\"x\",\"ask\":\"q\",\"background\":true}")
+                .path("isError").asBoolean());
     }
 }
