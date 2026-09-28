@@ -55,6 +55,15 @@ public final class Warnings {
     }
 
     /**
+     * Let the current channel report every message again: for a long-running process that
+     * re-reads definitions, as the proxy does on each config reload, so a problem still there
+     * is reported again rather than once per process.
+     */
+    public static void forgetReported() {
+        current.forgetReported();
+    }
+
+    /**
      * Send warnings to {@code to} until the returned handle is closed, which restores the
      * previous channel. Redirecting to the same channel again keeps what it already reported.
      */

@@ -84,4 +84,17 @@ class WarningsTest {
 
         assertEquals(List.of(), received);
     }
+
+    @Test
+    void forgettingLetsTheCurrentChannelReportAgain() {
+        // What the proxy does on each config reload: a problem still there is reported again.
+        var seen = new java.util.ArrayList<String>();
+        try (var ignored = Warnings.redirect(new Warnings.Channel(seen::add))) {
+            Warnings.warn("tool 'x' has proxy configuration but is project-local");
+            Warnings.warn("tool 'x' has proxy configuration but is project-local");
+            Warnings.forgetReported();
+            Warnings.warn("tool 'x' has proxy configuration but is project-local");
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(2, seen.size(), seen.toString());
+    }
 }

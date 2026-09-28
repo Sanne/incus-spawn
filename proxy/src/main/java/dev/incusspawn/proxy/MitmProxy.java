@@ -630,6 +630,9 @@ public class MitmProxy {
         System.out.println("Reloading configuration...");
         try {
             var loaded = ConfigFingerprint.load();
+            // Warnings from re-reading the definitions (a project-local proxy tool, a broken
+            // file) apply to this load too: report them again rather than once per process.
+            dev.incusspawn.Warnings.forgetReported();
             var oldState = useConfig(loaded.config());
             // A proxy built from credentials alone had no config to compare against.
             if (oldState.config() != NO_CONFIG) logDefaultChanges(oldState, configState);

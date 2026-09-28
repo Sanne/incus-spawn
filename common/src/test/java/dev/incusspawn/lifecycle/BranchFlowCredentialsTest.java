@@ -76,4 +76,44 @@ class BranchFlowCredentialsTest {
         var result = problem(daemon, "dev-1", List.of(), defs("name: tpl-dev\ntools: [claude]\n"));
         assertTrue(result.contains("Anthropic API key"), result);
     }
+
+    @Test
+    void theToolsTheSourceWasBuiltWithAreWhatIsChecked() throws Exception {
+        // tpl-dev's YAML gained claude after dev-1 was built without it: branching dev-1 needs
+        // what dev-1 has, recorded in its build source, not what the YAML says now.
+        var built = new dev.incusspawn.config.BuildSource(
+                Map.of("tpl-dev", ImageDef.parseYaml("name: tpl-dev\ntools: [gh]\n")), null, null, null);
+        var daemon = new FakeIncusDaemon().container("dev-1", Map.of(
+                Metadata.PROFILE, "tpl-dev", Metadata.BUILD_SOURCE, built.toJson()));
+        var edited = defs("name: tpl-dev\ntools: [gh, claude]\n");
+        assertEquals("", problem(daemon, "dev-1", List.of(), edited));
+
+        var unrecorded = new FakeIncusDaemon().container("dev-1", Map.of(Metadata.PROFILE, "tpl-dev"));
+        assertTrue(problem(unrecorded, "dev-1", List.of(), edited).contains("Anthropic API key"),
+                "without a build record, the YAML is all there is to go by");
+    }
+
+    @Test
+    void preflightRefusesABranchWhoseAccountHasNoKey() throws Exception {
+        // The CLI's path: the selection preflight stamps, --account included, is what is checked.
+        var original = BranchFlow.proxyHealthCheck;
+        BranchFlow.proxyHealthCheck = incus -> true;
+        try {
+            var defs = defs("name: tpl-dev\ntools:\n  - pi: {provider: openai}\n");
+            var request = new BranchFlow.Request("tpl-dev", "dev-2", false, false,
+                    dev.incusspawn.config.NetworkMode.FULL, null, null, null, null,
+                    List.of("openai=spare"), false, Map.of());
+            var daemon = template();
+            var e = assertThrows(BranchFlow.BranchException.class,
+                    () -> BranchFlow.preflight(daemon.client(), request, defs));
+            assertTrue(e.getMessage().contains("OpenAI API key"), e.getMessage());
+
+            var airgapped = new BranchFlow.Request("tpl-dev", "dev-2", false, false,
+                    dev.incusspawn.config.NetworkMode.AIRGAP, null, null, null, null,
+                    List.of("openai=spare"), false, Map.of());
+            BranchFlow.preflight(daemon.client(), airgapped, defs); // no proxy, no credentials needed
+        } finally {
+            BranchFlow.proxyHealthCheck = original;
+        }
+    }
 }

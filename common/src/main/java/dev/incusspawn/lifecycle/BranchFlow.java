@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.config.AccountOrigin;
+import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.CredentialCheck;
@@ -9,11 +10,13 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeSubnetCheck;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
+import dev.incusspawn.proxy.ToolProxyResolver;
 import dev.incusspawn.proxy.CertificateAuthority.CaStatus;
 import dev.incusspawn.proxy.ProxyConfig;
 import dev.incusspawn.proxy.ProxyHealthCheck;
@@ -45,6 +48,9 @@ public final class BranchFlow {
 
     /** Tells the proxy to re-read the instance list; replaced by tests, which have no proxy. */
     static Runnable proxyRefresh = ProxyService::signalAccountRefresh;
+
+    /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
+    static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
     /**
      * What to branch. {@code kvm} null means "whatever the source template was built with";
@@ -79,7 +85,7 @@ public final class BranchFlow {
 
     /** An account selection and who chose each pin in it. */
     /** @param template the leaf template the source was built from ({@link Inherited#template}) */
-    private record ResolvedAccounts(String template, Map<String, String> accounts,
+    private record ResolvedAccounts(Inherited inherited, Map<String, String> accounts,
                                     Map<String, AccountOrigin> origins) {}
 
     /**
@@ -126,24 +132,26 @@ public final class BranchFlow {
         // should be reported now, not as a failed API call inside the container later.
         var config = SpawnConfig.load();
         var loader = new ToolDefLoader();
-        var setups = AccountSelection.namespaceSetups(config, loader);
+        var served = ToolProxyResolver.proxyToolSetups(config, loader);
         ResolvedAccounts accounts;
         try {
-            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config, setups);
+            accounts = resolveAccountSelection(incus, req.source(), req.accountOverrides(), defs, config,
+                    AccountSelection.byNamespace(served));
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             throw new BranchException(e.getMessage());
         }
 
         if (req.networkMode() != NetworkMode.AIRGAP) {
-            if (!ProxyHealthCheck.checkOrWarn(incus)) {
+            if (!proxyHealthCheck.test(incus)) {
                 throw new BranchException("the isx proxy is not running; "
                         + "run 'isx doctor' to diagnose.", true);
             }
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
             checkCaMismatch(incus, req.source());
-            var credError = missingCredentials(config, accounts.template(), accounts.accounts(), defs, loader);
+            var credError = missingCredentials(config, accounts.inherited(), accounts.accounts(), defs,
+                    loader.allToolSetups(), served);
             if (!credError.isEmpty()) throw new BranchException(credError);
         }
 
@@ -266,10 +274,10 @@ public final class BranchFlow {
                                            Map<String, ImageDef> defs, ToolDefLoader loader) {
         var config = SpawnConfig.load();
         try {
-            var selection = new java.util.LinkedHashMap<>(inherited.accounts());
-            selection.putAll(AccountSelection.parse(accountOverrides));
-            AccountSelection.validate(config, selection, AccountSelection.namespaceSetups(config, loader));
-            return missingCredentials(config, inherited.template(), selection, defs, loader);
+            var selection = selection(inherited, AccountSelection.parse(accountOverrides));
+            var served = ToolProxyResolver.proxyToolSetups(config, loader);
+            AccountSelection.validate(config, selection, AccountSelection.byNamespace(served));
+            return missingCredentials(config, inherited, selection, defs, loader.allToolSetups(), served);
         } catch (AccountSelection.InvalidSelectionException
                  | AccountResolver.UnknownAccountException e) {
             return e.getMessage();
@@ -280,12 +288,22 @@ public final class BranchFlow {
      * Checked against the template the branch inherits from -- for a branch of a branch, the leaf
      * template recorded on the source -- and the selection it will actually be stamped with.
      */
-    private static String missingCredentials(SpawnConfig config, String templateName,
-                                             Map<String, String> selection,
-                                             Map<String, ImageDef> defs, ToolDefLoader loader) {
-        var template = defs.get(templateName);
+    private static String missingCredentials(SpawnConfig config, Inherited inherited,
+                                             Map<String, String> selection, Map<String, ImageDef> defs,
+                                             Map<String, ToolSetup> allTools, Map<String, ToolSetup> served) {
+        // What the source was built from, where it recorded that: the template's YAML may have
+        // changed since, and the branch gets what was built, not what the YAML says now.
+        var definitions = inherited.builtFrom().containsKey(inherited.template()) ? inherited.builtFrom() : defs;
+        var template = definitions.get(inherited.template());
         if (template == null) return "";
-        return CredentialCheck.check(config, template, defs, selection, loader);
+        return CredentialCheck.check(config, template, definitions, selection, allTools, served);
+    }
+
+    /** The selection a branch is stamped with: what it inherits, with {@code overrides} on top. */
+    private static Map<String, String> selection(Inherited inherited, Map<String, String> overrides) {
+        var selection = new java.util.LinkedHashMap<>(inherited.accounts());
+        selection.putAll(overrides);
+        return selection;
     }
 
     /**
@@ -298,11 +316,9 @@ public final class BranchFlow {
                                                             Map<String, ImageDef> defs, SpawnConfig config,
                                                             Map<String, ToolSetup> setups) {
         var inherited = inheritedAccounts(incus, source, defs);
-        var selection = new java.util.LinkedHashMap<>(inherited.accounts());
-        var origins = new java.util.LinkedHashMap<>(inherited.origins());
-
         var overrides = AccountSelection.parse(accountOverrides);
-        selection.putAll(overrides);
+        var selection = selection(inherited, overrides);
+        var origins = new java.util.LinkedHashMap<>(inherited.origins());
         overrides.keySet().forEach(ns -> origins.put(ns, AccountOrigin.EXPLICIT));
 
         AccountSelection.validate(config, selection, setups);
@@ -314,7 +330,7 @@ public final class BranchFlow {
         var reason = AccountSelection.incompatibilityReason(config, incus, source, selection, setups);
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
-        return new ResolvedAccounts(inherited.template(), selection, origins);
+        return new ResolvedAccounts(inherited, selection, origins);
     }
 
     /**
@@ -322,10 +338,16 @@ public final class BranchFlow {
      * built from, and the pins -- with who chose each -- that the branch would be stamped with.
      * A namespace absent from {@code accounts} is not pinned and follows the global default.
      *
-     * @param template the leaf template the source was built from, or the source itself
+     * @param template  the leaf template the source was built from, or the source itself
+     * @param builtFrom the definitions the source was built from, as its build recorded them
+     *                  ({@link BuildSource#getDefinitions}); empty when it recorded none
      */
     public record Inherited(String template, Map<String, String> accounts,
-                            Map<String, AccountOrigin> origins) {}
+                            Map<String, AccountOrigin> origins, Map<String, ImageDef> builtFrom) {
+        public Inherited(String template, Map<String, String> accounts, Map<String, AccountOrigin> origins) {
+            this(template, accounts, origins, Map.of());
+        }
+    }
 
     /**
      * The branch's inherited selection, lowest precedence first, each layer overwriting the last:
@@ -340,15 +362,21 @@ public final class BranchFlow {
      * branch dialog, which offers exactly this as the choice that changes nothing.
      */
     public static Inherited inheritedAccounts(IncusClient incus, String source, Map<String, ImageDef> defs) {
-        var profile = incus.configGet(source, Metadata.PROFILE);
-        var templateName = (profile != null && !profile.isEmpty()) ? profile : source;
+        // One read for the profile, the pins, their origins and the build record.
+        var instance = incus.instanceMetadata(source);
+        if (!instance.isObject()) { // Incus answers a missing instance with "metadata": null
+            throw new IncusException("Failed to read instance " + source);
+        }
+        var config = instance.path("config");
+        var profile = config.path(Metadata.PROFILE).asText("");
+        var templateName = !profile.isEmpty() ? profile : source;
 
         var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
         var origins = new java.util.LinkedHashMap<String, AccountOrigin>();
         selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(templateName)));
 
-        var sourcePins = AccountSelection.read(incus, source);
-        var sourceOrigins = AccountSelection.readOrigins(incus, source);
+        var sourcePins = AccountSelection.fromConfig(config);
+        var sourceOrigins = AccountSelection.originsFromConfig(config);
         sourcePins.forEach((ns, account) -> {
             // A pin the source recorded no origin for, but which is what the template chooses,
             // is the template's: that is how every pre-origin template build stamped it.
@@ -359,7 +387,9 @@ public final class BranchFlow {
             selection.put(ns, account);
             origins.put(ns, origin.copiedOnto(source));
         });
-        return new Inherited(templateName, selection, origins);
+        var built = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
+        return new Inherited(templateName, selection, origins,
+                built == null ? Map.of() : built.getDefinitions());
     }
 
     /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */
