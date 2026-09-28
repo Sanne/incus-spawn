@@ -887,11 +887,9 @@ public class ListCommand extends BaseCommand {
         if (!Platform.isMacOS()) { applianceSkewMessage = null; return; }
         if (applianceSkewFirstLoad) { applianceSkewFirstLoad = false; return; }
         try {
-            var running = VmManager.runningApplianceVersion();
-            if (running == null) { applianceSkewMessage = null; return; }
-            var installed = VmManager.applianceVersion();
-            if (running.equals(installed)) { applianceSkewMessage = null; return; }
-            applianceSkewMessage = "Appliance " + running + " — restart VM for " + installed;
+            var skew = VmManager.applianceSkew();
+            applianceSkewMessage = skew == null ? null
+                    : "Appliance " + skew.running() + " — restart VM for " + skew.installed();
         } catch (Exception e) {
             applianceSkewMessage = null;
         }

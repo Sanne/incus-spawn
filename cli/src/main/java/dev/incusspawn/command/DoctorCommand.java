@@ -893,11 +893,11 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkApplianceVersion() {
         var running = VmManager.runningApplianceVersion();
         if (running == null) return Finding.ok("Appliance version", "(unknown)");
-        var installed = VmManager.applianceVersion();
-        if (running.equals(installed)) return Finding.ok("Appliance version", running);
+        var skew = VmManager.applianceSkew();
+        if (skew == null) return Finding.ok("Appliance version", running);
         return Finding.warn("Appliance outdated",
-                "running " + running + ", installed " + installed,
-                new Remediation("Restart the VM to apply appliance " + installed
+                "running " + running + ", installed " + skew.installed(),
+                new Remediation("Restart the VM to apply appliance " + skew.installed()
                         + " (stops running containers)", true, DoctorCommand::restartVm));
     }
 

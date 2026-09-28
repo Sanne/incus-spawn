@@ -354,4 +354,24 @@ class VmManagerTest {
         assertEquals(VmManager.LeakLayer.FORWARDER, VmManager.leakLayer(5, 0),
                 "host fds leaked but forwarder gone: restarting it is the correct fix");
     }
+
+    @Test
+    void applianceSkewReportedWhenRestartReExtractsDisk() {
+        var skew = VmManager.applianceSkew("0.3.7", "0.3.8", "0.3.7");
+        assertEquals(new VmManager.ApplianceSkew("0.3.7", "0.3.8"), skew);
+        assertNotNull(VmManager.applianceSkew("0.3.7", "0.3.8", ""),
+                "an untracked disk is re-extracted on start");
+    }
+
+    @Test
+    void noApplianceSkewWhenVersionsMatch() {
+        assertNull(VmManager.applianceSkew("0.3.8", "0.3.8", "0.3.8"));
+    }
+
+    @Test
+    void noApplianceSkewWhenRestartKeepsTheSameDisk() {
+        // A locally built appliance embeds 0.0.0-SNAPSHOT, but a dev CLI stamps the disk with
+        // the latest release: restarting keeps that disk, so "restart for 0.3.8" never clears.
+        assertNull(VmManager.applianceSkew("0.0.0-SNAPSHOT", "0.3.8", "0.3.8"));
+    }
 }

@@ -86,10 +86,9 @@ public class VmCommand extends BaseCommand {
                 System.out.println("VM is not running. Use 'isx vm start' to start it.");
                 return CommandResult.SUCCESS;
             }
-            var running = VmManager.runningApplianceVersion();
-            var installed = VmManager.applianceVersion();
-            if (running != null && !running.equals(installed)) {
-                System.out.println("Appliance update pending (" + running + " → " + installed + ").");
+            var skew = VmManager.applianceSkew();
+            if (skew != null) {
+                System.out.println("Appliance update pending (" + skew.running() + " → " + skew.installed() + ").");
             }
             System.out.println("Running containers will be stopped.");
             if (!CleanCommand.confirm("Restart the VM?", yes)) {
@@ -401,11 +400,9 @@ public class VmCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             if (!VmManager.isRunning()) return CommandResult.SUCCESS;
-            var running = VmManager.runningApplianceVersion();
-            if (running == null) return CommandResult.SUCCESS;
-            var installed = VmManager.applianceVersion();
-            if (running.equals(installed)) return CommandResult.SUCCESS;
-            System.out.println(VmManager.skewMessage(running, installed));
+            var skew = VmManager.applianceSkew();
+            if (skew == null) return CommandResult.SUCCESS;
+            System.out.println(skew.message());
             return CommandResult.SUCCESS;
         }
     }

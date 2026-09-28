@@ -454,9 +454,9 @@ public final class VmManager {
             var running = runningApplianceVersion();
             if (running != null) {
                 sb.append("\n  Appliance: ").append(running);
-                var installed = applianceVersion();
-                if (!running.equals(installed)) {
-                    sb.append("  (installed: ").append(installed)
+                var skew = applianceSkew();
+                if (skew != null) {
+                    sb.append("  (installed: ").append(skew.installed())
                             .append(" — restart to apply)");
                 }
             }
@@ -664,17 +664,47 @@ public final class VmManager {
         return diskVer.isEmpty() ? null : diskVer;
     }
 
-    public static String skewMessage(String running, String installed) {
-        return "VM is running appliance " + running + "; " + installed
-                + " is installed — run 'isx vm restart' to apply it.";
+    /** The running appliance differs from the installed one, and restarting the VM would apply it. */
+    public record ApplianceSkew(String running, String installed) {
+        public String message() {
+            return "VM is running appliance " + running + "; " + installed
+                    + " is installed — run 'isx vm restart' to apply it.";
+        }
+    }
+
+    /**
+     * The skew between the running appliance and the installed one, or {@code null} when there
+     * is none a restart would clear. Every "restart the VM" hint goes through here.
+     */
+    public static ApplianceSkew applianceSkew() {
+        var running = runningApplianceVersion();
+        if (running == null) return null;
+        var installed = applianceVersion();
+        if (running.equals(installed)) return null;
+        return applianceSkew(running, installed, readVersionFile());
+    }
+
+    /**
+     * A restart boots whatever {@link #ensureDisk()} leaves in place, and it keeps the root disk
+     * when {@code disk.version} already names the installed version. The running appliance can
+     * still report something else: a locally built appliance embeds the project version
+     * ({@code 0.0.0-SNAPSHOT}) while a dev CLI stamps the disk with the latest release. Restarting
+     * then boots the same disk, so only a differing stamp is skew worth reporting.
+     */
+    static ApplianceSkew applianceSkew(String running, String installed, String diskVersion) {
+        if (running.equals(installed) || diskIsCurrent(installed, diskVersion)) return null;
+        return new ApplianceSkew(running, installed);
+    }
+
+    /** Whether {@link #ensureDisk()} keeps a root disk stamped {@code diskVersion}. */
+    private static boolean diskIsCurrent(String installed, String diskVersion) {
+        return installed.equals(diskVersion);
     }
 
     private static void warnIfApplianceStale() {
         try {
-            var running = runningApplianceVersion();
-            if (running == null) return;
-            var installed = applianceVersion();
-            if (running.equals(installed)) return;
+            var skew = applianceSkew();
+            if (skew == null) return;
 
             var marker = Environment.vmStateDir().resolve(".appliance-skew-warned");
             if (Files.exists(marker)) {
@@ -682,7 +712,7 @@ public final class VmManager {
                 if (age < SKEW_WARN_INTERVAL_MS) return;
             }
 
-            System.err.println(skewMessage(running, installed));
+            System.err.println(skew.message());
             Files.createDirectories(marker.getParent());
             Files.writeString(marker, "");
         } catch (Exception ignored) {
@@ -864,8 +894,7 @@ public final class VmManager {
                     + "Run 'isx init' to download appliance artifacts, or set ISX_APPLIANCE_DIR.");
         }
         boolean hasDiskVersion = Files.exists(Environment.vmDiskVersion());
-        boolean needsReExtract = (hasDiskVersion && !applianceVersion()
-                .equals(readVersionFile()))
+        boolean needsReExtract = (hasDiskVersion && !diskIsCurrent(applianceVersion(), readVersionFile()))
                 || (Files.exists(Environment.vmDiskImage()) && !hasDiskVersion);
         if (needsReExtract || (!Files.exists(Environment.vmDiskImage())
                 && !Files.exists(Environment.applianceDiskImage()))) {
@@ -896,7 +925,7 @@ public final class VmManager {
             try {
                 if (Files.exists(versionFile)) {
                     var diskVersion = Files.readString(versionFile).strip();
-                    if (diskVersion.equals(currentVersion)) return;
+                    if (diskIsCurrent(currentVersion, diskVersion)) return;
                     BuildOutput.step("Replacing appliance root disk ("
                             + diskVersion + " → " + currentVersion + ")");
                 } else {
