@@ -766,8 +766,9 @@ subvolume is not at its path. Whether Incus then deletes such a record may depen
 Btrfs subvolume"), while the orphans found on the #717 appliance (Incus 6.21) fit a delete that went through.
 
 `InstanceSubvolumes` compares the two sides. The disk side is a names-only parse of `btrfs subvolume list`
-(`BtrfsUsage.subvolumeList`, the same sudoers entry and agent verb as the rfer read). `BtrfsUsage.parse` cannot be
-reused, because it drops every subvolume without a qgroup row, which would hide orphans and invent dangling records.
+(`BtrfsUsage.subvolumeList`, the same sudoers entry and agent verb as the rfer read). The rfer join in
+`BtrfsUsage.parse` cannot serve, because it drops every subvolume without a qgroup row, which would hide orphans and
+invent dangling records; it places subvolumes with the same parser, though, so sizes and the scan agree on names.
 Only top-level `containers/<name>` and `virtual-machines/<name>` count, anchored at the pool (the filesystem root, or
 `…/storage-pools/<pool>` with no instance or pool directory above it): a guest running its own Incus nests a pool of
 the same name inside its rootfs. The records side is the pool's volumes across all projects, which live on disk as
@@ -775,14 +776,16 @@ the same name inside its rootfs. The records side is the pool's volumes across a
 listing while Incus has instances there is treated as "unknown", not as every instance being dangling, because the
 agent answers an empty section when `btrfs` fails.
 
-Three consumers use it, and each **fails open** when the pool cannot be listed (not btrfs, no sudoers rule, an
+Four consumers use it, and each **fails open** when the pool cannot be listed (not btrfs, no sudoers rule, an
 unprivileged host): refusing every delete there would be worse than the rare orphan.
 
 - `IncusClient.delete` throws `DanglingRecordException` before sending the DELETE when the instance's subvolume is
   missing, because that delete is what strands the data.
+- `IncusClient.rename` checks afterwards that Incus lists the new name and that the subvolume moved with it. That
+  turns a half-completed rename (the build's swap, promotion to `-failed-build`, a TUI rename) into an error at the
+  rename rather than a latent orphan.
 - `BuildCommand.buildSingleImage` refuses up front when either `<name>` or `<name>-rebuilding` is an orphan or a
-  dangling record. After the rename it checks that Incus lists the new name and the subvolume moved with it
-  (`verifySwap`), which turns a half-completed rename into a build failure, not a latent orphan.
+  dangling record, since its swap would otherwise fail only after the whole build.
 - `isx doctor` reports orphans (FAIL when the name is a template's or its `-rebuilding` name, since that build cannot
   succeed; WARN otherwise, with referenced sizes when qgroups have them) and dangling records (WARN). It offers no
   automatic removal yet. On Linux it prints the `sudo btrfs subvolume delete -R` command instead of widening the

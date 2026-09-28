@@ -629,7 +629,6 @@ public class BuildCommand extends BaseCommand {
             // must go through the same report-and-promote path as any other failure.
             incus.deleteIfExists(canonicalName);
             incus.rename(tempName, canonicalName);
-            verifySwap(tempName, canonicalName);
             activeBuild = null;
             buildDone(canonicalName);
         } catch (Exception e) {
@@ -658,16 +657,16 @@ public class BuildCommand extends BaseCommand {
      * whatever data it had. Silent when the pool cannot be inspected.
      */
     void requireNoStrandedStorage(String canonicalName, String tempName) {
-        var scan = incus.scanSubvolumes();
-        if (scan.isEmpty()) return;
+        var scan = incus.scanSubvolumes().orElse(null);
+        if (scan == null) return;
         var problems = new ArrayList<String>();
         for (var name : List.of(canonicalName, tempName)) {
-            if (scan.get().isOrphan(name)) {
-                problems.add("pool '" + scan.get().pool() + "' holds a subvolume for '" + name
+            if (scan.isOrphan(name)) {
+                problems.add("pool '" + scan.pool() + "' holds a subvolume for '" + name
                         + "' that Incus has no record of, so the build could not take that name");
             }
-            if (scan.get().isDangling(name)) {
-                problems.add("Incus has a record of '" + name + "' but pool '" + scan.get().pool()
+            if (scan.isDangling(name)) {
+                problems.add("Incus has a record of '" + name + "' but pool '" + scan.pool()
                         + "' has no subvolume for it, and replacing it could strand its data");
             }
         }
@@ -676,21 +675,6 @@ public class BuildCommand extends BaseCommand {
         problems.forEach(p -> System.err.println("  - " + p));
         System.err.println("Run 'isx doctor' to inspect the storage pool.");
         throw new BuildFailedException(canonicalName);
-    }
-
-    /**
-     * A rename Incus reports as successful can still leave the record and the subvolume under
-     * different names -- the first step towards an orphan (#717) -- so confirm both moved.
-     */
-    void verifySwap(String tempName, String canonicalName) {
-        if (!incus.exists(canonicalName) || incus.exists(tempName)) {
-            throw new IncusException("Incus reported renaming " + tempName + " to " + canonicalName
-                    + ", but it does not list the instance under the new name");
-        }
-        if (incus.storageOnDisk(canonicalName).orElse(true)) return;
-        throw new IncusException("Renaming " + tempName + " to " + canonicalName
-                + " left its storage behind: the record moved, but the pool has no subvolume under the"
-                + " new name. Do not delete " + canonicalName + "; run 'isx doctor' to inspect the pool");
     }
 
     /** Builds the template under {@code tempName}, from scratch or from its parent. */

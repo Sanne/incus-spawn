@@ -36,7 +36,7 @@ class BtrfsUsageTest {
 
     @Test
     void joinsReferencedBytesByInstanceName() {
-        var byName = BtrfsUsage.parse(QGROUP, SUBVOLS);
+        var byName = BtrfsUsage.parse(QGROUP, SUBVOLS, "cow");
         assertEquals(1_200_000_000L, byName.get("tpl-minimal"));
         assertEquals(1_800_000_000L, byName.get("tpl-isx"));
         assertEquals(900_000_000L, byName.get("tpl-vm"));   // virtual-machines/ subvolumes count too
@@ -44,7 +44,7 @@ class BtrfsUsageTest {
 
     @Test
     void ignoresImagesSnapshotsAndNestedSubvolumes() {
-        var byName = BtrfsUsage.parse(QGROUP, SUBVOLS);
+        var byName = BtrfsUsage.parse(QGROUP, SUBVOLS, "cow");
         assertEquals(3, byName.size());
         assertNull(byName.get("abcdef0123"));               // image subvolume
         assertNull(byName.get("snap0"));                    // snapshot under containers-snapshots
@@ -53,8 +53,8 @@ class BtrfsUsageTest {
 
     @Test
     void handlesEmptyOrGarbageOutput() {
-        assertTrue(BtrfsUsage.parse("", "").isEmpty());
-        assertTrue(BtrfsUsage.parse("not a table", "no paths here").isEmpty());
+        assertTrue(BtrfsUsage.parse("", "", "cow").isEmpty());
+        assertTrue(BtrfsUsage.parse("not a table", "no paths here", "cow").isEmpty());
     }
 
     @Test
@@ -62,16 +62,7 @@ class BtrfsUsageTest {
         // A subvolume present in the list but absent from qgroup output (quota just enabled, not yet
         // rescanned) must not appear with a bogus size.
         var subvols = "ID 999 gen 1 top level 5 path storage-pools/cow/containers/fresh\n";
-        assertTrue(BtrfsUsage.parse(QGROUP, subvols).isEmpty());
-    }
-
-    @Test
-    void instanceNameFromPathMatchesOnlyTopLevelInstanceSubvolumes() {
-        assertEquals("foo", BtrfsUsage.instanceNameFromPath("storage-pools/cow/containers/foo"));
-        assertEquals("vm1", BtrfsUsage.instanceNameFromPath("storage-pools/cow/virtual-machines/vm1"));
-        assertNull(BtrfsUsage.instanceNameFromPath("storage-pools/cow/images/deadbeef"));
-        assertNull(BtrfsUsage.instanceNameFromPath("storage-pools/cow/containers-snapshots/foo/s0"));
-        assertNull(BtrfsUsage.instanceNameFromPath("storage-pools/cow/containers/foo/nested/sub"));
+        assertTrue(BtrfsUsage.parse(QGROUP, subvols, "cow").isEmpty());
     }
 
     @Test

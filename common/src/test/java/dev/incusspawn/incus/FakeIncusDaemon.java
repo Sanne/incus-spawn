@@ -19,7 +19,7 @@ import java.util.Map;
  * flow; see {@code InstanceLifecycleRequestBudgetTest}.
  *
  * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
- * instance listing and DELETE, the {@code default} pool's volume listing, console log GET,
+ * instance listing, rename and DELETE, the {@code default} pool's volume listing, console log GET,
  * network and profile GET, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers.
@@ -250,6 +250,13 @@ public final class FakeIncusDaemon implements IncusTransport {
 
         var rest = path.substring(("/1.0/instances/" + name).length());
         if (rest.isEmpty() && method.equals("GET")) return sync(instance);
+        if (rest.isEmpty() && method.equals("POST")) {
+            var newName = JSON.readTree(body).path("name").asText();
+            instances.remove(name);
+            instance.put("name", newName);
+            instances.put(newName, instance);
+            return async();
+        }
         if (rest.isEmpty() && method.equals("DELETE")) {
             instances.remove(name);
             return async();

@@ -50,7 +50,7 @@ import java.util.concurrent.TimeUnit;
 public final class BtrfsUsage {
 
     /** Standard Incus on-disk layout: pools are mounted here on the host and inside the VM alike. */
-    static final String POOL_MOUNT_PREFIX = "/var/lib/incus/storage-pools/";
+    public static final String POOL_MOUNT_PREFIX = "/var/lib/incus/storage-pools/";
 
     /** Separates the two command outputs in the agent's {@code btrfs-usage} reply. */
     public static final String AGENT_SECTION_MARKER = "---ISX-SUBVOL---";
@@ -304,11 +304,8 @@ public final class BtrfsUsage {
         if (poolName == null || !isSafePoolName(poolName)) return Map.of();
         try {
             if (Platform.isMacOS()) {
-                var resp = VmAgentClient.btrfsUsage(poolName, sync);
-                if (resp.isEmpty()) return Map.of();
-                var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
-                if (parts.length != 2) return Map.of();
-                return parse(parts[0], parts[1]);
+                var sections = agentSections(poolName, sync);
+                return sections == null ? Map.of() : parse(sections[0], sections[1], poolName);
             }
             var mount = POOL_MOUNT_PREFIX + poolName;
             var qgroup = sync
@@ -316,7 +313,7 @@ public final class BtrfsUsage {
                     : runBtrfs("qgroup", "show", "-re", "--raw", mount);
             var subvols = runBtrfs("subvolume", "list", mount);
             if (qgroup == null || subvols == null) return Map.of();
-            return parse(qgroup, subvols);
+            return parse(qgroup, subvols, poolName);
         } catch (RuntimeException e) {
             return Map.of();
         }
@@ -325,18 +322,16 @@ public final class BtrfsUsage {
     /**
      * Raw {@code btrfs subvolume list} output for the pool, or null if it can't be read. Unlike
      * {@link #probe}, this does not depend on qgroups: it still answers with quotas off or
-     * inconsistent, which is what {@link InstanceSubvolumes} needs to see every subvolume. On macOS
-     * the agent's {@code btrfs-usage} reply carries the listing after the marker; an agent whose
-     * listing failed answers with an empty section, which callers must not read as "no subvolumes".
+     * inconsistent, which is what {@link InstanceSubvolumes} needs to see every subvolume. An agent
+     * whose listing failed answers with an empty section, which callers must not read as "no
+     * subvolumes".
      */
     static String subvolumeList(String poolName) {
         if (poolName == null || !isSafePoolName(poolName)) return null;
         try {
             if (Platform.isMacOS()) {
-                var resp = VmAgentClient.btrfsUsage(poolName, false);
-                if (resp.isEmpty()) return null;
-                var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
-                return parts.length == 2 ? parts[1] : null;
+                var sections = agentSections(poolName, false);
+                return sections == null ? null : sections[1];
             }
             return runBtrfs("subvolume", "list", POOL_MOUNT_PREFIX + poolName);
         } catch (RuntimeException e) {
@@ -344,13 +339,22 @@ public final class BtrfsUsage {
         }
     }
 
+    /** The agent's {@code btrfs-usage} reply as {qgroup show, subvolume list}, or null. */
+    private static String[] agentSections(String poolName, boolean sync) {
+        var resp = VmAgentClient.btrfsUsage(poolName, sync);
+        if (resp.isEmpty()) return null;
+        var parts = resp.get().split(AGENT_SECTION_MARKER, 2);
+        return parts.length == 2 ? parts : null;
+    }
+
     /**
      * Join {@code btrfs qgroup show -re --raw} output (Qgroupid / Referenced / Exclusive columns)
      * with {@code btrfs subvolume list} output (ID … path …) to map each instance/template name to
-     * its referenced bytes. Only top-level instance and VM subvolumes are considered — snapshots,
-     * images, custom volumes and any subvolumes nested inside a guest are skipped.
+     * its referenced bytes. Only the pool's top-level instance and VM subvolumes are considered, as
+     * {@link InstanceSubvolumes#parse} finds them: snapshots, images, custom volumes and any
+     * subvolumes nested inside a guest are skipped.
      */
-    public static Map<String, Long> parse(String qgroupShowOutput, String subvolumeListOutput) {
+    public static Map<String, Long> parse(String qgroupShowOutput, String subvolumeListOutput, String poolName) {
         Map<Long, Long> referencedBySubvolid = new HashMap<>();
         for (var line : qgroupShowOutput.split("\n")) {
             var fields = line.trim().split("\\s+");
@@ -367,42 +371,11 @@ public final class BtrfsUsage {
         }
 
         Map<String, Long> byName = new HashMap<>();
-        for (var line : subvolumeListOutput.split("\n")) {
-            var fields = line.trim().split("\\s+");
-            long subvolid = -1;
-            String path = null;
-            for (int i = 0; i + 1 < fields.length; i++) {
-                if ("ID".equals(fields[i])) {
-                    try { subvolid = Long.parseLong(fields[i + 1]); } catch (NumberFormatException ignored) {}
-                } else if ("path".equals(fields[i])) {
-                    path = String.join(" ", java.util.Arrays.copyOfRange(fields, i + 1, fields.length));
-                    break;
-                }
-            }
-            if (subvolid < 0 || path == null) continue;
-            var name = instanceNameFromPath(path);
-            if (name == null) continue;
+        InstanceSubvolumes.parseWithIds(subvolumeListOutput, poolName).forEach((ref, subvolid) -> {
             var referenced = referencedBySubvolid.get(subvolid);
-            if (referenced != null) byName.put(name, referenced);
-        }
+            if (referenced != null) byName.put(ref.name(), referenced);
+        });
         return byName;
-    }
-
-    /**
-     * The instance/template name for a subvolume path, or null if it isn't a top-level instance
-     * subvolume. Matches exactly {@code …/containers/<name>} and {@code …/virtual-machines/<name>}
-     * where {@code <name>} is the final path segment (so nested guest subvolumes, snapshots under
-     * {@code containers-snapshots}, images and custom volumes are all excluded).
-     */
-    static String instanceNameFromPath(String path) {
-        var parts = path.split("/");
-        for (int i = 0; i < parts.length - 1; i++) {
-            if (("containers".equals(parts[i]) || "virtual-machines".equals(parts[i]))
-                    && i == parts.length - 2) {
-                return parts[i + 1];
-            }
-        }
-        return null;
     }
 
     /**

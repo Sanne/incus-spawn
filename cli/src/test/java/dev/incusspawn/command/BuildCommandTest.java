@@ -366,7 +366,6 @@ class BuildCommandTest {
         InitCommandTest.withHome(tmp, () -> {
             var incus = mock(IncusClient.class);
             when(incus.scanSubvolumes()).thenReturn(Optional.of(scan(Set.of("dev-old"), Set.of())));
-            when(incus.exists("tpl-minimal")).thenReturn(true);
             var cmd = spy(new BuildCommand());
             cmd.incus = incus;
             cmd.yes = true;
@@ -377,48 +376,6 @@ class BuildCommandTest {
             cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef));
 
             verify(incus).rename("tpl-minimal-rebuilding", "tpl-minimal");
-        });
-    }
-
-    /** A rename Incus calls successful that left the subvolume behind is a failed build. */
-    @Test
-    void aSwapThatLeftItsStorageBehindFailsTheBuild(@TempDir Path tmp) {
-        InitCommandTest.withHome(tmp, () -> {
-            var incus = mock(IncusClient.class);
-            when(incus.exists("tpl-minimal")).thenReturn(true);
-            when(incus.storageOnDisk("tpl-minimal")).thenReturn(Optional.of(false));
-            var cmd = spy(new BuildCommand());
-            cmd.incus = incus;
-            cmd.yes = true;
-            doNothing().when(cmd).buildInto(any(), any(), anyString());
-            var imageDef = new ImageDef();
-            imageDef.setName("tpl-minimal");
-
-            assertThrows(BuildCommand.BuildFailedException.class,
-                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
-
-            var log = Environment.buildFailureLogFile("tpl-minimal");
-            assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("left its storage behind"));
-        });
-    }
-
-    @Test
-    void aSwapIncusDoesNotReflectFailsTheBuild(@TempDir Path tmp) {
-        InitCommandTest.withHome(tmp, () -> {
-            var incus = mock(IncusClient.class);
-            when(incus.exists(anyString())).thenReturn(false);
-            var cmd = spy(new BuildCommand());
-            cmd.incus = incus;
-            cmd.yes = true;
-            doNothing().when(cmd).buildInto(any(), any(), anyString());
-            var imageDef = new ImageDef();
-            imageDef.setName("tpl-minimal");
-
-            assertThrows(BuildCommand.BuildFailedException.class,
-                    () -> cmd.buildSingleImage(imageDef, Map.of("tpl-minimal", imageDef)));
-
-            var log = Environment.buildFailureLogFile("tpl-minimal");
-            assertTrue(assertDoesNotThrow(() -> Files.readString(log)).contains("under the new name"));
         });
     }
 

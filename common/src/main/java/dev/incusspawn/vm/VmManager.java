@@ -1023,8 +1023,7 @@ public final class VmManager {
             }
             BuildOutput.stepDone();
             createDataDisk(size);
-            if (startLocked() != StartResult.LAUNCHED) return false;
-            return awaitReady();
+            return startLocked() == StartResult.LAUNCHED && awaitReady();
         } catch (VmException e) {
             System.err.println("Error: " + e.getMessage());
             return false;

@@ -10,6 +10,7 @@ import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.incus.BtrfsUsage;
 import dev.incusspawn.incus.FirewalldCheck;
 import dev.incusspawn.incus.UfwCheck;
 import dev.incusspawn.incus.IncusClient;
@@ -43,6 +44,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -462,7 +464,7 @@ public class DoctorCommand extends BaseCommand {
             findings.addAll(checkProfilePool(incus, pool, pools));
             findings.addAll(checkInstancesOffCowPool(incus, pool, pools));
             findings.addAll(checkDiskAccounting(pool, pools.get(pool)));
-            findings.addAll(checkSubvolumes(incus));
+            findings.addAll(checkSubvolumes(incus, pool, pools.get(pool)));
             var usage = incus.getPoolUsageBytes(pool);
             if (usage == null) {
                 findings.add(Finding.ok("Storage pool " + pool, "(no usage info)"));
@@ -539,14 +541,14 @@ public class DoctorCommand extends BaseCommand {
      * Orphaned subvolumes and dangling records on the btrfs CoW pool (#717): the pool's instance
      * subvolumes and Incus's records disagree. Silent when the pool cannot be inspected.
      */
-    private List<Finding> checkSubvolumes(IncusClient incus) {
-        var scan = incus.scanSubvolumes();
-        if (scan.isEmpty()) return List.of();
-        var sizes = scan.get().orphans().isEmpty() ? Map.<String, Long>of()
-                : dev.incusspawn.incus.BtrfsUsage.probe(scan.get().pool(), false);
+    private List<Finding> checkSubvolumes(IncusClient incus, String pool, String driver) {
+        if (!"btrfs".equals(driver)) return List.of();
+        var scan = incus.scanSubvolumes(pool).orElse(null);
+        if (scan == null) return List.of();
+        var sizes = scan.orphans().isEmpty() ? Map.<String, Long>of() : BtrfsUsage.probe(pool, false);
         var loaded = loadImageDefs().loaded();
         Set<String> templates = loaded == null ? Set.of() : loaded.defs().keySet();
-        return subvolumeFindings(scan.get(), templates, sizes, Platform.isMacOS());
+        return subvolumeFindings(scan, templates, sizes, Platform.isMacOS());
     }
 
     static List<Finding> subvolumeFindings(InstanceSubvolumes.Scan scan, Set<String> templates,
@@ -555,11 +557,11 @@ public class DoctorCommand extends BaseCommand {
             return List.of(Finding.ok("Pool subvolumes", "match Incus's records"));
         }
         var findings = new ArrayList<Finding>();
-        var mount = "/var/lib/incus/storage-pools/" + scan.pool() + "/";
+        var mount = BtrfsUsage.POOL_MOUNT_PREFIX + scan.pool() + "/";
         if (!scan.orphans().isEmpty()) {
             // A template's build creates <name>-rebuilding and renames it to <name>: either one
             // already on disk makes that build fail at the end with "file exists".
-            var blocked = new ArrayList<String>();
+            var blocked = new LinkedHashSet<String>();
             var listed = new ArrayList<String>();
             for (var ref : scan.orphans()) {
                 var name = ref.name();
@@ -571,7 +573,7 @@ public class DoctorCommand extends BaseCommand {
             }
             var detail = "Incus has no record of " + String.join(", ", listed)
                     + " — the data is unreachable, still takes space, and blocks creating an instance of the same name"
-                    + (blocked.isEmpty() ? "" : "; builds of " + String.join(", ", blocked.stream().distinct().toList())
+                    + (blocked.isEmpty() ? "" : "; builds of " + String.join(", ", blocked)
                             + " will fail with \"file exists\"");
             var remediation = macOS
                     ? new Remediation("If nothing on the pool is worth keeping, wipe it with 'isx vm reset'"

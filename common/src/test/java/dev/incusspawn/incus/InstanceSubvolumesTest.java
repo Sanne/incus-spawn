@@ -164,6 +164,28 @@ class InstanceSubvolumesTest {
     }
 
     @Test
+    void renameChecksTheSubvolumeMovedWithTheRecord() {
+        var daemon = new FakeIncusDaemon().container("tpl-x-rebuilding", Map.of());
+        var client = daemon.client();
+        // The record moves; the listing still has the subvolume under the old name.
+        client.subvolumeLister = pool -> listing("tpl-x-rebuilding");
+
+        var e = assertThrows(IncusException.class, () -> client.rename("tpl-x-rebuilding", "tpl-x"));
+        assertTrue(e.getMessage().contains("left its storage behind"), e.getMessage());
+    }
+
+    @Test
+    void renameSucceedsWhenBothMoved() {
+        var daemon = new FakeIncusDaemon().container("tpl-x-rebuilding", Map.of());
+        var client = daemon.client();
+        client.subvolumeLister = pool -> listing("tpl-x");
+
+        client.rename("tpl-x-rebuilding", "tpl-x");
+
+        assertTrue(client.exists("tpl-x"));
+    }
+
+    @Test
     void scanIsEmptyWhenThePoolCannotBeListed() {
         var client = new FakeIncusDaemon().container("dev-1", Map.of()).client();
         client.subvolumeLister = pool -> null;

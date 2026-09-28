@@ -3,7 +3,6 @@ package dev.incusspawn.command;
 import dev.incusspawn.Environment;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
@@ -265,16 +264,15 @@ public class VmCommand extends BaseCommand {
             boolean up = VmManager.resetDataDisk();
             // Whatever the outcome, the instances are gone once the disk is: drop what the host
             // keeps for them (SSH config, git remotes, ...) and let the proxy forget their addresses.
-            if (lost != null) {
-                for (var name : lost.all()) {
-                    try {
-                        InstanceLifecycle.removeHostIntegration(name);
-                    } catch (Exception e) {
-                        System.err.println("Note: could not remove host integration for " + name + ": " + e.getMessage());
-                    }
+            var gone = lost == null ? List.<String>of() : lost.all();
+            for (var name : gone) {
+                try {
+                    InstanceLifecycle.removeHostIntegration(name);
+                } catch (Exception e) {
+                    System.err.println("Note: could not remove host integration for " + name + ": " + e.getMessage());
                 }
-                if (!lost.all().isEmpty()) InstanceDestroyer.refreshProxy();
             }
+            if (!gone.isEmpty()) InstanceDestroyer.refreshProxy();
             if (!up) {
                 System.err.println("The data disk was reset, but the VM did not come back. Check 'isx vm console'.");
                 return CommandResult.valueOf(1);
@@ -285,7 +283,7 @@ public class VmCommand extends BaseCommand {
                 System.err.println("The VM restarted, but " + problem + ". Check 'isx vm status'.");
                 return CommandResult.valueOf(1);
             }
-            BuildOutput.success("Data disk reset: Incus is up and pool '" + incus.findCowPool() + "' is empty.");
+            BuildOutput.success("Data disk reset: Incus is up and its storage pool is empty.");
             System.out.println("Recreate your templates with: isx build --all");
             return CommandResult.SUCCESS;
         }
@@ -318,16 +316,13 @@ public class VmCommand extends BaseCommand {
         static Survey survey(IncusClient incus) {
             if (!VmManager.isRunning() || incus.checkConnectivity() != null) return null;
             try {
-                var instances = new ArrayList<String>();
-                var templates = new ArrayList<String>();
+                // The same notion of instance and template as 'isx reset' and 'isx destroy'.
+                var instances = DestroyCommand.listClones(incus);
+                var templates = DestroyCommand.listBuiltTemplates(incus);
                 var others = new ArrayList<String>();
                 for (var inst : incus.list()) {
                     var name = inst.get("name");
-                    switch (Metadata.getType(incus, name)) {
-                        case Metadata.TYPE_CLONE -> instances.add(name);
-                        case Metadata.TYPE_BASE -> templates.add(name);
-                        default -> others.add(name);
-                    }
+                    if (!instances.contains(name) && !templates.contains(name)) others.add(name);
                 }
                 String usage = null;
                 var pool = incus.findCowPool();

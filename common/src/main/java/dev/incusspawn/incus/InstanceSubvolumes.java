@@ -1,7 +1,8 @@
 package dev.incusspawn.incus;
 
 import java.util.Comparator;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -74,11 +75,15 @@ public final class InstanceSubvolumes {
      */
     public record Scan(String pool, Set<Ref> orphans, Set<Ref> dangling) {
         public boolean isOrphan(String name) {
-            return orphans.stream().anyMatch(r -> r.name().equals(name));
+            return hasName(orphans, name);
         }
 
         public boolean isDangling(String name) {
-            return dangling.stream().anyMatch(r -> r.name().equals(name));
+            return hasName(dangling, name);
+        }
+
+        private static boolean hasName(Set<Ref> refs, String name) {
+            return refs.stream().anyMatch(r -> r.name().equals(name));
         }
 
         public boolean isClean() {
@@ -95,12 +100,24 @@ public final class InstanceSubvolumes {
      * {@code containers/tpl-isx/rootfs/…/storage-pools/x/containers/y} -- from reporting {@code y}.
      */
     static Set<Ref> parse(String subvolumeListOutput, String pool) {
-        var refs = new LinkedHashSet<Ref>();
+        return parseWithIds(subvolumeListOutput, pool).keySet();
+    }
+
+    /** {@link #parse}, keeping each subvolume's btrfs ID (its level-0 qgroup is {@code 0/<id>}). */
+    static Map<Ref, Long> parseWithIds(String subvolumeListOutput, String pool) {
+        var refs = new LinkedHashMap<Ref, Long>();
         for (var line : subvolumeListOutput.split("\n")) {
+            var fields = line.strip().split("\\s+", 3);
             var idx = line.indexOf(" path ");
-            if (idx < 0 || !line.stripLeading().startsWith("ID ")) continue;
+            if (fields.length < 3 || !fields[0].equals("ID") || idx < 0) continue;
+            long id;
+            try {
+                id = Long.parseLong(fields[1]);
+            } catch (NumberFormatException e) {
+                continue;
+            }
             var ref = refFromPath(line.substring(idx + " path ".length()).strip(), pool);
-            if (ref != null) refs.add(ref);
+            if (ref != null) refs.put(ref, id);
         }
         return refs;
     }

@@ -763,14 +763,26 @@ public class IncusClient {
     }
 
     public Map<String, String> instanceRootPools() {
-        var resp = http().get("/1.0/instances?recursion=1");
-        if (!resp.isSuccess()) return Map.of();
+        var roots = instanceRoots();
+        if (roots == null) return Map.of();
         var result = new LinkedHashMap<String, String>();
+        roots.forEach(r -> result.put(r.name(), r.pool()));
+        return result;
+    }
+
+    /** An instance with its Incus type and the pool its root disk is on. */
+    private record InstanceRoot(String name, String type, String pool) {}
+
+    /** Default-project instances with a root disk, or null if they cannot be listed. */
+    private List<InstanceRoot> instanceRoots() {
+        var resp = http().get("/1.0/instances?recursion=1");
+        if (!resp.isSuccess()) return null;
+        var result = new ArrayList<InstanceRoot>();
         for (var inst : resp.body().path("metadata")) {
             var name = inst.path("name").asText("");
             var pool = rootDiskPoolFromDevices(inst.path("expanded_devices"));
             if (!name.isEmpty() && pool != null) {
-                result.put(name, pool);
+                result.add(new InstanceRoot(name, inst.path("type").asText(""), pool));
             }
         }
         return result;
@@ -1623,10 +1635,26 @@ public class IncusClient {
         }
     }
 
+    /**
+     * Rename an instance, then confirm the record and its storage both moved. A rename Incus
+     * reports as successful can still leave them under different names, the first step towards an
+     * orphaned subvolume (#717); catching it here turns it into an error at the rename, not a
+     * mystery at some later create or delete.
+     */
     public void rename(String oldName, String newName) {
         var resp = http().requestAndWait("POST", "/1.0/instances/" + oldName,
                 Map.of("name", newName, "migration", false));
         if (!resp.isSuccess()) throw new IncusException("Failed to rename " + oldName + " to " + newName);
+        if (exists(oldName) || !exists(newName)) {
+            throw new IncusException("Incus reported renaming " + oldName + " to " + newName
+                    + ", but it does not list the instance under the new name");
+        }
+        var where = storageLocation(newName);
+        if (where != null && !where.onDisk()) {
+            throw new IncusException("Renaming " + oldName + " to " + newName + " left its storage behind:"
+                    + " the record moved, but pool '" + where.pool() + "' has no subvolume at "
+                    + where.ref().path() + ". Do not delete " + newName + "; run 'isx doctor' to inspect the pool");
+        }
     }
 
     /** Where the btrfs subvolume listing comes from; tests substitute canned output. */
@@ -1652,7 +1680,7 @@ public class IncusClient {
      */
     private void requireStorageOnDisk(String name) {
         var where = storageLocation(name);
-        if (where != null && Boolean.FALSE.equals(where.onDisk())) {
+        if (where != null && !where.onDisk()) {
             throw new DanglingRecordException(name, where.pool(), where.ref().path());
         }
     }
@@ -1662,30 +1690,23 @@ public class IncusClient {
      * cannot say (not btrfs, no listing, no such instance).
      */
     public Optional<Boolean> storageOnDisk(String name) {
-        var where = storageLocation(name);
-        return where == null ? Optional.empty() : Optional.ofNullable(where.onDisk());
+        return Optional.ofNullable(storageLocation(name)).map(StorageLocation::onDisk);
     }
 
-    private record StorageLocation(String pool, InstanceSubvolumes.Ref ref, Boolean onDisk) {}
+    private record StorageLocation(String pool, InstanceSubvolumes.Ref ref, boolean onDisk) {}
 
-    /** Null when {@code name} is not a btrfs-backed instance; {@code onDisk} null when unknown. */
+    /** Null unless {@code name} is on a btrfs pool whose listing can conclusively place it. */
     private StorageLocation storageLocation(String name) {
-        InstanceSubvolumes.Ref ref;
-        String pool;
-        try {
-            var resp = http().get("/1.0/instances/" + name);
-            if (!resp.isSuccess()) return null;
-            var meta = resp.body().path("metadata");
-            var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
-            pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
-            if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
-            ref = new InstanceSubvolumes.Ref(kind, name);
-        } catch (Exception e) {
-            return null;
-        }
+        var meta = instanceMetadata(name);
+        var kind = InstanceSubvolumes.Kind.fromApiType(meta.path("type").asText(""));
+        var pool = rootDiskPoolFromDevices(meta.path("expanded_devices"));
+        if (kind == null || pool == null || !"btrfs".equals(listPools().get(pool))) return null;
         var listing = subvolumeLister.apply(pool);
-        var onDisk = listing == null ? Set.<InstanceSubvolumes.Ref>of() : InstanceSubvolumes.parse(listing, pool);
-        return new StorageLocation(pool, ref, onDisk.isEmpty() ? null : onDisk.contains(ref));
+        if (listing == null) return null;
+        var onDisk = InstanceSubvolumes.parse(listing, pool);
+        if (onDisk.isEmpty()) return null;              // a listing that failed quietly
+        var ref = new InstanceSubvolumes.Ref(kind, name);
+        return new StorageLocation(pool, ref, onDisk.contains(ref));
     }
 
     /**
@@ -1694,13 +1715,21 @@ public class IncusClient {
      */
     public Optional<InstanceSubvolumes.Scan> scanSubvolumes() {
         var probe = probeCowPool();
-        if (!probe.isBtrfs()) return Optional.empty();
-        var pool = probe.poolName();
+        return probe.isBtrfs() ? scanSubvolumes(probe.poolName()) : Optional.empty();
+    }
+
+    /** {@link #scanSubvolumes()} for a pool the caller already knows is btrfs. */
+    public Optional<InstanceSubvolumes.Scan> scanSubvolumes(String pool) {
         var listing = subvolumeLister.apply(pool);
         if (listing == null) return Optional.empty();
         var volumes = instanceVolumes(pool);
-        var instances = instancesOnPool(pool);
-        if (volumes == null || instances == null) return Optional.empty();
+        var roots = instanceRoots();
+        if (volumes == null || roots == null) return Optional.empty();
+        var instances = new HashSet<InstanceSubvolumes.Ref>();
+        for (var r : roots) {
+            var kind = InstanceSubvolumes.Kind.fromApiType(r.type());
+            if (kind != null && pool.equals(r.pool())) instances.add(new InstanceSubvolumes.Ref(kind, r.name()));
+        }
         return Optional.ofNullable(InstanceSubvolumes.compare(
                 pool, InstanceSubvolumes.parse(listing, pool), volumes, instances));
     }
@@ -1723,22 +1752,6 @@ public class IncusClient {
             var project = vol.path("project").asText("default");
             refs.add(new InstanceSubvolumes.Ref(kind,
                     project.isEmpty() || project.equals("default") ? name : project + "_" + name));
-        }
-        return refs;
-    }
-
-    /** Default-project instances whose root disk is on {@code pool}; null if they cannot be listed. */
-    private Set<InstanceSubvolumes.Ref> instancesOnPool(String pool) {
-        var resp = http().get("/1.0/instances?recursion=1");
-        if (!resp.isSuccess()) return null;
-        var refs = new HashSet<InstanceSubvolumes.Ref>();
-        for (var inst : resp.body().path("metadata")) {
-            var kind = InstanceSubvolumes.Kind.fromApiType(inst.path("type").asText(""));
-            var name = inst.path("name").asText("");
-            if (kind != null && !name.isEmpty()
-                    && pool.equals(rootDiskPoolFromDevices(inst.path("expanded_devices")))) {
-                refs.add(new InstanceSubvolumes.Ref(kind, name));
-            }
         }
         return refs;
     }
