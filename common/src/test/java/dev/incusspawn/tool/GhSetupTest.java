@@ -286,6 +286,21 @@ class GhSetupTest {
         verify(incus).execInContainer(eq(CONTAINER), eq("agentuser"), contains("bot@acme.example"));
     }
 
+    /**
+     * Every build stamps a GitHub identity, gh or not; where gh is absent no identity was
+     * derived, so bringing it in line is a no-op rather than a failure on every use.
+     */
+    @Test
+    void aRepointWithoutGhInstalledDoesNothing() {
+        var incus = stubIncus();
+        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), eq("command -v gh"))).thenReturn(FAIL);
+
+        new GhSetup().rebakeForAccount(new Container(incus, CONTAINER), "acme");
+
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("gh api"));
+        verify(incus, never()).execInContainer(eq(CONTAINER), eq("agentuser"), contains("git config --global"));
+    }
+
     @Test
     void ghDeclaresItCanRepointAndClaudeDoesNot() {
         assertTrue(new GhSetup().canRebakeForAccount(),

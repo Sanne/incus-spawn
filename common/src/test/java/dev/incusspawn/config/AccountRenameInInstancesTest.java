@@ -48,7 +48,8 @@ class AccountRenameInInstancesTest {
                         Metadata.accountIdentityKey("github"), "bot"))
                 .container("other", Map.of(Metadata.accountKey("github"), "me"))
                 // Follows the default, but was built while 'bot' was the default.
-                .container("built-as-bot", Map.of(Metadata.accountIdentityKey("github"), "bot"));
+                .container("built-as-bot", Map.of(Metadata.accountIdentityKey("github"), "bot"))
+                .container("fingerprinted", Map.of(Metadata.accountIdentityKey("github"), "bot#0123456789ab"));
         var config = YAML.readValue(RENAMED, SpawnConfig.class);
 
         var repointed = AccountSelection.renameInInstances(daemon.client(), config, "github", "bot", "acme-bot");
@@ -56,12 +57,15 @@ class AccountRenameInInstancesTest {
         assertEquals(List.of("pinned"), repointed);
         assertEquals("acme-bot", config(daemon, "pinned", Metadata.accountKey("github")));
         assertEquals("acme-bot", config(daemon, "pinned", Metadata.accountIdentityKey("github")),
-                "GitHub's baked identity is the account name; left alone, the rename would read as a"
+                "GitHub's baked identity names the account; left alone, the rename would read as a"
                         + " change of identity and re-derive for nothing");
         assertEquals("me", config(daemon, "other", Metadata.accountKey("github")));
         assertEquals("acme-bot", config(daemon, "built-as-bot", Metadata.accountIdentityKey("github")));
         assertEquals("", config(daemon, "built-as-bot", Metadata.accountKey("github")),
                 "an instance that followed the default must not gain a pin");
+        assertEquals("acme-bot#0123456789ab", config(daemon, "fingerprinted", Metadata.accountIdentityKey("github")),
+                "the fingerprint describes the same token, so it carries over; a fresh one would hide"
+                        + " a token that was replaced before the rename");
     }
 
     /**

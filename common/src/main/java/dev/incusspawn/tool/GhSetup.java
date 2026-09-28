@@ -78,13 +78,45 @@ public class GhSetup implements ToolSetup {
     }
 
     /**
-     * The account name itself: {@code user.name} and {@code user.email} are derived from
-     * whoever the token belongs to, so any change of account is a change of identity -- unlike
-     * Claude, where two accounts of the same auth mode leave the image identical.
+     * The account name plus a fingerprint of what the identity is derived from:
+     * {@code user.name} and {@code user.email} come from whoever the token belongs to (and the
+     * configured email), so any change of account is a change of identity -- unlike Claude,
+     * where two accounts of the same auth mode leave the image identical.
+     *
+     * <p>The name alone is not enough: replacing an account's token with another user's keeps
+     * the name, and the instance would go on committing as the previous user while pushing as
+     * the new one (#281). The fingerprint is a truncated hash, never the token.
      */
     @Override
     public String bakedAccountIdentity(SpawnConfig config, String accountName) {
-        return AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
+        var account = AccountResolver.effectiveAccount(config, NAMESPACE, accountName);
+        if (account.isEmpty()) return "";
+        var token = AccountResolver.value(config, NAMESPACE, account, "token");
+        if (token.isBlank()) return account;
+        var email = AccountResolver.value(config, NAMESPACE, account, "email");
+        return account + IDENTITY_FINGERPRINT_SEPARATOR + fingerprint(token + "\0" + email);
+    }
+
+    private static final String IDENTITY_FINGERPRINT_SEPARATOR = "#";
+    private static final int IDENTITY_FINGERPRINT_LENGTH = 12;
+
+    /** The fingerprint carries over: the credential it describes is the same one, renamed. */
+    @Override
+    public String renameBakedIdentity(String baked, String from, String to) {
+        if (baked.equals(from)) return to;
+        var rest = baked.startsWith(from) ? baked.substring(from.length()) : "";
+        return rest.matches(IDENTITY_FINGERPRINT_SEPARATOR + "[0-9a-f]{" + IDENTITY_FINGERPRINT_LENGTH + "}")
+                ? to + rest : null;
+    }
+
+    private static String fingerprint(String material) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(material.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest).substring(0, IDENTITY_FINGERPRINT_LENGTH);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Override
@@ -101,6 +133,9 @@ public class GhSetup implements ToolSetup {
      */
     @Override
     public void rebakeForAccount(Container container, String accountName) {
+        // Every build stamps an identity for every namespace, so instances without gh carry
+        // one too; there, no git identity was derived and there is nothing to bring in line.
+        if (!container.sh("command -v gh").success()) return;
         var config = SpawnConfig.load();
         // Resolve before overwriting. Clearing first and then failing -- no network, a revoked
         // token, gh missing -- would leave the instance with no author at all, which is worse

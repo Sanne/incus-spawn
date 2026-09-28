@@ -242,7 +242,8 @@ public final class AccountSelection {
 
     /**
      * Namespaces whose baked identity on this instance no longer matches the account it is
-     * pinned to, mapped to the account it should be brought in line with. Each one's tool can
+     * pinned to -- another account, or the same one holding a different credential -- mapped to
+     * the account it should be brought in line with. Each one's tool can
      * re-derive -- the ones that cannot were refused at selection time.
      */
     public static Map<String, String> staleIdentities(SpawnConfig config, IncusClient incus,
@@ -266,7 +267,7 @@ public final class AccountSelection {
                     var wasBaked = baked.get(namespace);
                     if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(identity)) return;
                     if (!canRebake(setups.get(namespace))) return;
-                    stale.put(namespace, identity);
+                    stale.put(namespace, AccountResolver.effectiveAccount(config, namespace, selection.get(namespace)));
                 });
         return stale;
     }
@@ -285,8 +286,9 @@ public final class AccountSelection {
 
     /**
      * Follow an account rename onto every instance: pins to {@code from} become pins to
-     * {@code to}, and so does a baked identity that <em>is</em> the account name (GitHub's), so
-     * the rename does not read as a change of identity and trigger a needless re-derive.
+     * {@code to}, and a baked identity that names the account (GitHub's) is renamed with it
+     * ({@link ToolSetup#renameBakedIdentity}), so the rename does not read as a change of
+     * identity and trigger a needless re-derive.
      *
      * <p>Run after the config is saved under the new name: until then the proxy would answer
      * the re-pointed pin with "not configured". One list request, and one write per instance
@@ -298,10 +300,6 @@ public final class AccountSelection {
     public static List<String> renameInInstances(IncusClient incus, SpawnConfig config,
                                                  String namespace, String from, String to) {
         var setup = namespaceSetups(config).get(namespace);
-        // Only a tool that bakes the account itself: Claude bakes an auth mode, which an
-        // account's name could coincide with without being it.
-        var identityIsName = setup != null && setup.canRebakeForAccount()
-                && identityIsAccountName(setup, config, to);
         var pinKey = Metadata.accountKey(namespace);
         var identityKey = Metadata.accountIdentityKey(namespace);
         var repointed = new java.util.ArrayList<String>();
@@ -318,28 +316,14 @@ public final class AccountSelection {
             if (name.isEmpty() || !instanceConfig.isObject()) continue;
             var updates = new LinkedHashMap<String, String>();
             if (from.equals(instanceConfig.path(pinKey).asText(""))) updates.put(pinKey, to);
-            if (identityIsName && from.equals(instanceConfig.path(identityKey).asText(""))) {
-                updates.put(identityKey, to);
-            }
+            var renamedIdentity = setup == null ? null
+                    : setup.renameBakedIdentity(instanceConfig.path(identityKey).asText(""), from, to);
+            if (renamedIdentity != null) updates.put(identityKey, renamedIdentity);
             if (updates.isEmpty()) continue;
             incus.configSetAll(name, updates);
             if (updates.containsKey(pinKey)) repointed.add(name);
         }
         return repointed;
-    }
-
-    /**
-     * Whether the tool's baked identity for {@code account} is its name. Asking resolves the
-     * account, which refuses an incomplete one -- and a rename must still re-point the pins of an
-     * account that is incomplete, or they would name something that no longer exists. Such an
-     * identity is left alone; it is re-derived once the account is usable.
-     */
-    private static boolean identityIsAccountName(ToolSetup setup, SpawnConfig config, String account) {
-        try {
-            return account.equals(setup.bakedAccountIdentity(config, account));
-        } catch (AccountResolver.UnknownAccountException e) {
-            return false;
-        }
     }
 
     /** Render a selection for humans: {@code claude=work, github=acme-bot}. */

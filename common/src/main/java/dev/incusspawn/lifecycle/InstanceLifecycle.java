@@ -253,11 +253,11 @@ public final class InstanceLifecycle {
     /**
      * Re-derive anything the build baked from a credential account the instance is no longer
      * pinned to -- today, the git identity after {@code isx branch --account github=other} or
-     * {@code isx account set}.
+     * {@code isx account set}, or after the account's token is replaced with another user's.
      *
      * <p>Runs after start, because re-deriving means asking the API through the proxy, which is
      * also what makes it correct: the proxy already knows which account this instance uses, so
-     * the tool needs no argument beyond the account name to stamp back.
+     * the tool needs no argument beyond the account name.
      *
      * <p>Called from {@code BranchCommand} so a freshly branched instance is right from its
      * first commit, and again from {@code InstancePrep} so one branched {@code --no-start}, or
@@ -307,13 +307,13 @@ public final class InstanceLifecycle {
             var container = new Container(incus, name);
             var setups = knownSetups != null ? knownSetups : AccountSelection.namespaceSetups(config);
             var updates = new LinkedHashMap<String, String>();
-            stale.forEach((namespace, identity) -> {
+            stale.forEach((namespace, account) -> {
                 var setup = setups.get(namespace);
                 if (setup == null) return;
                 progress.accept("Updating " + namespace + " identity for account '"
-                        + identity + "'...");
-                setup.rebakeForAccount(container, identity);
-                updates.put(Metadata.accountIdentityKey(namespace), identity);
+                        + account + "'...");
+                setup.rebakeForAccount(container, account);
+                updates.put(Metadata.accountIdentityKey(namespace), setup.bakedAccountIdentity(config, account));
             });
             if (!updates.isEmpty()) incus.configSetAll(name, updates);
         } catch (Exception e) {

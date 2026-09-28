@@ -645,6 +645,11 @@ jobs:
           sg incus-admin -c "isx account set acct-gh github=agent"
           sg incus-admin -c "incus exec acct-gh -- bash /tmp/test-git-identity.sh agent"
 
+          # The same account holding another user's token is a change of identity
+          # too (#281): a child template built after the swap must not inherit its
+          # parent's. Moves the GitHub default for its duration and restores it.
+          sg incus-admin -c "bash .github/scripts/test-token-rotation.sh"
+
       - name: Test rootless podman
         run: |
           sg incus-admin -c "isx branch test-podman --from tpl-test-podman --no-start"

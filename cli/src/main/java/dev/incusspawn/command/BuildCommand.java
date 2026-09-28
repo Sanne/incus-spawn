@@ -1080,6 +1080,10 @@ public class BuildCommand extends BaseCommand {
         installAllPackages(container, imageDef, toolResolution.effective(), toolResolution.ancestors(), defs);
 
         runToolSetup(container, toolResolution.effective(), ImageDef.resolveAccounts(imageDef, defs));
+        // After tool setup, not before: a parent without gh still carries a GitHub stamp, and
+        // writing an identity first would create the .gitconfig whose absence is how gh's setup
+        // knows to write its git defaults.
+        refreshInheritedIdentities(container, imageDef, defs);
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
@@ -2076,6 +2080,38 @@ public class BuildCommand extends BaseCommand {
                         + "' for '" + key.name() + "', skipping.");
             }
         }
+    }
+
+    /**
+     * Re-derive what the parent baked from an account that has since changed -- another account
+     * chosen, or its token replaced with another user's (#281).
+     *
+     * <p>The copy carries the parent's {@code account-identity} stamps along with its
+     * {@code .gitconfig}, and the tools' setup skips an identity that is already present, so
+     * without this a rebuilt child would keep the parent's identity while the stamp written at
+     * the end of the build claimed the current one -- hiding it from the reconcile at branch
+     * time too. A failure fails the build rather than produce that template.
+     */
+    private void refreshInheritedIdentities(Container container, ImageDef imageDef, Map<String, ImageDef> defs) {
+        var inherited = incus.configByPrefix(container.name(), Metadata.ACCOUNT_IDENTITY_PREFIX);
+        if (inherited.isEmpty()) return;
+        var config = SpawnConfig.load();
+        var setups = AccountSelection.namespaceSetups(config);
+        var selection = ImageDef.resolveAccounts(imageDef, defs);
+        AccountSelection.bakedIdentities(config, AccountSelection.effectiveSelection(selection, setups), setups)
+                .forEach((namespace, identity) -> {
+                    var baked = inherited.get(namespace);
+                    var setup = setups.get(namespace);
+                    if (baked == null || baked.isBlank() || baked.equals(identity)
+                            || setup == null || !setup.canRebakeForAccount()) {
+                        return;
+                    }
+                    var account = dev.incusspawn.config.AccountResolver.effectiveAccount(
+                            config, namespace, selection.get(namespace));
+                    BuildOutput.step("Updating " + namespace + " identity inherited from '"
+                            + imageDef.getParent() + "' for account '" + account + "'...");
+                    setup.rebakeForAccount(container, account);
+                });
     }
 
     /**

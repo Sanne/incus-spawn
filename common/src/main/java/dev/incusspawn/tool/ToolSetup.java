@@ -89,8 +89,8 @@ public interface ToolSetup {
      * freely interchangeable. Two tools are not like that. Claude's auth mode decides which
      * variables {@code envEntries} writes into {@code isx-env.sh}, so it returns the mode:
      * accounts of the same mode remain interchangeable. GitHub derives {@code user.name} and
-     * {@code user.email} from whoever the token belongs to, so it returns the account name:
-     * any change is a change of identity.
+     * {@code user.email} from whoever the token belongs to, so it returns the account name with
+     * a fingerprint of its token and email: any change of either is a change of identity.
      *
      * <p>The build stamps this under {@link dev.incusspawn.incus.Metadata#accountIdentityKey}.
      * A later re-point compares against it and, when it differs, either asks the tool to bring
@@ -120,6 +120,16 @@ public interface ToolSetup {
      */
     default void rebakeForAccount(Container container, String accountName) {
         throw new UnsupportedOperationException(name() + " cannot re-derive its baked identity");
+    }
+
+    /**
+     * What an {@link #bakedAccountIdentity} stamp becomes when account {@code from} is renamed
+     * to {@code to}, or {@code null} when the stamp does not name the account -- a Claude auth
+     * mode, which an account's name could coincide with without being it. Pure string work, so
+     * it also applies to an account that is incomplete when renamed.
+     */
+    default String renameBakedIdentity(String baked, String from, String to) {
+        return null;
     }
 
     /** Feature flag that must be enabled for this tool to be available. Null means always available. */
