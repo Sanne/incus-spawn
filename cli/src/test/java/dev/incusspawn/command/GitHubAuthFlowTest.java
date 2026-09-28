@@ -5,11 +5,13 @@ import dev.incusspawn.config.SpawnConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.net.URI;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static dev.incusspawn.command.IsolatedHome.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -170,7 +172,7 @@ class GitHubAuthFlowTest {
      */
     @Test
     void theTokenPageIsPrefilledWithTheNeededPermissions() {
-        var url = java.net.URI.create(InitCommand.GH_PAT_NEW_URL);
+        var url = URI.create(InitCommand.GH_PAT_NEW_URL);
         assertEquals("/settings/personal-access-tokens/new", url.getPath());
         var params = List.of(url.getQuery().split("&"));
         for (var expected : List.of("emails=read", "contents=write", "issues=write", "pull_requests=write")) {
@@ -267,9 +269,10 @@ class GitHubAuthFlowTest {
         var init = new FakeInit()
                 .accept(AGENT_PAT, "agent-bot", null)
                 .accept("github_pat_with_email_000", "agent-bot", "bot@example.com");
-        run(init, declineBrowser().secret(AGENT_PAT).secret("1github_pat_with_email_000")
-                .secret("github_pat_with_email_000").line(FINISHED));
+        var out = captureStdout(() -> run(init, declineBrowser().secret(AGENT_PAT)
+                .secret("1github_pat_with_email_000").secret("github_pat_with_email_000").line(FINISHED)));
 
+        assertTrue(out.contains("1 character comes before 'github_pat_'"), "the stray keystroke went unnamed:\n" + out);
         assertEquals("github_pat_with_email_000", saved("github.accounts.default.token"));
         assertEquals("bot@example.com", saved("github.accounts.default.email"));
     }
@@ -279,7 +282,7 @@ class GitHubAuthFlowTest {
     @Test
     void knownTokenPrefixesPassTheShapeCheck() {
         for (var token : List.of(AGENT_PAT, "ghp_classic", PERSONAL_GH_TOKEN)) {
-            assertEquals(java.util.Optional.empty(), InitCommand.githubTokenShapeWarning(token), token);
+            assertEquals(Optional.empty(), InitCommand.githubTokenShapeWarning(token), token);
         }
     }
 

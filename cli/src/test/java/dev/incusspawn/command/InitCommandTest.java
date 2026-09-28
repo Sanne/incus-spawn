@@ -56,6 +56,12 @@ class InitCommandTest {
         assertEquals("ghp_...aB9z", InitCommand.maskSecret("ghp_1234567890aB9z"));
     }
 
+    /** The gh CLI's OAuth token: masked with the same prefix list the shape check accepts. */
+    @Test
+    void maskSecretGhoToken() {
+        assertEquals("gho_...aB9z", InitCommand.maskSecret("gho_1234567890aB9z"));
+    }
+
     @Test
     void maskSecretGithubPatToken() {
         assertEquals("github_pat_...Yz12", InitCommand.maskSecret("github_pat_ABCDEFGHIJKLMNOPYz12"));
