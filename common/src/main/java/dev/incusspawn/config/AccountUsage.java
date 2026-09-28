@@ -36,9 +36,16 @@ public final class AccountUsage {
      * @param problem         why a pinned account cannot be served, or {@code ""}
      * @param templateProblem why the template's account cannot be served -- renamed or removed
      *                        since the template was written -- or {@code ""}
+     * @param refusal         why the proxy refuses to serve this account to this instance -- it
+     *                        was built for another auth mode -- and how to fix it, or {@code ""}
      */
     public record Use(String namespace, String account, AccountOrigin origin, String templateAccount,
-                      String description, String problem, String templateProblem) {
+                      String description, String problem, String templateProblem, String refusal) {
+
+        public Use(String namespace, String account, AccountOrigin origin, String templateAccount,
+                   String description, String problem, String templateProblem) {
+            this(namespace, account, origin, templateAccount, description, problem, templateProblem, "");
+        }
 
         public boolean pinned() {
             return origin != null;
@@ -57,10 +64,14 @@ public final class AccountUsage {
      * @param pins             the instance's recorded selection ({@link AccountSelection#read})
      * @param origins          who chose each pin ({@link AccountSelection#readOrigins})
      * @param templateAccounts its template chain's {@code accounts:} as they read now
+     * @param bakedIdentities  its {@code account-identity} stamps, to report an account the
+     *                         proxy refuses because the instance was not built for it
      */
     public static List<Use> of(SpawnConfig config, Map<String, ToolSetup> setups,
                                Map<String, String> pins, Map<String, AccountOrigin> origins,
-                               Map<String, String> templateAccounts) {
+                               Map<String, String> templateAccounts, String instance,
+                               Map<String, String> bakedIdentities) {
+        var refused = AccountSelection.servingMismatches(config, setups, instance, pins, bakedIdentities);
         var namespaces = new LinkedHashSet<>(setups.keySet());
         namespaces.addAll(pins.keySet());
         namespaces.addAll(templateAccounts.keySet());
@@ -96,7 +107,8 @@ public final class AccountUsage {
             var description = setup == null || !problem.isEmpty() || account.isEmpty()
                     ? "" : setup.describeAccount(config, account);
             uses.add(new Use(namespace, account, origin, fromTemplate,
-                    description == null ? "" : description, problem, templateProblem));
+                    description == null ? "" : description, problem, templateProblem,
+                    problem.isEmpty() ? refused.getOrDefault(namespace, "") : ""));
         }
         return uses;
     }

@@ -53,16 +53,33 @@ class AccountMenuTest {
      */
     static final class StubbedInit extends InitCommand {
         final java.util.Map<String, java.util.Map<String, String>> pins = new java.util.LinkedHashMap<>();
+        /** Instances that pin nothing, and whether each is running. */
+        final java.util.Map<String, Boolean> unpinned = new java.util.LinkedHashMap<>();
+        final java.util.Map<String, java.util.Map<String, String>> baked = new java.util.LinkedHashMap<>();
         final java.util.Map<String, List<String>> templates = new java.util.LinkedHashMap<>();
         final List<String> renames = new java.util.ArrayList<>();
+        final List<String> pinned = new java.util.ArrayList<>();
+        final List<String> refreshed = new java.util.ArrayList<>();
 
         StubbedInit pin(String instance, String namespace, String account) {
             pins.computeIfAbsent(instance, k -> new java.util.LinkedHashMap<>()).put(namespace, account);
             return this;
         }
 
+        StubbedInit following(String instance, boolean running) {
+            unpinned.put(instance, running);
+            return this;
+        }
+
         @Override
-        java.util.Map<String, java.util.Map<String, String>> instanceAccountPins() { return pins; }
+        java.util.Map<String, dev.incusspawn.proxy.InstanceRegistry.AccountState> instanceAccountStates() {
+            var states = new java.util.LinkedHashMap<String, dev.incusspawn.proxy.InstanceRegistry.AccountState>();
+            pins.forEach((name, p) -> states.put(name, new dev.incusspawn.proxy.InstanceRegistry.AccountState(
+                    p, baked.getOrDefault(name, java.util.Map.of()), false)));
+            unpinned.forEach((name, running) -> states.put(name, new dev.incusspawn.proxy.InstanceRegistry.AccountState(
+                    java.util.Map.of(), baked.getOrDefault(name, java.util.Map.of()), running)));
+            return states;
+        }
 
         @Override
         List<String> renameInInstances(SpawnConfig config, String namespace, String from, String to) {
@@ -73,6 +90,17 @@ class AccountMenuTest {
         @Override
         List<String> templatesNaming(String namespace, String account) {
             return templates.getOrDefault(namespace + "=" + account, List.of());
+        }
+
+        @Override
+        List<String> pinInstances(SpawnConfig config, List<String> instances, String namespace, String account) {
+            instances.forEach(i -> pinned.add(i + ":" + namespace + "=" + account));
+            return List.of();
+        }
+
+        @Override
+        void refreshIdentities(List<String> instances) {
+            refreshed.addAll(instances);
         }
     }
 
@@ -368,5 +396,63 @@ class AccountMenuTest {
         assertEquals("ghp_flat", value(config, "github.accounts.me.token"));
         assertEquals("me@example.com", value(config, "github.accounts.me.email"));
         assertEquals("me", value(config, "github.default"));
+    }
+
+    // ── changing the default moves every instance that follows it ────────────
+
+    @Test
+    void changingTheDefaultWithNobodyFollowingItDoesNotAsk() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().pin("review-1", "github", "personal");
+        assertNull(choose(init, config, "d", "acme", ""));
+        assertEquals("acme", value(config, "github.default"));
+    }
+
+    /** Enter switches: not pinned means following the default. */
+    @Test
+    void followersSwitchByDefaultAndRunningOnesGetTheirIdentityRefreshed() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().following("scratch", true).following("idle", false);
+        assertNull(choose(init, config, "d", "acme", "", ""));
+        assertEquals("acme", value(config, "github.default"));
+        assertTrue(init.pinned.isEmpty());
+        assertEquals(List.of("scratch"), init.refreshed, "only the running one; the other catches up on next use");
+    }
+
+    @Test
+    void followersCanBeKeptOnTheAccountTheyUse() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().following("scratch", true);
+        assertNull(choose(init, config, "d", "acme", "k", ""));
+        assertEquals("acme", value(config, "github.default"));
+        assertEquals(List.of("scratch:github=personal"), init.pinned);
+        assertTrue(init.refreshed.isEmpty(), "nothing moved");
+    }
+
+    @Test
+    void cancellingLeavesTheDefaultAlone() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().following("scratch", true);
+        assertNull(choose(init, config, "d", "acme", "c", ""));
+        assertEquals("personal", value(config, "github.default"));
+        assertTrue(init.pinned.isEmpty());
+    }
+
+    /** No answer at all (EOF) must never move anyone's principal. */
+    @Test
+    void endOfInputCancels() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().following("scratch", true);
+        choose(init, config, "d", "acme");
+        assertEquals("personal", value(config, "github.default"));
+    }
+
+    @Test
+    void removingTheDefaultNamesItsFollowersAndRefreshesTheRunningOnes() throws Exception {
+        var config = YAML.readValue(TWO_ACCOUNTS, SpawnConfig.class);
+        var init = new StubbedInit().following("scratch", true);
+        assertNull(choose(init, config, "x", "personal", "y", ""));
+        assertEquals(List.of("acme"), NamespaceAccounts.names(config, "github"));
+        assertEquals(List.of("scratch"), init.refreshed);
     }
 }

@@ -3853,10 +3853,20 @@ public class ListCommand extends BaseCommand {
             });
             return dev.incusspawn.config.AccountUsage.of(config,
                     dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader),
-                    pins, dev.incusspawn.config.AccountSelection.originsFromMetadata(metadata), templateAccounts);
+                    pins, dev.incusspawn.config.AccountSelection.originsFromMetadata(metadata), templateAccounts,
+                    info.name, identities(metadata));
         } catch (RuntimeException e) {
             return List.of();
         }
+    }
+
+    private static Map<String, String> identities(Map<String, String> metadata) {
+        var prefix = Metadata.ACCOUNT_IDENTITY_PREFIX.substring(Metadata.PREFIX.length());
+        var identities = new java.util.LinkedHashMap<String, String>();
+        metadata.forEach((k, v) -> {
+            if (k.startsWith(prefix) && v != null && !v.isBlank()) identities.put(k.substring(prefix.length()), v.strip());
+        });
+        return identities;
     }
 
     private void openAccountsModal(String instance, Mode returnTo) {
@@ -4083,6 +4093,9 @@ public class ListCommand extends BaseCommand {
                 if (!use.problem().isEmpty()) {
                     lines.add(Line.from(List.of(Span.styled("    not configured: requests fail until it is,"
                             + " or it is changed", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
+                } else if (!use.refusal().isEmpty()) {
+                    lines.add(Line.from(List.of(Span.styled("    refused: built for another auth mode;"
+                            + " press a to pin one it can use", Style.EMPTY.fg(theme.modalWarn()).bg(modal.bg())))));
                 } else if (!use.templateProblem().isEmpty()) {
                     lines.add(Line.from(List.of(Span.styled("    the template names '" + use.templateAccount()
                             + "', which is not configured", dimStyle))));

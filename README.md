@@ -1124,6 +1124,21 @@ has already read it, so isx refuses that swap and tells you which kind of templa
 instead. Keep one template per mode you use, as `tpl-acme` above does for Vertex
 ([#866](https://github.com/Sanne/incus-spawn/issues/866) tracks lifting this).
 
+#### Changing the global default
+
+Every instance that is not pinned for a credential follows its global default, so changing the
+default moves all of them to the new account on their next request. `isx init` names those
+instances before it changes anything, and lets you switch them (Enter), keep them on the account
+they use now by pinning it for them (`k`), or cancel (`c`). Running instances that switch get
+their git identity updated straight away. `isx account list` shows which instances follow each
+default.
+
+When `config.yaml` is edited by hand, nothing can ask first: the proxy logs which instances
+moved. An instance that follows a default of another Claude auth mode than it was built for is
+refused its Claude requests -- with a message naming an account to pin it to -- rather than
+served a credential its environment does not match; its other credentials keep working.
+`isx doctor` and `isx account show` report instances in that state.
+
 #### Removing and renaming accounts
 
 If an instance is pinned to an account that has since been renamed or removed, its requests fail

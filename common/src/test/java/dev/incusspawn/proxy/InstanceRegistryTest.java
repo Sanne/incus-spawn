@@ -135,4 +135,37 @@ class InstanceRegistryTest {
             assertEquals("dev-3", parsed.get("10.0.0.6").instanceName(), "others are unaffected");
         }
     }
+
+    /** What the build derived is read too: the proxy refuses an account it cannot match. */
+    @Test
+    void readsWhatEachInstanceWasBuiltFor() {
+        var parsed = InstanceRegistry.parse("""
+                [{"name":"box","config":{"user.incus-spawn.static-ip":"10.0.0.8",
+                   "user.incus-spawn.account-identity.claude":"oauth",
+                   "user.incus-spawn.account-identity.github":"me"}}]
+                """);
+        var box = parsed.get("10.0.0.8");
+        assertEquals(java.util.Map.of("claude", "oauth", "github", "me"), box.bakedIdentities());
+        assertTrue(box.usesDefaults(), "build stamps are not pins");
+    }
+
+    /** Unpinned instances are listed too: they are the ones a change of default moves. */
+    @Test
+    void accountStatesIncludeUnpinnedInstances() {
+        var daemon = new dev.incusspawn.incus.FakeIncusDaemon()
+                .container("pinned", java.util.Map.of("user.incus-spawn.type", "clone",
+                        "user.incus-spawn.account.github", "bot"))
+                .container("follower", java.util.Map.of("user.incus-spawn.type", "clone",
+                        "user.incus-spawn.account-identity.claude", "oauth"))
+                .container("not-isx", java.util.Map.of())
+                .container("tpl-dev", java.util.Map.of("user.incus-spawn.type", "base"))
+                .container("tpl-dev-failed-build", java.util.Map.of("user.incus-spawn.type", "failed-build"));
+        var states = InstanceRegistry.accountStates(daemon.client());
+        assertEquals(java.util.Set.of("pinned", "follower"), states.keySet(),
+                "branches only: a template's pins would travel to all its future branches");
+        assertFalse(states.get("pinned").followsDefault("github"));
+        assertTrue(states.get("pinned").followsDefault("claude"));
+        assertTrue(states.get("follower").followsDefault("github"));
+        assertEquals("oauth", states.get("follower").bakedIdentities().get("claude"));
+    }
 }

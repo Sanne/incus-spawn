@@ -56,15 +56,47 @@ public final class InstanceRegistry {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    /** One instance's identity, as far as credential selection is concerned. */
-    public record InstanceAccounts(String instanceName, Map<String, String> accountsByNamespace) {
+    /**
+     * One instance's identity, as far as credential selection is concerned.
+     *
+     * @param bakedIdentities what its build derived from each namespace's account (its
+     *                        {@code account-identity} stamps), which the account it is served
+     *                        must still match where the tool cannot re-derive it
+     */
+    public record InstanceAccounts(String instanceName, Map<String, String> accountsByNamespace,
+                                   Map<String, String> bakedIdentities) {
         public InstanceAccounts {
             accountsByNamespace = accountsByNamespace == null
                     ? Map.of() : Map.copyOf(accountsByNamespace);
+            bakedIdentities = bakedIdentities == null ? Map.of() : Map.copyOf(bakedIdentities);
+        }
+
+        public InstanceAccounts(String instanceName, Map<String, String> accountsByNamespace) {
+            this(instanceName, accountsByNamespace, Map.of());
         }
 
         /** The instance pins nothing, so the configured defaults apply. */
         public boolean usesDefaults() { return accountsByNamespace.isEmpty(); }
+    }
+
+    /**
+     * An isx instance's account state, for deciding who a default change moves.
+     *
+     * @param pins            namespace to pinned account; a namespace absent follows the default
+     * @param bakedIdentities its {@code account-identity} stamps
+     */
+    public record AccountState(Map<String, String> pins, Map<String, String> bakedIdentities,
+                               boolean running) {
+
+        /** Whether this instance follows the global default for {@code namespace}. */
+        public boolean followsDefault(String namespace) {
+            return !pins.containsKey(namespace);
+        }
+    }
+
+    /** Every instance in the registry's current snapshot, as the proxy would serve it. */
+    public java.util.Collection<InstanceAccounts> instances() {
+        return snapshot.byAddress().values();
     }
 
     private record Snapshot(Map<String, InstanceAccounts> byAddress, long takenAt) {}
@@ -148,6 +180,36 @@ public final class InstanceRegistry {
     }
 
     /**
+     * Every branched instance's account state, keyed by name, in one request -- unpinned ones
+     * included, which {@link #accountsByInstance} leaves out: they are the ones a change of the
+     * global default moves.
+     *
+     * <p>Branches only. A template makes no proxied requests of its own, and its pins travel to
+     * every branch through the CoW copy: listing it here would let "keep them on the old
+     * account" pin every future branch of it, and report it as refused when it never asks.
+     * Failed builds are debris to inspect, not instances to re-point.
+     */
+    public static Map<String, AccountState> accountStates(IncusClient incus) {
+        var states = new LinkedHashMap<String, AccountState>();
+        try {
+            var root = JSON.readTree(incus.listJsonConfig());
+            if (!root.isArray()) return states;
+            for (var instance : root) {
+                var name = instance.path("name").asText("");
+                var config = instance.path("config");
+                if (name.isEmpty() || !config.isObject()
+                        || !Metadata.TYPE_CLONE.equals(config.path(Metadata.TYPE).asText(""))) continue;
+                states.put(name, new AccountState(accountsOf(config), identitiesOf(config),
+                        "Running".equalsIgnoreCase(instance.path("status").asText(""))));
+            }
+        } catch (Exception e) {
+            throw new dev.incusspawn.incus.IncusException(
+                    "Could not read instance account pinning: " + e.getMessage(), e);
+        }
+        return states;
+    }
+
+    /**
      * Build the address map from the JSON of {@code /1.0/instances?recursion=1}.
      * Package-private and static so it can be tested without a running Incus.
      */
@@ -165,7 +227,7 @@ public final class InstanceRegistry {
                 if (address.isEmpty()) continue;
 
                 claimants.computeIfAbsent(normalize(address), a -> new ArrayList<>()).add(new Claimant(
-                        new InstanceAccounts(name, accountsOf(config)),
+                        new InstanceAccounts(name, accountsOf(config), identitiesOf(config)),
                         "Running".equalsIgnoreCase(instance.path("status").asText(""))));
             }
         } catch (Exception e) {
@@ -203,6 +265,19 @@ public final class InstanceRegistry {
                     + "; serving it the defaults until only one holds it");
         }
         return null;
+    }
+
+    private static Map<String, String> identitiesOf(JsonNode config) {
+        var identities = new LinkedHashMap<String, String>();
+        config.properties().forEach(entry -> {
+            var key = entry.getKey();
+            if (!key.startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX)) return;
+            var value = entry.getValue().asText("").strip();
+            if (!value.isEmpty()) {
+                identities.put(key.substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()), value);
+            }
+        });
+        return identities;
     }
 
     private static Map<String, String> accountsOf(JsonNode config) {

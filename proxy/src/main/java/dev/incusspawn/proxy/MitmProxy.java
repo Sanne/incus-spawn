@@ -215,6 +215,25 @@ public class MitmProxy {
      * cleared whenever config.yaml changes, so a rotated token is never served from here.
      */
     private final Map<Map<String, String>, AccountBundle> credentialsBySelection = new ConcurrentHashMap<>();
+    /**
+     * Per instance, the credentials it cannot be served because its build does not match the
+     * account it would get (a Claude auth mode) -- see {@code AccountSelection.servingMismatches}.
+     * Keyed by the registry record, so a re-pinned or rebuilt instance is looked up afresh;
+     * cleared on every config reload, since a default change is what usually causes one.
+     */
+    private final Map<InstanceRegistry.InstanceAccounts, Mismatches> mismatchesByInstance =
+            new ConcurrentHashMap<>();
+    /**
+     * Bumped by every reload, after the new config is published. A mismatch result carries the
+     * generation it was computed under and is ignored once that is out of date: a request that
+     * read the old config can finish after reload() cleared the cache and put its result back,
+     * which would otherwise keep serving (or refusing) by the old default until the next reload.
+     */
+    private volatile long configGeneration;
+
+    private record Mismatches(long generation, Map<String, String> byNamespace) {}
+    /** Which credential each intercepted domain spends; rebuilt from the tool setups on reload. */
+    private volatile Map<String, java.util.Set<String>> namespacesByDomain;
 
     /**
      * The parsed config.yaml behind {@link #credentialsBySelection}. Held rather than
@@ -334,6 +353,9 @@ public class MitmProxy {
             scheduleRegistryRefresh(registry);
         }
 
+        if (instance != null && !instance.bakedIdentities().isEmpty()) {
+            refuseIfUnservable(instance, domain);
+        }
         if (instance == null || instance.usesDefaults()) {
             return new RequestContext(domain,
                     instance == null ? null : instance.instanceName(), credentials, toolRouting, true);
@@ -350,6 +372,39 @@ public class MitmProxy {
         }
         return new RequestContext(domain, instance.instanceName(),
                 bundle.creds(), bundle.routing(), false);
+    }
+
+    /**
+     * Fail a request closed when the credential it spends is one the instance was not built
+     * for -- typically because the global default it follows moved to another Claude auth mode.
+     * Scoped to that credential's domains: the instance's other services keep working.
+     */
+    private void refuseIfUnservable(InstanceRegistry.InstanceAccounts instance, String domain) {
+        // The generation is read before the config, so a result is never labelled newer than
+        // the config it was computed from.
+        var generation = configGeneration;
+        var cached = mismatchesByInstance.get(instance);
+        Map<String, String> mismatches;
+        if (cached != null && cached.generation() == generation) {
+            mismatches = cached.byNamespace();
+        } else {
+            mismatches = dev.incusspawn.config.AccountSelection.servingMismatches(configSnapshot(),
+                    dev.incusspawn.config.AccountSelection.byNamespace(toolSetups()), instance.instanceName(),
+                    instance.accountsByNamespace(), instance.bakedIdentities());
+            mismatchesByInstance.put(instance, new Mismatches(generation, mismatches));
+        }
+        if (mismatches.isEmpty()) return;
+        var byDomain = namespacesByDomain;
+        if (byDomain == null) {
+            byDomain = dev.incusspawn.config.AccountSelection.namespacesByDomain(toolSetups());
+            namespacesByDomain = byDomain;
+        }
+        for (var namespace : dev.incusspawn.config.AccountSelection.namespacesForDomain(byDomain, domain)) {
+            var message = mismatches.get(namespace);
+            if (message != null) {
+                throw new dev.incusspawn.config.AccountSelection.UnservableAccountException(namespace, message);
+            }
+        }
     }
 
     private Map<String, dev.incusspawn.tool.ToolSetup> toolSetups() {
@@ -531,6 +586,47 @@ public class MitmProxy {
     }
 
     /**
+     * Say which instances a change of a global default moves. An edit of config.yaml cannot
+     * ask first the way {@code isx init} does, so this is where it becomes visible: every
+     * instance not pinned for that credential switches on its next request -- and one that was
+     * built for another auth mode is refused instead, which is said here too.
+     */
+    private void logDefaultChanges(dev.incusspawn.config.SpawnConfig oldConfig,
+                                   dev.incusspawn.config.SpawnConfig newConfig,
+                                   Map<String, dev.incusspawn.tool.ToolSetup> newSetups) {
+        var registry = instanceRegistry;
+        var byNamespace = dev.incusspawn.config.AccountSelection.byNamespace(newSetups);
+        var oldTree = oldConfig.tree();
+        var newTree = newConfig.tree();
+        byNamespace.forEach((namespace, setup) -> {
+            var shape = setup.accountShape();
+            String before;
+            String after;
+            try {
+                before = dev.incusspawn.config.AccountResolver.effectiveAccount(oldTree, namespace, shape, null);
+                after = dev.incusspawn.config.AccountResolver.effectiveAccount(newTree, namespace, shape, null);
+            } catch (RuntimeException e) {
+                return;
+            }
+            if (before.equals(after)) return;
+            var followers = new java.util.ArrayList<String>();
+            if (registry != null) {
+                for (var instance : registry.instances()) {
+                    if (instance.accountsByNamespace().containsKey(namespace)) continue;
+                    followers.add(instance.instanceName());
+                    var refused = dev.incusspawn.config.AccountSelection.servingMismatches(newConfig, byNamespace,
+                            instance.instanceName(), instance.accountsByNamespace(), instance.bakedIdentities())
+                            .get(namespace);
+                    if (refused != null) ProxyLog.warn("Refusing " + namespace + " requests: " + refused);
+                }
+            }
+            ProxyLog.info("Global " + namespace + " default changed from '" + before + "' to '" + after + "'"
+                    + (followers.isEmpty() ? "; no instance follows it"
+                            : "; instances following it switch on their next request: " + String.join(", ", followers)));
+        });
+    }
+
+    /**
      * Reload configuration and certificates from disk. Re-reads {@code config.yaml}
      * for credential changes and re-loads the CA (re-minting leaf certs if the CA key
      * changed). Thread-safe: in-flight requests complete with the old state; new
@@ -544,12 +640,17 @@ public class MitmProxy {
             var newConfig = loaded.config();
             var newSetups = ToolProxyResolver.proxyToolSetups(newConfig);
             var newCreds = ProxyCredentials.forAccounts(newConfig, Map.of(), newSetups);
+            var oldConfig = configSnapshot;
             useConfig(newConfig);
             toolSetupsSnapshot = newSetups;
             credentials = newCreds;
             // Drop per-selection credentials before publishing the new defaults: a rotated
             // token must not keep being served from a cache entry built off the old file.
             credentialsBySelection.clear();
+            configGeneration++;
+            mismatchesByInstance.clear();
+            namespacesByDomain = null;
+            if (oldConfig != null) logDefaultChanges(oldConfig, newConfig, newSetups);
             applyToolProxies(newCreds.toolProxies(),
                     ToolProxyResolver.resolveAcrossAccounts(newConfig, newSetups));
             invalidateVertexToken();
@@ -858,6 +959,12 @@ public class MitmProxy {
                             + " account '" + e.accountName() + "'");
                     sendError(clientReq.response(), 502, e.getMessage());
                     return;
+                } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+                    // Fail closed too: the account exists, but not of the kind this instance
+                    // was built for, so serving it would hand it a mismatched credential.
+                    ProxyLog.warn("Refusing " + domain + " for " + describeCaller(clientReq) + ": " + e.getMessage());
+                    sendError(clientReq.response(), 502, e.getMessage());
+                    return;
                 }
                 handleApiRequest(clientReq, ctx);
             } else {
@@ -929,6 +1036,11 @@ public class MitmProxy {
             ProxyLog.warn("Refusing WebSocket to " + domain + " for "
                     + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
                     + e.namespace() + " account '" + e.accountName() + "'");
+            clientWs.reject(502);
+            return;
+        } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
+                    + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
             clientWs.reject(502);
             return;
         }

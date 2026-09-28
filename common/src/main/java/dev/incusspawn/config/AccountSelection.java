@@ -37,6 +37,22 @@ public final class AccountSelection {
     }
 
     /**
+     * The proxy's refusal to serve an instance a credential its build cannot honour: see
+     * {@link #servingMismatches}. Distinct from an unknown account, which is a pin gone stale;
+     * this is an account that exists but is the wrong kind for the instance.
+     */
+    public static class UnservableAccountException extends RuntimeException {
+        private final String namespace;
+
+        public UnservableAccountException(String namespace, String message) {
+            super(message);
+            this.namespace = namespace;
+        }
+
+        public String namespace() { return namespace; }
+    }
+
+    /**
      * Parse {@code ns=name} specifications into a namespace → account map.
      * Accepts repeated flags and comma-separated values alike.
      */
@@ -450,15 +466,113 @@ public final class AccountSelection {
      * time a dialog opens.
      */
     public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config, dev.incusspawn.tool.ToolDefLoader loader) {
+        return byNamespace(dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config, loader));
+    }
+
+    /** Tool setups keyed by tool name, re-keyed by the config namespace each one owns. */
+    public static Map<String, ToolSetup> byNamespace(Map<String, ToolSetup> toolSetups) {
         var byNamespace = new LinkedHashMap<String, ToolSetup>();
-        dev.incusspawn.proxy.ToolProxyResolver.proxyToolSetups(config, loader)
-                .forEach((toolName, setup) -> {
-                    var proxyDef = setup.proxy();
-                    if (proxyDef == null) return;
-                    var namespace = proxyDef.getConfigNamespace();
-                    if (!namespace.isBlank()) byNamespace.putIfAbsent(namespace, setup);
-                });
+        toolSetups.forEach((toolName, setup) -> {
+            var proxyDef = setup.proxy();
+            if (proxyDef == null) return;
+            var namespace = proxyDef.getConfigNamespace();
+            if (!namespace.isBlank()) byNamespace.putIfAbsent(namespace, setup);
+        });
         return byNamespace;
+    }
+
+    /**
+     * Which credential namespaces a request to each intercepted domain spends, from the tools'
+     * own proxy declarations -- so a refusal for one credential can be scoped to the domains
+     * that use it, rather than cutting the instance off from every service.
+     */
+    public static Map<String, java.util.Set<String>> namespacesByDomain(Map<String, ToolSetup> toolSetups) {
+        var byDomain = new LinkedHashMap<String, java.util.Set<String>>();
+        toolSetups.values().forEach(setup -> {
+            var proxyDef = setup.proxy();
+            if (proxyDef == null) return;
+            var namespaces = setup.credentialNamespaces();
+            if (namespaces.isEmpty()) return;
+            for (var auth : proxyDef.getAuth()) {
+                for (var domain : auth.getDomains()) {
+                    byDomain.computeIfAbsent(domain, d -> new java.util.LinkedHashSet<>()).addAll(namespaces);
+                }
+            }
+        });
+        return byDomain;
+    }
+
+    /**
+     * The credentials a request to {@code domain} spends, from {@link #namespacesByDomain}:
+     * an exact entry, or a {@code *.suffix} one it falls under ({@code api.github.com} under
+     * GitHub's {@code *.github.com}).
+     */
+    public static java.util.Set<String> namespacesForDomain(Map<String, java.util.Set<String>> byDomain,
+                                                            String domain) {
+        if (domain == null) return java.util.Set.of();
+        var exact = byDomain.get(domain);
+        var result = new java.util.LinkedHashSet<String>(exact == null ? java.util.Set.of() : exact);
+        byDomain.forEach((pattern, namespaces) -> {
+            if (pattern.startsWith("*.") && domain.endsWith(pattern.substring(1))) result.addAll(namespaces);
+        });
+        return result;
+    }
+
+    /**
+     * Credentials an instance cannot be served as things stand: the account it would get --
+     * its pin, or the global default it follows -- needs something the instance was not built
+     * with (a Claude auth mode), and the tool cannot bring a built instance in line. Mapped to
+     * a message saying why and how to fix it.
+     *
+     * <p>{@code isx account set} refuses such a move while the user is choosing, but changing
+     * the global default moves every unpinned instance at once and nothing is there to refuse
+     * it. The proxy asks this instead, and fails those requests closed -- the same rule as a pin
+     * to an account that is gone -- rather than handing the instance a credential its
+     * environment does not match.
+     *
+     * @param setups          tool setups keyed by namespace ({@link #byNamespace})
+     * @param pins            the instance's pins
+     * @param bakedIdentities its {@code account-identity} stamps
+     */
+    public static Map<String, String> servingMismatches(SpawnConfig config, Map<String, ToolSetup> setups,
+                                                        String instance, Map<String, String> pins,
+                                                        Map<String, String> bakedIdentities) {
+        var mismatches = new LinkedHashMap<String, String>();
+        bakedIdentities.forEach((namespace, baked) -> {
+            var setup = setups.get(namespace);
+            if (setup == null || baked == null || baked.isBlank() || canRebake(setup)) return;
+            var pin = pins.get(namespace);
+            String account;
+            String wanted;
+            try {
+                account = AccountResolver.effectiveAccount(config, namespace, pin);
+                if (account.isEmpty()) return;
+                wanted = setup.bakedAccountIdentity(config, account);
+            } catch (AccountResolver.UnknownAccountException e) {
+                return; // a pin to a missing account is refused on its own terms
+            }
+            if (!cannotHonour(setup, baked, wanted)) return;
+            var compatible = new java.util.ArrayList<String>();
+            for (var candidate : AccountResolver.usableAccountNames(config, namespace)) {
+                try {
+                    if (baked.equals(setup.bakedAccountIdentity(config, candidate))) compatible.add(candidate);
+                } catch (AccountResolver.UnknownAccountException ignored) {
+                }
+            }
+            var how = pin == null || pin.isBlank()
+                    ? "it follows the global default (" + namespace + ".default in config.yaml), which is now '"
+                            + account + "', an account of type '" + wanted + "'"
+                    : "it is pinned to '" + account + "', an account of type '" + wanted + "'";
+            var fix = compatible.isEmpty()
+                    ? "Configure a '" + baked + "' account for it, or branch from a template built for '" + wanted + "'."
+                    : "Pin it to one it was built for: isx account set " + instance + " " + namespace + "="
+                            + compatible.get(0)
+                            + (compatible.size() > 1 ? " (or " + String.join(", ", compatible.subList(1, compatible.size())) + ")" : "")
+                            + ".";
+            mismatches.put(namespace, "Instance '" + instance + "' was built for " + namespace + " '" + baked
+                    + "', but " + how + ". " + fix);
+        });
+        return mismatches;
     }
 
     /**

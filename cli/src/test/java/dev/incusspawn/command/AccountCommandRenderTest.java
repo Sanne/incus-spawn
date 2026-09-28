@@ -94,13 +94,14 @@ class AccountCommandRenderTest {
     void listMarksTheDefaultAndNamesWhoIsPinned() {
         var out = String.join("\n", AccountCommand.renderList(List.of(
                 new AccountCommand.NamespaceListing("github", List.of(
-                        new AccountCommand.AccountLine("me", "", true, "", List.of()),
+                        new AccountCommand.AccountLine("me", "", true, "", List.of(), List.of("scratch")),
                         new AccountCommand.AccountLine("bot", "commits as bot@x", false, "",
-                                List.of("review-1", "review-2"))),
+                                List.of("review-1", "review-2"), List.of())),
                         Map.of("gone", List.of("old-box")))), ""));
         assertTrue(out.contains("  me   [default]"), out);
         assertTrue(out.contains("  bot  commits as bot@x"), out);
         assertTrue(out.contains("pinned to it: review-1, review-2"), out);
+        assertTrue(out.contains("following the default (not pinned): scratch"), out);
         assertTrue(out.contains("Problem: 'gone' is not configured, but old-box is pinned to it"), out);
         assertFalse(out.contains("*"), "no unexplained markers:\n" + out);
     }
@@ -109,7 +110,7 @@ class AccountCommandRenderTest {
     void listWorksWithoutIncus() {
         var out = AccountCommand.renderList(List.of(
                 new AccountCommand.NamespaceListing("github", List.of(
-                        new AccountCommand.AccountLine("me", "", true, "", List.of())), Map.of())),
+                        new AccountCommand.AccountLine("me", "", true, "", List.of(), List.of())), Map.of())),
                 "connection refused");
         assertTrue(out.get(out.size() - 1).contains("connection refused"), String.join("\n", out));
     }
@@ -118,5 +119,16 @@ class AccountCommandRenderTest {
     void listWithNothingConfiguredSaysHowToStart() {
         assertEquals(List.of("No accounts configured. Run 'isx init' to add one."),
                 AccountCommand.renderList(List.of(), ""));
+    }
+
+    @Test
+    void showExplainsARefusalWithItsOwnFix() {
+        var refused = new AccountUsage.Use("claude", "work", DEFAULT, "", "Anthropic API key", "", "",
+                "Instance 'review-1' was built for claude 'oauth', but it follows the global default. "
+                        + "Pin it to one it was built for: isx account set review-1 claude=personal.");
+        var out = String.join("\n", AccountCommand.renderShow("review-1", "tpl-acme", List.of(refused), Map.of()));
+        assertTrue(out.contains("Problem: its claude requests are refused. Instance 'review-1' was built for"), out);
+        assertTrue(out.contains("isx account set review-1 claude=personal."), out);
+        assertFalse(out.contains("isx account unset"), "unpinning is not the fix here:\n" + out);
     }
 }

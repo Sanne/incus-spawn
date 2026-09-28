@@ -61,18 +61,18 @@ public class AccountCommand extends BaseCommand {
 
             // Which instances pin what. Listing accounts must not need Incus -- on a fresh host,
             // or with the daemon down, the configured accounts are still worth seeing.
-            Map<String, Map<String, String>> pins;
+            Map<String, InstanceRegistry.AccountState> states;
             String pinsUnavailable = "";
             try {
-                pins = InstanceRegistry.accountsByInstance(RuntimeServices.incus());
+                states = InstanceRegistry.accountStates(RuntimeServices.incus());
             } catch (Exception e) {
-                pins = Map.of();
+                states = Map.of();
                 pinsUnavailable = e.getMessage();
             }
 
             var namespaces = new ArrayList<NamespaceListing>();
             for (var entry : setups.entrySet()) {
-                namespaces.add(listNamespace(config, entry.getKey(), entry.getValue(), pins));
+                namespaces.add(listNamespace(config, entry.getKey(), entry.getValue(), states));
             }
             renderList(namespaces, pinsUnavailable).forEach(System.out::println);
             return CommandResult.SUCCESS;
@@ -80,15 +80,25 @@ public class AccountCommand extends BaseCommand {
     }
 
     /** One configured account, as {@code isx account list} shows it. */
+    /**
+     * @param following for the default account, the instances that follow the default -- the
+     *                  ones a change of default would move; otherwise empty
+     */
     record AccountLine(String name, String description, boolean isDefault, String problem,
-                       List<String> pinnedBy) {}
+                       List<String> pinnedBy, List<String> following) {}
 
     /** A namespace's accounts, plus pins naming an account it no longer has. */
     record NamespaceListing(String namespace, List<AccountLine> accounts,
                             Map<String, List<String>> danglingPins) {}
 
     static NamespaceListing listNamespace(SpawnConfig config, String namespace, ToolSetup setup,
-                                          Map<String, Map<String, String>> pins) {
+                                          Map<String, InstanceRegistry.AccountState> states) {
+        var pins = new LinkedHashMap<String, Map<String, String>>();
+        var following = new ArrayList<String>();
+        states.forEach((instance, state) -> {
+            if (!state.pins().isEmpty()) pins.put(instance, state.pins());
+            if (state.followsDefault(namespace)) following.add(instance);
+        });
         var tree = config.tree();
         var shape = setup.accountShape();
         var usable = AccountResolver.usableAccountNames(tree, namespace, shape);
@@ -105,8 +115,10 @@ public class AccountCommand extends BaseCommand {
                 }
             }
             var description = setup.describeAccount(config, name);
+            var isDefault = name.equals(defaultName);
             lines.add(new AccountLine(name, description == null ? "" : description,
-                    name.equals(defaultName), problem, AccountUsage.pinnedTo(pins, namespace, name)));
+                    isDefault, problem, AccountUsage.pinnedTo(pins, namespace, name),
+                    isDefault ? following : List.of()));
         }
         var dangling = new LinkedHashMap<String, List<String>>();
         pins.forEach((instance, selection) -> {
@@ -136,6 +148,9 @@ public class AccountCommand extends BaseCommand {
                 if (!a.pinnedBy().isEmpty()) {
                     out.add("    pinned to it: " + String.join(", ", a.pinnedBy()));
                 }
+                if (!a.following().isEmpty()) {
+                    out.add("    following the default (not pinned): " + String.join(", ", a.following()));
+                }
             }
             ns.danglingPins().forEach((account, instances) -> out.add(
                     "  Problem: '" + account + "' is not configured, but " + String.join(", ", instances)
@@ -146,7 +161,7 @@ public class AccountCommand extends BaseCommand {
         } else {
             out.add("");
             out.add("[default] is the global default: the account used by every instance that is not"
-                    + " pinned to one ('isx account show <instance>' says which are).");
+                    + " pinned to one. Changing it moves them all.");
         }
         if (!pinsUnavailable.isEmpty()) {
             out.add("(Could not read which instances use each account: " + pinsUnavailable + ")");
@@ -177,7 +192,8 @@ public class AccountCommand extends BaseCommand {
             var pins = subMap(metadata, Metadata.ACCOUNT_PREFIX);
             var template = templateOf(instance, metadata);
             var uses = AccountUsage.of(config, setups, pins,
-                    AccountSelection.originsFromMetadata(metadata), templateAccounts(template));
+                    AccountSelection.originsFromMetadata(metadata), templateAccounts(template), instance,
+                    subMap(metadata, Metadata.ACCOUNT_IDENTITY_PREFIX));
             renderShow(instance, template, uses, pendingIdentityRefresh(config, incus, instance, uses))
                     .forEach(System.out::println);
             return CommandResult.SUCCESS;
@@ -253,6 +269,8 @@ public class AccountCommand extends BaseCommand {
                 out.add(indent + "Problem: " + sentence(use.problem()) + " Requests using it fail until"
                         + " it is configured again, or 'isx account unset " + instance + " "
                         + use.namespace() + "' switches the instance to the global default.");
+            } else if (!use.refusal().isEmpty()) {
+                out.add(indent + "Problem: its " + use.namespace() + " requests are refused. " + sentence(use.refusal()));
             } else if (!use.templateProblem().isEmpty()) {
                 // Never suggest following a template to an account that is gone.
                 out.add(indent + "Problem: " + template + " chooses '" + use.templateAccount()

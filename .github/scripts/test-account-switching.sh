@@ -12,6 +12,8 @@
 #     than quietly served the default, which would spend the wrong subscription
 #   - the refusal is scoped to that instance; its neighbours keep working
 #   - 'isx account unset' returns an instance to the configured default, live
+#   - a global default of a Claude auth mode an instance was not built for is refused for
+#     that instance's Claude requests only, rather than served mismatched
 #
 # Requires:
 #   - instances acct-alpha and acct-beta branched and running
@@ -121,6 +123,58 @@ assert_eq "acct-alpha, still pinned, is unaffected" \
 
 isx account set acct-beta testAccountTool=beta >/dev/null 2>&1 \
     || incus config set acct-beta user.incus-spawn.account.testAccountTool beta
+echo ""
+
+echo "[5] A default of another Claude auth mode is refused, not served"
+# The instances were built for Claude 'api-key' (CI's flat apiKey) and do not pin claude,
+# so they follow the global default. Point that default at a Pro/Max account: serving it
+# would hand them a credential their environment does not match, so the proxy must refuse
+# their Claude requests -- and only those -- with a message saying how to fix it.
+CFG="$HOME/.config/incus-spawn/config.yaml"
+BACKUP="$(mktemp)"
+cp "$CFG" "$BACKUP"
+reload_proxy() {
+    local pid="${ISX_PROXY_PID:-$(pgrep -nf 'isx-proxy|incus-spawn-proxy' || true)}"
+    [ -n "$pid" ] && kill -HUP "$pid" 2>/dev/null
+    sleep 3
+}
+claude_body() {
+    incus exec "$1" -- curl -s https://api.anthropic.com/v1/models 2>/dev/null
+}
+case "$(claude_body acct-alpha)" in
+    *"was built for claude"*) fail "before the change, Claude requests are not refused" ;;
+    *)                        pass "before the change, Claude requests are not refused" ;;
+esac
+python3 - "$CFG" <<'PY'
+import sys, yaml
+path = sys.argv[1]
+with open(path) as f:
+    cfg = yaml.safe_load(f) or {}
+claude = cfg.setdefault('claude', {})
+accounts = claude.setdefault('accounts', {})
+if not accounts and claude.get('apiKey'):
+    accounts['default'] = {'type': 'api-key', 'apiKey': claude.pop('apiKey')}
+accounts['subscription'] = {'type': 'oauth', 'oauthToken': 'sk-ant-oat01-placeholder-for-ci'}
+claude['default'] = 'subscription'
+with open(path, 'w') as f:
+    yaml.safe_dump(cfg, f, default_flow_style=False)
+PY
+reload_proxy
+BODY="$(claude_body acct-alpha)"
+case "$BODY" in
+    *"was built for claude 'api-key'"*"isx account set acct-alpha claude="*)
+        pass "an unpinned instance's Claude requests are refused, saying how to pin it" ;;
+    *)  fail "an unpinned instance's Claude requests are refused, saying how to pin it" "got: $BODY" ;;
+esac
+assert_eq "its other credentials are still served" \
+    "acct-token-alpha" "$(injected_in acct-alpha)"
+cp "$BACKUP" "$CFG"
+rm -f "$BACKUP"
+reload_proxy
+case "$(claude_body acct-alpha)" in
+    *"was built for claude"*) fail "restoring the default serves it again" ;;
+    *)                        pass "restoring the default serves it again" ;;
+esac
 echo ""
 
 echo "========================================"

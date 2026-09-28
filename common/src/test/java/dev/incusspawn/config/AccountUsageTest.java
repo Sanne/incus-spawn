@@ -53,7 +53,8 @@ class AccountUsageTest {
 
     private static List<AccountUsage.Use> uses(Map<String, String> pins, Map<String, AccountOrigin> origins,
                                                Map<String, String> template) throws Exception {
-        return AccountUsage.of(YAML.readValue(CONFIG, SpawnConfig.class), setups(), pins, origins, template);
+        return AccountUsage.of(YAML.readValue(CONFIG, SpawnConfig.class), setups(), pins, origins, template,
+                "review-1", Map.of());
     }
 
     private static AccountUsage.Use find(List<AccountUsage.Use> uses, String namespace) {
@@ -145,7 +146,7 @@ class AccountUsageTest {
     void aNamespaceWithNothingConfiguredIsLeftOut() throws Exception {
         var setups = setups();
         var config = YAML.readValue("claude:\n  apiKey: \"sk-ant-api-x\"\n", SpawnConfig.class);
-        var uses = AccountUsage.of(config, setups, Map.of(), Map.of(), Map.of());
+        var uses = AccountUsage.of(config, setups, Map.of(), Map.of(), Map.of(), "review-1", Map.of());
         assertEquals(List.of("claude"), uses.stream().map(AccountUsage.Use::namespace).toList());
     }
 
@@ -174,5 +175,76 @@ class AccountUsageTest {
     void aBorrowedCredentialCountsForTheToolThatBorrowsIt() {
         assertEquals(java.util.Set.of("github"), new dev.incusspawn.tool.CopilotSetup().credentialNamespaces());
         assertEquals(java.util.Set.of("claude"), new ClaudeSetup().credentialNamespaces());
+    }
+
+    // ── what the proxy refuses ─────────────────────────────────────────────────
+
+    private static final String MODES = """
+            claude:
+              accounts:
+                personal:
+                  type: oauth
+                  oauthToken: "sk-ant-oat01-x"
+                other-sub:
+                  type: oauth
+                  oauthToken: "sk-ant-oat01-y"
+                work:
+                  type: api-key
+                  apiKey: "sk-ant-api-x"
+              default: work
+            github:
+              accounts:
+                me:
+                  token: "ghp_me"
+                bot:
+                  token: "ghp_bot"
+              default: bot
+            """;
+
+    /** Built for Pro/Max, following a default that is now an API key: refused, with the fix. */
+    @Test
+    void aDefaultOfAnotherAuthModeIsRefusedWithAFix() throws Exception {
+        var config = YAML.readValue(MODES, SpawnConfig.class);
+        var refused = AccountSelection.servingMismatches(config, setups(), "review-1", Map.of(),
+                Map.of("claude", "oauth", "github", "me"));
+        assertEquals(java.util.Set.of("claude"), refused.keySet(),
+                "github re-derives its identity, so a different account there is not a refusal");
+        var message = refused.get("claude");
+        assertTrue(message.contains("was built for claude 'oauth'"), message);
+        assertTrue(message.contains("follows the global default"), message);
+        assertTrue(message.contains("isx account set review-1 claude=personal (or other-sub)."), message);
+    }
+
+    @Test
+    void aMatchingAccountOrAPinThatFitsIsServed() throws Exception {
+        var config = YAML.readValue(MODES, SpawnConfig.class);
+        assertTrue(AccountSelection.servingMismatches(config, setups(), "a", Map.of(),
+                Map.of("claude", "api-key")).isEmpty());
+        assertTrue(AccountSelection.servingMismatches(config, setups(), "b", Map.of("claude", "personal"),
+                Map.of("claude", "oauth")).isEmpty(), "pinned to one it was built for");
+    }
+
+    @Test
+    void theRefusalIsReportedByShowAsItsOwnProblem() throws Exception {
+        var config = YAML.readValue(MODES, SpawnConfig.class);
+        var claude = find(AccountUsage.of(config, setups(), Map.of(), Map.of(), Map.of(), "review-1",
+                Map.of("claude", "oauth")), "claude");
+        assertEquals("", claude.problem());
+        assertTrue(claude.refusal().contains("isx account set review-1 claude=personal"), claude.refusal());
+    }
+
+    /** A refusal is scoped to the domains that spend that credential. */
+    @Test
+    void domainsMapToTheCredentialTheySpend() {
+        var tools = new java.util.LinkedHashMap<String, ToolSetup>();
+        tools.put("claude", new ClaudeSetup());
+        tools.put("gh", new GhSetup());
+        tools.put("copilot", new dev.incusspawn.tool.CopilotSetup());
+        var byDomain = AccountSelection.namespacesByDomain(tools);
+        assertEquals(java.util.Set.of("claude"), AccountSelection.namespacesForDomain(byDomain, "api.anthropic.com"));
+        assertEquals(java.util.Set.of("github"), AccountSelection.namespacesForDomain(byDomain, "api.github.com"),
+                "GitHub declares *.github.com");
+        assertEquals(java.util.Set.of("github"), AccountSelection.namespacesForDomain(byDomain, "github.com"));
+        assertTrue(AccountSelection.namespacesForDomain(byDomain, "example.com").isEmpty());
     }
 }

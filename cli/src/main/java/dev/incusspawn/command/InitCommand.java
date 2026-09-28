@@ -1710,7 +1710,7 @@ public class InitCommand extends BaseCommand {
                 case "r" -> {
                     var going = new java.util.ArrayList<>(accounts.keySet());
                     going.remove(AccountTarget.FRESH.name());
-                    if (!confirmLosingAccounts(SpawnConfig.ClaudeConfig.NAMESPACE, going, prompts)) continue;
+                    if (!confirmLosingAccounts(config, SpawnConfig.ClaudeConfig.NAMESPACE, going, prompts)) continue;
                     return Optional.of(AccountTarget.FRESH);
                 }
                 case "n" -> {
@@ -1729,9 +1729,8 @@ public class InitCommand extends BaseCommand {
                             if (!account.isComplete()) {
                                 System.out.println("  Account '" + name + "' is incomplete — fix it before making it the default.");
                             } else {
-                                claude.setDefaultAccount(name);
-                                config.save();
-                                System.out.println("  Default account is now '" + name + "'.");
+                                changeDefaultAccount(config, SpawnConfig.ClaudeConfig.NAMESPACE, name,
+                                        () -> config.getClaude().setDefaultAccount(name), prompts);
                             }
                         } else if (!name.isEmpty()) {
                             System.out.println("  No account named '" + name + "'.");
@@ -1747,14 +1746,16 @@ public class InitCommand extends BaseCommand {
                             var account = accounts.get(name);
                             if (account.isComplete() && claude.effectiveAccounts().size() <= 1) {
                                 System.out.println("  Cannot remove '" + name + "' — it is the only working account.");
-                            } else if (confirmLosingAccounts(SpawnConfig.ClaudeConfig.NAMESPACE,
+                            } else if (confirmLosingAccounts(config, SpawnConfig.ClaudeConfig.NAMESPACE,
                                     List.of(name), prompts)) {
+                                var moving = runningFollowersIfDefault(config, SpawnConfig.ClaudeConfig.NAMESPACE, name);
                                 claude.getAccounts().remove(name);
                                 if (name.equals(claude.getDefaultAccount())) {
                                     claude.setDefaultAccount(claude.accountName());
                                 }
                                 config.save();
                                 System.out.println("  Removed account '" + name + "'.");
+                                if (!moving.isEmpty()) refreshIdentities(moving);
                             }
                         } else if (!name.isEmpty()) {
                             System.out.println("  No account named '" + name + "'.");
@@ -2403,7 +2404,7 @@ public class InitCommand extends BaseCommand {
                 case "r" -> {
                     var going = new java.util.ArrayList<>(accounts);
                     going.remove(AccountTarget.FRESH.name());
-                    if (confirmLosingAccounts(namespace, going, prompts)) return Optional.of(AccountTarget.FRESH);
+                    if (confirmLosingAccounts(config, namespace, going, prompts)) return Optional.of(AccountTarget.FRESH);
                 }
                 case "n" -> renameAccount(config, namespace, new java.util.LinkedHashSet<>(accounts), prompts);
                 // 'd' and 'x' save immediately and loop back to the listing, so an abort after
@@ -2412,9 +2413,8 @@ public class InitCommand extends BaseCommand {
                     System.out.print("  Name of the account to make default: ");
                     var name = readInput(prompts.readLine());
                     if (accounts.contains(name)) {
-                        NamespaceAccounts.setDefault(config, namespace, name);
-                        config.save();
-                        System.out.println("  Default account is now '" + name + "'.");
+                        changeDefaultAccount(config, namespace, name,
+                                () -> NamespaceAccounts.setDefault(config, namespace, name), prompts);
                     } else if (!name.isEmpty()) {
                         System.out.println("  No account named '" + name + "'.");
                     }
@@ -2422,10 +2422,12 @@ public class InitCommand extends BaseCommand {
                 case "x" -> {
                     System.out.print("  Name of the account to remove: ");
                     var name = readInput(prompts.readLine());
-                    if (accounts.contains(name) && confirmLosingAccounts(namespace, List.of(name), prompts)) {
+                    if (accounts.contains(name) && confirmLosingAccounts(config, namespace, List.of(name), prompts)) {
+                        var moving = runningFollowersIfDefault(config, namespace, name);
                         NamespaceAccounts.remove(config, namespace, name);
                         config.save();
                         System.out.println("  Removed account '" + name + "'.");
+                        if (!moving.isEmpty()) refreshIdentities(moving);
                     } else if (!name.isEmpty() && !accounts.contains(name)) {
                         System.out.println("  No account named '" + name + "'.");
                     }
@@ -2444,9 +2446,11 @@ public class InitCommand extends BaseCommand {
      *
      * @return true to go ahead
      */
-    boolean confirmLosingAccounts(String namespace, java.util.Collection<String> going, Prompts prompts) {
+    boolean confirmLosingAccounts(SpawnConfig config, String namespace, java.util.Collection<String> going,
+                                  Prompts prompts) {
         if (going.isEmpty()) return true;
-        var pins = instanceAccountPins();
+        var states = instanceAccountStates();
+        var pins = pinsOf(states);
         var instances = new java.util.ArrayList<String>();
         var templates = new java.util.ArrayList<String>();
         for (var account : going) {
@@ -2455,7 +2459,16 @@ public class InitCommand extends BaseCommand {
             templatesNaming(namespace, account)
                     .forEach(t -> templates.add(t + " (" + namespace + ": " + account + ")"));
         }
-        if (instances.isEmpty() && templates.isEmpty()) return true;
+        // Removing the default moves everything that follows it, which is every unpinned
+        // instance -- not an error for them, but a change of principal worth saying out loud.
+        var followers = going.contains(currentDefault(config, namespace))
+                ? followersOf(states, namespace) : List.<String>of();
+        if (instances.isEmpty() && templates.isEmpty() && followers.isEmpty()) return true;
+        if (!followers.isEmpty()) {
+            System.out.println("  These instances follow the " + namespace + " default, which is going,"
+                    + " and would switch to the new default:");
+            followers.forEach(i -> System.out.println("    - " + i));
+        }
         if (!instances.isEmpty()) {
             System.out.println("  These instances are pinned to " + (going.size() == 1 ? "it" : "those accounts")
                     + " and would fail their requests:");
@@ -2507,12 +2520,152 @@ public class InitCommand extends BaseCommand {
         }
     }
 
-    /** Every instance's account pins, or none when Incus cannot be asked. Overridden in tests. */
-    Map<String, Map<String, String>> instanceAccountPins() {
+    /** Every isx instance's account state, or none when Incus cannot be asked. Overridden in tests. */
+    Map<String, InstanceRegistry.AccountState> instanceAccountStates() {
         try {
-            return InstanceRegistry.accountsByInstance(RuntimeServices.incus());
+            return InstanceRegistry.accountStates(RuntimeServices.incus());
         } catch (Exception e) {
             return Map.of();
+        }
+    }
+
+    private static Map<String, Map<String, String>> pinsOf(Map<String, InstanceRegistry.AccountState> states) {
+        var pins = new LinkedHashMap<String, Map<String, String>>();
+        states.forEach((name, state) -> { if (!state.pins().isEmpty()) pins.put(name, state.pins()); });
+        return pins;
+    }
+
+    private static List<String> followersOf(Map<String, InstanceRegistry.AccountState> states, String namespace) {
+        return states.entrySet().stream().filter(e -> e.getValue().followsDefault(namespace))
+                .map(Map.Entry::getKey).toList();
+    }
+
+    private static String currentDefault(SpawnConfig config, String namespace) {
+        try {
+            return dev.incusspawn.config.AccountResolver.effectiveAccount(config, namespace, null);
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** The running instances that follow {@code account} as the default, which removing it moves. */
+    private List<String> runningFollowersIfDefault(SpawnConfig config, String namespace, String account) {
+        if (!account.equals(currentDefault(config, namespace))) return List.of();
+        return instanceAccountStates().entrySet().stream()
+                .filter(e -> e.getValue().followsDefault(namespace) && e.getValue().running())
+                .map(Map.Entry::getKey).toList();
+    }
+
+    enum DefaultChange { SWITCH, KEEP, CANCEL }
+
+    /**
+     * Make {@code to} the {@code namespace} default, applied by {@code apply}. Every instance that
+     * does not pin this credential follows the default, so this changes whose account they spend
+     * on their next request. When there are any, they are named and the user chooses: switch them
+     * (the default, since that is what following the default means), keep them on the account
+     * they use now -- by pinning it for them -- or cancel. Switched instances that are running
+     * have their git identity brought in line straight away, as {@code isx account set} does.
+     *
+     * @return whether the default changed
+     */
+    boolean changeDefaultAccount(SpawnConfig config, String namespace, String to, Runnable apply,
+                                 Prompts prompts) {
+        var from = currentDefault(config, namespace);
+        if (to.equals(from)) {
+            System.out.println("  '" + to + "' is already the default.");
+            return false;
+        }
+        var states = instanceAccountStates();
+        var followers = new LinkedHashMap<String, InstanceRegistry.AccountState>();
+        states.forEach((name, state) -> { if (state.followsDefault(namespace)) followers.put(name, state); });
+
+        var decision = followers.isEmpty() ? DefaultChange.SWITCH
+                : askDefaultChange(config, namespace, from, to, followers, prompts);
+        if (decision == DefaultChange.CANCEL) {
+            System.out.println("  Default left as '" + from + "'.");
+            return false;
+        }
+        if (decision == DefaultChange.KEEP) {
+            // Pinned before the default moves, so none of them is ever served the new one.
+            for (var failure : pinInstances(config, List.copyOf(followers.keySet()), namespace, from)) {
+                System.out.println("  " + failure);
+            }
+        }
+        apply.run();
+        config.save();
+        System.out.println("  Default account is now '" + to + "'.");
+        if (decision == DefaultChange.KEEP) {
+            System.out.println("  " + String.join(", ", followers.keySet()) + " stay on '" + from
+                    + "', now pinned to it.");
+        } else if (!followers.isEmpty()) {
+            var running = followers.entrySet().stream().filter(e -> e.getValue().running())
+                    .map(Map.Entry::getKey).toList();
+            if (!running.isEmpty()) refreshIdentities(running);
+        }
+        return true;
+    }
+
+    private DefaultChange askDefaultChange(SpawnConfig config, String namespace, String from, String to,
+                                           Map<String, InstanceRegistry.AccountState> followers, Prompts prompts) {
+        System.out.println("  These instances follow the " + namespace + " default and would switch from '"
+                + from + "' to '" + to + "':");
+        var setup = dev.incusspawn.config.AccountSelection.namespaceSetups(config).get(namespace);
+        var refused = new java.util.ArrayList<String>();
+        followers.forEach((name, state) -> {
+            System.out.println("    - " + name + (state.running() ? " (running)" : ""));
+            if (!dev.incusspawn.config.AccountSelection.requiredRebuild(config, setup, namespace, to,
+                    state.bakedIdentities()).isEmpty()) {
+                refused.add(name);
+            }
+        });
+        if (!refused.isEmpty()) {
+            System.out.println("  " + String.join(", ", refused) + (refused.size() == 1 ? " was" : " were")
+                    + " built for another auth mode than '" + to + "': " + (refused.size() == 1 ? "its " : "their ")
+                    + namespace + " requests would be refused until pinned to an account " + (refused.size() == 1 ? "it" : "they")
+                    + " can use. Keeping " + (followers.size() == 1 ? "it" : "them") + " on '" + from
+                    + "' avoids that.");
+        }
+        while (true) {
+            System.out.print("  Enter to switch them, k to keep them on '" + from + "' (pins it for them),"
+                    + " c to cancel: ");
+            var line = prompts.readLine();
+            if (line == null) return DefaultChange.CANCEL;   // EOF: never change principals unasked
+            switch (line.strip().toLowerCase(java.util.Locale.ROOT)) {
+                case "", "s" -> { return DefaultChange.SWITCH; }
+                case "k" -> { return DefaultChange.KEEP; }
+                case "c" -> { return DefaultChange.CANCEL; }
+                default -> System.out.println("  Please answer Enter, k or c.");
+            }
+        }
+    }
+
+    /**
+     * Pin instances to the account they use now, as an explicit choice. Overridden in tests.
+     *
+     * @return one line per instance that could not be pinned, saying why
+     */
+    List<String> pinInstances(SpawnConfig config, List<String> instances, String namespace, String account) {
+        var failures = new java.util.ArrayList<String>();
+        var incus = RuntimeServices.incus();
+        var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config);
+        for (var instance : instances) {
+            try {
+                InstanceLifecycle.changeAccounts(incus, instance, config, setups, Map.of(namespace, account),
+                        msg -> { }, msg -> System.out.println("  Warning: " + msg));
+            } catch (RuntimeException e) {
+                failures.add("Could not pin " + instance + " (" + e.getMessage() + "); it will switch.");
+            }
+        }
+        return failures;
+    }
+
+    /** Bring running instances' baked git identity in line with their new account. Overridden in tests. */
+    void refreshIdentities(List<String> instances) {
+        var incus = RuntimeServices.incus();
+        for (var instance : instances) {
+            InstanceLifecycle.reconcileAccountIdentities(incus, instance,
+                    msg -> System.out.println("  " + instance + ": " + msg),
+                    msg -> System.out.println("  Warning: " + msg));
         }
     }
 

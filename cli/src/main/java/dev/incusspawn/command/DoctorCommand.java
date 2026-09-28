@@ -1225,23 +1225,41 @@ public class DoctorCommand extends BaseCommand {
             var incus = RuntimeServices.incus();
             var config = SpawnConfig.load();
             var dangling = new ArrayList<String>();
-            // One request for every instance's pinning, rather than a full instance GET each:
-            // this check runs on every 'isx doctor', not only under --deep.
-            for (var entry : InstanceRegistry.accountsByInstance(incus).entrySet()) {
+            var refused = new ArrayList<String>();
+            var setups = AccountSelection.namespaceSetups(config);
+            // One request for every instance's account state, rather than a full instance GET
+            // each: this check runs on every 'isx doctor', not only under --deep.
+            for (var entry : InstanceRegistry.accountStates(incus).entrySet()) {
+                var state = entry.getValue();
                 try {
-                    AccountSelection.validate(config, entry.getValue());
+                    AccountSelection.validate(config, state.pins(), setups);
                 } catch (AccountResolver.UnknownAccountException e) {
                     dangling.add(entry.getKey() + " (" + e.namespace() + "=" + e.accountName() + ")");
+                    continue;
+                }
+                // What the proxy refuses: an account the instance was not built for -- most
+                // often the global default it follows, since moved to another Claude auth mode.
+                var mismatches = AccountSelection.servingMismatches(config, setups, entry.getKey(),
+                        state.pins(), state.bakedIdentities());
+                if (!mismatches.isEmpty()) {
+                    refused.add(entry.getKey() + " (" + String.join(", ", mismatches.keySet()) + ")");
                 }
             }
-            if (dangling.isEmpty()) {
+            if (dangling.isEmpty() && refused.isEmpty()) {
                 return Finding.ok("Instance credential accounts", "(all resolve)");
             }
-            return Finding.fail("Instance credential accounts",
-                    "(" + dangling.size() + " pinned to a missing account: "
-                            + String.join(", ", dangling) + ")",
-                    new Remediation("Re-point them with 'isx account set <instance> <ns>=<account>'"
-                            + ", or re-add the account with 'isx init'", false, null));
+            var problems = new ArrayList<String>();
+            if (!dangling.isEmpty()) {
+                problems.add(dangling.size() + " pinned to a missing account: " + String.join(", ", dangling));
+            }
+            if (!refused.isEmpty()) {
+                problems.add(refused.size() + (refused.size() == 1 ? " has its" : " have their")
+                        + " requests refused, being served an account of another auth mode than built for: "
+                        + String.join(", ", refused));
+            }
+            return Finding.fail("Instance credential accounts", "(" + String.join("; ", problems) + ")",
+                    new Remediation("'isx account show <instance>' says why and what to pin it to;"
+                            + " re-point with 'isx account set <instance> <ns>=<account>'", false, null));
         } catch (Exception e) {
             return Finding.warn("Instance credential accounts",
                     "(could not check: " + e.getMessage() + ")", null);
