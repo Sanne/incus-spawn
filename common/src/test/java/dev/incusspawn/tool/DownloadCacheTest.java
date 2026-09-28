@@ -11,8 +11,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -173,6 +175,95 @@ class DownloadCacheTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void transientFailuresAreRetriedFromTheOriginalUrl(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var redirects = new AtomicInteger();
+        var fileRequests = new AtomicInteger();
+        server.createContext("/release", ex -> {
+            redirects.incrementAndGet();
+            ex.getResponseHeaders().add("Location", "/asset");
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        });
+        // Fails transiently, as GitHub release downloads have been seen to, then serves the file.
+        server.createContext("/asset", ex -> {
+            if (fileRequests.incrementAndGet() <= 2) {
+                ex.sendResponseHeaders(500, -1);
+            } else {
+                var body = "content".getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+            }
+            ex.close();
+        });
+        server.start();
+        try {
+            var base = "http://127.0.0.1:" + server.getAddress().getPort();
+            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
+            assertEquals("content", Files.readString(cache.download(base + "/release", null)));
+            assertEquals(3, fileRequests.get());
+            assertEquals(3, redirects.get(), "each attempt restarts at the original URL");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void persistentServerErrorsGiveUpNamingTheFailingHost(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/broken", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(503, -1);
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/broken";
+            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
+            var e = assertThrows(IOException.class, () -> cache.download(url, null));
+            assertEquals("Download failed: HTTP 503 from 127.0.0.1 for " + url + " (after 3 attempts)", e.getMessage());
+            assertEquals(3, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void clientErrorsAreNotRetried(@TempDir Path cacheDir) throws IOException {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var requests = new AtomicInteger();
+        server.createContext("/missing", ex -> {
+            requests.incrementAndGet();
+            ex.sendResponseHeaders(404, -1);
+            ex.close();
+        });
+        server.start();
+        try {
+            var url = "http://127.0.0.1:" + server.getAddress().getPort() + "/missing";
+            var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO, Duration.ZERO));
+            var e = assertThrows(IOException.class, () -> cache.download(url, null));
+            assertEquals("Download failed: HTTP 404 from 127.0.0.1 for " + url, e.getMessage());
+            assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void refusedConnectionsAreRetried(@TempDir Path cacheDir) throws IOException {
+        int port;
+        try (var socket = new java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())) {
+            port = socket.getLocalPort();
+        }
+        var url = "http://127.0.0.1:" + port + "/gone";
+        var cache = new DownloadCache(cacheDir, uri -> false, List.of(Duration.ZERO));
+        var e = assertThrows(IOException.class, () -> cache.download(url, null));
+        assertTrue(e.getMessage().startsWith("Download failed: "), e.getMessage());
+        assertTrue(e.getMessage().endsWith(" from 127.0.0.1 for " + url + " (after 2 attempts)"), e.getMessage());
     }
 
     /** Records what a download reported, in order. */

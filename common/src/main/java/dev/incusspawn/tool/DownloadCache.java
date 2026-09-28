@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -31,6 +32,13 @@ import java.util.function.Predicate;
 public class DownloadCache {
 
     private static final int MAX_REDIRECTS = 10;
+
+    /**
+     * Pauses before each retry of a download that failed transiently (a 5xx, a 429 or a broken
+     * connection); one entry per retry. GitHub release downloads have been seen to answer 500
+     * transiently, around when a new base image had just been published and was first pulled.
+     */
+    private static final List<Duration> RETRY_DELAYS = List.of(Duration.ofSeconds(2), Duration.ofSeconds(8));
 
     /**
      * Observes a download as it runs, so a caller can show progress for a large file. Methods
@@ -55,6 +63,7 @@ public class DownloadCache {
 
     private final Path cacheDir;
     private final Predicate<URI> hostLocal;
+    private final List<Duration> retryDelays;
 
     public DownloadCache() {
         this(RuntimeConstants.DOWNLOAD_CACHE_DIR);
@@ -67,8 +76,14 @@ public class DownloadCache {
 
     /** Constructor for testing which addresses count as local to this machine. */
     DownloadCache(Path cacheDir, Predicate<URI> hostLocal) {
+        this(cacheDir, hostLocal, RETRY_DELAYS);
+    }
+
+    /** Constructor for testing how long to wait before each retry. */
+    DownloadCache(Path cacheDir, Predicate<URI> hostLocal, List<Duration> retryDelays) {
         this.cacheDir = cacheDir;
         this.hostLocal = hostLocal;
+        this.retryDelays = retryDelays;
     }
 
     /**
@@ -162,20 +177,54 @@ public class DownloadCache {
         var client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
+        for (int attempt = 0; ; attempt++) {
+            try {
+                // Each attempt starts again from the original URL: a redirect target is often a
+                // short-lived signed URL, and the failing hop may be the redirector itself.
+                fetchOnce(client, uri, url, tmp, listener);
+                return;
+            } catch (TransientDownloadException e) {
+                if (attempt == retryDelays.size()) {
+                    throw attempt == 0 ? e
+                            : new IOException(e.getMessage() + " (after " + (attempt + 1) + " attempts)", e.getCause());
+                }
+                Thread.sleep(retryDelays.get(attempt));
+            }
+        }
+    }
+
+    /** A failure worth retrying: the server or the connection, not the request or our own policy. */
+    private static final class TransientDownloadException extends IOException {
+        TransientDownloadException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    private void fetchOnce(HttpClient client, URI uri, String url, Path tmp, Listener listener)
+            throws IOException, InterruptedException {
         var current = uri;
         for (int hops = 0; ; hops++) {
             var request = HttpRequest.newBuilder(current).GET().build();
             // Only a 200 body reaches the disk: a redirect or error body is discarded unread, so a
             // server cannot fill the host's disk through responses that never become the download.
-            var response = client.send(request, info -> info.statusCode() == 200
-                    ? new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
-                            StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
-                            info.headers().firstValueAsLong("Content-Length").orElse(-1), listener)
-                    : HttpResponse.BodySubscribers.replacing(tmp));
+            HttpResponse<Path> response;
+            try {
+                response = client.send(request, info -> info.statusCode() == 200
+                        ? new CountingSubscriber<>(HttpResponse.BodySubscribers.ofFile(tmp,
+                                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING),
+                                info.headers().firstValueAsLong("Content-Length").orElse(-1), listener)
+                        : HttpResponse.BodySubscribers.replacing(tmp));
+            } catch (IOException e) {
+                throw new TransientDownloadException("Download failed: " + describe(e) + " from "
+                        + current.getHost() + " for " + url, e);
+            }
             var status = response.statusCode();
             if (status == 200) return;
             if (!isRedirect(status)) {
-                throw new IOException("Download failed: HTTP " + status + " for " + url);
+                // Name the host: behind a redirect, the URL the user sees is not the one that failed.
+                var message = "Download failed: HTTP " + status + " from " + current.getHost() + " for " + url;
+                if (status >= 500 || status == 429) throw new TransientDownloadException(message, null);
+                throw new IOException(message);
             }
             if (hops == MAX_REDIRECTS) {
                 throw new IOException("Download failed: more than " + MAX_REDIRECTS + " redirects for " + url);
@@ -239,6 +288,10 @@ public class DownloadCache {
         public void onComplete() {
             delegate.onComplete();
         }
+    }
+
+    private static String describe(IOException e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     private static boolean isRedirect(int status) {
