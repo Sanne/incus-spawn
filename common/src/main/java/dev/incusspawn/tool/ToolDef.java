@@ -164,6 +164,9 @@ public class ToolDef {
         @JsonProperty("auto_return")
         private boolean autoReturn = false;
         private String id;
+        @JsonProperty("shell_menu")
+        private boolean shellMenu = false;
+        private String shortcut;
 
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
@@ -183,6 +186,10 @@ public class ToolDef {
         public void setText(String text) { this.text = text; }
         public boolean isAutoReturn() { return autoReturn; }
         public void setAutoReturn(boolean autoReturn) { this.autoReturn = autoReturn; }
+        public boolean isShellMenu() { return shellMenu; }
+        public void setShellMenu(boolean shellMenu) { this.shellMenu = shellMenu; }
+        public String getShortcut() { return shortcut; }
+        public void setShortcut(String shortcut) { this.shortcut = shortcut; }
     }
 
     @RegisterForReflection
