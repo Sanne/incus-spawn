@@ -157,4 +157,22 @@ class AccountUsageTest {
         pins.put("c", Map.of("github", "bot"));
         assertEquals(List.of("a", "c"), AccountUsage.pinnedTo(pins, "github", "bot"));
     }
+
+    // ── which credentials a template's tools use ─────────────────────────────
+
+    @Test
+    void aTemplatesCredentialsComeFromItsToolsDownTheChain() throws Exception {
+        var base = ImageDef.parseYaml("name: tpl-dev\ntools:\n  - gh\n");
+        var child = ImageDef.parseYaml("name: tpl-ai\nparent: tpl-dev\ntools:\n  - pi\n");
+        Map<String, ToolSetup> tools = Map.of("gh", new GhSetup(), "pi", new dev.incusspawn.tool.PiSetup());
+        var defs = Map.of("tpl-dev", base, "tpl-ai", child);
+        assertEquals(java.util.Set.of("github", "claude", "openai"),
+                AccountSelection.templateNamespaces(child, defs, tools::get));
+    }
+
+    @Test
+    void aBorrowedCredentialCountsForTheToolThatBorrowsIt() {
+        assertEquals(java.util.Set.of("github"), new dev.incusspawn.tool.CopilotSetup().credentialNamespaces());
+        assertEquals(java.util.Set.of("claude"), new ClaudeSetup().credentialNamespaces());
+    }
 }

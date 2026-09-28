@@ -1,0 +1,24 @@
+
+   ▸ claude  personal · global default, follows it ▾
+     gi╭───────────────────────────────────────────────────────────────────────╮
+       │ ▸ inherit   personal · global default, follows it                     │
+       │   or pin for this branch:                                             │
+       │   personal  Claude Pro/Max OAuth token · stays if the default changes │
+       │   work-sub  Claude Pro/Max OAuth token                                │
+       │   acme      not usable: this template was built for another auth mode │
+       ╰───────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

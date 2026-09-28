@@ -201,6 +201,8 @@ public class ListCommand extends BaseCommand {
     // Branch modal state
     private String branchSourceName;
     private TextInputState branchNameInput;
+    /** The branch dialog's credential account rows; empty when there is nothing to choose. */
+    private BranchAccountChoices branchAccounts;
     private CheckboxState branchGuiCheck;
     private CheckboxState branchKvmCheck;
     private NetworkMode[] branchNetworkModes;
@@ -1630,8 +1632,33 @@ public class ListCommand extends BaseCommand {
         vmCpuInput = new TextInputState(String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2)));
         vmMemoryInput = new TextInputState(adaptiveMemory);
         vmDiskInput = new TextInputState(adaptiveDisk);
+        branchAccounts = branchAccountChoicesFor(sourceName);
         branchFieldIndex = 0;
         mode = Mode.BRANCH;
+    }
+
+    /**
+     * The account rows for a branch of {@code source}: what it would inherit, and every account
+     * each credential its template's tools use could be pinned to instead. Best effort -- the
+     * dialog is still worth opening without them, and {@code BranchFlow} validates what it gets.
+     */
+    private BranchAccountChoices branchAccountChoicesFor(String source) {
+        List<BranchAccountChoices.Row> rows;
+        try {
+            var config = SpawnConfig.load();
+            // The TUI's own loader: a fresh one would re-read the tool definitions and print
+            // their warnings over the screen.
+            var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
+            var inherited = BranchFlow.inheritedAccounts(incus, source, imageDefs);
+            // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
+            var namespaces = dev.incusspawn.config.AccountSelection.templateNamespaces(
+                    imageDefs.get(inherited.template()), imageDefs, toolDefLoader.allToolSetups()::get);
+            rows = BranchAccountChoices.rowsFor(config, setups, namespaces, inherited,
+                    incus.configByPrefix(source, Metadata.ACCOUNT_IDENTITY_PREFIX));
+        } catch (RuntimeException e) {
+            rows = List.of();
+        }
+        return new BranchAccountChoices(modal, theme, rows);
     }
 
     private NetworkMode branchNetworkMode() {
@@ -1639,6 +1666,23 @@ public class ListCommand extends BaseCommand {
     }
 
     private boolean handleBranchEvent(KeyEvent key, TuiRunner tui, TableState tableState) {
+        // An open dropdown takes every key, Esc and Enter included: they close it, not the dialog.
+        if (branchAccounts.isOpen()) {
+            branchAccounts.handleOpenKey(key);
+            return true;
+        }
+        if (isAccountField(branchFieldIndex)) {
+            var row = branchFieldIndex - accountFieldBase();
+            // Space opens it, as Space toggles every other field; Enter still confirms the branch.
+            if (key.isChar(' ')) {
+                branchAccounts.open(row);
+                return true;
+            }
+            if (key.isKey(KeyCode.RIGHT) || key.isKey(KeyCode.LEFT)) {
+                branchAccounts.cycle(row, key.isKey(KeyCode.RIGHT) ? 1 : -1);
+                return true;
+            }
+        }
         if (key.isKey(KeyCode.ESCAPE) || key.isCtrlC()) {
             mode = Mode.BROWSE;
             return true;
@@ -1742,11 +1786,20 @@ public class ListCommand extends BaseCommand {
     }
 
     private boolean isToggleField(int fieldIndex) {
-        return fieldIndex >= guiFieldIndex() && fieldIndex <= inboxFieldIndex();
+        return (fieldIndex >= guiFieldIndex() && fieldIndex <= inboxFieldIndex()) || isAccountField(fieldIndex);
+    }
+
+    /** The first account row's field index: after the inbox, and its path when that is shown. */
+    private int accountFieldBase() {
+        return (branchInboxCheck.isChecked() ? inboxPathFieldIndex() : inboxFieldIndex()) + 1;
+    }
+
+    private boolean isAccountField(int fieldIndex) {
+        return fieldIndex >= accountFieldBase() && fieldIndex < accountFieldBase() + branchAccounts.size();
     }
 
     private int maxBranchField() {
-        return branchInboxCheck.isChecked() ? inboxPathFieldIndex() : inboxFieldIndex();
+        return accountFieldBase() - 1 + branchAccounts.size();
     }
 
     private TextInputState activeBranchInput() {
@@ -2909,8 +2962,13 @@ public class ListCommand extends BaseCommand {
     }
 
     private void renderBranchModal(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect screen) {
-        int height = 11;
-        var modalArea = ModalRenderer.centerRect(screen, 54, height);
+        var accountRows = branchAccounts.size();
+        // A blank line and a heading, then a row per credential with a choice to make.
+        int accountLines = accountRows == 0 ? 0 : 2 + accountRows;
+        // Nine field lines, the key hints, and the two borders. It was 11, which left the hints
+        // a zero-height line: they were never shown.
+        int height = 12 + accountLines;
+        var modalArea = ModalRenderer.centerRect(screen, accountRows == 0 ? 54 : 64, height);
         var block = Block.builder()
                 .borders(Borders.ALL).borderType(BorderType.DOUBLE)
                 .title(modal.styledTitle(" Branch from '" + branchSourceName + "' ", modal.border()))
@@ -2931,6 +2989,7 @@ public class ListCommand extends BaseCommand {
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
         constraints.add(Constraint.length(1));
+        for (int i = 0; i < accountLines; i++) constraints.add(Constraint.length(1));
         constraints.add(Constraint.fill());
 
         var rows = Layout.vertical()
@@ -2961,12 +3020,38 @@ public class ListCommand extends BaseCommand {
         modal.renderSelect(frame, rows.get(row++), "Network", branchNetworkSelect, branchFieldIndex == networkFieldIndex());
         renderInboxField(frame, rows.get(row++));
 
+        dev.tamboui.layout.Rect openRowArea = null;
+        if (accountRows > 0) {
+            row++;
+            frame.renderWidget(Paragraph.from(Line.styled("Credential accounts:",
+                    Style.EMPTY.fg(modal.fg()).bg(modal.bg()))), rows.get(row++));
+            for (int i = 0; i < accountRows; i++) {
+                var area = rows.get(row++);
+                var focused = branchFieldIndex == accountFieldBase() + i;
+                branchAccounts.renderRow(frame, area, i, focused);
+                if (focused) openRowArea = area;
+            }
+        }
+
         var hintSpans = new ArrayList<Span>();
-        modal.addKey(hintSpans, "Enter", "Confirm");
-        modal.addKey(hintSpans, "Esc", "Cancel");
-        modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
-        modal.addKey(hintSpans, "Space", "Toggle");
+        if (branchAccounts.isOpen()) {
+            modal.addKey(hintSpans, "Enter", "Choose");
+            modal.addKey(hintSpans, "Esc", "Close");
+            modal.addKey(hintSpans, "↑↓", "Move");
+        } else if (isAccountField(branchFieldIndex)) {
+            modal.addKey(hintSpans, "Enter", "Confirm");
+            modal.addKey(hintSpans, "Space", "Choose account");
+            modal.addKey(hintSpans, "←→", "Cycle");
+        } else {
+            modal.addKey(hintSpans, "Enter", "Confirm");
+            modal.addKey(hintSpans, "Esc", "Cancel");
+            modal.addKey(hintSpans, "↑↓/Tab", "Navigate");
+            modal.addKey(hintSpans, "Space", "Toggle");
+        }
         frame.renderWidget(Paragraph.from(Line.from(hintSpans)), rows.get(row));
+
+        // Last, so the dropdown is drawn over everything below its row.
+        if (openRowArea != null) branchAccounts.renderOpen(frame, screen, openRowArea);
     }
 
     private void renderResourceFields(dev.tamboui.terminal.Frame frame, dev.tamboui.layout.Rect area) {
@@ -5141,7 +5226,7 @@ public class ListCommand extends BaseCommand {
         var request = new BranchFlow.Request(source, name, branchGuiCheck.isChecked(),
                 branchKvmCheck.isChecked(), branchNetworkMode(),
                 inboxText == null ? null : java.nio.file.Path.of(inboxText),
-                cpu, memory, disk, java.util.List.of(), true, java.util.Map.of());
+                cpu, memory, disk, branchAccounts.overrides(), true, java.util.Map.of());
 
         var prefetched = BranchFlow.create(incus, BranchFlow.preflight(incus, request, imageDefs));
 

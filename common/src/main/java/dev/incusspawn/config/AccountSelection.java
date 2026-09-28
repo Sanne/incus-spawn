@@ -179,8 +179,7 @@ public final class AccountSelection {
         for (var entry : wanted.entrySet()) {
             var namespace = entry.getKey();
             var wasBaked = baked.get(namespace);
-            if (wasBaked == null || wasBaked.isBlank() || wasBaked.equals(entry.getValue())) continue;
-            if (canRebake(setups.get(namespace))) continue;
+            if (!cannotHonour(setups.get(namespace), wasBaked, entry.getValue())) continue;
             // A null account is "follow the default" -- what 'isx account unset' asks for.
             var chosen = selection.get(namespace);
             var what = chosen == null || chosen.isBlank()
@@ -196,6 +195,33 @@ public final class AccountSelection {
 
     private static boolean canRebake(ToolSetup setup) {
         return setup != null && setup.canRebakeForAccount();
+    }
+
+    /** Whether an instance that baked {@code baked} cannot be moved to an account that bakes {@code wanted}. */
+    private static boolean cannotHonour(ToolSetup setup, String baked, String wanted) {
+        if (baked == null || baked.isBlank() || wanted == null || wanted.isBlank() || baked.equals(wanted)) {
+            return false;
+        }
+        return !canRebake(setup);
+    }
+
+    /**
+     * What an instance built as {@code bakedIdentities} (its {@code account-identity} stamps)
+     * would have to be rebuilt as to use {@code account} for {@code namespace} -- e.g. {@code
+     * "vertex"} for a Vertex account on an instance built for Pro/Max -- or {@code ""} when the
+     * account can be used as it is. For offering only the accounts a choice could honour, before
+     * anything is attempted.
+     */
+    public static String requiredRebuild(SpawnConfig config, ToolSetup setup, String namespace,
+                                         String account, Map<String, String> bakedIdentities) {
+        if (setup == null) return "";
+        String wanted;
+        try {
+            wanted = setup.bakedAccountIdentity(config, account);
+        } catch (AccountResolver.UnknownAccountException e) {
+            return "";
+        }
+        return cannotHonour(setup, bakedIdentities.get(namespace), wanted) ? wanted : "";
     }
 
     /**
@@ -433,6 +459,24 @@ public final class AccountSelection {
                     if (!namespace.isBlank()) byNamespace.putIfAbsent(namespace, setup);
                 });
         return byNamespace;
+    }
+
+    /**
+     * The credential namespaces a template's tools spend, down its whole chain, in the order the
+     * tools are listed. {@code tools} looks a tool up by name; one it does not know contributes
+     * nothing.
+     */
+    public static java.util.Set<String> templateNamespaces(ImageDef template, Map<String, ImageDef> defs,
+                                                          java.util.function.Function<String, ToolSetup> tools) {
+        var namespaces = new java.util.LinkedHashSet<String>();
+        if (template == null) return namespaces;
+        for (var layer : ImageDef.chain(template, defs)) {
+            for (var ref : layer.getTools()) {
+                var setup = tools.apply(ref.getName());
+                if (setup != null) namespaces.addAll(setup.credentialNamespaces());
+            }
+        }
+        return namespaces;
     }
 
     /** Config namespaces a tool declares. */

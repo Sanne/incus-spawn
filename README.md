@@ -1087,7 +1087,11 @@ isx account set review-1 github=acme-bot
 isx account unset review-1 github       # follow the default again
 ```
 
-In the TUI, **F3** on an instance shows the same as `isx account show`, and **a** changes it.
+In the TUI, **F3** on an instance shows the same as `isx account show`, and **a** changes it. The
+branch dialog (**F4**) has a dropdown per credential the template uses, when there is more than one
+account to choose from: its first entry, *inherit*, is what the branch gets with no override -- the
+template's choice, or the global default, which the branch then keeps following -- and every account
+below it pins the branch to that account, the default included.
 
 `show` says in words where each account comes from. An instance is either *pinned* to an account,
 and keeps it whatever the global default becomes, or *not pinned*, in which case it uses the global

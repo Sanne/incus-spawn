@@ -1,0 +1,40 @@
+
+     claude  personal · global default, follows it ▾
+   ▸ github  acme-bot · as tpl-acme chooses ▾
+            ╭────────────────────────────────────────────╮
+            │ ▸ inherit   acme-bot · as tpl-acme chooses │
+            │   or pin for this branch:                  │
+            │   me                                       │
+            │   acme-bot  commits as bot@acme.example    │
+            ╰────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

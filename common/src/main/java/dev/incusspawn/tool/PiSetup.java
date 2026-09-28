@@ -65,6 +65,16 @@ public class PiSetup implements ToolSetup {
         return List.of("nodejs", "fd-find", "ripgrep");
     }
 
+    /**
+     * Pi spends Claude Code's credential, or OpenAI's with {@code provider: openai}, through the
+     * proxy entries those tools declare -- it has none of its own. Both are listed: which one a
+     * template uses is a parameter, and offering one account choice too many is harmless.
+     */
+    @Override
+    public java.util.Set<String> credentialNamespaces() {
+        return new java.util.LinkedHashSet<>(List.of(SpawnConfig.ClaudeConfig.NAMESPACE, "openai"));
+    }
+
     @Override
     public List<EnvEntry> envEntries(java.util.Map<String, String> resolvedParams) {
         return envEntries(resolvedParams, java.util.Map.of());

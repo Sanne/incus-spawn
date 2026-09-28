@@ -248,40 +248,16 @@ public final class BranchFlow {
     }
 
     /**
-     * The account selection this branch inherits: the source template's {@code accounts:}
-     * merged down its chain, with any {@code --account} override applied on top.
-     *
-     * <p>Resolved against the template the instance is branched from, which for a branch of a
-     * branch is the leaf template recorded in {@link Metadata#PROFILE} -- the same rule
-     * {@code InstancePrep} uses to find the chain.
+     * The branch's account selection: what it {@linkplain #inheritedAccounts inherits}, with any
+     * {@code --account} override applied on top, validated and checked against what the source
+     * was built for.
      */
     private static ResolvedAccounts resolveAccountSelection(IncusClient incus, Request req,
                                                             Map<String, ImageDef> defs) {
+        var inherited = inheritedAccounts(incus, req.source(), defs);
         var source = req.source();
-        var profile = incus.configGet(source, Metadata.PROFILE);
-        var templateName = (profile != null && !profile.isEmpty()) ? profile : source;
-
-        // Lowest precedence first, each layer overwriting the last:
-        //   template chain  <  the source instance's own pins  <  --account
-        // The source's pins win over the template because a source re-pointed with
-        // 'isx account set' shows that choice to the user, and the CoW copy carries it across
-        // regardless -- resolving the template here would silently stamp over it.
-        var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
-        var origins = new java.util.LinkedHashMap<String, AccountOrigin>();
-        selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(templateName)));
-
-        var sourcePins = AccountSelection.read(incus, source);
-        var sourceOrigins = AccountSelection.readOrigins(incus, source);
-        sourcePins.forEach((ns, account) -> {
-            // A pin the source recorded no origin for, but which is what the template chooses,
-            // is the template's: that is how every pre-origin template build stamped it.
-            var origin = sourceOrigins.getOrDefault(ns, AccountOrigin.UNKNOWN);
-            if (origin.kind() == AccountOrigin.Kind.UNKNOWN && account.equals(selection.get(ns))) {
-                origin = AccountOrigin.template(templateName);
-            }
-            selection.put(ns, account);
-            origins.put(ns, origin.copiedOnto(source));
-        });
+        var selection = new java.util.LinkedHashMap<>(inherited.accounts());
+        var origins = new java.util.LinkedHashMap<>(inherited.origins());
 
         var overrides = AccountSelection.parse(req.accountOverrides());
         selection.putAll(overrides);
@@ -298,6 +274,51 @@ public final class BranchFlow {
         if (!reason.isEmpty()) throw new AccountSelection.InvalidSelectionException(reason);
 
         return new ResolvedAccounts(selection, origins);
+    }
+
+    /**
+     * What a branch of {@code source} inherits before any {@code --account}: the template it was
+     * built from, and the pins -- with who chose each -- that the branch would be stamped with.
+     * A namespace absent from {@code accounts} is not pinned and follows the global default.
+     *
+     * @param template the leaf template the source was built from, or the source itself
+     */
+    public record Inherited(String template, Map<String, String> accounts,
+                            Map<String, AccountOrigin> origins) {}
+
+    /**
+     * The branch's inherited selection, lowest precedence first, each layer overwriting the last:
+     * the template chain's {@code accounts:}, then the source instance's own pins. The source's
+     * pins win because a source re-pointed with 'isx account set' shows that choice to the user,
+     * and the CoW copy carries it across regardless -- resolving the template here would silently
+     * stamp over it.
+     *
+     * <p>Resolved against the template the instance is branched from, which for a branch of a
+     * branch is the leaf template recorded in {@link Metadata#PROFILE} -- the same rule
+     * {@code InstancePrep} uses to find the chain. Shared by {@code isx branch} and the TUI's
+     * branch dialog, which offers exactly this as the choice that changes nothing.
+     */
+    public static Inherited inheritedAccounts(IncusClient incus, String source, Map<String, ImageDef> defs) {
+        var profile = incus.configGet(source, Metadata.PROFILE);
+        var templateName = (profile != null && !profile.isEmpty()) ? profile : source;
+
+        var selection = AccountSelection.resolve(defs.get(templateName), defs, Map.of());
+        var origins = new java.util.LinkedHashMap<String, AccountOrigin>();
+        selection.keySet().forEach(ns -> origins.put(ns, AccountOrigin.template(templateName)));
+
+        var sourcePins = AccountSelection.read(incus, source);
+        var sourceOrigins = AccountSelection.readOrigins(incus, source);
+        sourcePins.forEach((ns, account) -> {
+            // A pin the source recorded no origin for, but which is what the template chooses,
+            // is the template's: that is how every pre-origin template build stamped it.
+            var origin = sourceOrigins.getOrDefault(ns, AccountOrigin.UNKNOWN);
+            if (origin.kind() == AccountOrigin.Kind.UNKNOWN && account.equals(selection.get(ns))) {
+                origin = AccountOrigin.template(templateName);
+            }
+            selection.put(ns, account);
+            origins.put(ns, origin.copiedOnto(source));
+        });
+        return new Inherited(templateName, selection, origins);
     }
 
     /** Report the account pins {@code configureBranch} stamped, and tell the proxy. */

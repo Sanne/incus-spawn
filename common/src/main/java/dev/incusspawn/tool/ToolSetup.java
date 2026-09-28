@@ -55,6 +55,23 @@ public interface ToolSetup {
     }
 
     /**
+     * The credential namespaces this tool spends -- the ones whose account choice matters to an
+     * instance that has it. Derived from {@link #proxy()}: each entry's namespace, including one
+     * it borrows from another tool (Copilot's {@code github.token}). Override for a tool that
+     * uses another tool's credential without declaring a proxy entry of its own.
+     */
+    default java.util.Set<String> credentialNamespaces() {
+        var proxy = proxy();
+        var namespaces = new java.util.LinkedHashSet<String>();
+        if (proxy == null) return namespaces;
+        for (var entry : proxy.getConfiguration().values()) {
+            var namespace = proxy.namespaceOf(entry);
+            if (!namespace.isBlank()) namespaces.add(namespace);
+        }
+        return namespaces;
+    }
+
+    /**
      * A short, secret-free description of one of this tool's accounts -- what kind of
      * credential it is, or whose -- for listings such as {@code isx account list}; {@code ""}
      * when there is nothing to say beyond its name. Never include the credential itself.
