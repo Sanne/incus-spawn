@@ -367,20 +367,10 @@ public class DoctorCommand extends BaseCommand {
         for (var def : loaded.defs().values()) {
             if (def.isBuiltIn()) continue;
             for (var toolRef : def.getTools()) {
-                addWithRequires(toolRef.getName(), allTools, declared);
+                ToolSetup.addWithRequires(toolRef.getName(), allTools, declared);
             }
         }
         return declared::contains;
-    }
-
-    /** Adds {@code name} and everything it (transitively) requires to {@code into}. */
-    static void addWithRequires(String name, Map<String, ToolSetup> allTools, HashSet<String> into) {
-        if (!into.add(name)) return; // already visited -- also guards against a requires cycle
-        var tool = allTools.get(name);
-        if (tool == null) return;
-        for (var dep : tool.requires()) {
-            addWithRequires(dep, allTools, into);
-        }
     }
 
     /**

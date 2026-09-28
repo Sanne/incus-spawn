@@ -1750,14 +1750,13 @@ public class ListCommand extends BaseCommand {
             }
             if (branchNetworkMode() != NetworkMode.AIRGAP) {
                 if (showProxyError()) return true;
-                var def = imageDefs.get(branchSourceName);
-                if (def != null) {
-                    var credError = dev.incusspawn.config.SpawnConfig.checkCredentials(def, imageDefs, n -> false);
-                    if (!credError.isEmpty()) {
-                        statusMessage = credError;
-                        mode = Mode.BROWSE;
-                        return true;
-                    }
+                // With the accounts chosen above, as BranchFlow.preflight will check them.
+                var credError = BranchFlow.credentialProblem(incus, branchSourceName,
+                        branchAccounts.overrides(), imageDefs, toolDefLoader);
+                if (!credError.isEmpty()) {
+                    statusMessage = credError;
+                    mode = Mode.BROWSE;
+                    return true;
                 }
             }
             if (vanished(branchSourceName)) return true;
