@@ -198,6 +198,7 @@ public class ActionResolver {
             return repos;
         }
 
+        var config = SpawnConfig.load();
         var chain = getInheritanceChain(parentTemplate);
         for (var def : chain) {
             for (var repo : def.getRepos()) {
@@ -207,10 +208,20 @@ public class ActionResolver {
                         ? "/home/agentuser" + path.substring(1)
                         : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
-                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
+                var hostPath = resolveHostPath(name, config);
+                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl(), hostPath));
             }
         }
         return repos;
+    }
+
+    private static String resolveHostPath(String repoName, SpawnConfig config) {
+        try {
+            var path = dev.incusspawn.git.GitRemoteUtils.resolveHostRepoPath(repoName, config);
+            return path != null ? path.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -242,6 +253,46 @@ public class ActionResolver {
                 networkMode,
                 repos
         );
+    }
+
+    /**
+     * Resolve shell menu actions for an instance: actions with shell_menu=true,
+     * filtered to host-side types (url/command), with expand:repos collapsed
+     * to a single entry matching the effective workdir.
+     */
+    public List<ToolAction> resolveShellMenuActions(String instanceName, String parentTemplate) {
+        var installedTools = collectInstalledTools(instanceName, parentTemplate);
+        var repos = collectRepos(parentTemplate);
+        var allActions = resolveActionsForInstance(instanceName, parentTemplate, installedTools, repos);
+
+        var workdir = incus.configGet(instanceName, Metadata.WORKDIR);
+        var effectiveWorkdir = (workdir == null || workdir.isBlank()) ? "/home/agentuser" : workdir;
+
+        var candidates = allActions.stream()
+                .filter(ToolAction::isShellMenu)
+                .filter(a -> a.type().map(t -> "url".equals(t) || "command".equals(t)).orElse(false))
+                .toList();
+
+        var menuActions = new ArrayList<ToolAction>();
+        var seen = new java.util.HashSet<String>();
+        for (var action : candidates) {
+            if (action.repoPath().isPresent()) {
+                var groupKey = action.toolName();
+                if (!seen.add(groupKey)) continue;
+                var match = candidates.stream()
+                        .filter(a -> a.toolName().equals(groupKey))
+                        .filter(a -> a.repoPath().map(effectiveWorkdir::equals).orElse(false))
+                        .findFirst()
+                        .orElse(action);
+                menuActions.add(match);
+            } else {
+                var key = action.toolName() + ":" + action.id().orElse("");
+                if (seen.add(key)) {
+                    menuActions.add(action);
+                }
+            }
+        }
+        return menuActions;
     }
 
     // --- Private helpers ---

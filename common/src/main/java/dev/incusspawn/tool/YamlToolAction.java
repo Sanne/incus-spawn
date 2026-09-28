@@ -52,6 +52,28 @@ public class YamlToolAction implements ToolAction {
         return entry.isRequiresRunning();
     }
 
+    @Override
+    public boolean isShellMenu() {
+        return entry.isShellMenu();
+    }
+
+    @Override
+    public java.util.Optional<String> shortcut() {
+        var s = entry.getShortcut();
+        return s == null || s.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(s);
+    }
+
+    @Override
+    public java.util.Optional<String> type() {
+        var t = entry.getType();
+        return t == null || t.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(t);
+    }
+
+    @Override
+    public java.util.Optional<String> repoPath() {
+        return repo != null ? java.util.Optional.of(repo.path()) : java.util.Optional.empty();
+    }
+
     public boolean isUrl() {
         return TYPE_URL.equals(entry.getType());
     }
@@ -203,6 +225,9 @@ public class YamlToolAction implements ToolAction {
             result = result.replace("${repo_name}", repo.name());
             result = result.replace("${repo_path}", repo.path());
             result = result.replace("${repo_url}", repo.url());
+            if (repo.hostPath() != null) {
+                result = result.replace("${host_repo_path}", repo.hostPath());
+            }
         }
 
         // Instance variables (available when executing, not when generating label)
