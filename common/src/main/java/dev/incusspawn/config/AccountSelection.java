@@ -446,8 +446,8 @@ public final class AccountSelection {
 
     /**
      * As {@link #namespaceSetups(SpawnConfig)}, from a loader the caller already holds -- the
-     * TUI's, which has read the tool YAMLs once already and would otherwise re-read them, and
-     * re-print their warnings over its screen, every time a dialog opens.
+     * TUI's, which has read the tool YAMLs once already and would otherwise re-read them every
+     * time a dialog opens.
      */
     public static Map<String, ToolSetup> namespaceSetups(SpawnConfig config, dev.incusspawn.tool.ToolDefLoader loader) {
         var byNamespace = new LinkedHashMap<String, ToolSetup>();

@@ -1,10 +1,14 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.Warnings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -307,6 +311,38 @@ class ToolDefLoaderTest {
 
         assertEquals(List.of(broken.toAbsolutePath().normalize()), loader.parseFailures());
         assertEquals("built-in", loader.getSource("podman"));
+    }
+
+    /** Loaders are built deep in code the TUI reaches, so they must never print (#872). */
+    @Test
+    void unreadableFilesAreWarningsNotStderr(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("podman.yaml"), """
+                name: podman
+                env:
+                  - export DOCKER_HOST=unix:///var/run/docker.sock
+                """);
+        var reported = new ArrayList<String>();
+        var stderr = new ByteArrayOutputStream();
+        var originalErr = System.err;
+        System.setErr(new PrintStream(stderr, true));
+        try (var ignored = Warnings.redirect(new Warnings.Channel(reported::add))) {
+            var loader = new ToolDefLoader();
+            loader.setProjectToolsDir(tempDir);
+
+            assertEquals(1, loader.warnings().size());
+            var warning = loader.warnings().get(0);
+            assertTrue(warning.startsWith("podman.yaml: "), warning);
+            assertTrue(warning.contains("is a shell string"), warning);
+
+            // A second loader finds the same problem; it is still reported only once.
+            var again = new ToolDefLoader();
+            again.setProjectToolsDir(tempDir);
+            assertEquals(List.of(warning), again.warnings());
+            assertEquals(List.of(warning), reported);
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertEquals("", stderr.toString());
     }
 
     @Test

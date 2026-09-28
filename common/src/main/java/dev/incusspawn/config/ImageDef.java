@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.tool.ToolDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -569,7 +570,7 @@ public class ImageDef {
      * Load all image definitions with explicit search paths.
      */
     static Map<String, ImageDef> loadAll(List<String> searchPaths) {
-        return loadAll(searchPaths, msg -> System.err.println(msg));
+        return loadAll(searchPaths, Warnings::warn);
     }
 
     static Map<String, ImageDef> loadAll(List<String> searchPaths, Consumer<String> warnings) {
@@ -588,7 +589,7 @@ public class ImageDef {
      * aborts on a conflict; the TUI shows a warning but still lists templates).
      */
     public static LayeredDefinitions<ImageDef> loadAllWithConflicts() {
-        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), msg -> System.err.println(msg));
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn);
     }
 
     static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {
@@ -676,7 +677,7 @@ public class ImageDef {
                 }
             }
         } catch (IOException e) {
-            warnings.accept("Warning: failed to scan " + dir + ": " + e.getMessage());
+            warnings.accept("failed to scan " + dir + ": " + e.getMessage());
         }
         defs.endDirectory();
     }

@@ -1,6 +1,7 @@
 package dev.incusspawn.tool;
 
 import dev.incusspawn.RuntimeConstants;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.config.LayeredDefinitions;
 import dev.incusspawn.config.SpawnConfig;
@@ -9,6 +10,7 @@ import dev.incusspawn.config.YamlErrors;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +30,9 @@ import java.util.Set;
  * mistake; those are reported via {@link #conflicts()} so callers (e.g. {@code isx
  * build}) can refuse to build and insist the user disambiguate. See
  * {@link LayeredDefinitions} for the shared collision/override bookkeeping.
+ * <p>
+ * Problems reading a file are collected in {@link #warnings()} and reported through
+ * {@link Warnings}, never printed: loaders are built deep inside code the TUI reaches (#872).
  */
 public class ToolDefLoader {
 
@@ -58,6 +63,7 @@ public class ToolDefLoader {
     private List<String> searchPaths;
 
     private LayeredDefinitions<YamlToolSetup> defs;
+    private List<String> warnings = List.of();
 
     /** Override the project tools directory (for testing). */
     void setProjectToolsDir(Path dir) {
@@ -89,6 +95,12 @@ public class ToolDefLoader {
     /** Tool files that failed to parse during the last load and were skipped. */
     public List<Path> parseFailures() {
         return load().parseFailures();
+    }
+
+    /** Files that could not be read during the last load, as one message each. */
+    public List<String> warnings() {
+        load();
+        return List.copyOf(warnings);
     }
 
     /** Cross-layer overrides found during the last load (intentional; for diagnostics). */
@@ -159,6 +171,7 @@ public class ToolDefLoader {
     private LayeredDefinitions<YamlToolSetup> load() {
         if (defs == null) {
             defs = new LayeredDefinitions<>("tool");
+            warnings = new ArrayList<>();
             loadBuiltins();
             loadFromDirectory(userToolsDir());
             var paths = searchPaths != null ? searchPaths : SpawnConfig.load().getSearchPaths();
@@ -167,6 +180,7 @@ public class ToolDefLoader {
                 loadFromDirectory(Path.of(expandedPath).resolve("tools"));
             }
             loadFromDirectory(projectToolsDir);
+            warnings.forEach(Warnings::warn);
         }
         return defs;
     }
@@ -182,7 +196,7 @@ public class ToolDefLoader {
                     defs.putBuiltin(def.getName(), new YamlToolSetup(def));
                 }
             } catch (IOException e) {
-                System.err.println("Warning: " + YamlErrors.friendly(filename, e));
+                warnings.add(YamlErrors.friendly(filename, e));
             }
         }
     }
@@ -203,13 +217,12 @@ public class ToolDefLoader {
                         defs.put(def.getName(), new YamlToolSetup(def), source);
                     }
                 } catch (IOException e) {
-                    System.err.println("Warning: " + YamlErrors.friendly(
-                            path.getFileName().toString(), e));
+                    warnings.add(YamlErrors.friendly(path.getFileName().toString(), e));
                     defs.parseFailed(path.toAbsolutePath().normalize());
                 }
             }
         } catch (IOException e) {
-            System.err.println("Warning: failed to scan " + dir + ": " + e.getMessage());
+            warnings.add("failed to scan " + dir + ": " + e.getMessage());
         }
         defs.endDirectory();
     }

@@ -285,8 +285,8 @@ public final class InstanceLifecycle {
 
     /**
      * @param knownSetups the credential namespaces' tools, when the caller has them -- the TUI
-     *                    passes its own so the tool definitions are not re-read, and their
-     *                    warnings re-printed over its screen; {@code null} discovers them
+     *                    passes its own so the tool definitions are not re-read from disk;
+     *                    {@code null} discovers them
      */
     private static void reconcileAccountIdentities(IncusClient incus, String name, SpawnConfig config,
                                                    Map<String, dev.incusspawn.tool.ToolSetup> knownSetups,
@@ -382,7 +382,7 @@ public final class InstanceLifecycle {
      *
      * @param setups the credential namespaces' tools ({@link AccountSelection#namespaceSetups});
      *               the TUI passes those it already loaded, so nothing here re-reads the tool
-     *               definitions and prints their warnings over its screen
+     *               definitions from disk
      * @return the instance's pins afterwards
      * @throws AccountSelection.InvalidSelectionException  when the built instance cannot honour it
      * @throws dev.incusspawn.config.AccountResolver.UnknownAccountException  for an unknown or

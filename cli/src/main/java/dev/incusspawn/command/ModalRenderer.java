@@ -266,33 +266,47 @@ final class ModalRenderer {
         frame.renderWidget(Paragraph.from(Line.from(btnSpans)), rows.get(rows.size() - 1));
     }
 
+    /**
+     * Word-wrap each line of {@code text} to {@code width}. A line's leading indentation is kept
+     * on it and on its continuation lines, so an indented snippet (a YAML fix) keeps its shape.
+     */
     static List<String> wrapText(String text, int width) {
         var result = new ArrayList<String>();
         for (var paragraph : text.split("\n")) {
-            if (paragraph.isEmpty()) {
+            if (paragraph.isBlank()) {
                 result.add("");
                 continue;
             }
-            var words = paragraph.split("\\s+");
-            var line = new StringBuilder();
-            for (var word : words) {
-                if (line.length() + word.length() + (line.length() > 0 ? 1 : 0) > width) {
-                    if (line.length() > 0) {
-                        result.add(line.toString());
-                        line = new StringBuilder();
-                    }
-                    // If a single word is longer than width, add it anyway
-                    if (word.length() > width) {
-                        result.add(word);
-                        continue;
-                    }
+            var indent = paragraph.substring(0, paragraph.length() - paragraph.stripLeading().length());
+            if (indent.length() > width / 2) indent = "";
+            for (var wrapped : wrapWords(paragraph.strip(), width - indent.length())) {
+                result.add(indent + wrapped);
+            }
+        }
+        return result;
+    }
+
+    private static List<String> wrapWords(String paragraph, int width) {
+        var result = new ArrayList<String>();
+        var words = paragraph.split("\\s+");
+        var line = new StringBuilder();
+        for (var word : words) {
+            if (line.length() + word.length() + (line.length() > 0 ? 1 : 0) > width) {
+                if (line.length() > 0) {
+                    result.add(line.toString());
+                    line = new StringBuilder();
                 }
-                if (line.length() > 0) line.append(" ");
-                line.append(word);
+                // If a single word is longer than width, add it anyway
+                if (word.length() > width) {
+                    result.add(word);
+                    continue;
+                }
             }
-            if (line.length() > 0) {
-                result.add(line.toString());
-            }
+            if (line.length() > 0) line.append(" ");
+            line.append(word);
+        }
+        if (line.length() > 0) {
+            result.add(line.toString());
         }
         return result;
     }

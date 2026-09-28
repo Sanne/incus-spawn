@@ -5,6 +5,7 @@ import dev.incusspawn.ai.HelpContext;
 import dev.incusspawn.BuildInfo;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
+import dev.incusspawn.Warnings;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
@@ -40,6 +41,7 @@ import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.tui.ShiftTabBindings;
 import dev.incusspawn.tui.TerminalThemeDetector;
 import dev.incusspawn.tui.TuiTheme;
+import dev.incusspawn.tui.WarningLog;
 import dev.tamboui.backend.panama.PanamaBackend;
 import dev.incusspawn.vm.VmManager;
 import dev.tamboui.layout.Constraint;
@@ -114,6 +116,18 @@ public class ListCommand extends BaseCommand {
 
     private final TuiTheme theme = TerminalThemeDetector.detect();
     private final ModalRenderer modal = new ModalRenderer(theme);
+    /** Warnings from any operation while the TUI runs; the status line holds only one. */
+    private final WarningLog warningLog = new WarningLog();
+    /**
+     * Where {@link Warnings} go while the TUI draws or reloads (#872). Its own channel, so what it
+     * has reported is remembered across TUI sessions, while a build run on the released terminal
+     * still prints the same warning on stderr.
+     */
+    private final Warnings.Channel warningChannel = new Warnings.Channel(warningLog::add);
+    private final WarningsModal warningsModal = new WarningsModal(modal, theme, warningLog,
+            warningChannel::forgetReported);
+    /** The status line last set by a warning announcement, which a newer one may replace. */
+    private String warningAnnouncement;
     private final TemplateDetailView templateDetail = new TemplateDetailView(modal, theme,
             new TemplateDetailView.Source() {
                 @Override public Map<String, dev.incusspawn.config.ImageDef> imageDefs() { return imageDefs; }
@@ -182,7 +196,7 @@ public class ListCommand extends BaseCommand {
                                 IncusClient.PoolUsage poolUsage, RuntimeException error) {}
     private static final Duration TASK_DISPLAY_DURATION = Duration.ofSeconds(5);
 
-    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT }
+    private enum Mode { BROWSE, CONFIRM_DELETE, CONFIRM_STOP_FOR_RENAME, CONFIRM_BUILD_FOR_BRANCH, BUILD_MENU, BRANCH, RENAME, TEMPLATE_DETAIL, INSTANCE_DETAIL, ACCOUNTS, INFO, ERROR, ACTIONS, NEW_TEMPLATE, CLEAN_CONFIRM, CLEAN_RESULT, HELP_CHAT, WARNINGS }
     private Mode mode = Mode.BROWSE;
     private String errorMessage;
     private String pendingDeleteName;
@@ -381,6 +395,30 @@ public class ListCommand extends BaseCommand {
     // --- TUI lifecycle ---
 
     private void runTuiLoop() {
+        try {
+            runTuiLoopUntilQuit();
+        } finally {
+            printUnreadWarnings();
+        }
+    }
+
+    /**
+     * Whether the status line is free for a warning announcement: it is empty, or holds an older
+     * announcement. An action's result (a failed build, a created template) is not replaced; the
+     * warnings wait, counted in the header, until the next key clears the line.
+     */
+    private boolean canAnnounceWarnings() {
+        return statusMessage == null || statusMessage.equals(warningAnnouncement);
+    }
+
+    /** The TUI has closed: warnings nobody opened the dialog for must not vanish with it. */
+    private void printUnreadWarnings() {
+        for (var entry : warningLog.unreadEntries()) {
+            System.err.println("Warning: " + entry.message());
+        }
+    }
+
+    private void runTuiLoopUntilQuit() {
         liveRefreshEnabled = SpawnConfig.load().tuiLiveRefreshEnabled();
         if (!liveRefreshEnabled) {
             runTuiSessions();
@@ -412,7 +450,10 @@ public class ListCommand extends BaseCommand {
     private void runTuiSessions() {
         while (true) {
             String reloadError = null;
-            try {
+            // Anything reporting through Warnings (definition loaders built deep in shared code)
+            // goes to the warning log, like everything raised while the runner below draws, but
+            // not while the terminal is released to a build or a shell, which print their own.
+            try (var ignored = Warnings.redirect(warningChannel)) {
                 reloadData();
             } catch (IncusException e) {
                 reloadError = e.getMessage();
@@ -475,7 +516,8 @@ public class ListCommand extends BaseCommand {
             }
 
             ProxyLog.setSuppressStderr(true);
-            try (var runner = TuiRunner.create(TuiConfig.builder()
+            try (var ignored = Warnings.redirect(warningChannel);
+                 var runner = TuiRunner.create(TuiConfig.builder()
                     .backend(new PanamaBackend())
                     .bindings(ShiftTabBindings.createWithBacktab())
                     .tickRate(Duration.ofMillis(100))
@@ -596,21 +638,17 @@ public class ListCommand extends BaseCommand {
         // Run it in the background while the main thread does filesystem I/O and pool probes.
         var instancesFuture = java.util.concurrent.CompletableFuture.supplyAsync(this::collectEntries);
 
-        var loadWarnings = new ArrayList<String>();
         // Re-read tool defs from disk alongside the image defs below, so edited tool YAML
         // is reflected in the "△ definition changed" flag. Must precede addFallbacks(),
-        // which re-populates the freshly cleared cache.
+        // which re-populates the freshly cleared cache. Its warnings reach the log itself.
         toolDefLoader.reload();
-        imageDefs = dev.incusspawn.config.ImageDef.loadAll(loadWarnings::add);
+        // Through Warnings rather than straight into the log: each reload finds the same
+        // problems again, and Warnings reports a message once until the user presses 'r'.
+        imageDefs = dev.incusspawn.config.ImageDef.loadAll(Warnings::warn);
         // Tool conflicts don't flow through image loadAll; surface them here too so
         // the TUI warns about duplicate tool names instead of only failing at build.
         for (var conflict : toolDefLoader.conflicts()) {
-            loadWarnings.add(conflict.shortMessage());
-        }
-        if (!loadWarnings.isEmpty()) {
-            statusMessage = loadWarnings.size() == 1
-                    ? loadWarnings.get(0)
-                    : loadWarnings.get(0) + " (+" + (loadWarnings.size() - 1) + " more)";
+            Warnings.warn(conflict.shortMessage());
         }
 
         // Pool usage runs here (before the merge) so the base-image weight can be attributed
@@ -1208,6 +1246,7 @@ public class ListCommand extends BaseCommand {
             boolean repaint = needsRepaint.getAndSet(false);
             repaint |= tickLiveRefresh(tableState);
             return repaint || needsRefresh.get() || pendingStatusMessage.get() != null
+                    || (warningLog.hasUnannounced() && canAnnounceWarnings())
                     || !backgroundTasks.getActiveTasks().isEmpty()
                     || (helpChat != null && helpChat.isLoading());
         }
@@ -1226,6 +1265,10 @@ public class ListCommand extends BaseCommand {
             case INSTANCE_DETAIL -> handleInstanceDetailEvent(key, tui);
             case ACCOUNTS -> handleAccountsEvent(key);
             case INFO -> handleInfoEvent(key);
+            case WARNINGS -> {
+                if (!warningsModal.handleKey(key)) mode = Mode.BROWSE;
+                yield true;
+            }
             case HELP_CHAT -> {
                 if (!helpChat.handleKey(key)) mode = Mode.BROWSE;
                 yield true;
@@ -1259,7 +1302,15 @@ public class ListCommand extends BaseCommand {
         // Refresh data. 'r' is the TUI-idiomatic binding (k9s/lazygit/btop);
         // Ctrl+L is kept as an alias for the terminal "redraw screen" reflex.
         if ((!key.hasCtrl() && key.isCharIgnoreCase('r')) || (key.hasCtrl() && key.isCharIgnoreCase('l'))) {
+            // An explicit reload reports definition problems again, so a warning that is still
+            // true is announced again rather than silently deduplicated.
+            warningChannel.forgetReported();
             refreshData(tableState);
+            return true;
+        }
+        if (!key.hasCtrl() && key.isChar(WarningsModal.KEY.charAt(0))) {
+            warningsModal.open();
+            mode = Mode.WARNINGS;
             return true;
         }
         if (!key.hasCtrl() && key.isCharIgnoreCase('c')) {
@@ -1646,8 +1697,7 @@ public class ListCommand extends BaseCommand {
         List<BranchAccountChoices.Row> rows;
         try {
             var config = SpawnConfig.load();
-            // The TUI's own loader: a fresh one would re-read the tool definitions and print
-            // their warnings over the screen.
+            // The TUI's own loader: a fresh one would re-read the tool definitions from disk.
             var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
             var inherited = BranchFlow.inheritedAccounts(incus, source, imageDefs);
             // allToolSetups, not find(): find() knows only YAML tools, and claude and gh are Java.
@@ -2173,6 +2223,17 @@ public class ListCommand extends BaseCommand {
         if (pending != null) {
             statusMessage = pending;
         }
+        // Announce warnings that arrived since the last frame, from whichever thread raised them.
+        // Unless the dialog is open, which shows them already.
+        if (mode != Mode.WARNINGS) {
+            if (canAnnounceWarnings()) {
+                var announced = WarningLog.statusLine(warningLog.takeUnannounced());
+                if (announced != null) statusMessage = warningAnnouncement = announced;
+            }
+        } else {
+            warningLog.markRead();
+            warningLog.takeUnannounced();
+        }
 
         var area = frame.area();
         boolean hasStatus = statusMessage != null;
@@ -2305,6 +2366,18 @@ public class ListCommand extends BaseCommand {
             var skew = applianceSkewMessage;
             if (skew != null) {
                 var label = "  !! " + skew;
+                int need = label.length();
+                if (area.width() - leftW - gaugeW - need >= 1) {
+                    centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
+                    centreW = need;
+                }
+            }
+        }
+        if (centreW == 0) {
+            int unread = warningLog.unread();
+            if (unread > 0) {
+                var label = "  ⚠ " + unread + (unread == 1 ? " warning" : " warnings")
+                        + " (" + WarningsModal.KEY + ")";
                 int need = label.length();
                 if (area.width() - leftW - gaugeW - need >= 1) {
                     centre.add(Span.styled(label, Style.EMPTY.bold().fg(theme.statusWarning()).bg(bg)));
@@ -2719,8 +2792,10 @@ public class ListCommand extends BaseCommand {
             var singleLine = statusMessage.replaceAll("[\\n\\r]+", " ").strip();
             var isError = singleLine.startsWith("Failed") || singleLine.startsWith("Invalid")
                     || singleLine.startsWith("Template");
+            var isWarning = singleLine.startsWith("⚠") || singleLine.startsWith("Warning");
             var statusBg = theme.statusBarBg();
-            var msgFg = isError ? theme.statusBarErrorFg() : theme.contextPrimaryFg();
+            var msgFg = isError ? theme.statusBarErrorFg()
+                    : isWarning ? theme.statusWarning() : theme.contextPrimaryFg();
             frame.renderWidget(
                     Paragraph.builder()
                             .text(Text.from(Line.styled(" " + singleLine,
@@ -2952,6 +3027,7 @@ public class ListCommand extends BaseCommand {
             case INSTANCE_DETAIL -> renderInstanceDetailModal(frame, screen);
             case ACCOUNTS -> accountsModal.render(frame, screen);
             case INFO -> renderInfoModal(frame, screen);
+            case WARNINGS -> warningsModal.render(frame, screen);
             case HELP_CHAT -> helpChat.render(frame, screen);
             case ACTIONS -> renderActionsModal(frame, screen);
             case ERROR -> modal.renderErrorModal(frame, screen, errorMessage);
@@ -3646,6 +3722,7 @@ public class ListCommand extends BaseCommand {
                 shortcutRow("a", "Credential accounts", null, null),
                 shortcutRow("C", "Clean pool storage", null, null),
                 shortcutRow("r", "Refresh", null, null),
+                shortcutRow(WarningsModal.KEY, "Warnings", null, null),
                 shortcutRow("n", "New template…", null, null),
                 shortcutRow("/", "Search / filter", null, null),
                 shortcutRow("g/Home", "Jump to top", "G/End", "Jump to bottom")));
@@ -3794,8 +3871,8 @@ public class ListCommand extends BaseCommand {
         var instance = accountsModal.instance();
         var changes = accountsModal.changes();
         var config = SpawnConfig.load();
-        // The TUI's own loader: a fresh one would re-read the tool definitions and print their
-        // warnings over the screen, from this thread and again from the background one.
+        // The TUI's own loader: a fresh one would re-read the tool definitions from disk, on this
+        // thread and again on the background one.
         var setups = dev.incusspawn.config.AccountSelection.namespaceSetups(config, toolDefLoader);
         // Checked here, on the event thread, so a refusal is read in the dialog while the user
         // is still choosing; applying -- which may re-derive the git identity inside the
@@ -3820,7 +3897,7 @@ public class ListCommand extends BaseCommand {
                 instance, () -> {
                     try {
                         InstanceLifecycle.changeAccounts(incus, instance, config, setups, changes,
-                                msg -> { }, msg -> setStatusMessage("Warning: " + msg));
+                                msg -> { }, warningLog::add);
                         setStatusMessage(instance + ": " + described);
                     } catch (RuntimeException e) {
                         setStatusMessage("Couldn't change accounts of " + instance + ": " + e.getMessage());
@@ -5359,12 +5436,9 @@ public class ListCommand extends BaseCommand {
         vmIpFixApplied = false;
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
-        // protection refused, an unusable allocation lock) is worth the status line; progress
-        // is not, since nothing can render until this returns.
-        var warning = new String[1];
-        var output = new StaticIpAllocator.Output(msg -> {}, msg -> {
-            if (warning[0] == null) warning[0] = msg;
-        });
+        // protection refused, an unusable allocation lock) goes to the warning log; progress
+        // does not, since nothing can render until this returns.
+        var output = new StaticIpAllocator.Output(msg -> {}, warningLog::add);
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output)) {
                 vmIpFixApplied = incus.isVm(name);
@@ -5372,7 +5446,6 @@ public class ListCommand extends BaseCommand {
             }
         } catch (Exception ignored) {
         }
-        if (warning[0] != null) statusMessage = "Warning: " + warning[0];
     }
 
     private void fixResolvConfIfNeeded(String name) {
@@ -5386,26 +5459,13 @@ public class ListCommand extends BaseCommand {
     private void fixCaMismatchIfNeeded(String containerName) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
-            // because its host directory is gone must not go unannounced (#852), so it goes on
-            // the status line, which is still there when the shell returns to the TUI.
-            var warnings = new ArrayList<String>();
-            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warnings::add);
-            var status = startWarningStatus(warnings);
-            if (status != null) statusMessage = status;
+            // because its host directory is gone must not go unannounced (#852), so it goes to
+            // the warning log, which the status line announces when the shell returns to the TUI.
+            InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warningLog::add);
             incus.start(containerName);
             incus.waitForReady(containerName);
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
-    }
-
-    /**
-     * The status line for the warnings of a pre-start repair: the first, on one line (the CLI
-     * form is indented and may wrap), and how many more there were. Null when there were none.
-     */
-    static String startWarningStatus(List<String> warnings) {
-        if (warnings.isEmpty()) return null;
-        var first = warnings.get(0).strip().replaceAll("\\s*\\R\\s*", " ");
-        return warnings.size() == 1 ? first : first + " (+" + (warnings.size() - 1) + " more)";
     }
 
     private void shellInto(String name) {
