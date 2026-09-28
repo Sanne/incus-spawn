@@ -434,6 +434,25 @@ public final class VmManager {
             handle.get().destroyForcibly();
         }
 
+        // destroyForcibly() only sends SIGKILL; it does not wait for the process to actually
+        // release the vsock socket files and disk images. A caller that starts a new VM right
+        // after (restart()) would otherwise race that teardown, which fails the new vfkit almost
+        // immediately with no diagnostic (see resetDataDisk(), which already had to work around
+        // this). Throwing here -- rather than swallowing a timeout -- means every caller gets the
+        // same protection restart() needs, instead of each having to re-check isAlive() itself.
+        try {
+            handle.get().onExit().get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ignored) {
+            // ExecutionException/TimeoutException/CancellationException: fall through to the
+            // isAlive() check below, which is what actually decides success here.
+        }
+        if (handle.get().isAlive()) {
+            BuildOutput.stepBreak();
+            throw new VmException("VM process " + pid + " did not exit after SIGKILL.");
+        }
+
         cleanupStaleFiles();
         VmAgentClient.clearVersionCache();
         BuildOutput.stepDone();
@@ -1002,18 +1021,10 @@ public final class VmManager {
             long size = dataDiskSizeBytes();
             if (size <= 0) size = parseDiskSize(diskSize());
             if (isRunning()) {
-                var vm = ProcessHandle.of(readPid());
+                // stopLocked() itself throws if the hypervisor doesn't exit, which is exactly
+                // what must hold here: a lingering process means the disk it still writes to
+                // must not be replaced.
                 stopLocked();
-                // stopLocked() ends with a SIGKILL it does not wait for: the hypervisor must be
-                // gone before the disk it writes to is replaced.
-                if (vm.isPresent()) {
-                    try {
-                        vm.get().onExit().get(10, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        throw new VmException("VM process " + vm.get().pid()
-                                + " did not exit; the data disk was left untouched.");
-                    }
-                }
             }
             BuildOutput.stepStart("Deleting data disk...");
             try {
