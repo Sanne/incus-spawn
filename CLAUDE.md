@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 incus-spawn (`isx`) is a CLI tool for managing isolated Incus-based development environments. It creates full Linux system containers (not Docker-style app containers) with copy-on-write branching, a MITM TLS proxy for credential isolation, and an interactive TUI. See README.md for user-facing docs, DESIGN.md for architecture rationale, and [docs/CHARACTER.md](docs/CHARACTER.md) for the project's mission and design philosophy.
 
+**Keep notes in the repository**: the machines this is developed on are wiped regularly, so anything worth remembering between sessions goes in a committed file (this one, `.claude/rules/`, DESIGN.md), never only in local agent memory.
+
+**Latency on the branch/start/shell path is never noise.** A container starts in well under a second, so a few milliseconds or a handful of redundant Incus round trips are a real share of the wait, and each round trip costs far more over the macOS vsock tunnel. When a flow repeats a read, fix it rather than weighing whether it is worth it. Pin the result in a request-budget test (`InstanceLifecycleRequestBudgetTest`, `BranchFlowRequestBudgetTest`), and trace it against a real Incus with `bench/trace-branch.sh`, since `FakeIncusDaemon` does not see what the proxy health check and refresh ask for.
+
 **Keep docs in sync**: When making architectural changes (new proxy capabilities, new tool types, new init steps, module structure changes, CI job changes, new intercepted domains, etc.), update both this file (and its `.claude/rules/` topic files) and DESIGN.md in the same PR. CLAUDE.md is the quick-reference for contributors; DESIGN.md is the full rationale. Both must stay current.
 
 ## Build and Test Commands
