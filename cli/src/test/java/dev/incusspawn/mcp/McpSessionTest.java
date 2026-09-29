@@ -73,6 +73,14 @@ class McpSessionTest {
     }
 
     @Test
+    void anInstanceDeletedBehindTheSessionsBackFreesItsPlace() {
+        var s = session(1);
+        var name = create(s, backend);
+        backend.instances.remove(name); // deleted from the TUI: the session was not told
+        s.reserve(TEMPLATE, null, null);
+    }
+
+    @Test
     void namesSayWhereTheyCameFrom() {
         var s = session(3);
         assertTrue(s.reserve(TEMPLATE, null, null).matches("mcp-dev-[a-z2-7]{5}"));

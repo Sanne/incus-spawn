@@ -9,11 +9,13 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * One MCP session: the instances it holds. Transport-agnostic -- over stdio the session is the
@@ -73,7 +75,11 @@ final class McpSession {
 
     /** This user's instances other sessions hold, or that are orphaned, from one listing. */
     Map<String, Orphans.Other> others() {
-        var others = Orphans.othersOf(backend.mcpInstances(), owner, id, alive);
+        return others(backend.mcpInstances());
+    }
+
+    private Map<String, Orphans.Other> others(Map<String, Map<String, String>> listing) {
+        var others = Orphans.othersOf(listing, owner, id, alive);
         synchronized (this) {
             others.keySet().removeIf(owned::containsKey);
         }
@@ -126,10 +132,18 @@ final class McpSession {
                     + "starting with a letter or digit");
         }
         purpose = checkPurpose(purpose);
+        // Only what was ready before the listing can be missing from it for being deleted.
+        Set<String> readyBefore;
+        synchronized (this) {
+            readyBefore = owned.values().stream().filter(Owned::ready).map(Owned::name).collect(Collectors.toSet());
+        }
         // Read before the lock: it is a round trip to Incus.
-        var elsewhere = others().keySet();
+        var listing = backend.mcpInstances();
+        var elsewhere = others(listing).keySet();
         synchronized (this) {
             var max = config.get().maxInstances();
+            // A held instance deleted behind the session's back (from the TUI, say) is let go.
+            owned.keySet().removeIf(n -> readyBefore.contains(n) && !listing.containsKey(n));
             var mine = owned.values().stream().filter(o -> !o.kept()).count();
             var others = elsewhere.stream().filter(n -> !owned.containsKey(n)).count();
             if (mine + others >= max) {
