@@ -1107,7 +1107,8 @@ public class DoctorCommand extends BaseCommand {
      * Overrides only help while the proxy is listening: written without it, they send every
      * intercepted domain to a gateway where nothing answers, which is worse than bypassing it.
      * So with the proxy down this reports nothing to fix (the "Proxy running" finding carries
-     * the problem), and with it up, missing overrides are a failure the rewrite repairs (#839).
+     * the problem), and with it up, missing overrides are a failure the rewrite repairs (#839),
+     * and so are overrides that all point at a gateway the bridge no longer has (#840).
      */
     static Finding bridgeDnsFinding(ProxyHealthCheck.ProxyStatus proxy, BridgeDns.Status status,
                                     Set<String> domains, Action rewrite) {
@@ -1123,6 +1124,9 @@ public class DoctorCommand extends BaseCommand {
             return Finding.fail("Bridge DNS overrides",
                     "none configured (instances reach intercepted domains directly, bypassing the proxy)",
                     repair);
+        }
+        if (status.legacy().isEmpty() && status.stale().size() == domains.size()) {
+            return Finding.fail("Bridge DNS overrides", status.describe(), repair);
         }
         return Finding.warn("Bridge DNS overrides incomplete", status.describe(), repair);
     }

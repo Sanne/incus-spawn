@@ -628,11 +628,12 @@ class DoctorCommandTest {
     }
 
     @Test
-    void bridgeDnsForAnOldGatewayWarnsAndOffersTheRewrite() {
-        // The bridge moved to 10.1.5.1 since the overrides were written for 10.1.2.1 (#840).
+    void bridgeDnsForAnOldGatewayFailsAndOffersTheRewrite() {
+        // The bridge moved to 10.1.5.1 since the overrides were written for 10.1.2.1 (#840):
+        // every intercepted domain resolves to where the proxy no longer listens.
         var status = BridgeDns.status(overridesFor("github.com", "api.anthropic.com"), DNS_DOMAINS, "10.1.5.1");
         var f = DoctorCommand.bridgeDnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, status, DNS_DOMAINS, () -> {});
-        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertEquals(DoctorCommand.Status.FAIL, f.status());
         assertTrue(f.detail().contains("the gateway 10.1.5.1: api.anthropic.com, github.com"), f.detail());
         assertNotNull(f.remediation());
     }
