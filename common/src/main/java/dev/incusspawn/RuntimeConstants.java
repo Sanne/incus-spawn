@@ -15,8 +15,7 @@ import java.util.List;
  * Host-derived constants resolved once per process. All fields are initialized eagerly at
  * class-load time from {@link Environment}, which means this class MUST be listed in the
  * native-image {@code --initialize-at-run-time} flag (see each module's
- * {@code resources-filtered/application.properties}, plus {@code cli/pom.xml}'s
- * {@code macos-native} profile) — the {@code common} counterpart of {@code RuntimeServices}
+ * {@code resources-filtered/application.properties}) — the {@code common} counterpart of {@code RuntimeServices}
  * in the CLI.
  *
  * <p>Without that flag GraalVM resolves these paths while <em>building</em> the image and bakes

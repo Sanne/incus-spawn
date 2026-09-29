@@ -15,6 +15,9 @@
         <native.optimization>-Os</native.optimization>
 <!-- Empty by default: -march values are architecture-specific, and passing an x86 one to an aarch64 build fails. Set only by the x86_64 profiles below. -->
         <native.march.args/>
+<!-- Platform-only arguments, joined into the one list in application.properties. Set by the linux and macos-native profiles below; never redefine the list itself (#489). -->
+        <svm.target.name.args/>
+        <macos.plist.args/>
     </properties>
 
     <dependencies>
@@ -219,6 +222,17 @@
             </properties>
         </profile>
         <profile>
+            <!-- Bake os.name at build time to avoid a uname() syscall; macOS doesn't need this (already a build-time constant in GraalVM) -->
+            <id>linux</id>
+            <activation>
+                <os><name>linux</name></os>
+            </activation>
+            <properties>
+                <svm.target.name.args>,-Dsvm.targetName=Linux</svm.target.name.args>
+            </properties>
+        </profile>
+        <profile>
+            <!-- Embeds Info.plist in the binary. -->
             <id>macos-native</id>
             <activation>
                 <property>
@@ -226,7 +240,7 @@
                 </property>
             </activation>
             <properties>
-                <quarkus.native.additional-build-args>--initialize-at-run-time=dev.incusspawn.Environment\,dev.incusspawn.RuntimeConstants\,dev.incusspawn.RuntimeServices\,dev.tamboui.tui\,dev.tamboui.toolkit\,dev.tamboui.terminal\,dev.tamboui.capability\,dev.tamboui.error\,dev.tamboui.widget\,dev.tamboui.backend.panama,-H:+UnlockExperimentalVMOptions,-H:+SharedArenaSupport,--enable-native-access=ALL-UNNAMED,-Os,--gc=serial${native.march.args},--initialize-at-build-time=dev.tamboui.backend.panama.unix.PlatformConstants,-H:-ParseRuntimeOptions,-H:-UseContainerSupport,-H:-JNIExportSymbols,-H:-AllowVMInternalThreads,-R:MaxRAM=128m,-R:ActiveProcessorCount=2,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist},--features=dev.incusspawn.graal.SyscallReachabilityFeature\,dev.incusspawn.graal.BakedHostStateFeature</quarkus.native.additional-build-args>
+                <macos.plist.args>,-H:NativeLinkerOption=-sectcreate,-H:NativeLinkerOption=__TEXT,-H:NativeLinkerOption=__info_plist,-H:NativeLinkerOption=${macos.info.plist}</macos.plist.args>
             </properties>
         </profile>
     </profiles>

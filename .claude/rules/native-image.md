@@ -7,6 +7,8 @@ paths:
   - "cli/src/main/java/dev/incusspawn/RuntimeServices.java"
   - "cli/src/main/resources-filtered/application.properties"
   - "proxy/src/main/resources-filtered/application.properties"
+  - "cli/pom.xml"
+  - "proxy/pom.xml"
   - "install.sh"
 ---
 
@@ -40,11 +42,19 @@ baked `/root/.cache/incus-spawn/downloads`). The *holder* has to be deferred too
 08a8ea0 (2026-08-26), which moved the tool-setup list out of the already-deferred `RuntimeServices`
 and into `ToolDefLoader`'s static initializer.
 
-The flag is declared in **three** places — each module's `resources-filtered/application.properties`
-plus the duplicate list in `cli/pom.xml`'s `macos-native` profile. `NativeImageInitializationTest`
-(in `cli`) parses all three and asserts each defers the right classes, registers both guards *and*
-passes no `-E` environment variable to the builder, so drift fails `mvn test` rather than shipping —
-a Linux build never exercises the macOS copy.
+The flag is declared **once per module**, in its `resources-filtered/application.properties`.
+Arguments only one platform takes come in through placeholders the list includes, empty by default
+and set by a pom profile: `svm.target.name.args` (`-Dsvm.targetName=Linux`, from an
+`<os><name>linux</name></os>` profile, in both modules) and the CLI's `macos.plist.args` (the
+Info.plist linker options, from `macos-native`). A pom must never redefine
+`quarkus.native.additional-build-args` itself: a pom property overrides `application.properties`,
+so the copy would be the only list that platform builds with, and no build elsewhere exercises it.
+The CLI's `macos-native` profile had such a copy, and it drifted — macOS release builds kept
+`-R:MaxRAM=128m` after Linux moved to 512m, and ignored `-Dnative.optimization` (#489).
+`NativeImageInitializationTest` (in `cli`) parses both lists and asserts each defers the right
+classes, registers both guards *and* passes no `-E` environment variable to the builder. It fails if
+any pom (root included) defines the list, if the CLI's list drops a placeholder, or if a placeholder
+value passes `-E` or `--initialize-at-build-time` — so drift fails `mvn test` rather than shipping.
 
 ## Build-time guards (`graal/`)
 

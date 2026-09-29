@@ -71,9 +71,10 @@ Linux native builds run as **root inside the GraalVM builder container** — so 
 `Environment` path bakes the builder's `/root/...` into the binary (that regression shipped: see
 DESIGN.md "Build-time initialization must not capture host paths"). Eagerly resolved host state goes
 in `RuntimeConstants` (`common`) or `RuntimeServices` (`cli`), both on the flag; everywhere else call
-the `Environment` method instead of storing its result. The flag is declared three times (each
-module's `resources-filtered/application.properties` plus `cli/pom.xml`'s `macos-native` profile) --
-`NativeImageInitializationTest` fails if one drifts, and `graal/BakedHostStateFeature` fails the
-native build if such a path reaches the image heap.
+the `Environment` method instead of storing its result. The flag is declared once per module, in its
+`resources-filtered/application.properties`; pom profiles add platform arguments through placeholders
+the list includes and never redefine the list itself (#489) -- `NativeImageInitializationTest` fails
+if a list stops deferring a class or registering a guard, or a pom redefines it, and
+`graal/BakedHostStateFeature` fails the native build if such a path reaches the image heap.
 
 Detailed architecture docs are in `.claude/rules/` and load automatically when you work on related files. Each rule file declares `paths:` globs that trigger it. When adding new source packages, renaming files, or restructuring modules, check whether `.claude/rules/` path globs need updating -- stale paths silently stop loading context. Prefer package-level globs (`incus/**`) over specific files; use specific files only for cross-cutting triggers (e.g. `BuildCommand.java` in `incus.md` to ensure pool-awareness context loads during build work).

@@ -1115,11 +1115,13 @@ any builder variable that is a credential by name or shape must not appear in th
 the variable while withholding the value, since build logs are often public.
 
 Second, `NativeImageInitializationTest` parses
-all three declarations of the build arguments — each module's `resources-filtered/application.properties`
-plus the duplicate list in `cli/pom.xml`'s `macos-native` profile — and fails in `mvn test` if one
-stops deferring a class, stops registering a guard, or passes an environment variable through with
-`-E`; a Linux build would otherwise never notice the
-macOS copy drifting.
+both modules' build arguments — each declared once, in its `resources-filtered/application.properties`
+— and fails in `mvn test` if one stops deferring a class, stops registering a guard, or passes an
+environment variable through with `-E`. It also fails if a pom redefines the list: a platform's own
+arguments join it through placeholders a profile sets (`svm.target.name.args`, `macos.plist.args`), because
+a pom property overrides the file and a platform's private copy is exercised by no build on the
+other. The CLI's `macos-native` profile carried such a copy until #489, and it had drifted: macOS
+release builds kept `-R:MaxRAM=128m` after Linux moved to 512m.
 
 The sibling guard `SyscallReachabilityFeature` targets something else — keeping lazy system-property
 resolvers off the startup path of short-lived commands — and currently cannot fail, because it
