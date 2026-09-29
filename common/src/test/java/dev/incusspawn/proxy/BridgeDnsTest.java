@@ -113,13 +113,27 @@ class BridgeDnsTest {
 
                 address=/github.com/10.0.0.1
                 address=/github.com/::""";
-        var status = BridgeDns.status(config, Set.of("api.anthropic.com", "ghcr.io", "github.com"));
+        var status = BridgeDns.status(config, Set.of("api.anthropic.com", "ghcr.io", "github.com"), "10.0.0.1");
         assertFalse(status.complete());
         assertEquals(List.of("ghcr.io"), status.missing());
         assertEquals(List.of("github.com"), status.legacy());
         assertEquals("missing: ghcr.io; AAAA answered with :: (the pre-#814 layout) for: github.com",
                 status.describe());
-        assertTrue(BridgeDns.status(GITHUB_BLOCK, Set.of("github.com")).complete());
+        assertTrue(BridgeDns.status(GITHUB_BLOCK, Set.of("github.com"), "10.0.0.1").complete());
+    }
+
+    /**
+     * After the bridge's address changes, overrides for the old gateway send every intercepted
+     * domain where the proxy no longer listens (#840). Doctor and the TUI's auto-heal only repair
+     * what {@code status()} reports, so it must report them.
+     */
+    @Test
+    void overridesForAnOldGatewayAreStale() {
+        var status = BridgeDns.status(GITHUB_BLOCK, Set.of("github.com"), "10.0.5.1");
+        assertFalse(status.complete());
+        assertEquals(List.of(), status.missing());
+        assertEquals(List.of("github.com"), status.stale());
+        assertEquals("pointing at another address than the gateway 10.0.5.1: github.com", status.describe());
     }
 
     @Test

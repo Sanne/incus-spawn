@@ -40,7 +40,7 @@ public final class BridgeDns {
         var lines = new ArrayList<>(unmanaged(existing));
         lines.add(BEGIN);
         domains.stream().sorted().forEach(d -> {
-            lines.add("address=/" + d + "/" + gatewayIp);
+            lines.add(addressLine(d, gatewayIp));
             lines.add("local=/" + d + "/");
         });
         lines.add(END);
@@ -52,8 +52,11 @@ public final class BridgeDns {
         return String.join("\n", unmanaged(existing));
     }
 
-    /** What stands between {@code config} and intercepting exactly {@code domains}. */
-    public static Status status(String config, Set<String> domains) {
+    /**
+     * What stands between {@code config} and intercepting exactly {@code domains} at
+     * {@code gatewayIp}, the bridge's current address.
+     */
+    public static Status status(String config, Set<String> domains, String gatewayIp) {
         var managed = new HashSet<String>();
         var inBlock = false;
         for (var line : config.lines().toList()) {
@@ -66,27 +69,43 @@ public final class BridgeDns {
                 .map(BridgeDns::addressDomain)
                 .filter(d -> d != null)
                 .collect(Collectors.toSet());
+        // An override for an address the bridge no longer has sends the domain where the proxy
+        // does not listen (#840): it is there, but it is as wrong as a missing one.
+        var misaddressed = managed.stream()
+                .filter(l -> addressDomain(l) != null && !l.equals(addressLine(addressDomain(l), gatewayIp)))
+                .map(BridgeDns::addressDomain)
+                .collect(Collectors.toSet());
         var legacy = legacyDomains(config);
         var missing = domains.stream()
                 .filter(d -> !legacy.contains(d))
                 .filter(d -> !addressed.contains(d) || !managed.contains("local=/" + d + "/"))
                 .sorted()
                 .toList();
-        return new Status(missing, legacy.stream().sorted().toList());
+        var stale = domains.stream()
+                .filter(d -> !legacy.contains(d) && !missing.contains(d) && misaddressed.contains(d))
+                .sorted()
+                .toList();
+        return new Status(missing, stale, gatewayIp, legacy.stream().sorted().toList());
     }
 
     /**
-     * @param missing domains without both of their lines in isx's block, legacy ones aside
-     * @param legacy  domains still answered with {@code ::} by a pre-#814 {@code address=} line
+     * @param missing   domains without both of their lines in isx's block, legacy ones aside
+     * @param stale     domains whose {@code address=} line points anywhere but {@code gatewayIp}
+     * @param gatewayIp the bridge's address, which every override should point at
+     * @param legacy    domains still answered with {@code ::} by a pre-#814 {@code address=} line
      */
-    public record Status(List<String> missing, List<String> legacy) {
+    public record Status(List<String> missing, List<String> stale, String gatewayIp, List<String> legacy) {
         public boolean complete() {
-            return missing.isEmpty() && legacy.isEmpty();
+            return missing.isEmpty() && stale.isEmpty() && legacy.isEmpty();
         }
 
         public String describe() {
             var parts = new ArrayList<String>();
             if (!missing.isEmpty()) parts.add("missing: " + String.join(", ", missing));
+            if (!stale.isEmpty()) {
+                parts.add("pointing at another address than the gateway " + gatewayIp + ": "
+                        + String.join(", ", stale));
+            }
             if (!legacy.isEmpty()) {
                 parts.add("AAAA answered with :: (the pre-#814 layout) for: " + String.join(", ", legacy));
             }
@@ -126,6 +145,10 @@ public final class BridgeDns {
             else if (!inBlock && l.endsWith(LEGACY_WILDCARD) && addressDomain(l) != null) legacy.add(addressDomain(l));
         }
         return legacy;
+    }
+
+    private static String addressLine(String domain, String ip) {
+        return "address=/" + domain + "/" + ip;
     }
 
     /** The domain of an {@code address=/<domain>/<ip>} line, or null for any other line. */

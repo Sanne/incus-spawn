@@ -1092,14 +1092,16 @@ public class DoctorCommand extends BaseCommand {
     private Finding checkBridgeDns(IncusClient incus) {
         Set<String> allDomains;
         String overrides;
+        String gatewayIp;
         try {
             var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
             allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
             overrides = ProxyConfig.readDnsOverrides(incus);
+            gatewayIp = ProxyConfig.resolveGatewayIp(incus);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
-        return bridgeDnsFinding(ProxyHealthCheck.check(incus), overrides, allDomains,
+        return bridgeDnsFinding(ProxyHealthCheck.check(incus), overrides, allDomains, gatewayIp,
                 () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains));
     }
 
@@ -1110,12 +1112,12 @@ public class DoctorCommand extends BaseCommand {
      * the problem), and with it up, missing overrides are a failure the rewrite repairs (#839).
      */
     static Finding bridgeDnsFinding(ProxyHealthCheck.ProxyStatus proxy, String overrides,
-                                    Set<String> domains, Action rewrite) {
+                                    Set<String> domains, String gatewayIp, Action rewrite) {
         if (proxy == ProxyHealthCheck.ProxyStatus.NOT_RUNNING
                 || proxy == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             return Finding.note("Bridge DNS overrides", "(not checked: the proxy is not running)");
         }
-        var status = BridgeDns.status(overrides, domains);
+        var status = BridgeDns.status(overrides, domains, gatewayIp);
         if (status.complete()) {
             return Finding.ok("Bridge DNS overrides", "all " + domains.size() + " domains configured");
         }

@@ -360,12 +360,13 @@ public final class ProxyConfig {
     }
 
     /**
-     * Whether the bridge overrides every one of {@code allDomains}. No overrides at all is not
-     * complete (#839): containers then resolve intercepted domains to their real addresses and
-     * bypass the proxy. Throws when Incus cannot be read, which is not an answer either way.
+     * Whether the bridge overrides every one of {@code allDomains} to its current gateway. No
+     * overrides at all is not complete (#839): containers then resolve intercepted domains to
+     * their real addresses and bypass the proxy. Nor are overrides for an address the bridge has
+     * since given up (#840). Throws when Incus cannot be read, which is not an answer either way.
      */
     public static boolean isBridgeDnsComplete(IncusClient incus, Set<String> allDomains) {
         var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        return BridgeDns.status(readDnsOverrides(incus), domains).complete();
+        return BridgeDns.status(readDnsOverrides(incus), domains, resolveGatewayIp(incus)).complete();
     }
 }

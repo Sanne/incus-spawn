@@ -571,7 +571,7 @@ class DoctorCommandTest {
     }
 
     private static DoctorCommand.Finding dnsFinding(ProxyHealthCheck.ProxyStatus proxy, String overrides) {
-        return DoctorCommand.bridgeDnsFinding(proxy, overrides, DNS_DOMAINS, () -> {});
+        return DoctorCommand.bridgeDnsFinding(proxy, overrides, DNS_DOMAINS, "10.1.2.1", () -> {});
     }
 
     @Test
@@ -622,6 +622,16 @@ class DoctorCommandTest {
         var f = dnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING, overridesFor("github.com"));
         assertEquals(DoctorCommand.Status.WARN, f.status());
         assertTrue(f.detail().contains("missing: api.anthropic.com"), f.detail());
+        assertNotNull(f.remediation());
+    }
+
+    @Test
+    void bridgeDnsForAnOldGatewayWarnsAndOffersTheRewrite() {
+        // The bridge moved to 10.1.5.1 since the overrides were written for 10.1.2.1 (#840).
+        var f = DoctorCommand.bridgeDnsFinding(ProxyHealthCheck.ProxyStatus.RUNNING,
+                overridesFor("github.com", "api.anthropic.com"), DNS_DOMAINS, "10.1.5.1", () -> {});
+        assertEquals(DoctorCommand.Status.WARN, f.status());
+        assertTrue(f.detail().contains("the gateway 10.1.5.1: api.anthropic.com, github.com"), f.detail());
         assertNotNull(f.remediation());
     }
 
