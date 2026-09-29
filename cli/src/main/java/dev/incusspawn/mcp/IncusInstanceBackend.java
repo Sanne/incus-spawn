@@ -93,8 +93,9 @@ final class IncusInstanceBackend implements InstanceBackend {
             }
             throw new ToolError("creating " + name + " from " + template + " failed: " + e.getMessage());
         }
-        var config = metadata(name);
-        return new CreatedInstance(name, config == null ? null : config.get(Metadata.STATIC_IP), workdir(config));
+        // Only for its address and workdir: a failed read leaves those unset, never fails the create.
+        var config = configOf(incus.instanceMetadata(name));
+        return new CreatedInstance(name, config.get(Metadata.STATIC_IP), workdir(config));
     }
 
     @Override
@@ -113,9 +114,9 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     @Override
     public Map<String, String> metadata(String name) {
-        var instance = incus.instanceMetadata(name);
-        if (instance.isMissingNode() || instance.path("name").isMissingNode()) return null;
-        return configOf(instance);
+        // Only a 404 means gone: a refused or failed read would otherwise drop a live instance.
+        var instance = incus.instanceMetadataOrThrow(name);
+        return instance == null ? null : configOf(instance);
     }
 
     @Override

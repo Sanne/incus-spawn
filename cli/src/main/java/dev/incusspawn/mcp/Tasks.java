@@ -215,7 +215,7 @@ final class Tasks {
                     states.putAll(probe(instance, ids));
                 } catch (RuntimeException e) {
                     // Gone: its tasks are over. Merely unreachable: nothing is known.
-                    var gone = backend.metadata(instance) == null;
+                    var gone = isGone(instance);
                     ids.forEach(id -> states.put(id, gone ? "done" : "unknown"));
                     if (gone) forgetInstance(instance);
                 }
@@ -301,9 +301,18 @@ final class Tasks {
             } catch (RuntimeException e) {
                 // An instance that is gone takes its tasks with it; one we merely cannot reach
                 // right now keeps them as they were, so their slots stay counted.
-                if (backend.metadata(instance) == null) forgetInstance(instance);
+                if (isGone(instance)) forgetInstance(instance);
             }
         });
+    }
+
+    /** Whether Incus says the instance no longer exists; not when Incus cannot be asked. */
+    private boolean isGone(String instance) {
+        try {
+            return backend.metadata(instance) == null;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** Forget the tasks of an instance that no longer exists. */

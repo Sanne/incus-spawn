@@ -1914,6 +1914,20 @@ public class IncusClient {
     }
 
     /**
+     * Like {@link #instanceMetadata}, but only Incus answering that the instance does not exist
+     * yields null; any other failure (403, 500, a daemon that cannot answer) throws. For
+     * decisions that must not mistake "cannot ask" for "gone".
+     */
+    public JsonNode instanceMetadataOrThrow(String name) {
+        var resp = http().get("/1.0/instances/" + name);
+        if (resp.statusCode() == 404) return null;
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read instance '" + name + "' (HTTP " + resp.statusCode() + ")");
+        }
+        return resp.body().path("metadata");
+    }
+
+    /**
      * Host source of a device as {@link #instanceMetadata} reports it, or ""
      * when the instance declares no such device (profile-inherited devices
      * are not part of that representation).

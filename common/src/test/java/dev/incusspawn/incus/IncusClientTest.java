@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class IncusClientTest {
@@ -132,5 +134,18 @@ class IncusClientTest {
         // Incus 6.x, as Fedora and Ubuntu package it, predates the extension (#820)
         var older = new FakeIncusDaemon().apiExtensions("storage");
         assertFalse(older.client().hasApiExtension("storage_create_options"));
+    }
+
+    @Test
+    void instanceMetadataOrThrowTellsGoneFromUnreadable() {
+        var daemon = new FakeIncusDaemon().container("dev", Map.of("user.incus-spawn.type", "clone"));
+        assertEquals("dev", daemon.client().instanceMetadataOrThrow("dev").path("name").asText());
+        assertNull(daemon.client().instanceMetadataOrThrow("missing"), "a 404 means the instance is gone");
+        // A daemon that refuses or fails the read has said nothing about whether it exists (#858)
+        for (var status : new int[] {403, 500}) {
+            var failing = new FakeIncusDaemon().container("dev", Map.of()).failInstanceReads(status);
+            assertThrows(IncusException.class, () -> failing.client().instanceMetadataOrThrow("dev"),
+                    "HTTP " + status);
+        }
     }
 }

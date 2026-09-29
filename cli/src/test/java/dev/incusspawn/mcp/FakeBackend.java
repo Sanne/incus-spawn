@@ -76,8 +76,12 @@ class FakeBackend implements InstanceBackend {
         proxyRefreshes++;
     }
 
+    /** When set, every metadata read throws it, as a backend whose daemon cannot answer does. */
+    volatile RuntimeException metadataFailure;
+
     @Override
     public Map<String, String> metadata(String name) {
+        if (metadataFailure != null) throw metadataFailure;
         var config = instances.get(name);
         return config == null ? null : new LinkedHashMap<>(config);
     }

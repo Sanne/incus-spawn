@@ -48,7 +48,10 @@ interface InstanceBackend {
     /** Tell the proxy instances went away, so a reused address never maps to one of them. */
     void refreshProxy();
 
-    /** The instance's {@code user.incus-spawn.*} config, or null if it does not exist. */
+    /**
+     * The instance's {@code user.incus-spawn.*} config, or null if Incus says it does not exist.
+     * Throws when Incus cannot be asked, so that is never mistaken for the instance being gone.
+     */
     Map<String, String> metadata(String name);
 
     /** Set config keys in one write; a null value removes the key. */

@@ -2,6 +2,7 @@ package dev.incusspawn.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.incusspawn.config.McpConfig;
+import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -308,6 +309,25 @@ class DelegationToolsTest {
         var second = call("delegate", "{\"instruction\":\"y\",\"instance\":\"" + instance + "\"}");
         assertTrue(second.path("isError").asBoolean(), "a second agent in the same working tree");
         assertTrue(text(second).contains("already an agent"), text(second));
+    }
+
+    @Test
+    void anInstanceIncusCannotAnswerForKeepsItsTasks() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        var task = delegateFresh();
+        var instance = instanceOf(task);
+        // The daemon fails every read: neither the probe nor the existence check can answer.
+        backend.metadataFailure = new IncusException("Failed to read instance (HTTP 500)");
+        var probe = backend.responder;
+        backend.responder = script -> {
+            throw new IncusException("exec failed (HTTP 500)");
+        };
+        var second = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
+        assertTrue(text(second).contains("max-concurrent-tasks"), "the running task still holds the only slot: "
+                + text(second));
+        backend.metadataFailure = null;
+        backend.responder = probe;
+        assertEquals(task, instanceTask(instance));
     }
 
     private String instanceTask(String instance) throws Exception {
