@@ -24,17 +24,19 @@ class FakeBackend implements InstanceBackend {
     volatile String execStdout = "";
     volatile int execExit = 0;
     volatile RuntimeException createFailure;
+    /** Run while an instance is being created: what happens concurrently with a slow copy. */
+    volatile Runnable onCreate;
     /** When set, answers each exec script with its stdout (exit 0), instead of execStdout/execExit. */
     volatile java.util.function.Function<String, String> responder;
 
     FakeBackend template(String name, boolean built, String... tools) {
-        templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), false));
+        templates.add(new TemplateInfo(name, name + " template", built, false, List.of(tools), false, Map.of()));
         if (built) instances.put(name, new ConcurrentHashMap<>(Map.of(Metadata.TYPE, Metadata.TYPE_BASE)));
         return this;
     }
 
     FakeBackend projectLocalTemplate(String name) {
-        templates.add(new TemplateInfo(name, "", true, false, List.of(), true));
+        templates.add(new TemplateInfo(name, "", true, false, List.of(), true, Map.of()));
         return this;
     }
 
@@ -49,8 +51,10 @@ class FakeBackend implements InstanceBackend {
     }
 
     @Override
-    public CreatedInstance create(String template, String name, Map<String, String> stamps) {
+    public CreatedInstance create(TemplateInfo info, String name, Map<String, String> stamps) {
+        var template = info.name();
         if (createFailure != null) throw createFailure;
+        if (onCreate != null) onCreate.run();
         var config = new ConcurrentHashMap<String, String>(stamps);
         config.put(Metadata.TYPE, Metadata.TYPE_CLONE);
         config.put(Metadata.PARENT, template);
@@ -79,8 +83,12 @@ class FakeBackend implements InstanceBackend {
     /** When set, every metadata read throws it, as a backend whose daemon cannot answer does. */
     volatile RuntimeException metadataFailure;
 
+    /** Every {@link #metadata} call, as a real backend's instance GETs. */
+    final java.util.concurrent.atomic.AtomicInteger metadataReads = new java.util.concurrent.atomic.AtomicInteger();
+
     @Override
     public Map<String, String> metadata(String name) {
+        metadataReads.incrementAndGet();
         if (metadataFailure != null) throw metadataFailure;
         var config = instances.get(name);
         return config == null ? null : new LinkedHashMap<>(config);

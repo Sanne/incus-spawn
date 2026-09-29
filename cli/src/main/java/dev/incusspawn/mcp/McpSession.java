@@ -219,7 +219,9 @@ final class McpSession {
     Owned adopt(String name, boolean force) {
         synchronized (this) {
             var held = owned.get(name);
-            if (held != null && held.ready()) {
+            // Mid-create the copy already carries our stamp: adopting would mark it ready early.
+            if (held != null && !held.ready()) throw new ToolError("'" + name + "' is still being created.");
+            if (held != null) {
                 requireOwned(name);
                 return held;
             }

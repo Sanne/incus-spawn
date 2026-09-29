@@ -9,6 +9,7 @@ import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
+import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.tui.InstanceLockManager;
 
 import java.io.InputStream;
@@ -39,7 +40,10 @@ final class IncusInstanceBackend implements InstanceBackend {
 
     /** Where commands run by default: the template's workdir, else agentuser's home. */
     static String workdir(Map<String, String> metadata) {
-        var workdir = metadata == null ? "" : metadata.getOrDefault(Metadata.WORKDIR, "");
+        return workdir(metadata == null ? "" : metadata.getOrDefault(Metadata.WORKDIR, ""));
+    }
+
+    private static String workdir(String workdir) {
         return workdir.isEmpty() ? AGENT_HOME : workdir;
     }
 
@@ -65,22 +69,25 @@ final class IncusInstanceBackend implements InstanceBackend {
                 .flatMap(d -> d.getTools().stream().map(ref -> ref.getName()))
                 .distinct().toList();
         return new TemplateInfo(def.getName(), def.getDescription(), built, stale, tools,
-                source != null && source.usedProjectLocal());
+                source != null && source.usedProjectLocal(), defs);
     }
 
     @Override
-    public CreatedInstance create(String template, String name, Map<String, String> stamps) {
+    public CreatedInstance create(TemplateInfo info, String name, Map<String, String> stamps) {
         // Exactly `isx branch <name> --from <template>`: the template's network mode, accounts,
         // KVM and resource defaults; no GUI, no inbox. The agent chooses none of it.
+        var template = info.name();
         var request = BranchFlow.Request.defaults(template, name).withExtraConfig(stamps);
         BranchFlow.Preflight preflight;
         try {
-            preflight = BranchFlow.preflight(incus, request, ImageDef.loadTrusted());
+            // The trusted definitions the template was just checked against, not a second load.
+            preflight = BranchFlow.preflight(incus, request, info.definitions());
         } catch (BranchFlow.BranchException e) {
             throw new ToolError("cannot create an instance from " + template + ": " + e.getMessage());
         }
+        InstanceLifecycle.RuntimeConfig runtime;
         try {
-            BranchFlow.create(incus, preflight);
+            runtime = BranchFlow.create(incus, preflight);
         } catch (RuntimeException e) {
             // A half-made branch is useless to the agent and invisible to the user; take it away.
             try {
@@ -94,9 +101,9 @@ final class IncusInstanceBackend implements InstanceBackend {
             }
             throw new ToolError("creating " + name + " from " + template + " failed: " + e.getMessage());
         }
-        // Only for its address and workdir: a failed read leaves those unset, never fails the create.
-        var config = configOf(incus.instanceMetadata(name));
-        return new CreatedInstance(name, config.get(Metadata.STATIC_IP), workdir(config));
+        // The request starts it, so the runtime config read before the start is always there.
+        var ip = runtime.staticIp();
+        return new CreatedInstance(name, ip.isEmpty() ? null : ip, workdir(runtime.workdir()));
     }
 
     @Override

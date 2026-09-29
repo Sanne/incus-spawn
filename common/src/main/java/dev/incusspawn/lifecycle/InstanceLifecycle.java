@@ -1020,7 +1020,7 @@ public final class InstanceLifecycle {
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiag, terminfo, config.getOrDefault(Metadata.STATIC_IP, ""));
     }
 
     private static String captureHostTerminfo() {
@@ -1037,9 +1037,10 @@ public final class InstanceLifecycle {
         }
     }
 
+    /** @param staticIp the address {@code configureBranch} assigned, or "" for none */
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
-                                String subnetDiagnostic, String terminfo) {
+                                String subnetDiagnostic, String terminfo, String staticIp) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(

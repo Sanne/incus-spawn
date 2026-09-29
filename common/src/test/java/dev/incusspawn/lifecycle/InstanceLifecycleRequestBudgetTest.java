@@ -70,11 +70,14 @@ class InstanceLifecycleRequestBudgetTest {
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.WORKDIR, "/home/agentuser/project",
                 Metadata.SHELL_COMMAND, "zsh",
-                "user.incus-spawn.ssh-setup", "done"));
+                "user.incus-spawn.ssh-setup", "done",
+                Metadata.STATIC_IP, "10.166.11.20"));
         var config = InstanceLifecycle.prefetchRuntimeConfig(daemon.client(), NAME);
         assertBudget(2, daemon, "prefetchRuntimeConfig");
 
         assertEquals("/home/agentuser/project", config.workdir());
+        // isx mcp answers create_instance from this, rather than reading the instance again.
+        assertEquals("10.166.11.20", config.staticIp());
         assertEquals("zsh", config.shellCommand());
         assertEquals("", config.buildSourceJson());
         assertTrue(config.hasSshKeys());

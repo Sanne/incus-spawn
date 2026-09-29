@@ -602,8 +602,8 @@ public class ImageDef {
      * parent of an approved template.
      */
     public static Map<String, ImageDef> loadTrusted() {
-        Consumer<String> warnings = msg -> System.err.println(msg);
-        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), warnings, false).defs();
+        // Warnings.warn: a long-lived isx mcp loads these on every call, and a conflict is news once.
+        return loadAllWithConflicts(SpawnConfig.load().getSearchPaths(), Warnings::warn, false).defs();
     }
 
     static LayeredDefinitions<ImageDef> loadAllWithConflicts(List<String> searchPaths, Consumer<String> warnings) {

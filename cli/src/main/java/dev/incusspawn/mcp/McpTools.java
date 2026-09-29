@@ -283,7 +283,7 @@ final class McpTools {
         var start = System.nanoTime();
         InstanceBackend.CreatedInstance created;
         try {
-            created = backend.create(template.name(), name, session.stamps(purpose));
+            created = backend.create(template, name, session.stamps(purpose));
         } catch (RuntimeException e) {
             session.abandon(name);
             McpAuditLog.record(session.id, "create_instance", name, template.name(), millisSince(start),
@@ -533,7 +533,8 @@ final class McpTools {
                                      boolean fresh) {
         Tasks.Task task;
         try {
-            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, mode);
+            // A fresh instance's caller just ran checkCapacityForNewAgent: no need to ask again.
+            task = tasks.delegate(instance, cwd == null || cwd.isBlank() ? workdir : cwd, prompt, mode, !fresh);
         } catch (RuntimeException e) {
             // An instance made for this task alone is no use to the agent, which never learns its name.
             if (fresh) {

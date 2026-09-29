@@ -1,5 +1,7 @@
 package dev.incusspawn.mcp;
 
+import dev.incusspawn.config.ImageDef;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
@@ -13,10 +15,12 @@ interface InstanceBackend {
 
     /**
      * What {@code list_templates} shows about one template. {@code projectLocal} when the
-     * image was built from a repository's {@code .incus-spawn/} definitions.
+     * image was built from a repository's {@code .incus-spawn/} definitions. {@code definitions}
+     * are the ones it was described from, which {@link #create} branches with rather than
+     * loading them again; never shown to the agent.
      */
     record TemplateInfo(String name, String description, boolean built, boolean stale,
-                        List<String> tools, boolean projectLocal) {
+                        List<String> tools, boolean projectLocal, Map<String, ImageDef> definitions) {
         boolean supportsDelegate() {
             return tools.contains("claude");
         }
@@ -32,10 +36,11 @@ interface InstanceBackend {
     java.util.Optional<TemplateInfo> template(String name);
 
     /**
-     * Branch {@code template} into {@code name} exactly as {@code isx branch} would, with
-     * {@code stamps} written by the copy itself. Throws {@link ToolError} on refusal.
+     * Branch {@code template}, as {@link #template} described it, into {@code name} exactly as
+     * {@code isx branch} would, with {@code stamps} written by the copy itself. Throws
+     * {@link ToolError} on refusal.
      */
-    CreatedInstance create(String template, String name, Map<String, String> stamps);
+    CreatedInstance create(TemplateInfo template, String name, Map<String, String> stamps);
 
     record CreatedInstance(String name, String ip, String workdir) {}
 

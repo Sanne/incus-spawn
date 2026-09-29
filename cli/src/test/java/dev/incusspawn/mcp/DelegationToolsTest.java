@@ -10,9 +10,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** delegate and the task tools over the protocol, with the instance side scripted. */
@@ -48,6 +50,8 @@ class DelegationToolsTest {
             {"type":"result","subtype":"success","is_error":false,"result":"Fixed the race in A.java; tests pass.","num_turns":7,"total_cost_usd":0.42}
             """;
 
+    private Tasks tasks;
+
     @BeforeEach
     void setUp() {
         realHome = System.getProperty("user.home");
@@ -55,7 +59,7 @@ class DelegationToolsTest {
         config.setTemplates(List.of("tpl-agent", "tpl-plain"));
         // Every other session is dead: another session's instance is an orphan.
         var session = new McpSession(new SessionId(7, 1), "alice", 1, "/work", backend, () -> config, s -> false);
-        var tasks = new Tasks(session, backend, () -> config);
+        tasks = new Tasks(session, backend, () -> config);
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
@@ -494,5 +498,42 @@ class DelegationToolsTest {
         var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
         assertFalse(r.path("isError").asBoolean(), text(r));
         assertTrue(call("task_status", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());
+    }
+
+    @Test
+    void aMessageToATaskForgottenMeanwhileIsRefusedNotACrash() throws Exception {
+        var id = delegateFresh();
+        var task = tasks.require(id).task();
+        // A concurrent destroy_instance forgets the task between send_message's check and its reservation.
+        tasks.forgetInstance(task.instance());
+        var e = assertThrows(ToolError.class, () -> tasks.sendMessage(task, "push it", "bypassPermissions"));
+        assertTrue(e.getMessage().contains("no longer this session's"), e.getMessage());
+    }
+
+    @Test
+    void delegatingToATemplateAsksTheBusyInstancesOnce() throws Exception {
+        config.setMaxConcurrentTasks(2);
+        delegateFresh(); // still running: every new task must ask its instance whether it is
+        var probes = backend.scripts.size();
+        var reads = backend.metadataReads.get();
+        delegateFresh();
+        var stateProbes = backend.scripts.subList(probes, backend.scripts.size()).stream()
+                .filter(s -> s.startsWith("n=$(cat")).count();
+        assertEquals(1, stateProbes, "one state probe of the running task's instance, not one per check");
+        assertEquals(1, backend.metadataReads.get() - reads, "one check that the session still holds it");
+    }
+
+    @Test
+    void aSlotTakenDuringTheCreateIsCountedButOneFreedIsToo() throws Exception {
+        config.setMaxConcurrentTasks(2);
+        var first = tasks.require(delegateFresh()).task();
+        backend.onCreate = () -> {
+            // While the new instance is copied, a background command takes the last slot, and
+            // the first task finishes: only asking the instances again shows the slot free.
+            tasks.startCommand(first.instance(), "/home/agentuser", Map.of(), "make");
+            taskState = "done";
+        };
+        var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
     }
 }

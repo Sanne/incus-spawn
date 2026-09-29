@@ -23,7 +23,7 @@ class McpSessionTest {
 
     private final FakeBackend backend = new FakeBackend().template("tpl-dev", true, "claude");
     private static final InstanceBackend.TemplateInfo TEMPLATE =
-            new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, List.of(), false);
+            new InstanceBackend.TemplateInfo("tpl-dev", "", true, false, List.of(), false, Map.of());
     private final McpConfig config = new McpConfig();
     private final Set<SessionId> alive = new HashSet<>(Set.of(SELF, SessionId.parse(ALIVE).orElseThrow()));
 
@@ -35,7 +35,7 @@ class McpSessionTest {
 
     private static String create(McpSession session, FakeBackend backend) {
         var name = session.reserve(TEMPLATE, null, null);
-        backend.create("tpl-dev", name, session.stamps(null));
+        backend.create(TEMPLATE, name, session.stamps(null));
         session.created(name);
         return name;
     }
@@ -60,6 +60,16 @@ class McpSessionTest {
         assertThrows(RuntimeException.class, () -> s.requireOwned(name));
         backend.metadataFailure = null;
         s.requireOwned(name); // still held once Incus answers again
+    }
+
+    @Test
+    void anInstanceStillBeingCreatedCannotBeAdoptedIntoReadiness() {
+        var s = session(3);
+        var name = s.reserve(TEMPLATE, null, null);
+        backend.create(TEMPLATE, name, s.stamps(null)); // the copy exists and carries our stamp
+        assertThrows(ToolError.class, () -> s.adopt(name, false));
+        var e = assertThrows(ToolError.class, () -> s.requireOwned(name));
+        assertTrue(e.getMessage().contains("still being created"), e.getMessage());
     }
 
     @Test

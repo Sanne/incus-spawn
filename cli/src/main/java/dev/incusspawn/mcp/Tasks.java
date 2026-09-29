@@ -103,13 +103,18 @@ final class Tasks {
 
     /** Start a background command in {@code instance}, which the caller checked is owned. */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
-        var task = reserve(null, new Task(nextId(), instance, COMMAND, cwd, 1, true, true));
+        var task = reserve(null, new Task(nextId(), instance, COMMAND, cwd, 1, true, true), true);
         return launch(task, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
     }
 
-    /** Start a delegated agent in {@code instance}, which the caller checked is owned. */
-    Task delegate(String instance, String cwd, String instruction, String permissionMode) {
-        var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true));
+    /**
+     * Start a delegated agent in {@code instance}, which the caller checked is owned. Without
+     * {@code refresh}, the caller has just asked the instances ({@link #checkCapacityForNewAgent}),
+     * so they are asked again only if the states as last known would refuse: a refresh only
+     * ever frees slots.
+     */
+    Task delegate(String instance, String cwd, String instruction, String permissionMode, boolean refresh) {
+        var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true), refresh);
         return launch(task, null,
                 t -> TaskScripts.agentRun(t.id(), 1, cwd, config.get().delegateMaxTurns(), permissionMode), instruction);
     }
@@ -127,7 +132,7 @@ final class Tasks {
                     + ", in " + task.instance() + "). Messages would race with theirs: wait until task_status "
                     + "no longer says attached, or ask the user.");
         }
-        var reserved = reserve(task.id(), null);
+        var reserved = reserve(task.id(), null, true);
         return launch(reserved, task, t -> TaskScripts.agentRun(t.id(), t.runs(), t.cwd(),
                 config.get().delegateMaxTurns(), permissionMode), message);
     }
@@ -244,11 +249,28 @@ final class Tasks {
      * one lock, so concurrent calls see each other's reservations; asking the instances which
      * tasks have finished happens before it, outside the lock.
      */
-    private Task reserve(String continuing, Task fresh) {
+    private Task reserve(String continuing, Task fresh, boolean refresh) {
+        if (!refresh) {
+            try {
+                return reserveNow(continuing, fresh);
+            } catch (ToolError refused) {
+                // Tasks may have finished since the caller asked: ask again before refusing.
+            }
+        }
         refreshStates();
+        return reserveNow(continuing, fresh);
+    }
+
+    /** {@link #reserve} against the states as last known. */
+    private Task reserveNow(String continuing, Task fresh) {
         synchronized (this) {
             if (continuing != null) {
                 var task = tasks.get(continuing);
+                // Forgotten by the refresh above: its instance went away or another session took it.
+                if (task == null) {
+                    throw new ToolError("task " + continuing + " is no longer this session's: its instance "
+                            + "is gone or another session adopted it.");
+                }
                 if (task.busy()) {
                     throw new ToolError("task " + continuing + " is still running; wait for it (task_status "
                             + "with wait_seconds) or cancel_task it first.");
