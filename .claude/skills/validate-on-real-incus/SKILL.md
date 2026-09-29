@@ -113,9 +113,10 @@ sg incus-admin -c "java -jar $SCRATCH/base/cli/target/quarkus-app/quarkus-run.ja
 ## 5. Time it, when the change is about speed
 
 `bench/trace-branch.sh` records the daemon's events around one `isx branch`. Build native for both
-sides (`mvn package -Dnative -DskipTests -pl cli -am`). The script takes the newest
-`cli/target/incus-spawn-*-runner`, so copy the base runner in as `incus-spawn-base-runner` and
-`touch` whichever side should run next. Alternate a few runs of each; a single run is noise.
+sides (`mvn package -Dnative -DskipTests -pl cli -am`), each in its own worktree
+(`$SCRATCH/base` as above, `$SCRATCH/head` for the change), and run each tree's own
+`bench/trace-branch.sh`: it takes the newest runner in that tree's `cli/target`. Alternate a few
+runs of each; a single run is noise.
 Compare the writes before `PUT .../state`, the time of the start request, and any gap after
 "Stopping forkfile" (a push still in flight makes the start wait a full second).
 
@@ -127,6 +128,13 @@ Compare the writes before `PUT .../state`, the time of the start request, and an
 - `kill <pid>` of `isx proxy start` stops the `isx-proxy` it started too (#882), but `kill -9`
   cannot: the orphan keeps the ports and the next proxy fails with "Address already in use", or a
   leftover older build keeps serving. Find it with `sudo ss -ltnp | grep 18443` and kill that pid.
+- Don't build the other side by `git stash`-ing the main tree: a `git stash; <build>; git stash pop`
+  chain run in the background keeps your edits away until the job ends, and anything you edit
+  meanwhile collides with the pop. Use a worktree per side, as in section 5.
+- A patch needed only to measure (e.g. to get past something this host refuses) goes into both
+  sides' worktrees identically, and is never committed.
+- Don't `./install.sh` (JVM) from a worktree: its launchers run the jar where it was built, so
+  removing the worktree breaks the installed `isx` and the proxy. Install from the main checkout.
 - Inside an isx instance, the outer isx's DNS and MITM proxy sit behind this one. A certificate
   issued by "incus-spawn MITM CA" might be the *outer* one: check which domains the inner proxy
   actually overrides (`incus network get incusbr0 raw.dnsmasq`) before reading a result.
