@@ -66,7 +66,7 @@ public final class VmAgentRecovery {
             incus.forceStop(name);
         }
         InstanceLifecycle.prepareHostDevicesForStart(incus, name, instance, say);
-        InstanceLifecycle.startInstance(incus, name);
+        InstanceLifecycle.startInstance(incus, name, say);
         // Stamped before the wait, so a boot whose agent never comes up is still recorded
         // however the wait ends.
         long restarted = incus.pid(name);

@@ -84,6 +84,18 @@ INOTIFY_INSTANCES=$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || e
     || fail "fs.inotify.max_user_instances is $INOTIFY_INSTANCES (99-incus-spawn.conf did not apply)"
 echo "  PASS: inotify instance limit raised ($INOTIFY_INSTANCES)"
 
+# security.ipv4_filtering is what makes the proxy's source-IP identity unforgeable, and Incus's
+# nftables driver enforces it in an nft "bridge"-family table. A kernel without that family
+# accepts the setting and fails only when an instance starts, and isx then starts it with
+# filtering off (#905) -- so a config trim that drops CONFIG_NF_TABLES_BRIDGE would silently
+# re-open the hole on every Mac. Nothing else here would notice; this does, offline.
+if ! nft add table bridge isx_smoke > /tmp/smoke-nft.log 2>&1; then
+    cat /tmp/smoke-nft.log
+    fail "kernel lacks the nft bridge family (CONFIG_NF_TABLES_BRIDGE); security.ipv4_filtering cannot be enforced"
+fi
+nft delete table bridge isx_smoke
+echo "  PASS: nft bridge family available (security.ipv4_filtering enforceable)"
+
 # Filter to CONTAINER images — picking a VIRTUAL-MACHINE image would fail creation spuriously.
 IMAGE=$(incus image list --format csv --columns ft 2>/dev/null \
     | grep -i ',container' | head -n1 | cut -d, -f1)

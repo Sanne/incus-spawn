@@ -73,6 +73,16 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /**
+     * Give an instance the bridge NIC override {@code isx branch} writes: a pinned address with IP
+     * spoofing protection on, the steady state of every instance branched since #905's check.
+     * Without it the profile's NIC has no filtering, which the pre-start repair turns back on.
+     */
+    public FakeIncusDaemon ipFiltering(String instanceName, String value) {
+        return device(instanceName, "eth0", Map.of("type", "nic", "network", "incusbr0", "name", "eth0",
+                "ipv4.address", "10.166.11.20", "security.ipv4_filtering", value));
+    }
+
     /** Add a stopped container with the given config. */
     public FakeIncusDaemon container(String name, Map<String, String> config) {
         return instance(name, "container", "Stopped", config);
@@ -166,6 +176,17 @@ public final class FakeIncusDaemon implements IncusTransport {
     }
 
     /** A client wired to this daemon. */
+    /**
+     * A client whose readiness wait gives up after a few milliseconds, for tests outside this
+     * package that go through a start: this daemon serves no exec, so the wait can only time out.
+     */
+    public IncusClient clientWithShortReadyWait() {
+        var client = client();
+        client.readyTimeouts(new IncusClient.ReadyTimeouts(java.time.Duration.ofMillis(20),
+                java.time.Duration.ofMillis(20), java.time.Duration.ofMillis(10), java.time.Duration.ofMillis(5)));
+        return client;
+    }
+
     public IncusClient client() {
         return new IncusClient(new IncusApi(this));
     }

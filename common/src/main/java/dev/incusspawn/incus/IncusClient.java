@@ -1923,17 +1923,14 @@ public class IncusClient {
     public NicDevice findNic(String instance, String networkName) {
         var resp = http().get("/1.0/instances/" + instance);
         if (!resp.isSuccess()) return null;
-        var expandedDevices = resp.body().path("metadata").path("expanded_devices");
-        for (var it = expandedDevices.properties().iterator(); it.hasNext(); ) {
-            var entry = it.next();
-            var dev = entry.getValue();
-            if (isNic(dev)
-                    && (networkName.equals(dev.path("network").asText())
-                        || networkName.equals(dev.path("parent").asText()))) {
-                return new NicDevice(entry.getKey(), deviceConfig(dev));
-            }
-        }
-        return null;
+        return nic(resp.body().path("metadata"), networkName);
+    }
+
+    /** As {@link #findNic}, from an instance representation already read. */
+    public static NicDevice nic(JsonNode instanceMetadata, String networkName) {
+        var name = nicDeviceName(instanceMetadata, networkName);
+        return name == null ? null
+                : new NicDevice(name, deviceConfig(instanceMetadata.path("expanded_devices").path(name)));
     }
 
     public void deviceConfigSet(String container, String deviceName, String key, String value) {

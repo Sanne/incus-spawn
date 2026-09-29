@@ -28,7 +28,8 @@ class StaleInboxTest {
     }
 
     private static FakeIncusDaemon withInbox(Path source) {
-        return new FakeIncusDaemon().container(NAME, Map.of())
+        // Filtering on, as isx branch leaves it, so the pre-start repair has only the inbox to do.
+        return new FakeIncusDaemon().container(NAME, Map.of()).ipFiltering(NAME, "true")
                 .device(NAME, InstanceLifecycle.INBOX_DEVICE, Map.of("type", "disk",
                         "source", source.toString(), "path", InstanceLifecycle.INBOX_PATH, "readonly", "true"));
     }

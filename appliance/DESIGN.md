@@ -48,7 +48,7 @@ Both were measured under QEMU against the shipped kernels. The reason this is wo
 **Enabled (built-in)**:
 - **Virtio**: PCI, MMIO, block, network, console, balloon, vsock (host↔VM API tunnel)
 - **Filesystems**: btrfs, overlayfs (Incus containers), fuse (lxcfs), tmpfs, procfs, sysfs, devtmpfs
-- **Networking**: TCP/UDP/IPv4/IPv6, UNIX sockets, packet sockets, bridge (with VLAN filtering), veth, macvlan, 802.1Q VLANs, netfilter/iptables (NAT, REDIRECT, CHECKSUM, MASQUERADE, conntrack)
+- **Networking**: TCP/UDP/IPv4/IPv6, UNIX sockets, packet sockets, bridge (with VLAN filtering), veth, macvlan, 802.1Q VLANs, netfilter/iptables (NAT, REDIRECT, CHECKSUM, MASQUERADE, conntrack), nftables `bridge` family (`CONFIG_NF_TABLES_BRIDGE`, which enforces `security.ipv4_filtering`; see below)
 - **Container isolation**: all namespace types (including time), cgroups v2 (cpu with CFS bandwidth, io with iocost, memory with zswap, pids, cpuset, hugetlb), seccomp
 - **Console**: HVC (hvc0, vfkit) shared; serial 8250 (ttyS0) on x86_64 only, AMBA PL011 (ttyAMA0) on aarch64 only. No virtual terminals (`CONFIG_VT=n`) -- there is no display adapter or keyboard, so VT could only bind the dummy console while publishing 64 unusable `/dev/tty0..63` nodes and dragging in the input core that `drivers/tty/Kconfig` selects with it. Every boot path passes an explicit `console=`.
 - **Block**: loop devices (Incus btrfs storage pool)
@@ -64,7 +64,7 @@ Both were measured under QEMU against the shipped kernels. The reason this is wo
 
 ### Config Validation
 
-`build-kernel.sh` validates the merged fragment after applying it: every `CONFIG_*=y` option is checked against the generated `.config`, and every `=n` is checked not to have come back on. Options silently dropped by kconfig (unknown name or unmet dependency) are reported as warnings. Since the per-arch split the expected output is `209 applied, 0 skipped` on x86_64 and `203 applied, 1 skipped` on aarch64, the single warning being `CPU_MITIGATIONS` (below). Any other warning means a fragment and the kernel have drifted apart -- treat it as a finding, not as background noise. Keeping the floor at zero-or-one is the point of the split: the old shared fragment emitted a warning per option the other arch didn't have, which trained readers to skim past the block.
+`build-kernel.sh` validates the merged fragment after applying it: every `CONFIG_*=y` option is checked against the generated `.config`, and every `=n` is checked not to have come back on. Options silently dropped by kconfig (unknown name or unmet dependency) are reported as warnings. Since the per-arch split the expected output is `210 applied, 0 skipped` on x86_64 and `204 applied, 1 skipped` on aarch64, the single warning being `CPU_MITIGATIONS` (below). Any other warning means a fragment and the kernel have drifted apart -- treat it as a finding, not as background noise. Keeping the floor at zero-or-one is the point of the split: the old shared fragment emitted a warning per option the other arch didn't have, which trained readers to skim past the block.
 
 Note that `CONFIG_CPU_MITIGATIONS=n` does **not** take on aarch64: the validator reports `requested but .config has CONFIG_CPU_MITIGATIONS=y`. This is the one warning that is expected rather than actionable, and it matters less than it reads, because on aarch64 the symbol gates almost nothing that is compiled in:
 
@@ -97,6 +97,7 @@ Key dependencies discovered during development:
 - `CONFIG_VLAN_8021Q=y` -- dependency for `CONFIG_BRIDGE_VLAN_FILTERING` (Incus bridge)
 - `CONFIG_NETFILTER_XTABLES_LEGACY=y` -- dependency for iptables filter/nat/mangle in kernel 7.x
 - `CONFIG_NETFILTER_XT_TARGET_CHECKSUM=y` -- required by Incus for DHCP checksum fixup on bridge
+- `CONFIG_NF_TABLES_BRIDGE=y` -- required to enforce `security.ipv4_filtering` (#905). Alpine's `incus-feature` (6.21 on 3.23) still ships both firewall drivers and picks one at startup; `incus info` reports `firewall: nftables` here, because the only `ebtables` on the appliance is the nft shim from the `iptables` package, which disqualifies the xtables driver. Its per-NIC anti-spoofing rules go into `table bridge incus` (`in.<instance>.<nic>` / `fwd.<instance>.<nic>` chains). Without the family Incus accepts the setting but fails every start with `Failed adding bridge filter rules ... Could not process rule: Not supported`, and isx falls back to starting with filtering off, so any instance could spoof a neighbour's address and spend its credential account. The rules need only core nf_tables expressions. Incus *network ACLs* would also need `NF_CONNTRACK_BRIDGE` (`ct state` in bridge chains) and `NFT_BRIDGE_REJECT`, but isx sets none, so they are left out. The smoke test asserts the family exists.
 
 ### Root Device
 
@@ -298,7 +299,10 @@ Takes the two host-side Unix sockets (Incus and agent), however they were bridge
 1. Incus daemon is responsive (`incus info`)
 2. Storage pool `cow` exists
 3. Bridge `incusbr0` exists
-4. Container creation works (if image server is reachable)
+4. The default profile has a root disk and a NIC
+5. The inotify instance limit took
+6. The nft `bridge` family is available (`nft add table bridge ...`), so `security.ipv4_filtering` can be enforced. Without it Incus fails every filtered start and isx silently falls back to no filtering, which nothing else here would notice (#905)
+7. Container creation works (if an image is already cached; the smoke test never fetches one)
 
 Output goes to the serial console as `=== SMOKE TEST PASSED ===` or `=== SMOKE TEST FAILED: <reason> ===`. CI checks for this marker.
 

@@ -306,6 +306,13 @@ jobs:
 
           start=$(date +%s)
           until grep -q 'ISX READY' vm-console.log; do
+            # A failed smoke check aborts rcS before ISX READY: say which one now, rather than
+            # after the whole deadline with the reason scrolled out of the tail by the diag dump.
+            if grep -q 'SMOKE TEST FAILED' vm-console.log; then
+              echo "::error::Incus smoke test failed"
+              grep -a 'SMOKE TEST' vm-console.log | sed 's/\x1b\[[0-9;]*m//g'
+              exit 1
+            fi
             if [ $(( $(date +%s) - start )) -ge "$BOOT_DEADLINE" ] || ! kill -0 $! 2>/dev/null; then
               echo "::error::VM did not reach ISX READY"
               tail -50 vm-console.log | sed 's/\x1b\[[0-9;]*m//g'

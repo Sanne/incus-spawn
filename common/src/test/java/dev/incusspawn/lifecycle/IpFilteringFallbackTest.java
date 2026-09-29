@@ -3,6 +3,8 @@ package dev.incusspawn.lifecycle;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -28,6 +30,18 @@ class IpFilteringFallbackTest {
                     + "ebtables -t filter -A INPUT -s ! 10:66:6a:f9:3d:b3 -i veth0 -j DROP: "
                     + "exit status 255 (The kernel doesn't support the ebtables 'filter' table.)";
 
+    /**
+     * What Incus 6.21's nftables driver says on the macOS appliance before its kernel had the nft
+     * bridge family (#905), recorded from a real start (repeated per-chain lines trimmed).
+     */
+    private static final String NFT_BRIDGE_FAILURE =
+            "Failed to start device \"eth0\": Failed adding bridge filter rules for instance device "
+                    + "\"a.eth0\" (bridge): Failed apply nftables config: Failed to run: nft -f -: "
+                    + "exit status 1 (/dev/stdin:2:1-2: Error: Could not process rule: Not supported\n"
+                    + "table bridge incus {\n^^\n"
+                    + "/dev/stdin:2:14-18: Error: Could not process rule: No such file or directory\n"
+                    + "table bridge incus {\n             ^^^^^)";
+
     private static IncusClient withFilteringOn() {
         var incus = mock(IncusClient.class);
         when(incus.findNic(eq(NAME), anyString()))
@@ -36,15 +50,31 @@ class IpFilteringFallbackTest {
         return incus;
     }
 
-    @Test
-    void startsOnceFilteringIsDroppedOnAHostThatCannotEnforceIt() {
+    @ParameterizedTest
+    @ValueSource(strings = {EBTABLES_FAILURE, NFT_BRIDGE_FAILURE})
+    void startsOnceFilteringIsDroppedOnAHostThatCannotEnforceIt(String failure) {
         var incus = withFilteringOn();
-        doThrow(new IncusException(EBTABLES_FAILURE)).doNothing().when(incus).start(NAME);
+        doThrow(new IncusException(failure)).doNothing().when(incus).start(NAME);
 
         InstanceLifecycle.startInstance(incus, NAME);
 
         verify(incus).deviceConfigSet(NAME, "eth0", "security.ipv4_filtering", "false");
         verify(incus, times(2)).start(NAME);
+    }
+
+    @Test
+    void theLossOfProtectionIsReportedToTheCallersSink() {
+        var incus = withFilteringOn();
+        doThrow(new IncusException(NFT_BRIDGE_FAILURE)).doNothing().when(incus).start(NAME);
+        var warnings = new java.util.ArrayList<String>();
+
+        // The TUI's warning log: stderr would be drawn over while the TUI owns the terminal.
+        InstanceLifecycle.startInstance(incus, NAME, warnings::add);
+
+        assertEquals(1, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("cannot enforce IP spoofing protection, so it has been disabled on box"),
+                warnings.get(0));
+        assertTrue(warnings.get(0).contains("impersonate each other's credential accounts"), warnings.get(0));
     }
 
     /**
@@ -87,6 +117,8 @@ class IpFilteringFallbackTest {
     void recognisesTheFilteringFailureAndOnlyThat() {
         assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
                 new IncusException(EBTABLES_FAILURE)));
+        assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
+                new IncusException(NFT_BRIDGE_FAILURE)));
         // Nested, as Incus exceptions often arrive.
         assertTrue(InstanceLifecycle.looksLikeIpFilteringFailure(
                 new RuntimeException("wrapped", new IncusException(EBTABLES_FAILURE))));

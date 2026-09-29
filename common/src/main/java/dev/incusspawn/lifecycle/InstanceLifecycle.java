@@ -460,7 +460,7 @@ public final class InstanceLifecycle {
         if ("Stopped".equalsIgnoreCase(status)) {
             say.accept("Starting " + name + "...");
             prepareHostDevicesForStart(incus, name, say);
-            startInstance(incus, name);
+            startInstance(incus, name, say);
             incus.waitForReady(name);
         } else if (incus.isVm(name) && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
@@ -491,10 +491,18 @@ public final class InstanceLifecycle {
      * user has to know which one they have.
      */
     public static void startInstance(IncusClient incus, String name) {
+        startInstance(incus, name, System.err::println);
+    }
+
+    /**
+     * As above, reporting the loss of protection to {@code warn} rather than stderr, for callers
+     * that may own the terminal (the TUI).
+     */
+    public static void startInstance(IncusClient incus, String name, Consumer<String> warn) {
         try {
             incus.start(name);
         } catch (RuntimeException e) {
-            if (!looksLikeIpFilteringFailure(e) || !disableIpFiltering(incus, name)) throw e;
+            if (!looksLikeIpFilteringFailure(e) || !disableIpFiltering(incus, name, warn)) throw e;
             incus.start(name);
         }
     }
@@ -517,17 +525,16 @@ public final class InstanceLifecycle {
         return false;
     }
 
-    private static boolean disableIpFiltering(IncusClient incus, String name) {
+    private static boolean disableIpFiltering(IncusClient incus, String name, Consumer<String> warn) {
         try {
             var nic = incus.findNic(name, BridgeAddress.BRIDGE);
             if (nic == null || !"true".equals(nic.config().get("security.ipv4_filtering"))) {
                 return false;
             }
             incus.deviceConfigSet(name, nic.name(), "security.ipv4_filtering", "false");
-            System.err.println(BuildOutput.STEP_INDENT
+            warn.accept(BuildOutput.STEP_INDENT
                     + "Warning: this host cannot enforce IP spoofing protection, so it has been"
-                    + " disabled on " + name + ".");
-            System.err.println(BuildOutput.STEP_INDENT
+                    + " disabled on " + name + ".\n" + BuildOutput.STEP_INDENT
                     + "Instances on this host can impersonate each other's credential accounts.");
             return true;
         } catch (RuntimeException ignored) {
@@ -747,10 +754,16 @@ public final class InstanceLifecycle {
     }
 
     /**
-     * Repair host-side devices before starting an instance.  Both a
-     * host-resource source that has disappeared and a missing zmx socket
-     * directory otherwise fail Incus start validation with
-     * {@code Missing source path}.
+     * Repair an existing, stopped instance before starting it. Every path that starts one for use
+     * (the {@code isx shell}/{@code run} prep, the TUI, {@link #ensureReady}, VM agent recovery)
+     * goes through here, so a repair placed here reaches all of them, and any path that merges
+     * them must keep calling it.
+     *
+     * <ul>
+     *   <li>Host-side devices: a host-resource source that has disappeared and a missing zmx socket
+     *       directory otherwise fail Incus start validation with {@code Missing source path}.</li>
+     *   <li>IP spoofing protection ({@link #rearmIpFiltering}): turned back on where it is off.</li>
+     * </ul>
      */
     public static void prepareHostDevicesForStart(IncusClient incus, String name) {
         prepareHostDevicesForStart(incus, name, System.err::println);
@@ -773,6 +786,27 @@ public final class InstanceLifecycle {
         HostResourceSetup.removeStaleDevices(incus, name, instance, warn);
         removeStaleInbox(incus, name, instance, warn);
         ZmxSocketForward.ensureHostDirForStart(incus, name, instance);
+        rearmIpFiltering(incus, name, instance, warn);
+    }
+
+    /**
+     * Turn IP spoofing protection back on for an instance that does not have it: one branched
+     * before isx set it, or one {@link #startInstance} had to start without it on a host that
+     * could not enforce it -- every Mac, until the appliance kernel gained the nft bridge family
+     * (#905). Re-arming on every stopped start is what lets such an instance regain protection
+     * once its host can enforce it, instead of staying open until it is re-branched; where the
+     * host still cannot, the start falls back again and says so.
+     *
+     * <p>Only while stopped, which is all this is called for: NIC device changes on a live
+     * instance are not reliably applied. Reads the instance the other repairs already read, so
+     * an instance that has it (every one branched since) costs no request at all.
+     */
+    static void rearmIpFiltering(IncusClient incus, String name, JsonNode instance, Consumer<String> warn) {
+        var nic = IncusClient.nic(instance, BridgeAddress.BRIDGE);
+        // No bridge NIC: airgap, or a hand-made instance -- nothing to filter.
+        if (nic == null || "true".equals(nic.config().get("security.ipv4_filtering"))) return;
+        applyIpFiltering(incus, name, nic.name(),
+                msg -> warn.accept(BuildOutput.STEP_INDENT + "Warning: " + msg));
     }
 
     /**
