@@ -861,6 +861,8 @@ public final class InstanceLifecycle {
     public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, boolean isVm) {
         var prefetched = prefetchRuntimeConfig(incus, name);
         BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
+        // Plain stderr for the fallback warning, like the rest of BranchFlow's output: the TUI
+        // branches only as a pendingAction, after its runner has released the terminal.
         startInstance(incus, name);
         BuildOutput.stepDone();
         return prefetched;
