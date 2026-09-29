@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.List;
 
 @CommandDefinition(
         name = "start",
@@ -107,14 +108,17 @@ public class ProxyStartCommand extends BaseCommand {
         }
         if (debug) cmd.add("--debug");
 
-        var pb = new ProcessBuilder(cmd);
-        pb.inheritIO();
-        var process = pb.start();
-        int code = process.waitFor();
+        int code = runProxy(cmd);
         if (code != 0) {
             explainAbnormalExit(code);
         }
         return CommandResult.valueOf(code);
+    }
+
+    /** Run the proxy in the foreground, sharing this terminal, and return its exit status. */
+    static int runProxy(List<String> cmd) throws IOException, InterruptedException {
+        var process = new ProcessBuilder(cmd).inheritIO().start();
+        return process.waitFor();
     }
 
     private static final int LOG_TAIL_LINES = 10;
