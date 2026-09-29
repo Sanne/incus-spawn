@@ -5,8 +5,6 @@ import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.config.SpawnConfig;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -83,7 +81,7 @@ public final class McpMain {
         try {
             var grace = Duration.ofHours(config.get().orphanGraceHours());
             var names = Orphans.sweep(backend, self, owner, SessionId::isAlive, grace, Instant.now(),
-                    name -> attended(backend, name));
+                    name -> Orphans.inUse(backend, name));
             if (!names.isEmpty()) {
                 System.err.println("isx mcp: destroyed orphaned instances past their grace period: "
                         + String.join(", ", names));
@@ -91,17 +89,6 @@ public final class McpMain {
             }
         } catch (RuntimeException e) {
             System.err.println("isx mcp: could not check for orphaned instances: " + e.getMessage());
-        }
-    }
-
-    /** Whether a person works in the instance; true when it cannot be looked into (e.g. stopped). */
-    private static boolean attended(InstanceBackend backend, String name) {
-        try {
-            var out = new ByteArrayOutputStream();
-            if (backend.exec(name, Presence.script(""), null, out, null) != 0) return true;
-            return Presence.parse(out.toString(StandardCharsets.UTF_8).lines().toList()).attended();
-        } catch (RuntimeException e) {
-            return true;
         }
     }
 

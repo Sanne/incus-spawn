@@ -2,6 +2,8 @@ package dev.incusspawn.mcp;
 
 import dev.incusspawn.incus.Metadata;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -15,7 +17,7 @@ import java.util.function.Predicate;
  * Instances whose session is gone. An orphan is quarantined, never destroyed on sight: a
  * coordinating agent that restarts finds its workers where it left them and adopts them. Once
  * {@code mcp.orphan-grace-hours} have passed since it was orphaned, the next session to start
- * destroys it -- unless a person is working in it.
+ * destroys it -- unless a person or one of its tasks is still working in it.
  *
  * <p>Only this host user's instances are considered, and only ones that were never kept and are
  * not in the middle of another operation. A session is dead when its process no longer exists,
@@ -57,14 +59,15 @@ final class Orphans {
 
     /**
      * Start the grace period of orphans nobody has stamped yet (their session was killed), and
-     * destroy those whose grace period is over and in which {@code attended} finds nobody at
-     * work. Returns what was destroyed.
+     * destroy those whose grace period is over and which {@code inUse} finds idle. Returns what
+     * was destroyed.
      *
-     * @param attended whether a person is working in the instance; it must answer true when it
-     *                 cannot tell, so what cannot be inspected is left for the user
+     * @param inUse whether a person or a task is working in the instance ({@link #inUse}); it
+     *              must answer true when it cannot tell, so what cannot be inspected is left for
+     *              the user
      */
     static List<String> sweep(InstanceBackend backend, SessionId self, String owner, Predicate<SessionId> alive,
-                              Duration grace, Instant now, Predicate<String> attended) {
+                              Duration grace, Instant now, Predicate<String> inUse) {
         var destroyed = new ArrayList<String>();
         othersOf(backend.mcpInstances(), owner, self, alive).values().forEach(other -> {
             if (!other.orphaned()) return;
@@ -77,8 +80,9 @@ final class Orphans {
                     return;
                 }
                 if (now.isBefore(since.plus(grace))) return;
-                if (attended.test(name)) {
-                    System.err.println("isx mcp: keeping orphaned instance " + name + ": someone is working in it");
+                if (inUse.test(name)) {
+                    System.err.println("isx mcp: keeping orphaned instance " + name
+                            + ": someone, or a task it was given, is still working in it");
                     return;
                 }
                 // Adopted while we looked: it is somebody's again.
@@ -94,5 +98,23 @@ final class Orphans {
         });
         if (!destroyed.isEmpty()) backend.refreshProxy();
         return destroyed;
+    }
+
+    /**
+     * Whether a person works in the instance ({@link Presence}) or one of its tasks has not
+     * finished: a delegate outliving its coordinator by the grace period still has unpushed
+     * work. True when the instance cannot be looked into (e.g. stopped) or systemd cannot say.
+     */
+    static boolean inUse(InstanceBackend backend, String name) {
+        try {
+            var out = new ByteArrayOutputStream();
+            if (backend.exec(name, Presence.script("") + "; " + TaskScripts.unfinished(), null, out, null) != 0) {
+                return true;
+            }
+            var lines = out.toString(StandardCharsets.UTF_8).lines().toList();
+            return Presence.parse(lines).attended() || lines.stream().anyMatch(l -> l.startsWith("task "));
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 }

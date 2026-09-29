@@ -68,12 +68,12 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { echo 125 > \"$D/exit-1\"; exit 0; }\n");
+        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { ").append(recordExit("1", "125")).append("; exit 0; }\n");
         sb.append(RECORD_CWD);
         ExecScript.appendExports(sb, env, "\n");
         sb.append("bash -c ").append(ExecScript.quote(command))
                 .append(" < /dev/null > \"$D/stdout\" 2> \"$D/stderr\"\n");
-        sb.append("echo $? > \"$D/exit-1\"\n");
+        sb.append("rc=$?\n").append(recordExit("1", "$rc")).append('\n');
         return sb.toString();
     }
 
@@ -86,8 +86,8 @@ final class TaskScripts {
         var sb = new StringBuilder();
         sb.append("D=").append(d).append('\n');
         sb.append("export ").append(TASK_ENV).append('=').append(taskId).append('\n');
-        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { echo 125 > \"$D/exit-").append(run)
-                .append("\"; exit 0; }\n");
+        sb.append("cd -- ").append(ExecScript.quote(cwd)).append(" || { ")
+                .append(recordExit(String.valueOf(run), "125")).append("; exit 0; }\n");
         if (run == 1) {
             sb.append(RECORD_CWD);
             sb.append("""
@@ -109,8 +109,16 @@ final class TaskScripts {
         sb.append("sid=$(sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p' \"$D/events-").append(run)
                 .append(".jsonl\" | head -n 1)\n");
         sb.append("[ -n \"$sid\" ] && printf '%s' \"$sid\" > \"$D/session_id\"\n");
-        sb.append("echo $rc > \"$D/exit-").append(run).append("\"\n");
+        sb.append(recordExit(String.valueOf(run), "$rc")).append('\n');
         return sb.toString();
+    }
+
+    /**
+     * Record run {@code run}'s exit code. Whether a run finished is whether its {@code exit-<run>}
+     * file exists, so it must never be seen empty: written aside, then renamed into place.
+     */
+    private static String recordExit(String run, String code) {
+        return "echo " + code + " > \"$D/exit-" + run + ".tmp\" && mv -f \"$D/exit-" + run + ".tmp\" \"$D/exit-" + run + "\"";
     }
 
     /**
@@ -194,6 +202,19 @@ final class TaskScripts {
                 + "\"$(cat \"$d/cwd\" 2>/dev/null)\"; done; exit 0";
     }
 
+    /**
+     * {@code task <id> running|unknown} for every task whose current run has not finished, as
+     * systemd sees it; {@code unknown} when systemd could not be asked. What keeps an orphan's
+     * working delegate from being destroyed with it.
+     */
+    static String unfinished() {
+        return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; id=$(basename \"$d\"); "
+                + "n=$(cat \"$d/current\" 2>/dev/null); { [ -n \"$n\" ] && [ ! -f \"$d/exit-$n\" ]; } || continue; "
+                + "s=$(sudo -n systemctl is-active " + UNIT_PREFIX + "\"$id-$n\" 2>/dev/null); "
+                + "case \"$s\" in active|activating) echo \"task $id running\";; '') echo \"task $id unknown\";; esac; "
+                + "done; exit 0";
+    }
+
     /** All of a command task's output, stdout then stderr, each under a heading. */
     static String output(String taskId) {
         var d = dir(taskId);
@@ -216,7 +237,7 @@ final class TaskScripts {
         return "D=" + d + "; n=$(cat \"$D/current\" 2>/dev/null) || exit 0; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
                 + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
-                + "[ -f \"$D/exit-$n\" ] || echo 143 > \"$D/exit-$n\"";
+                + "[ -f \"$D/exit-$n\" ] || { " + recordExit("$n", "143") + "; }";
     }
 
     /**

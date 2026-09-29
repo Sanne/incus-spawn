@@ -75,6 +75,29 @@ class OrphansTest {
     }
 
     @Test
+    void anOrphanWhoseDelegateIsStillWorkingIsSpared() {
+        // Its coordinator died, but the delegate it started has unpushed work in progress.
+        var backend = new FakeBackend()
+                .instance("working", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO))
+                .instance("idle", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO))
+                .instance("unasked", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        var current = new String[1];
+        backend.responder = script -> {
+            assertTrue(script.contains("isx-task-"), "the probe asks systemd about unfinished tasks");
+            return switch (current[0]) {
+                case "working" -> "task t1-abc running\n";
+                case "unasked" -> "task t1-abc unknown\n";
+                default -> "";
+            };
+        };
+        var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {
+            current[0] = name;
+            return Orphans.inUse(backend, name);
+        });
+        assertEquals(List.of("idle"), destroyed);
+    }
+
+    @Test
     void anOrphanAdoptedDuringTheSweepIsSpared() {
         var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
         var destroyed = Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> {

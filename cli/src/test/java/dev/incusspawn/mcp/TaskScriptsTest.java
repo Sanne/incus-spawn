@@ -395,4 +395,38 @@ class TaskScriptsTest {
         assertEquals("finished", status.state(), "the first run's result is still there");
         assertTrue(StreamJsonEvents.summarize(status.output(), 0).finished());
     }
+
+    @Test
+    void theSweepSeesATaskThatHasNotFinished() throws Exception {
+        sh(TaskScripts.launch("t11-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t11-abc", work.toString(), Map.of(), "sleep 300")), "");
+        sh(TaskScripts.launch("t12-abc", 1, Tasks.COMMAND,
+                TaskScripts.commandRun("t12-abc", work.toString(), Map.of(), "true")), "");
+        awaitFinished("t12-abc");
+        assertEquals("task t11-abc running\n", sh(TaskScripts.unfinished(), ""));
+        stub("systemctl", "exit 1"); // systemd cannot be asked: that is not "finished"
+        assertEquals("task t11-abc unknown\n", sh(TaskScripts.unfinished(), ""));
+        var pid = Files.readString(home.resolve("units/isx-task-t11-abc-1")).strip();
+        sh("kill -TERM -- -" + pid, "");
+        assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.unfinished(), ""), "no tasks");
+    }
+
+    @Test
+    void anExitCodeIsNeverSeenHalfWritten() throws Exception {
+        // Whether a run finished is whether its exit file exists: each is written aside, then renamed.
+        var scripts = java.util.List.of(
+                TaskScripts.commandRun("t13-abc", work.toString(), Map.of(), "true"),
+                TaskScripts.agentRun("t13-abc", 1, work.toString(), null, "plan"),
+                TaskScripts.agentRun("t13-abc", 2, work.toString(), null, "plan"),
+                TaskScripts.cancel("t13-abc"));
+        var direct = java.util.regex.Pattern.compile(">\\s*\"\\$D/exit-[^\".]*\"");
+        for (var script : scripts) {
+            assertFalse(direct.matcher(script).find(), "an exit file written in place:\n" + script);
+        }
+        sh(TaskScripts.launch("t13-abc", 1, Tasks.COMMAND, scripts.get(0)), "");
+        assertEquals(0, awaitFinished("t13-abc").exit());
+        try (var files = Files.list(home.resolve(".isx-mcp/tasks/t13-abc"))) {
+            assertTrue(files.noneMatch(f -> f.getFileName().toString().endsWith(".tmp")), "nothing left aside");
+        }
+    }
 }
