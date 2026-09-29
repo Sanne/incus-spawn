@@ -192,7 +192,7 @@ final class TaskScripts {
      */
     private static final String STATE = "n=$(cat \"$D/current\" 2>/dev/null); "
             + "if [ -z \"$n\" ] || [ -f \"$D/exit-$n\" ]; then s=done; else "
-            + "s=$(sudo -n systemctl is-active " + UNIT_PREFIX + "$id-$n 2>/dev/null); "
+            + "s=$(sudo -n systemctl is-active \"" + UNIT_PREFIX + "$id-$n\" 2>/dev/null); "
             + "case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ";
 
     /**
@@ -209,12 +209,16 @@ final class TaskScripts {
     }
 
     /**
-     * {@code task <id> running|unknown} for every task whose current run has not finished, as
-     * systemd sees it; {@code unknown} when systemd could not be asked. What keeps an orphan's
-     * working delegate from being destroyed with it.
+     * {@code task <id> running|unknown} for every delegated agent whose current run has not
+     * finished, as systemd sees it; {@code unknown} when systemd could not be asked. What keeps
+     * an orphan's working delegate, and its unpushed work, from being destroyed with it. Not
+     * background commands: a dev server never finishes, and would keep its orphan forever.
      */
     static String unfinished() {
-        return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; D=${d%/}; id=${D##*/}; "
+        return "for d in " + TASKS_DIR + "/*/; do D=${d%/}; id=${D##*/}; "
+                // Any directory there could be made by anyone in the instance: only a task id.
+                + "case $id in ''|*[!a-z0-9-]*) continue;; esac; "
+                + "read -r k < \"$D/kind\" 2>/dev/null && [ \"$k\" = " + Tasks.AGENT + " ] || continue; "
                 + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
     }
 

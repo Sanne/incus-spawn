@@ -396,18 +396,30 @@ class TaskScriptsTest {
         assertTrue(StreamJsonEvents.summarize(status.output(), 0).finished());
     }
 
+    /** A task whose current run is {@code run}, as launch leaves it, with a unit running while {@code running}. */
+    private void recordedTask(String dirName, String kind, boolean running) throws Exception {
+        var d = Files.createDirectories(home.resolve(".isx-mcp/tasks/" + dirName));
+        Files.writeString(d.resolve("kind"), kind + "\n");
+        Files.writeString(d.resolve("current"), "1\n");
+        if (running) sh(TaskScripts.launch(dirName, 2, kind, "sleep 300"), "");
+        Files.writeString(d.resolve("current"), running ? "2\n" : "1\n");
+        if (!running) Files.writeString(d.resolve("exit-1"), "0\n");
+    }
+
     @Test
-    void theSweepSeesATaskThatHasNotFinished() throws Exception {
-        sh(TaskScripts.launch("t11-abc", 1, Tasks.COMMAND,
-                TaskScripts.commandRun("t11-abc", work.toString(), Map.of(), "sleep 300")), "");
-        sh(TaskScripts.launch("t12-abc", 1, Tasks.COMMAND,
-                TaskScripts.commandRun("t12-abc", work.toString(), Map.of(), "true")), "");
-        awaitFinished("t12-abc");
+    void theSweepSeesADelegateThatHasNotFinished() throws Exception {
+        recordedTask("t11-abc", Tasks.AGENT, true);
+        recordedTask("t12-abc", Tasks.AGENT, false);
+        recordedTask("t14-abc", Tasks.COMMAND, true); // a dev server never finishes: not a reason to keep it
         assertEquals("task t11-abc running\n", sh(TaskScripts.unfinished(), ""));
+        Files.createDirectories(home.resolve(".isx-mcp/tasks/a b*"));
+        Files.writeString(home.resolve(".isx-mcp/tasks/a b*/kind"), "agent\n");
         stub("systemctl", "exit 1"); // systemd cannot be asked: that is not "finished"
-        assertEquals("task t11-abc unknown\n", sh(TaskScripts.unfinished(), ""));
-        var pid = Files.readString(home.resolve("units/isx-task-t11-abc-1")).strip();
-        sh("kill -TERM -- -" + pid, "");
+        assertEquals("task t11-abc unknown\n", sh(TaskScripts.unfinished(), ""), "only task ids are asked about");
+        for (var id : java.util.List.of("t11-abc", "t14-abc")) {
+            var pid = Files.readString(home.resolve("units/isx-task-" + id + "-2")).strip();
+            sh("kill -TERM -- -" + pid, "");
+        }
         assertEquals("", sh("HOME=" + home.resolve("empty") + "; " + TaskScripts.unfinished(), ""), "no tasks");
     }
 
