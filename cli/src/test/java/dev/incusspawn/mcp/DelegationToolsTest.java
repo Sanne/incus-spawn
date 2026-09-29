@@ -63,8 +63,8 @@ class DelegationToolsTest {
         server = new McpServer(out, new McpTools(session, backend, new TemplatePolicy(backend, () -> config),
                 tasks).all(), "1", null, null);
         backend.responder = script -> {
-            if (script.startsWith("n=$(cat")) { // the state probe: one line per task asked about
-                var ids = java.util.regex.Pattern.compile("echo (t[0-9a-z-]+) \\$s").matcher(script).results()
+            if (isStateProbe(script)) { // one line per task asked about
+                var ids = java.util.regex.Pattern.compile("; id=(t[0-9a-z-]+); ").matcher(script).results()
                         .map(m -> m.group(1) + switch (taskState) {
                             case "running" -> " running";
                             case "unknown" -> " unknown";
@@ -97,6 +97,10 @@ class DelegationToolsTest {
                     : "run=1\nkind=agent\nunit=inactive\nexit=0\n" + who + "events_bytes=400\n---\n"
                             + (finishedEvents != null ? finishedEvents : EVENTS) + "\n---stderr\n";
         };
+    }
+
+    private static boolean isStateProbe(String script) {
+        return script.contains("echo $id $s");
     }
 
     @AfterEach
@@ -518,7 +522,7 @@ class DelegationToolsTest {
         var reads = backend.metadataReads.get();
         delegateFresh();
         var stateProbes = backend.scripts.subList(probes, backend.scripts.size()).stream()
-                .filter(s -> s.startsWith("n=$(cat")).count();
+                .filter(DelegationToolsTest::isStateProbe).count();
         assertEquals(1, stateProbes, "one state probe of the running task's instance, not one per check");
         assertEquals(1, backend.metadataReads.get() - reads, "one check that the session still holds it");
     }

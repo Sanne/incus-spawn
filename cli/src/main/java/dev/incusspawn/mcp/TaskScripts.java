@@ -179,15 +179,21 @@ final class TaskScripts {
     static String states(Collection<String> taskIds) {
         var sb = new StringBuilder();
         for (var id : taskIds) {
-            var d = dir(id);
-            sb.append("n=$(cat \"").append(d).append("/current\" 2>/dev/null); ")
-                    .append("if [ -z \"$n\" ] || [ -f \"").append(d).append("/exit-$n\" ]; then s=done; else ")
-                    .append("s=$(sudo -n systemctl is-active ").append(unit(id, "$n")).append(" 2>/dev/null); ")
-                    .append("case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ")
-                    .append("echo ").append(id).append(" $s; ");
+            sb.append("D=").append(dir(id)).append("; id=").append(id).append("; ").append(STATE)
+                    .append("echo $id $s; ");
         }
         return sb.append("exit 0").toString();
     }
+
+    /**
+     * Sets {@code s} to {@code running}, {@code done} or {@code unknown} for task {@code $id}
+     * in {@code $D}: done once its current run recorded an exit, otherwise as systemd sees its
+     * unit. Through sudo, like {@link #status}.
+     */
+    private static final String STATE = "n=$(cat \"$D/current\" 2>/dev/null); "
+            + "if [ -z \"$n\" ] || [ -f \"$D/exit-$n\" ]; then s=done; else "
+            + "s=$(sudo -n systemctl is-active " + UNIT_PREFIX + "$id-$n 2>/dev/null); "
+            + "case \"$s\" in active|activating) s=running;; '') s=unknown;; *) s=done;; esac; fi; ";
 
     /**
      * Every task recorded in the instance, one per line: {@code <id> <kind> <run> <running|done>
@@ -208,11 +214,8 @@ final class TaskScripts {
      * working delegate from being destroyed with it.
      */
     static String unfinished() {
-        return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; id=$(basename \"$d\"); "
-                + "n=$(cat \"$d/current\" 2>/dev/null); { [ -n \"$n\" ] && [ ! -f \"$d/exit-$n\" ]; } || continue; "
-                + "s=$(sudo -n systemctl is-active " + UNIT_PREFIX + "\"$id-$n\" 2>/dev/null); "
-                + "case \"$s\" in active|activating) echo \"task $id running\";; '') echo \"task $id unknown\";; esac; "
-                + "done; exit 0";
+        return "for d in " + TASKS_DIR + "/*/; do [ -f \"$d/kind\" ] || continue; D=${d%/}; id=${D##*/}; "
+                + STATE + "[ $s = done ] || echo \"task $id $s\"; done; exit 0";
     }
 
     /** All of a command task's output, stdout then stderr, each under a heading. */
