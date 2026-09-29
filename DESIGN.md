@@ -323,6 +323,8 @@ first-run flow is the one deliberate exception, kept in its own style for now.)
   whose result lands on a separate line.
 - **Step detail** (`stepNote`, `stepWarn`): dim or yellow lines one level under the
   step they describe — a tool's verified version, or why its verify failed.
+  A warning (`stepWarn`, `warn`) is followed by a blank line, separating it from the
+  regular flow; a group closing right after it does not add a second one.
 - **Note** (dim, 4-space indent): informational messages that should be visible
   but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.`
   Uses ANSI dim (`\e[2m`).

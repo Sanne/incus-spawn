@@ -152,6 +152,31 @@ class BuildOutputTest {
     }
 
     @Test
+    void warningIsFollowedByOneBlankLine() {
+        try (var tools = BuildOutput.group("Verifying", null)) {
+            BuildOutput.step("mvn");
+            BuildOutput.stepWarn("broken");
+            BuildOutput.step("mx");
+            BuildOutput.stepWarn("broken too");
+        }
+        BuildOutput.warn("top-level");
+        BuildOutput.step("next");
+        // The blank line before the group depends on how the previous test's output ended.
+        assertEquals("""
+                    ▸ Verifying
+                      mvn
+                        ⚠ broken
+
+                      mx
+                        ⚠ broken too
+
+                    ⚠ top-level
+
+                    next
+                """, BuildOutput.stripAnsi(text()).replaceFirst("^\n", ""));
+    }
+
+    @Test
     void headerResetsAGroupLeftOpenByAFailure() {
         BuildOutput.group("Packages", null);
         BuildOutput.header("Next");

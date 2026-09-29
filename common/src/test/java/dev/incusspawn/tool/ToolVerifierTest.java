@@ -55,7 +55,7 @@ class ToolVerifierTest {
                 "a slow verify must not run after the step already claimed to be done");
         assertTrue(BuildOutput.stripAnsi(out.toString()).contains(
                 "⚠ Verification failed (mvn --version): The JAVA_HOME environment variable is not defined"
-                        + " correctly, this environment variable is needed to run this program.\n"),
+                        + " correctly, this environment variable is needed to run this program.\n\n"),
                 out.toString());
     }
 

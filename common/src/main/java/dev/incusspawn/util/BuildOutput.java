@@ -106,7 +106,7 @@ public final class BuildOutput {
             if (closed) return;
             closed = true;
             depth = previousDepth;
-            System.out.println();
+            if (!blankLineEnded) System.out.println();
             blankLineEnded = true;
         }
     }
@@ -124,11 +124,14 @@ public final class BuildOutput {
         System.out.println(indent() + GROUP_INDENT + DIM + msg + RESET);
     }
 
-    /** Print a yellow warning about the step above, one level under it. */
+    /**
+     * Print a yellow warning about the step above, one level under it, then a blank line
+     * separating it from the regular flow.
+     */
     public static void stepWarn(String msg) {
         if (msg == null || msg.isBlank()) return;
-        blankLineEnded = false;
         System.out.println(indent() + GROUP_INDENT + YELLOW + "⚠ " + msg + RESET);
+        endWithBlankLine();
     }
 
     /** Print a finished step: {@code ✓ msg}. For a result known at once, without a live step. */
@@ -475,11 +478,20 @@ public final class BuildOutput {
                 + " " + DIM + "← " + source + RESET);
     }
 
-    /** Print a yellow warning line. Blank messages are skipped. */
+    /**
+     * Print a yellow warning line, then a blank line separating it from the regular flow.
+     * Blank messages are skipped.
+     */
     public static void warn(String msg) {
         if (msg == null || msg.isBlank()) return;
-        blankLineEnded = false;
         System.out.println(indent() + YELLOW + "⚠ " + msg + RESET);
+        endWithBlankLine();
+    }
+
+    /** Close a block with a blank line, which a following group or section does not repeat. */
+    private static void endWithBlankLine() {
+        System.out.println();
+        blankLineEnded = true;
     }
 
     /** Print an indented dim note (informational, not a warning). Blank messages are skipped. */
