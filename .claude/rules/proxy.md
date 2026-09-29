@@ -3,6 +3,7 @@ paths:
   - "proxy/**"
   - "common/src/main/java/dev/incusspawn/proxy/**"
   - "common/src/main/java/dev/incusspawn/DerEncoder.java"
+  - "cli/src/main/java/dev/incusspawn/command/Proxy*Command.java"
 ---
 
 # MITM TLS Proxy
