@@ -1266,10 +1266,12 @@ public class MitmProxy {
             });
         }
         if (Revalidation.forDomain(host) == null) return connected;
-        // Every connection to a caching domain, whatever its purpose, keeps its backoff current
+        // Every request to a caching domain, whatever its purpose, keeps its backoff current: a
+        // failed connect starts it, and only a response ends it, since a request on a pooled
+        // connection is handed out without any network I/O.
         return connected.andThen(ar -> {
             if (ar.succeeded()) {
-                unreachableSince.remove(host);
+                ar.result().response().onSuccess(resp -> unreachableSince.remove(host));
             } else if (unreachableSince.put(host, System.nanoTime()) == null) {
                 ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
                         "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
@@ -2506,7 +2508,7 @@ public class MitmProxy {
                 .setIdleTimeout(30_000);
     }
 
-    private boolean inBackoff(String domain) {
+    boolean inBackoff(String domain) {
         var since = unreachableSince.get(domain);
         if (since == null) return false;
         if (System.nanoTime() - since < TimeUnit.SECONDS.toNanos(UNREACHABLE_BACKOFF_SECONDS)) return true;

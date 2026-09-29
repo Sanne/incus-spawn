@@ -283,13 +283,10 @@ class ArtifactCacheProxyTest {
                 .setHost(host)
                 .setPort(443)
                 .setURI(path);
-        var result = io.vertx.core.Promise.<Response>promise();
-        clientContext.runOnContext(v -> client.request(options)
+        return onClientContext(() -> client.request(options)
                 .compose(HttpClientRequest::send)
                 .compose(resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
-                        resp.getHeader("X-Checksum-SHA1"))))
-                .onComplete(result));
-        return result.future();
+                        resp.getHeader("X-Checksum-SHA1")))));
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
@@ -676,6 +673,44 @@ class ArtifactCacheProxyTest {
         assertEquals("v1", get(CENTRAL, JAR).text());
         assertStaysPresent(cached(CENTRAL, JAR), "v1");
         assertEquals(before, Files.getLastModifiedTime(stored), "an unreachable upstream confirms nothing");
+    }
+
+    @Test
+    void aPooledConnectionDoesNotEndTheBackoffUntilItAnswers() throws Exception {
+        publishJar(CENTRAL, JAR, "v1");
+        confirm();
+        var pooled = lastHeadConnection;
+
+        offline();
+        assertEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
+        assertTrue(proxy.inBackoff(CENTRAL), "a refused connect starts the backoff");
+
+        // Back to the address the pooled connection was made to: acquiring it needs no network I/O
+        online(CENTRAL);
+        headsToStall.set(1);
+        var stalled = confirmAsync();
+        await("the HEAD to arrive", () -> stalledConnection != null);
+        assertSame(pooled, stalledConnection, "the HEAD went out on the pooled connection");
+        assertTrue(proxy.inBackoff(CENTRAL), "a pooled connection proves nothing until it answers");
+        stalled.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+
+        assertNotEquals(MitmProxy.SidecarAnswer.UNREACHABLE, confirm());
+        assertFalse(proxy.inBackoff(CENTRAL), "an answer ends the backoff");
+    }
+
+    /** Confirm the cached JAR with Central's checksum header, as a hit does. */
+    static MitmProxy.SidecarAnswer confirm() throws Exception {
+        return confirmAsync().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+    }
+
+    static Future<MitmProxy.SidecarAnswer> confirmAsync() {
+        return onClientContext(() -> proxy.fetchChecksumHeader(CENTRAL, JAR, Revalidation.forDomain(CENTRAL)));
+    }
+
+    static <T> Future<T> onClientContext(java.util.function.Supplier<Future<T>> action) {
+        var result = io.vertx.core.Promise.<T>promise();
+        clientContext.runOnContext(v -> action.get().onComplete(result));
+        return result.future();
     }
 
     @Test
