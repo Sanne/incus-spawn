@@ -11,9 +11,11 @@ import org.aesh.command.option.Option;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @CommandDefinition(
         name = "start",
@@ -108,18 +110,72 @@ public class ProxyStartCommand extends BaseCommand {
         }
         if (debug) cmd.add("--debug");
 
-        int code = runProxy(cmd);
-        if (code != 0) {
+        var proxy = new ForegroundProxy(cmd, PROXY_STOP_GRACE);
+        int code = proxy.run();
+        // A proxy stopped because this process is exiting was asked to stop: nothing to diagnose.
+        if (code != 0 && !proxy.stoppedOnShutdown()) {
             explainAbnormalExit(code);
         }
         return CommandResult.valueOf(code);
     }
 
-    /** Run the proxy in the foreground, sharing this terminal, and return its exit status. */
-    static int runProxy(List<String> cmd) throws IOException, InterruptedException {
-        var process = new ProcessBuilder(cmd).inheritIO().start();
-        return process.waitFor();
+    /**
+     * The proxy run in the foreground, sharing this terminal. Ctrl+C signals the whole process
+     * group, but a signal to this process alone (a {@code kill}, a supervisor, a cancelled CI
+     * step) would leave the proxy orphaned and holding its ports (issue #882), so a shutdown hook
+     * stops it: SIGTERM, then SIGKILL once {@code grace} is up.
+     */
+    static final class ForegroundProxy {
+        private final List<String> cmd;
+        private final Duration grace;
+        private Process process;   // guarded by this
+        private boolean stopping;  // guarded by this
+
+        ForegroundProxy(List<String> cmd, Duration grace) {
+            this.cmd = cmd;
+            this.grace = grace;
+        }
+
+        /** Start the proxy and wait for it; returns its exit status. */
+        int run() throws IOException, InterruptedException {
+            var hook = new Thread(this::stop, "stop-proxy");
+            Runtime.getRuntime().addShutdownHook(hook);
+            try {
+                Process started;
+                // Starting under the lock means a hook that runs meanwhile waits for the process
+                // and stops it, rather than finding nothing and letting it outlive this JVM.
+                synchronized (this) {
+                    if (stopping) return 0;
+                    started = process = new ProcessBuilder(cmd).inheritIO().start();
+                }
+                return started.waitFor();
+            } finally {
+                try { Runtime.getRuntime().removeShutdownHook(hook); } catch (IllegalStateException ignored) {}
+            }
+        }
+
+        /** Whether the proxy ended because this process is shutting down. */
+        synchronized boolean stoppedOnShutdown() {
+            return stopping;
+        }
+
+        private void stop() {
+            Process started;
+            synchronized (this) {
+                stopping = true;
+                started = process;
+            }
+            if (started == null) return;
+            started.destroy();
+            try {
+                if (started.waitFor(grace.toMillis(), TimeUnit.MILLISECONDS)) return;
+            } catch (InterruptedException ignored) {}
+            started.destroyForcibly();
+        }
     }
+
+    /** Longer than the proxy's own 10-second forced exit, so a clean stop always wins. */
+    private static final Duration PROXY_STOP_GRACE = Duration.ofSeconds(15);
 
     private static final int LOG_TAIL_LINES = 10;
 

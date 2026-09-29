@@ -76,6 +76,13 @@ fixed:
   never re-enters the CLI — and converts such a unit's loop into a single `EXIT_CONFIG` failure
   that `RestartPreventExitStatus` halts, or, once `isx-proxy` is installed, into a working proxy.
 
+In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a
+shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds,
+longer than the proxy's own 10-second forced exit. Ctrl+C reaches both through the process group,
+but a signal to the CLI alone (`kill`, a supervisor, a cancelled CI step) used to leave the proxy
+orphaned, holding its ports, and possibly serving an older build than the one being tested (#882).
+Exec'ing the proxy in place of the CLI would avoid the child entirely, but Java cannot exec.
+
 The uber-jars are what JBang users actually run, and nothing else in CI executes them, which is how
 the inline fallback's removal went unnoticed for six weeks. The `uber-jar-smoke` job in
 `test-integration.yml` runs both jars on every PR and asserts the missing-`isx-proxy` path exits 78

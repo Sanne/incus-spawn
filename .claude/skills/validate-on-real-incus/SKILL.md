@@ -124,9 +124,9 @@ Compare the writes before `PUT .../state`, the time of the start request, and an
 - `mvn verify -DskipITs=false` is not this: it runs `isx init` against the host and its template
   build IT has no definition to build. Use the CLI as above.
 - `pkill -f <pattern>` also kills the shell whose command line contains the pattern. Kill by pid.
-- Killing `isx proxy start` leaves the `isx-proxy` it started running, still holding the ports, so
-  the next proxy fails with "Address already in use". Find it with
-  `sudo ss -ltnp | grep 18443` and kill that pid.
+- `kill <pid>` of `isx proxy start` stops the `isx-proxy` it started too (#882), but `kill -9`
+  cannot: the orphan keeps the ports and the next proxy fails with "Address already in use", or a
+  leftover older build keeps serving. Find it with `sudo ss -ltnp | grep 18443` and kill that pid.
 - Inside an isx instance, the outer isx's DNS and MITM proxy sit behind this one. A certificate
   issued by "incus-spawn MITM CA" might be the *outer* one: check which domains the inner proxy
   actually overrides (`incus network get incusbr0 raw.dnsmasq`) before reading a result.
