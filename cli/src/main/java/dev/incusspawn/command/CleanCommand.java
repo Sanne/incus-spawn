@@ -5,6 +5,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.lifecycle.InstanceDestroyer;
 import dev.incusspawn.vm.VmManager;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
@@ -362,6 +363,34 @@ public class CleanCommand extends BaseCommand {
         return images.stream().mapToLong(IncusClient.ImageInfo::size).sum();
     }
 
+    /** Tells the proxy to re-read which instance holds which address; a seam for tests. */
+    static Runnable proxyRefresh = InstanceDestroyer::refreshProxy;
+
+    /**
+     * Delete every failed build, then tell the proxy once. A failed build keeps the static IP
+     * and account pins its build was given (#903), so until the proxy re-reads, the next
+     * holder of that address would be served the deleted build's accounts.
+     */
+    static int deleteFailedBuilds(IncusClient incus, List<String> warnings) {
+        int deleted = 0;
+        for (var name : findFailedBuilds(incus)) {
+            try {
+                incus.delete(name, true);
+                deleted++;
+            } catch (Exception e) {
+                warnings.add("Could not delete " + name + ": " + e.getMessage());
+            }
+        }
+        if (deleted > 0) proxyRefresh.run();
+        return deleted;
+    }
+
+    /** Delete one failed build and tell the proxy, as {@link #deleteFailedBuilds} does. */
+    static void deleteFailedBuild(IncusClient incus, String name) {
+        incus.delete(name, true);
+        proxyRefresh.run();
+    }
+
     static List<String> findFailedBuilds(IncusClient incus) {
         var result = new ArrayList<String>();
         for (var inst : incus.list()) {
@@ -440,17 +469,7 @@ public class CleanCommand extends BaseCommand {
         var beforeUsage = incus.getPoolUsageBytes(pool);
         var warnings = new ArrayList<String>();
 
-        int failedDeleted = 0;
-        if (deleteFailedBuilds) {
-            for (var name : findFailedBuilds(incus)) {
-                try {
-                    incus.delete(name, true);
-                    failedDeleted++;
-                } catch (Exception e) {
-                    warnings.add("Could not delete " + name + ": " + e.getMessage());
-                }
-            }
-        }
+        int failedDeleted = deleteFailedBuilds ? deleteFailedBuilds(incus, warnings) : 0;
 
         int imagesDeleted = 0;
         int baseImagesDeleted = 0;

@@ -738,7 +738,7 @@ public class DoctorCommand extends BaseCommand {
         for (var name : CleanCommand.findFailedBuilds(incus)) {
             findings.add(Finding.warn("Failed build: " + name, "can be deleted to reclaim space",
                     new Remediation("Delete " + name, true,
-                            () -> incus.delete(name, true))));
+                            () -> CleanCommand.deleteFailedBuild(incus, name))));
         }
         return findings;
     }
