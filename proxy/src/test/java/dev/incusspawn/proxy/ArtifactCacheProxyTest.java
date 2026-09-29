@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -102,6 +103,21 @@ class ArtifactCacheProxyTest {
     static final AtomicInteger headsToStall = new AtomicInteger();
     static volatile long headDelayMs;
     static final AtomicInteger headsAnswered = new AtomicInteger();
+    /** GETs left to cut off halfway through their body: stalled, or closed when {@link #cutByClosing}. */
+    static final AtomicInteger getsToCut = new AtomicInteger();
+    static volatile boolean cutByClosing;
+    /** Whether a Range request gets its 206, as from the real repositories and registries. */
+    static volatile boolean honourRange;
+    static final List<String> rangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
+    static final List<String> ifRangesAsked = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it, as a republish would. */
+    static volatile String etag;
+    static volatile String lastModified;
+    /** Range answers left to end short, as if the connection closed early without an error. */
+    static final AtomicInteger rangesToShorten = new AtomicInteger();
+    static volatile boolean changeOnCut;
+    /** GETs left to receive but never answer. */
+    static final AtomicInteger getsToIgnore = new AtomicInteger();
 
     @BeforeAll
     static void start() throws Exception {
@@ -170,6 +186,9 @@ class ArtifactCacheProxyTest {
                 return;
             }
         }
+        if (req.method() == HttpMethod.GET && getsToIgnore.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            return;
+        }
         reply(req, key);
     }
 
@@ -188,7 +207,44 @@ class ArtifactCacheProxyTest {
         resp.setStatusCode(reply.status());
         if (reply.location() != null) resp.putHeader("Location", reply.location());
         if (reply.checksumHeader() != null) resp.putHeader("X-Checksum-SHA1", reply.checksumHeader());
-        resp.end(Buffer.buffer(reply.body() == null ? new byte[0] : reply.body()));
+        var body = reply.body() == null ? new byte[0] : reply.body();
+        var currentEtag = etag;
+        if (currentEtag != null && reply.status() == 200) resp.putHeader("ETag", currentEtag);
+        var currentLastModified = lastModified;
+        if (currentLastModified != null && reply.status() == 200) resp.putHeader("Last-Modified", currentLastModified);
+        var range = req.getHeader("Range");
+        if (range != null) rangesAsked.add(range);
+        var ifRange = req.getHeader("If-Range");
+        if (ifRange != null) ifRangesAsked.add(ifRange);
+        if (range != null && honourRange && reply.status() == 200
+                && (ifRange == null || ifRange.equals(currentEtag) || ifRange.equals(currentLastModified))) {
+            var from = Integer.parseInt(range.substring("bytes=".length(), range.length() - 1));
+            var rest = java.util.Arrays.copyOfRange(body, from, body.length);
+            resp.setStatusCode(206)
+                    .putHeader("Content-Range", "bytes " + from + "-" + (body.length - 1) + "/" + body.length);
+            if (getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                // Stalls again, halfway through the rest
+                resp.putHeader("Content-Length", String.valueOf(rest.length))
+                        .write(Buffer.buffer(java.util.Arrays.copyOf(rest, rest.length / 2)));
+                return;
+            }
+            if (rangesToShorten.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                rest = java.util.Arrays.copyOf(rest, rest.length / 2);
+            }
+            resp.end(Buffer.buffer(rest));
+            return;
+        }
+        if (req.method() == HttpMethod.GET && reply.status() == 200
+                && getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            resp.putHeader("Content-Length", String.valueOf(body.length));
+            if (changeOnCut) etag = "\"changed\"";
+            resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, body.length / 2)))
+                    .onComplete(written -> {
+                        if (cutByClosing) req.connection().close();
+                    });
+            return;
+        }
+        resp.end(Buffer.buffer(body));
     }
 
     @AfterAll
@@ -212,6 +268,18 @@ class ArtifactCacheProxyTest {
         headsToStall.set(0);
         headDelayMs = 0;
         headsAnswered.set(0);
+        getsToCut.set(0);
+        cutByClosing = false;
+        honourRange = true;
+        rangesAsked.clear();
+        ifRangesAsked.clear();
+        etag = null;
+        lastModified = null;
+        rangesToShorten.set(0);
+        changeOnCut = false;
+        getsToIgnore.set(0);
+        proxy.downloadIdleSeconds = 20;
+        proxy.clientSilenceBudgetSeconds = 110;
         proxy.maxBackgroundConfirmations = 16;
         // Most tests are about confirming a hit; the tiers that skip it have tests of their own
         proxy.artifactCacheTiers = ArtifactCacheTiers.CONFIRM_EVERY_HIT;
@@ -277,6 +345,13 @@ class ArtifactCacheProxyTest {
     }
 
     static Future<Response> getAsync(String host, String path) {
+        return sendAsync(host, path, resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
+                resp.getHeader("X-Checksum-SHA1"))));
+    }
+
+    /** A GET through the proxy, its response handled by {@code read}, all on the client's context. */
+    static <T> Future<T> sendAsync(String host, String path,
+                                   Function<io.vertx.core.http.HttpClientResponse, Future<T>> read) {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
@@ -285,8 +360,7 @@ class ArtifactCacheProxyTest {
                 .setURI(path);
         return onClientContext(() -> client.request(options)
                 .compose(HttpClientRequest::send)
-                .compose(resp -> resp.body().map(b -> new Response(resp.statusCode(), b.getBytes(),
-                        resp.getHeader("X-Checksum-SHA1")))));
+                .compose(read));
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
@@ -765,6 +839,201 @@ class ArtifactCacheProxyTest {
         routes.put(CENTRAL + " " + JAR + ".sha1", new Reply(200, hex("SHA-1", "v1".getBytes()).getBytes(), null));
         assertEquals("corrupt", get(CENTRAL, JAR).text(), "the client sees what upstream sent");
         assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    /** Text that does not repeat, so a resume from the wrong offset cannot look right. */
+    static String randomText(int length) {
+        var random = new java.util.Random(length);
+        var text = new StringBuilder(length);
+        for (int i = 0; i < length; i++) text.append((char) ('a' + random.nextInt(26)));
+        return text.toString();
+    }
+
+    static final String ETAG = "\"v1\"";
+
+    /** Publishes a jar, with a strong ETag, whose first download is cut off halfway. */
+    static String publishCutJar(boolean byClosing) throws Exception {
+        var content = randomText(128 * 1024);
+        publishJar(CENTRAL, JAR, content);
+        etag = ETAG;
+        getsToCut.set(1);
+        cutByClosing = byClosing;
+        proxy.downloadIdleSeconds = 1;
+        return content;
+    }
+
+    @Test
+    void downloadThatStallsMidwayIsResumedWhereItStopped() throws Exception {
+        // npm drops an optional platform package whose download breaks (#925)
+        var content = publishCutJar(false);
+
+        assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
+        assertEquals(List.of("bytes=" + content.length() / 2 + "-"), rangesAsked);
+        assertEquals(List.of(ETAG), ifRangesAsked, "only the same file may continue");
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadThatKeepsStallingIsResumedAsLongAsItGetsFurther() throws Exception {
+        var content = publishCutJar(false);
+        // The first GET and the next four resumes each stall halfway through
+        getsToCut.set(5);
+
+        assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
+        assertEquals(5, rangesAsked.size(), rangesAsked.toString());
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadWhoseConnectionDropsMidwayIsResumedWhereItStopped() throws Exception {
+        var content = publishCutJar(true);
+
+        // From half, or from 0 when the close overtakes the bytes before the proxy writes them
+        assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
+        assertEquals(1, rangesAsked.size(), rangesAsked.toString());
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    /** A reset connection, or a 502 if nothing had been sent yet: never a body that looks whole. */
+    static void assertDownloadFails() throws Exception {
+        try {
+            var response = get(CENTRAL, JAR);
+            assertEquals(502, response.status(), "got " + response.body().length + " bytes");
+        } catch (java.util.concurrent.ExecutionException e) {
+            // reset mid-body
+        }
+    }
+
+    @Test
+    void downloadIsNotResumedFromAnUpstreamThatIgnoresRange() throws Exception {
+        publishCutJar(true);
+        honourRange = false;
+
+        assertDownloadFails();
+        assertEquals(1, rangesAsked.size(), rangesAsked.toString());
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void downloadOfAFileThatChangedIsNotSplicedOntoTheOldOne() throws Exception {
+        publishCutJar(true);
+        changeOnCut = true;
+
+        assertDownloadFails();
+        assertEquals(List.of(ETAG), ifRangesAsked);
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void downloadWithOnlyLastModifiedResumesAgainstIt() throws Exception {
+        var content = publishCutJar(false);
+        etag = null;
+        lastModified = "Tue, 29 Sep 2026 08:10:59 GMT";
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(List.of(lastModified), ifRangesAsked);
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadWithOnlyAWeakEtagIsNotResumed() throws Exception {
+        // A server ignores a weak If-Range and answers the whole file
+        publishCutJar(true);
+        etag = "W/\"v1\"";
+
+        assertDownloadFails();
+        assertEquals(List.of(), rangesAsked, "not even tried");
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void rangeThatEndsShortIsResumedAgain() throws Exception {
+        var content = publishCutJar(false);
+        rangesToShorten.set(1);
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(2, rangesAsked.size(), rangesAsked.toString());
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void redirectedDownloadIsResumedAtItsTarget() throws Exception {
+        var content = randomText(128 * 1024);
+        var bytes = content.getBytes(StandardCharsets.UTF_8);
+        var cdnPath = "/cdn/lib-1.0.jar";
+        routes.put(CENTRAL + " " + JAR, new Reply(302, null, "https://" + CENTRAL + cdnPath));
+        routes.put(CENTRAL + " " + cdnPath, new Reply(200, bytes, null, hex("SHA-1", bytes)));
+        etag = ETAG;
+        getsToCut.set(1);
+        proxy.downloadIdleSeconds = 1;
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(1, hitsOn(CENTRAL, JAR), "the redirect is not followed again");
+        assertEquals(2, hitsOn(CENTRAL, cdnPath));
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadGoesOnIntoTheCacheWhenTheClientLeaves() throws Exception {
+        var content = randomText(64 * 1024).repeat(256);
+        publishJar(CENTRAL, JAR, content);
+
+        sendAsync(CENTRAL, JAR, resp -> {
+            var got = new java.util.concurrent.atomic.AtomicLong();
+            resp.handler(b -> {
+                if (got.addAndGet(b.length()) > 1_000_000) resp.request().connection().close();
+            });
+            return Future.succeededFuture();
+        });
+
+        // The next client, maybe the same one retrying, gets a hit
+        await(JAR + " to be cached", () -> Files.isRegularFile(cached(CENTRAL, JAR)));
+    }
+
+    @Test
+    void downloadWithoutAValidatorIsNotResumed() throws Exception {
+        // Without If-Range, a file changed meanwhile would continue the old one's bytes
+        publishCutJar(true);
+        etag = null;
+
+        assertDownloadFails();
+        assertEquals(List.of(), rangesAsked, "not even tried");
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void clientThatStopsReadingIsNotTakenForAStalledUpstream() throws Exception {
+        // Enough to fill every socket buffer between here and upstream, so upstream is paused
+        var content = randomText(64 * 1024).repeat(256);
+        publishJar(CENTRAL, JAR, content);
+        etag = ETAG;
+        proxy.downloadIdleSeconds = 1;
+
+        var body = sendAsync(CENTRAL, JAR, resp -> {
+            var received = io.vertx.core.Promise.<Buffer>promise();
+            var buffer = Buffer.buffer(content.length());
+            resp.pause();
+            // Longer than two stall checks
+            vertx.setTimer(2_500, t -> resp.resume());
+            resp.handler(buffer::appendBuffer);
+            resp.endHandler(end -> received.complete(buffer));
+            resp.exceptionHandler(received::tryFail);
+            return received.future();
+        }).toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+
+        assertEquals(content.length(), body.length());
+        assertEquals(hex("SHA-1", content.getBytes()), hex("SHA-1", body.getBytes()));
+        assertEquals(List.of(), rangesAsked, "a healthy upstream was not reset");
+    }
+
+    @Test
+    void headThatNeverComesIsAnErrorBeforeTheClientIsDropped() throws Exception {
+        // Otherwise the MITM server's idle timeout drops the client, silently (#925)
+        publishJar(CENTRAL, JAR, "v1");
+        getsToIgnore.set(1);
+        proxy.clientSilenceBudgetSeconds = 1;
+
+        assertEquals(502, get(CENTRAL, JAR).status());
     }
 
     @Test

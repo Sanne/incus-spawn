@@ -273,6 +273,15 @@ public class MitmProxy {
     boolean upstreamTrustAll = false;
     // Overridable for tests: see probeClient's options
     int probeReadIdleSeconds = 15;
+    static final int MITM_IDLE_TIMEOUT_SECONDS = 120;
+    // How long a download to the cache may go without a byte from upstream before it is
+    // resumed (#925)
+    int downloadIdleSeconds = 20;
+    // How long a client fetching into the cache may go without a byte from us. Below the MITM
+    // server's idle timeout, which drops the client silently, with the upstream read still
+    // pending: the upstream client's read-idle timeout (300s) outlasts it. Waiting for a
+    // response head and every resume get only what is left of it.
+    int clientSilenceBudgetSeconds = MITM_IDLE_TIMEOUT_SECONDS - 10;
     // From config.yaml's artifact-cache: section, through useConfig()
     volatile ArtifactCacheTiers artifactCacheTiers = ArtifactCacheTiers.DEFAULT;
     // For the benchmark (bench/run.sh --load=maven, via ISX_BENCH_UPSTREAM) and tests:
@@ -691,7 +700,7 @@ public class MitmProxy {
                 .setSsl(true)
                 .setSni(true)
                 .setKeyCertOptions(keyCertOptions)
-                .setIdleTimeout(120)
+                .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
                 .setIdleTimeoutUnit(TimeUnit.SECONDS)
                 .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
                 .setMaxWebSocketFrameSize(1024 * 1024)
@@ -707,6 +716,9 @@ public class MitmProxy {
                 .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(30_000)
+                // Outlasts the MITM server's idle timeout, so a stalled relay is dropped by that,
+                // silently; waits for the cache take clientSilenceBudgetSeconds instead. Not lowered
+                // for everything: an upload gets no bytes back for as long as it sends.
                 .setReadIdleTimeout(300);
         var upstreamTrust = upstreamTrust();
         if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
@@ -919,6 +931,8 @@ public class MitmProxy {
     // --- Request routing ---
 
     private void routeRequest(HttpServerRequest clientReq) {
+        // When the client last heard from us, for waits that must end before its idle timeout
+        var started = System.nanoTime();
         try {
             var domain = extractDomain(clientReq);
             if (domain == null) {
@@ -927,13 +941,13 @@ public class MitmProxy {
             }
 
             if (REGISTRY_DOMAINS.contains(domain)) {
-                handleRegistryRequest(clientReq, domain);
+                handleRegistryRequest(clientReq, started, domain);
             } else if (MAVEN_DOMAINS.contains(domain)) {
-                handleArtifactRequest(clientReq, domain, path -> mavenTarget(domain, path));
+                handleArtifactRequest(clientReq, started, domain, path -> mavenTarget(domain, path));
             } else if (GRADLE_DOMAINS.contains(domain)) {
-                handleArtifactRequest(clientReq, domain, MitmProxy::gradleTarget);
+                handleArtifactRequest(clientReq, started, domain, MitmProxy::gradleTarget);
             } else if (NPM_DOMAINS.contains(domain)) {
-                handleNpmRequest(clientReq, domain);
+                handleNpmRequest(clientReq, started, domain);
             } else if (isInterceptedDomain(domain)) {
                 RequestContext ctx;
                 try {
@@ -1410,7 +1424,7 @@ public class MitmProxy {
      * GET requests for blobs with a SHA256 digest are served from cache or
      * fetched, cached, and served. Everything else is relayed transparently.
      */
-    private void handleRegistryRequest(HttpServerRequest clientReq, String domain) {
+    private void handleRegistryRequest(HttpServerRequest clientReq, long started, String domain) {
         var path = clientReq.path();
 
         if (clientReq.method() == HttpMethod.GET && path != null) {
@@ -1428,7 +1442,7 @@ public class MitmProxy {
                                 "... (" + formatSize(size) + ")");
                         serveCachedFile(clientReq.response(), cacheFile, digest);
                     } else {
-                        fetchCacheAndServe(clientReq, domain, cacheFile, imageRef,
+                        fetchCacheAndServe(clientReq, started, domain, cacheFile, imageRef,
                                 Verification.ofDigest(digest));
                     }
                 }).onFailure(err -> {
@@ -1469,7 +1483,7 @@ public class MitmProxy {
      * Fetch a file from upstream, tee-stream it to the client and a temp file,
      * and commit it to the cache only if it passes {@code verification}.
      */
-    private void fetchCacheAndServe(HttpServerRequest clientReq, String domain,
+    private void fetchCacheAndServe(HttpServerRequest clientReq, long started, String domain,
                                     Path cacheFile, String ref, Verification verification) {
         var options = new RequestOptions()
                 .setMethod(clientReq.method())
@@ -1478,6 +1492,8 @@ public class MitmProxy {
                 .setURI(clientReq.uri());
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
+            // A head that never comes is an error the client can retry, not a silent drop
+            upReq.idleTimeout(timeoutLeftMillis(started));
             copyRequestHeaders(clientReq, upReq, domain);
             upReq.putHeader("Connection", "close");
             // Don't let upstream gzip the response — we cache raw bytes
@@ -1488,12 +1504,12 @@ public class MitmProxy {
                 var statusCode = upResp.statusCode();
 
                 if (statusCode == 200) {
-                    teeStreamToCache(clientReq.response(), upResp, cacheFile, ref, verification);
+                    new CachingDownload(clientReq.response(), started, upResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
                     // Follow redirect manually — Vert.x setFollowRedirects carries
                     // the original Host header, which breaks cross-domain redirects
                     // (e.g. plugins.gradle.org -> plugins-artifacts.gradle.org).
-                    followRedirect(clientReq, upResp, cacheFile, ref, verification, 0);
+                    followRedirect(clientReq, upResp, cacheFile, ref, verification, 0, started);
                 } else {
                     var clientResp = clientReq.response();
                     clientResp.setStatusCode(statusCode);
@@ -1521,7 +1537,7 @@ public class MitmProxy {
      */
     private void followRedirect(HttpServerRequest clientReq, HttpClientResponse upResp,
                                 Path cacheFile, String ref,
-                                Verification verification, int depth) {
+                                Verification verification, int depth, long started) {
         if (depth >= MAX_REDIRECTS) {
             System.err.println("Too many redirects for " + ref);
             sendError(clientReq.response(), 502, "Too many redirects");
@@ -1554,15 +1570,16 @@ public class MitmProxy {
                 .setURI(redirectPath);
 
         requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
+            redReq.idleTimeout(timeoutLeftMillis(started));
             redReq.putHeader("Host", redirectHost);
             redReq.putHeader("Connection", "close");
 
             redReq.send().onSuccess(redResp -> {
                 var statusCode = redResp.statusCode();
                 if (statusCode == 200) {
-                    teeStreamToCache(clientReq.response(), redResp, cacheFile, ref, verification);
+                    new CachingDownload(clientReq.response(), started, redResp, cacheFile, ref, verification).start();
                 } else if (statusCode >= 300 && statusCode < 400) {
-                    followRedirect(clientReq, redResp, cacheFile, ref, verification, depth + 1);
+                    followRedirect(clientReq, redResp, cacheFile, ref, verification, depth + 1, started);
                 } else {
                     ProxyLog.warn("Redirect target " + redirectHost + " returned " +
                             statusCode + " for " + ref + " (Location: " + location + ")");
@@ -1582,94 +1599,342 @@ public class MitmProxy {
         });
     }
 
-    private void teeStreamToCache(HttpServerResponse clientResp, HttpClientResponse upResp,
-                                  Path cacheFile, String ref, Verification verification) {
-        upResp.pause();
+    /** What is left of the client's silence budget, counted from {@code since}. */
+    private long silenceLeftMillis(long since) {
+        return TimeUnit.SECONDS.toMillis(clientSilenceBudgetSeconds)
+                - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - since);
+    }
 
-        clientResp.setStatusCode(200);
-        clientResp.putHeader("Content-Type", "application/octet-stream");
-        var clHeader = upResp.getHeader("Content-Length");
-        if (clHeader != null) {
-            clientResp.putHeader("Content-Length", clHeader);
+    /** {@link #silenceLeftMillis} as a timeout, which must be positive. */
+    private long timeoutLeftMillis(long since) {
+        return Math.max(1, silenceLeftMillis(since));
+    }
+
+    // How often a download may be resumed in a row without getting further
+    private static final int MAX_DOWNLOAD_RESUMES = 3;
+    // The least of the client's silence budget worth starting a resume with
+    private static final long MIN_RESUME_MILLIS = 1_000;
+
+    /**
+     * One download, streamed to the client and a temp file at once, and committed to the cache
+     * once it passes {@code verification}. When upstream stalls or breaks off mid-body, the rest
+     * is asked for with a Range request, so the client still sees one unbroken response: npm
+     * drops an optional dependency whose download breaks, and exits 0 without it (#925).
+     */
+    private final class CachingDownload {
+        private final HttpServerResponse clientResp;
+        private final HttpClientResponse first;
+        private final Path cacheFile;
+        private final String ref;
+        private final Verification verification;
+        private final boolean isGzip;
+        private final long length;
+        // What the rest must still be for a Range request to continue it (If-Range); without
+        // one, a changed file would be spliced onto the old one's first bytes
+        private final String validator;
+        // The response bytes are coming from; null while a resume is being asked for
+        private HttpClientResponse current;
+        private io.vertx.core.file.AsyncFile file;
+        private Path tempFile;
+        private long received;
+        // Resumes since the download last got further
+        private int resumes;
+        private boolean failed;
+        private boolean done;
+        // The client left: the download goes on for the cache alone, as it always has, with
+        // nobody left to write to or to keep within a silence budget
+        private boolean clientGone;
+        // Whether upstream is paused on our own backpressure: then it is not stalled
+        private boolean waitingForDrain;
+        // When the client last heard from us (from its request on, head wait included), and
+        // upstream's last sign of life
+        private long clientActive;
+        private long upstreamActive = System.nanoTime();
+        private long stallTimer;
+
+        CachingDownload(HttpServerResponse clientResp, long started, HttpClientResponse first,
+                        Path cacheFile, String ref, Verification verification) {
+            this.clientResp = clientResp;
+            this.clientActive = started;
+            this.first = first;
+            this.cacheFile = cacheFile;
+            this.ref = ref;
+            this.verification = verification;
+            var contentEncoding = first.getHeader("Content-Encoding");
+            this.isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
+            this.length = contentLength(first);
+            // A weak ETag makes the server ignore If-Range (RFC 9110), so it could never resume
+            var etag = first.getHeader("ETag");
+            this.validator = etag != null && !etag.startsWith("W/") ? etag : first.getHeader("Last-Modified");
         }
-        verification.responseHeaders().accept(clientResp, upResp);
-        if (clHeader == null) {
-            clientResp.setChunked(true);
-        }
 
-        var contentEncoding = upResp.getHeader("Content-Encoding");
-        var isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
+        void start() {
+            clientResp.setStatusCode(200);
+            clientResp.putHeader("Content-Type", "application/octet-stream");
+            var clHeader = first.getHeader("Content-Length");
+            if (clHeader != null) {
+                clientResp.putHeader("Content-Length", clHeader);
+            }
+            verification.responseHeaders().accept(clientResp, first);
+            if (clHeader == null) {
+                clientResp.setChunked(true);
+            }
+            // Before anything asynchronous: an error with no handler yet is only logged by Vert.x
+            attach(first);
+            watchForStalls();
+            clientResp.closeHandler(v -> {
+                if (failed || done) return;
+                ProxyLog.info("Client left before " + ref + " was downloaded (" + received
+                        + " of " + length + " bytes); finishing it for the cache");
+                clientGone = true;
+                resumeWhenWritable();
+            });
 
-        vertx.executeBlocking(() -> {
-            Files.createDirectories(cacheFile.getParent());
-            return Files.createTempFile(cacheFile.getParent(), "dl-", ".tmp");
-        }, false).onSuccess(tempFile -> {
-            vertx.fileSystem().open(tempFile.toString(),
-                    new io.vertx.core.file.OpenOptions().setCreate(true).setWrite(true)
-            ).onSuccess(asyncFile -> {
-                upResp.handler(chunk -> {
-                    clientResp.write(chunk);
-                    asyncFile.write(chunk);
-                    if (clientResp.writeQueueFull()) {
-                        upResp.pause();
-                        clientResp.drainHandler(v -> {
-                            if (!asyncFile.writeQueueFull()) upResp.resume();
-                        });
-                    }
-                    if (asyncFile.writeQueueFull()) {
-                        upResp.pause();
-                        asyncFile.drainHandler(v -> {
-                            if (!clientResp.writeQueueFull()) upResp.resume();
-                        });
-                    }
-                });
-
-                upResp.endHandler(v -> {
-                    asyncFile.close().onComplete(closeResult -> {
-                        clientResp.end();
-                        verification.expected().apply(upResp).onComplete(ar -> vertx.executeBlocking(() -> {
-                            finalizeCacheFile(tempFile, cacheFile, ref, isGzip,
-                                    verification, ar.succeeded() ? ar.result() : null);
-                            return null;
-                        }, false));
-                    });
-                });
-
-                upResp.exceptionHandler(err -> {
-                    asyncFile.close();
-                    sendError(clientResp, 502, "Upstream stream error");
-                    vertx.executeBlocking(() -> {
-                        Files.deleteIfExists(tempFile);
-                        return null;
-                    });
-                    ProxyLog.warn("Stream error caching " + ref + ": " + err.getMessage());
-                });
-
-                asyncFile.exceptionHandler(err -> {
+            vertx.executeBlocking(() -> {
+                Files.createDirectories(cacheFile.getParent());
+                return Files.createTempFile(cacheFile.getParent(), "dl-", ".tmp");
+            }, false).compose(temp -> {
+                tempFile = temp;
+                return vertx.fileSystem().open(temp.toString(),
+                        new io.vertx.core.file.OpenOptions().setCreate(true).setWrite(true));
+            }).onSuccess(opened -> {
+                file = opened;
+                file.exceptionHandler(err -> {
                     ProxyLog.warn("Disk write error caching " + ref + ": " + err.getMessage());
-                    upResp.handler(null);
-                    upResp.endHandler(null);
-                    upResp.exceptionHandler(null);
-                    upResp.request().reset();
-                    asyncFile.close();
-                    sendError(clientResp, 502, "Cache write error");
-                    vertx.executeBlocking(() -> {
-                        Files.deleteIfExists(tempFile);
-                        return null;
-                    });
+                    fail("Cache write error");
                 });
-
-                upResp.resume();
+                if (failed) {
+                    discardTempFile();
+                } else {
+                    resumeWhenWritable();
+                }
             }).onFailure(err -> {
                 ProxyLog.warn("Failed to open temp file for caching: " + err.getMessage());
-                upResp.resume();
-                pipeResponse(upResp, clientResp);
+                if (tempFile != null) discardTempFile();
+                if (failed) return;
+                if (current == null) {
+                    fail("Cache write error");
+                } else {
+                    finish();
+                    // Relay what is left uncached; the handlers above only knew the cache
+                    current.handler(null).endHandler(null).exceptionHandler(null);
+                    pipeResponse(current, clientResp);
+                    current.resume();
+                }
             });
-        }).onFailure(err -> {
-            ProxyLog.warn("Failed to create temp file: " + err.getMessage());
-            upResp.resume();
-            pipeResponse(upResp, clientResp);
-        });
+        }
+
+        private void attach(HttpClientResponse upResp) {
+            current = upResp;
+            upstreamActive = System.nanoTime();
+            upResp.pause();
+            upResp.handler(chunk -> {
+                if (upResp != current) return;
+                received += chunk.length();
+                resumes = 0;
+                clientActive = upstreamActive = System.nanoTime();
+                if (!clientGone) clientResp.write(chunk);
+                file.write(chunk);
+                if (clientBackedUp() || file.writeQueueFull()) {
+                    upResp.pause();
+                    waitingForDrain = true;
+                    resumeWhenWritable();
+                }
+            });
+            upResp.endHandler(v -> {
+                if (upResp != current) return;
+                if (length >= 0 && received < length) {
+                    broken(new IOException("upstream ended at " + received + " of " + length + " bytes"), false);
+                } else {
+                    complete();
+                }
+            });
+            upResp.exceptionHandler(err -> {
+                if (upResp == current) broken(err, false);
+            });
+        }
+
+        private void resumeWhenWritable() {
+            if (failed || done || file == null) return;
+            if (clientBackedUp()) {
+                clientResp.drainHandler(v -> resumeWhenWritable());
+            } else if (file.writeQueueFull()) {
+                file.drainHandler(v -> resumeWhenWritable());
+            } else if (current != null) {
+                if (waitingForDrain) {
+                    // The client took what we had: it was not left waiting, nor upstream stalled
+                    waitingForDrain = false;
+                    clientActive = upstreamActive = System.nanoTime();
+                }
+                current.resume();
+            }
+        }
+
+        private boolean clientBackedUp() {
+            return !clientGone && clientResp.writeQueueFull();
+        }
+
+        /**
+         * Vert.x's request idle timeout stops at the response head, and the upstream client's
+         * read-idle timeout outlasts the MITM server's, so a body that stops arriving is noticed here.
+         * Not while upstream waits on our own backpressure or for the temp file to open, or while
+         * a resume is being asked for (that request has its own timeouts).
+         */
+        private void watchForStalls() {
+            long wait;
+            if (current == null || waitingForDrain || file == null) {
+                wait = idleMillis();
+            } else {
+                var quiet = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - upstreamActive);
+                wait = Math.min(idleMillis() - quiet, resumeBudgetMillis());
+                if (wait <= 0) {
+                    broken(new java.util.concurrent.TimeoutException("no data for " + quiet / 1000 + "s"), false);
+                    if (!failed) watchForStalls();
+                    return;
+                }
+            }
+            stallTimer = vertx.setTimer(wait, id -> {
+                if (!failed && !done) watchForStalls();
+            });
+        }
+
+        private long idleMillis() {
+            return TimeUnit.SECONDS.toMillis(downloadIdleSeconds);
+        }
+
+        /** What a resume can still take before the client has waited too long for a byte. */
+        private long resumeBudgetMillis() {
+            return clientGone ? Long.MAX_VALUE : silenceLeftMillis(clientActive) - MIN_RESUME_MILLIS;
+        }
+
+        /** A resume's connect and head timeouts: what the budget leaves, if anyone is waiting. */
+        private long resumeTimeoutMillis(long cap) {
+            return clientGone ? cap : Math.min(cap, timeoutLeftMillis(clientActive));
+        }
+
+        private void finish() {
+            done = true;
+            vertx.cancelTimer(stallTimer);
+        }
+
+        private void complete() {
+            finish();
+            file.close().onComplete(closed -> {
+                if (!clientGone) clientResp.end();
+                verification.expected().apply(first).onComplete(ar -> vertx.executeBlocking(() -> {
+                    finalizeCacheFile(tempFile, cacheFile, ref, isGzip,
+                            verification, ar.succeeded() ? ar.result() : null);
+                    return null;
+                }, false));
+            });
+        }
+
+        private void broken(Throwable err, boolean resumeFailed) {
+            if (failed || done) return;
+            abandonCurrent();
+            var cannot = whyNotResumable();
+            if (cannot != null) {
+                ProxyLog.warn("Stream error caching " + ref + " at " + received + " of " + length
+                        + " bytes (" + err.getMessage() + "), not resuming: " + cannot);
+                fail("Upstream stream error");
+                return;
+            }
+            resumes++;
+            ProxyLog.warn("Download of " + ref + " broke off at " + received + " of " + length
+                    + " bytes (" + err.getMessage() + "); resuming");
+            // At once after a stall or a broken body; after a failed resume, give the network a moment
+            if (resumeFailed) {
+                var backoff = Math.min(TimeUnit.SECONDS.toMillis(resumes - 1), resumeBudgetMillis());
+                vertx.setTimer(Math.max(1, backoff), id -> resume());
+            } else {
+                resume();
+            }
+        }
+
+        private String whyNotResumable() {
+            // Compressed on the fly, the same file need not give the same bytes twice
+            if (isGzip) return "it is gzip-encoded";
+            if (length < 0) return "its length is unknown";
+            if (received >= length) return "every byte had arrived";
+            if (validator == null) return "upstream gave no ETag or Last-Modified to resume against";
+            if (resumes >= MAX_DOWNLOAD_RESUMES) return MAX_DOWNLOAD_RESUMES + " resumes in a row got nowhere";
+            if (resumeBudgetMillis() < 0) {
+                return "the client has waited " + clientSilenceBudgetSeconds + "s for the next byte";
+            }
+            return null;
+        }
+
+        private void resume() {
+            if (failed) return;
+            var from = first.request();
+            var options = new RequestOptions()
+                    .setMethod(HttpMethod.GET)
+                    .setHost(from.getHost())
+                    .setPort(from.getPort())
+                    .setURI(from.getURI())
+                    .setConnectTimeout(resumeTimeoutMillis(30_000));
+            var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());
+            var resumeAt = received;
+            requestWithAsyncDns(options).compose(req -> {
+                req.idleTimeout(resumeTimeoutMillis(idleMillis()));
+                req.headers().setAll(headers);
+                req.putHeader("Range", "bytes=" + resumeAt + "-");
+                // Only the same bytes may continue: a changed file comes back whole (200)
+                req.putHeader("If-Range", validator);
+                req.putHeader("Connection", "close");
+                return req.send();
+            }).onSuccess(resp -> {
+                if (failed) {
+                    resp.request().reset();
+                } else if (resp.statusCode() == 206 && resumesAt(resp, resumeAt)) {
+                    attach(resp);
+                    resumeWhenWritable();
+                } else {
+                    resp.request().reset();
+                    ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
+                            + " to a Range request");
+                    fail("Upstream stream error");
+                }
+            }).onFailure(err -> broken(err, true));
+        }
+
+        /** Detached first: its reset reports back to its handlers, which must not take it as a new break. */
+        private void abandonCurrent() {
+            var upResp = current;
+            current = null;
+            if (upResp != null) upResp.request().reset();
+        }
+
+        /** Whether a 206 carries the rest of this file, from {@code offset} to its end. */
+        private boolean resumesAt(HttpClientResponse resp, long offset) {
+            return ("bytes " + offset + "-" + (length - 1) + "/" + length).equals(resp.getHeader("Content-Range"));
+        }
+
+        private void fail(String message) {
+            if (failed || done) return;
+            failed = true;
+            vertx.cancelTimer(stallTimer);
+            abandonCurrent();
+            sendError(clientResp, 502, message);
+            if (file != null) discardTempFile();
+        }
+
+        private void discardTempFile() {
+            var closed = file != null ? file.close() : Future.<Void>succeededFuture();
+            closed.onComplete(v -> vertx.executeBlocking(() -> {
+                Files.deleteIfExists(tempFile);
+                return null;
+            }));
+        }
+    }
+
+    private static long contentLength(HttpClientResponse resp) {
+        var header = resp.getHeader("Content-Length");
+        try {
+            return header == null ? -1 : Long.parseLong(header.strip());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private void finalizeCacheFile(Path tempFile, Path cacheFile, String ref, boolean isGzip,
@@ -1740,7 +2005,7 @@ public class MitmProxy {
      *       relayed transparently.</li>
      * </ul>
      */
-    private void handleNpmRequest(HttpServerRequest clientReq, String domain) {
+    private void handleNpmRequest(HttpServerRequest clientReq, long started, String domain) {
         var path = clientReq.path();
         if (path == null) {
             relayRequest(clientReq, domain);
@@ -1761,7 +2026,7 @@ public class MitmProxy {
                         return;
                     }
                     var ref = domain + path;
-                    fetchNpmTarballAndServe(clientReq, domain, cacheFile, ref,
+                    fetchNpmTarballAndServe(clientReq, started, domain, cacheFile, ref,
                             pkgRef.packageName(), pkgRef.version());
                     return;
                 }
@@ -1832,7 +2097,7 @@ public class MitmProxy {
      * <b>Cache miss</b>: fetch per-version shasum, download with digest verification,
      * write shasum + ETag sidecar files alongside the cached tarball.
      */
-    private void fetchNpmTarballAndServe(HttpServerRequest clientReq, String domain,
+    private void fetchNpmTarballAndServe(HttpServerRequest clientReq, long started, String domain,
                                           Path cacheFile, String ref,
                                           String packageName, String version) {
         vertx.<NpmVerifyResult>executeBlocking(() -> {
@@ -1850,7 +2115,7 @@ public class MitmProxy {
                         " (" + formatSize(result.size()) + ")");
                 serveCachedFile(clientReq.response(), cacheFile, null);
             } else {
-                fetchCacheAndServe(clientReq, domain, cacheFile, ref,
+                fetchCacheAndServe(clientReq, started, domain, cacheFile, ref,
                         Verification.ofDigest(result.digest()));
             }
         }).onFailure(err -> {
@@ -2054,7 +2319,7 @@ public class MitmProxy {
      * be. Everything else is relayed, including a request with a query string: the
      * cache is keyed by path, and a query may select something else.
      */
-    private void handleArtifactRequest(HttpServerRequest clientReq, String domain,
+    private void handleArtifactRequest(HttpServerRequest clientReq, long started, String domain,
                                        Function<String, ArtifactTarget> targetOf) {
         var path = clientReq.path();
         var revalidation = Revalidation.forDomain(domain);
@@ -2069,7 +2334,7 @@ public class MitmProxy {
                 if (sidecar != null) {
                     serveSidecar(clientReq, domain, revalidation, sidecar, target);
                 } else {
-                    serveArtifact(clientReq, domain, revalidation, target);
+                    serveArtifact(clientReq, started, domain, revalidation, target);
                 }
                 return;
             }
@@ -2099,7 +2364,7 @@ public class MitmProxy {
      * Serve an artifact from the verified cache, confirmed with upstream as recently
      * as {@link #artifactCacheTiers} asks, or download, verify and store it.
      */
-    private void serveArtifact(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+    private void serveArtifact(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                ArtifactTarget target) {
         var ref = domain + clientReq.path();
 
@@ -2112,17 +2377,17 @@ public class MitmProxy {
             if (cached != null) {
                 var tier = trustTier(domain, cached);
                 if (tier == ArtifactCacheTiers.Tier.EXPIRED) {
-                    revalidateAndServe(clientReq, domain, revalidation, target, ref, cached.size());
+                    revalidateAndServe(clientReq, started, domain, revalidation, target, ref, cached.size());
                 } else {
-                    serveTrusted(clientReq, domain, revalidation, target, ref, cached, tier);
+                    serveTrusted(clientReq, started, domain, revalidation, target, ref, cached, tier);
                 }
             } else if (local.hostCopy() && !inBackoff(domain)) {
                 // The checksum is needed before deciding whether to download at all
                 probe(domain, clientReq.path(), revalidation, target.checksum()).onSuccess(answer ->
-                        importOrDownload(clientReq, domain, revalidation, target, ref, answer));
+                        importOrDownload(clientReq, started, domain, revalidation, target, ref, answer));
             } else {
                 // No copy to fall back on, so even in a backoff upstream is asked
-                download(clientReq, domain, revalidation, target, ref);
+                download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             System.err.println("Artifact cache check error for " + ref + ": " + err.getMessage());
@@ -2146,7 +2411,7 @@ public class MitmProxy {
      * checksum header where upstream would send one, so Maven skips its own
      * {@code .sha1} request, which would otherwise cost the round trip saved here.
      */
-    private void serveTrusted(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+    private void serveTrusted(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                               ArtifactTarget target, String ref, VerifiedArtifactStore.CachedCopy cached,
                               ArtifactCacheTiers.Tier tier) {
         // The header must describe the bytes sendFile is about to open. Vert.x opens by
@@ -2154,7 +2419,7 @@ public class MitmProxy {
         // the thread that opens it next (a stat; sendFile's own open blocks likewise).
         // A copy replaced since goes through the confirm-first path instead.
         if (!VerifiedArtifactStore.unchanged(target.artifact(), cached)) {
-            revalidateAndServe(clientReq, domain, revalidation, target, ref, cached.size());
+            revalidateAndServe(clientReq, started, domain, revalidation, target, ref, cached.size());
             return;
         }
         recordHit(tier == ArtifactCacheTiers.Tier.STALE
@@ -2275,7 +2540,7 @@ public class MitmProxy {
                         answer.mayEvict(revalidation))), false));
     }
 
-    private void revalidateAndServe(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+    private void revalidateAndServe(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                     ArtifactTarget target, String ref, long size) {
         confirm(domain, clientReq.path(), revalidation, target).onSuccess(confirmed -> {
             if (confirmed.outcome() == null) {
@@ -2287,7 +2552,7 @@ public class MitmProxy {
             } else {
                 // Changed, withdrawn, or not confirmed (a 403, a disagreeing sidecar): let upstream answer
                 logEviction(confirmed.outcome(), ref, target.checksum(), confirmed.answer());
-                download(clientReq, domain, revalidation, target, ref);
+                download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             System.err.println("Artifact revalidation error for " + ref + ": " + err.getMessage());
@@ -2312,7 +2577,7 @@ public class MitmProxy {
         serveCachedFile(clientReq.response(), artifact, null);
     }
 
-    private void importOrDownload(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+    private void importOrDownload(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                                   ArtifactTarget target, String ref, SidecarAnswer answer) {
         if (answer == SidecarAnswer.UNREACHABLE) {
             // Downloading would only wait out the same failed connection
@@ -2321,7 +2586,7 @@ public class MitmProxy {
         }
         var checksum = target.checksum();
         if (answer.status() != 200 || checksum.hex(answer.body()) == null) {
-            download(clientReq, domain, revalidation, target, ref);
+            download(clientReq, started, domain, revalidation, target, ref);
             return;
         }
         vertx.executeBlocking(() -> VerifiedArtifactStore.importCopy(
@@ -2333,11 +2598,11 @@ public class MitmProxy {
                 serveConfirmed(clientReq, target.artifact(), revalidation, answer);
             } else {
                 System.out.println("Maven .m2 copy differs from upstream: " + ref);
-                download(clientReq, domain, revalidation, target, ref);
+                download(clientReq, started, domain, revalidation, target, ref);
             }
         }).onFailure(err -> {
             System.err.println("Maven .m2 import error for " + ref + ": " + err.getMessage());
-            download(clientReq, domain, revalidation, target, ref);
+            download(clientReq, started, domain, revalidation, target, ref);
         });
     }
 
@@ -2347,10 +2612,10 @@ public class MitmProxy {
      * domain sends one, else the sidecar fetched once the download is done.
      * Without either it is served but not cached.
      */
-    private void download(HttpServerRequest clientReq, String domain, Revalidation revalidation,
+    private void download(HttpServerRequest clientReq, long started, String domain, Revalidation revalidation,
                           ArtifactTarget target, String ref) {
         var sidecarPath = clientReq.path() + target.checksum().extension;
-        fetchCacheAndServe(clientReq, domain, target.artifact(), ref,
+        fetchCacheAndServe(clientReq, started, domain, target.artifact(), ref,
                 Verification.ofArtifact(target.checksum(), upResp -> {
                     var hex = revalidation.checksumFrom(upResp);
                     if (hex != null) return Future.succeededFuture(hex.getBytes(StandardCharsets.US_ASCII));
