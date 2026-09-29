@@ -1115,8 +1115,8 @@ public class BuildCommand extends BaseCommand {
 
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
-        InstanceLifecycle.releaseBuildAddress(incus, buildName);
         BuildOutput.stepDone();
+        releaseBuildAddress(buildName);
     }
 
     private boolean effectiveVm(ImageDef imageDef) {
@@ -1376,8 +1376,8 @@ public class BuildCommand extends BaseCommand {
 
         BuildOutput.stepStart("Stopping image...");
         incus.stop(buildName);
-        InstanceLifecycle.releaseBuildAddress(incus, buildName);
         BuildOutput.stepDone();
+        releaseBuildAddress(buildName);
     }
 
     /**
@@ -2612,7 +2612,11 @@ public class BuildCommand extends BaseCommand {
      * <p>Without this the proxy cannot tell a build from host traffic and serves every
      * namespace's default account: repos are cloned, {@code prime} runs and the git identity is
      * derived with credentials the template chose not to use. The pins travel to every branch
-     * through the CoW copy; the address is given back once the build stops.
+     * through the CoW copy. A successful build gives the address back once it has stopped
+     * ({@link #releaseBuildAddress}). A failed one keeps it, and its pins, as {@code
+     * <template>-failed-build}: started for inspection, it is served its template's accounts
+     * rather than the defaults. Deleting it frees the address, as the next failure of the
+     * same template, {@code isx clean} or a destroy does.
      *
      * @return the {@code account-identity} stamps the container was copied with, by namespace
      */
@@ -2642,6 +2646,20 @@ public class BuildCommand extends BaseCommand {
             }
         });
         return result;
+    }
+
+    /**
+     * Give back the finished template's address. Warns rather than fails: the template is
+     * built, and an address it keeps costs one of the bridge's addresses, not correctness --
+     * its copies never carry it, and it is freed when the template is next rebuilt or removed.
+     */
+    private void releaseBuildAddress(String buildName) {
+        try {
+            InstanceLifecycle.releaseBuildAddress(incus, buildName);
+        } catch (RuntimeException e) {
+            BuildOutput.warn("Could not release the build's static IP: " + e.getMessage()
+                    + ". The template keeps it until it is rebuilt or removed.");
+        }
     }
 
     /**
