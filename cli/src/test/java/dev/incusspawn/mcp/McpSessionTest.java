@@ -1,7 +1,6 @@
 package dev.incusspawn.mcp;
 
 import dev.incusspawn.config.McpConfig;
-import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 
@@ -56,7 +55,7 @@ class McpSessionTest {
     void anInstanceIncusCannotAnswerForIsStillHeld() {
         var s = session(3);
         var name = create(s, backend);
-        backend.metadataFailure = new IncusException("Failed to read instance (HTTP 500)");
+        backend.metadataFailure = new ToolError("cannot read it from Incus right now");
         assertTrue(s.stillHolds(name));
         assertThrows(RuntimeException.class, () -> s.requireOwned(name));
         backend.metadataFailure = null;

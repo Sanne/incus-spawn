@@ -317,7 +317,7 @@ class DelegationToolsTest {
         var task = delegateFresh();
         var instance = instanceOf(task);
         // The daemon fails every read: neither the probe nor the existence check can answer.
-        backend.metadataFailure = new IncusException("Failed to read instance (HTTP 500)");
+        backend.metadataFailure = new ToolError("cannot read it from Incus right now");
         var probe = backend.responder;
         backend.responder = script -> {
             throw new IncusException("exec failed (HTTP 500)");

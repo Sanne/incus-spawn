@@ -25,6 +25,6 @@ class IncusInstanceBackendTest {
     void aFailedReadIsNotMistakenForAGoneInstance() {
         // A 403 or 500 said nothing about the instance: reading it as gone abandoned live ones (#858).
         when(incus.instanceMetadataOrThrow("dev")).thenThrow(new IncusException("Failed to read instance 'dev' (HTTP 500)"));
-        assertThrows(IncusException.class, () -> backend.metadata("dev"));
+        assertThrows(ToolError.class, () -> backend.metadata("dev"));
     }
 }

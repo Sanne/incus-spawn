@@ -5,6 +5,7 @@ import dev.incusspawn.BuildInfo;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.BranchFlow;
 import dev.incusspawn.lifecycle.InstanceDestroyer;
@@ -115,7 +116,13 @@ final class IncusInstanceBackend implements InstanceBackend {
     @Override
     public Map<String, String> metadata(String name) {
         // Only a 404 means gone: a refused or failed read would otherwise drop a live instance.
-        var instance = incus.instanceMetadataOrThrow(name);
+        JsonNode instance;
+        try {
+            instance = incus.instanceMetadataOrThrow(name);
+        } catch (IncusException e) {
+            throw new ToolError("cannot read '" + name + "' from Incus right now (" + e.getMessage()
+                    + "); nothing was changed, try again.");
+        }
         return instance == null ? null : configOf(instance);
     }
 

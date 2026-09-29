@@ -3,6 +3,8 @@ package dev.incusspawn.mcp;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -12,6 +14,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class OrphansTest {
 
@@ -85,8 +88,24 @@ class OrphansTest {
     void theCurrentProcessIsAlive() {
         var self = SessionId.current();
         assertTrue(self.isAlive());
-        assertFalse(new SessionId(self.pid(), self.startMillis() + 1).isAlive(),
+        assertFalse(new SessionId(self.pid(), self.start() + 1).isAlive(),
                 "same pid, different start: the pid was reused");
         assertEquals(self, SessionId.parse(self.toString()).orElseThrow());
+    }
+
+    @Test
+    void onLinuxTheStartIsTheKernelsTicksSinceBootNotAWallClockInstant() throws Exception {
+        // A wall-clock start moves when NTP steps the clock, and a live holder then reads as dead (#858).
+        var stat = Path.of("/proc/self/stat");
+        assumeTrue(Files.isReadable(stat), "Linux only");
+        var fields = Files.readString(stat).replaceFirst("^.*\\) ", "").trim().split(" +");
+        assertEquals(Long.parseLong(fields[19]), SessionId.current().start());
+    }
+
+    @Test
+    void theStartTicksAreFoundWhateverTheCommandNameHolds() {
+        var stat = "4242 (evil) 1 2 3 (x) S 1 4242 4242 0 -1 4194304 100 0 0 0 1 2 0 0 20 0 1 0 987654 1 2 3\n";
+        assertEquals(987654L, SessionId.procStartTicks(stat).orElseThrow());
+        assertTrue(SessionId.procStartTicks("garbage").isEmpty());
     }
 }
