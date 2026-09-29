@@ -253,7 +253,7 @@ public class ClaudeSetup implements ToolSetup {
                     + " /home/agentuser/.local/state"
                     + " /home/agentuser/.cache");
             BuildOutput.stepDone();
-            BuildOutput.note("Claude Code " + version);
+            BuildOutput.stepNote("Claude Code " + version);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Claude Code: " + e.getMessage(), e);
         }

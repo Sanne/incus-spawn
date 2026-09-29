@@ -1754,10 +1754,19 @@ class BuildCommandTest {
     }
 
     @Test
-    void formatDnfLineShowsDoneWhenComplete() {
-        var line = BuildCommand.formatDnfLine("Installing base packages", BuildCommand.StepProgress.done(null), 0);
-        assertTrue(line.contains("done."), "should show 'done.' when complete");
-        assertTrue(line.contains("Installing base packages"));
+    void formatDnfLineShowsCheckWhenComplete() {
+        var line = stripAnsi(BuildCommand.formatDnfLine("Installing base packages",
+                BuildCommand.StepProgress.done(null), 0));
+        assertEquals("    ✓ Installing base packages", line,
+                "a finished step reads like every other finished step, not 'label done.'");
+    }
+
+    @Test
+    void formatDnfLineShowsElapsedOnlyForSlowSteps() {
+        var done = BuildCommand.StepProgress.done(null);
+        assertFalse(stripAnsi(BuildCommand.formatDnfLine("x", done, 0, 900)).contains("s"),
+                "a quick step shows no time");
+        assertTrue(stripAnsi(BuildCommand.formatDnfLine("x", done, 0, 41_000)).endsWith("  41s"));
     }
 
     private static String stripAnsi(String s) {

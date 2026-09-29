@@ -632,6 +632,7 @@ public class BuildCommand extends BaseCommand {
             activeBuild = null;
             buildDone(canonicalName);
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             reportBuildFailure(tempName, canonicalName,
                     "Build failed for " + canonicalName + ": " + e.getMessage());
             try {
@@ -752,11 +753,9 @@ public class BuildCommand extends BaseCommand {
         var oldSourceJson = incus.configGet(existingImage, Metadata.BUILD_SOURCE);
         var removed = findDroppedTools(oldSourceJson, imageDef, defs);
         if (!removed.isEmpty()) {
-            BuildOutput.step("\033[33m⚠ Tools no longer included in " + imageDef.getName() + ":\033[0m");
-            for (var tool : removed) {
-                BuildOutput.step("  - " + tool);
-            }
-            BuildOutput.step("  Add to your template's tools: list if you still need them.");
+            BuildOutput.warn("Tools no longer included in " + imageDef.getName() + ": "
+                    + String.join(", ", removed));
+            BuildOutput.note("  Add them to your template's tools: list if you still need them.");
         }
     }
 
@@ -1593,7 +1592,7 @@ public class BuildCommand extends BaseCommand {
                 idx -> runSpinnerWork(work, state),
                 (idx, frame) -> formatLiveStepLine(label, state.get(0), detail, frame),
                 idx -> state.get(0).state() == StepState.DONE
-                        ? BuildOutput.STEP_INDENT + state.get(0).note() : null,
+                        ? BuildOutput.indent() + state.get(0).note() : null,
                 System.out::println);
         finishSpinner(label, failureMessage, state);
     }
@@ -1602,12 +1601,12 @@ public class BuildCommand extends BaseCommand {
                                      int frame) {
         return switch (p.state()) {
             case RUNNING -> {
-                var line = BuildOutput.STEP_INDENT
+                var line = BuildOutput.indent()
                         + TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length] + " " + label;
                 var d = detail.get();
                 yield d == null || d.isEmpty() ? line : line + "  \033[2m" + d + "\033[0m";
             }
-            case DONE -> BuildOutput.STEP_INDENT + p.note();
+            case DONE -> BuildOutput.indent() + BuildOutput.CHECK + " " + p.note();
             case FAILED -> formatDnfLine(label, p, frame);
         };
     }
@@ -2018,23 +2017,24 @@ public class BuildCommand extends BaseCommand {
         allPackages.removeAll(ancestorPackages);
 
         if (allPackages.isEmpty()) {
-            BuildOutput.step("All " + totalCount + " packages already installed.");
+            BuildOutput.ok("All " + totalCount + " packages already installed");
             return;
         }
 
         var alreadyInstalled = totalCount - allPackages.size();
-        var pkgHeader = "Installing " + allPackages.size() + " packages"
-                + (alreadyInstalled > 0 ? " (" + alreadyInstalled + " already installed)" : "")
-                + ":";
-        BuildOutput.stepWithList(pkgHeader, allPackages);
-        var rest = new ArrayList<String>(List.of("install", "-y"));
-        rest.addAll(allPackages);
-        // Label carries no count: the println above states the requested packages, while
-        // dnf's own N/M in the spinner detail counts the fully-resolved transaction
-        // (requested packages + their dependencies, one step per action phase), so a count
-        // here would look like it should match dnf's much larger N when it never will.
-        runDnf(container, "Installing packages and dependencies", "Failed to install packages",
-                dnfCommand(rest.toArray(String[]::new)));
+        var pkgDetail = allPackages.size() + " to install"
+                + (alreadyInstalled > 0 ? " (" + alreadyInstalled + " already installed)" : "");
+        try (var group = BuildOutput.group("Packages", pkgDetail)) {
+            BuildOutput.list(allPackages);
+            var rest = new ArrayList<String>(List.of("install", "-y"));
+            rest.addAll(allPackages);
+            // Label carries no count: the group header states the requested packages, while
+            // dnf's own N/M in the spinner detail counts the fully-resolved transaction
+            // (requested packages + their dependencies, one step per action phase), so a count
+            // here would look like it should match dnf's much larger N when it never will.
+            runDnf(container, "Installing packages and dependencies", "Failed to install packages",
+                    dnfCommand(rest.toArray(String[]::new)));
+        }
     }
 
     /**
@@ -2093,24 +2093,16 @@ public class BuildCommand extends BaseCommand {
      */
     private void runToolSetup(Container container, List<ResolvedTool> tools,
                               Map<String, String> accountSelection) {
-        var installable = tools.stream().filter(t -> !t.reconfigureOnly()).toList();
-        if (!installable.isEmpty()) {
-            var names = installable.stream().map(ResolvedTool::name).toList();
-            BuildOutput.stepWithList("Setting up " + names.size() + " tool"
-                    + (names.size() == 1 ? "" : "s") + ":", names);
-        }
-
-        for (var resolved : tools) {
-            if (resolved.reconfigureOnly()) {
-                resolved.setup().reconfigure(container, resolved.parameters());
-            } else {
-                resolved.setup().install(container, resolved.parameters(), accountSelection);
+        if (tools.isEmpty()) return;
+        var names = tools.stream().map(ResolvedTool::name).toList();
+        try (var group = BuildOutput.group("Tools", String.join(", ", names))) {
+            for (var resolved : tools) {
+                if (resolved.reconfigureOnly()) {
+                    resolved.setup().reconfigure(container, resolved.parameters());
+                } else {
+                    resolved.setup().install(container, resolved.parameters(), accountSelection);
+                }
             }
-        }
-
-        if (!installable.isEmpty()) {
-            BuildOutput.note(installable.size() + " tool"
-                    + (installable.size() == 1 ? "" : "s") + " ready.");
         }
     }
 
@@ -2272,9 +2264,11 @@ public class BuildCommand extends BaseCommand {
     private void runDnf(Container container, String label, String failureMessage, String... args) {
         var state = new AtomicReferenceArray<StepProgress>(1);
         state.set(0, StepProgress.running("", "starting"));
+        var started = System.nanoTime();
         TerminalProgress.run(1, 1,
                 idx -> dnfWork(container, args, state),
-                (idx, frame) -> formatDnfLine(label, state.get(0), frame),
+                (idx, frame) -> formatDnfLine(label, state.get(0), frame,
+                        (System.nanoTime() - started) / 1_000_000),
                 idx -> plainDnfLine(label, state.get(0)),
                 System.out::println);
         finishSpinner(label, failureMessage, state);
@@ -2333,20 +2327,27 @@ public class BuildCommand extends BaseCommand {
         return body.replaceFirst("-\\d+:.*$", "");
     }
 
-    /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}. */
+    /** Render the dnf spinner line: {@code     ⠋ <label>  <dim live detail>}, then {@code ✓ <label>}. */
     static String formatDnfLine(String label, StepProgress p, int frame) {
-        var sb = new StringBuilder(BuildOutput.STEP_INDENT);
+        return formatDnfLine(label, p, frame, 0);
+    }
+
+    static String formatDnfLine(String label, StepProgress p, int frame, long elapsedMs) {
+        var sb = new StringBuilder(BuildOutput.indent());
         switch (p.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(' ').append(label);
-            case DONE    -> sb.append(label).append(" done.");
-            case FAILED  -> sb.append("\033[31m✗\033[0m ").append(label);
+            case DONE    -> sb.append(BuildOutput.CHECK).append(' ').append(label);
+            case FAILED  -> sb.append(BuildOutput.CROSS).append(' ').append(label);
         }
         if (p.state() == StepState.RUNNING && p.detail() != null && !p.detail().isEmpty()) {
             sb.append("  \033[2m").append(p.detail()).append("\033[0m");
         }
         if (p.state() == StepState.DONE && p.note() != null && !p.note().isEmpty()) {
             sb.append(" \033[2m(").append(p.note()).append(")\033[0m");
+        }
+        if (p.state() == StepState.DONE && elapsedMs >= 2000) {
+            sb.append("  \033[2m").append(BuildOutput.formatElapsed(elapsedMs)).append("\033[0m");
         }
         if (p.state() == StepState.FAILED && p.detail() != null && !p.detail().isEmpty()) {
             sb.append("  \033[31m").append(p.detail()).append("\033[0m");
@@ -2357,11 +2358,11 @@ public class BuildCommand extends BaseCommand {
     /** Non-ANSI fallback line for a dnf step (emitted once, on completion). */
     private static String plainDnfLine(String label, StepProgress p) {
         if (p.state() == StepState.DONE) {
-            var line = BuildOutput.STEP_INDENT + label + " done.";
+            var line = BuildOutput.indent() + label + "... done.";
             if (p.note() != null && !p.note().isEmpty()) line += " (" + p.note() + ")";
             return line;
         }
-        var msg = BuildOutput.STEP_INDENT + "Warning: " + label + " failed";
+        var msg = BuildOutput.indent() + "Warning: " + label + " failed";
         if (p.detail() != null && !p.detail().isEmpty()) msg += ": " + p.detail();
         return msg;
     }
@@ -2870,29 +2871,29 @@ public class BuildCommand extends BaseCommand {
         if (resolvedSet.isEmpty()) return;
         var resolvedNames = new ArrayList<>(resolvedSet);
 
-        BuildOutput.stepWithList("Installing " + resolvedNames.size() + " skill"
-                + (resolvedNames.size() == 1 ? "" : "s") + ":", resolvedNames);
+        try (var skillsGroup = BuildOutput.group("Skills", resolvedNames.size() + " to install")) {
 
-        var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL).build();
-        var cache = new dev.incusspawn.tool.SkillsCache();
+            var http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NORMAL).build();
+            var cache = new dev.incusspawn.tool.SkillsCache();
 
-        container.exec("mkdir", "-p", SKILLS_DIR);
+            container.exec("mkdir", "-p", SKILLS_DIR);
 
-        for (var resolved : resolvedNames) {
-            BuildOutput.stepStart("Installing skill: " + resolved + "...");
-            try {
-                var skills = fetchSkills(resolved, http, cache);
-                for (var skill : skills) {
-                    var skillDir = SKILLS_DIR + "/" + skill.name();
-                    container.exec("mkdir", "-p", skillDir);
-                    container.writeFile(skillDir + "/SKILL.md", skill.content());
+            for (var resolved : resolvedNames) {
+                BuildOutput.stepStart(resolved + "...");
+                try {
+                    var skills = fetchSkills(resolved, http, cache);
+                    for (var skill : skills) {
+                        var skillDir = SKILLS_DIR + "/" + skill.name();
+                        container.exec("mkdir", "-p", skillDir);
+                        container.writeFile(skillDir + "/SKILL.md", skill.content());
+                    }
+                    BuildOutput.stepDone();
+                } catch (IOException | InterruptedException e) {
+                    BuildOutput.stepBreak();
+                    System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
+                    throw new BuildFailedException();
                 }
-                BuildOutput.stepDone();
-            } catch (IOException | InterruptedException e) {
-                BuildOutput.stepBreak();
-                System.err.println("Error: Failed to fetch skill '" + resolved + "': " + e.getMessage());
-                throw new BuildFailedException();
             }
         }
         // Fix ownership so agentuser owns the agents / skills directories
@@ -3198,69 +3199,70 @@ public class BuildCommand extends BaseCommand {
         var repos = imageDef.getRepos();
         if (repos.isEmpty()) return;
 
-        BuildOutput.step("Preparing " + repos.size() + (repos.size() == 1 ? " repository:" : " repositories:"));
+        try (var reposGroup = BuildOutput.group("Repositories", repos.size() + " to prepare")) {
 
-        var config = SpawnConfig.load();
+            var config = SpawnConfig.load();
 
-        // Phase 1 (serial): mount all host-reference disk devices up front.
-        var refs = new RepoReference[repos.size()];
-        var projectLocal = imageDef.getProjectRoot() != null;
-        for (int i = 0; i < repos.size(); i++) {
-            refs[i] = projectLocal
-                    ? RepoReference.skipped("project-local template, host checkouts are not shared")
-                    : tryMountReference(container, repos.get(i).getUrl(), config, isVm);
-        }
-        var mountedCount = (int) java.util.Arrays.stream(refs).filter(r -> r != null && r.mounted()).count();
-        var referencesDetached = new java.util.concurrent.CountDownLatch(mountedCount);
-        var detached = new java.util.concurrent.atomic.AtomicReferenceArray<Boolean>(repos.size());
-        var detachLock = new Object();
-        java.util.function.IntPredicate detach = idx -> {
-            synchronized (detachLock) {
-                try {
-                    incus.deviceRemove(container.name(), refs[idx].deviceName());
-                    detached.set(idx, true);
-                    return true;
-                } catch (Exception e) {
-                    return false;
-                }
-            }
-        };
-
-        // Phase 2 (parallel, bounded): clone each repo from its reference (local)
-        // or the remote (fallback), restore the fetch refspec, then prime it —
-        // all in one worker so priming starts as soon as that repo's clone
-        // finishes rather than waiting at a barrier for the whole clone batch.
-        var states = new AtomicReferenceArray<StepProgress>(repos.size());
-        for (int i = 0; i < repos.size(); i++) {
-            states.set(i, StepProgress.running("Cloning"));
-        }
-        int concurrency = repoConcurrency(repos.size());
-        // Bounded here rather than by TerminalProgress: a worker waiting for the references to
-        // be detached must not hold a slot, or the clones that detach them could never start.
-        var limiter = new java.util.concurrent.Semaphore(concurrency);
-        var failureSeen = new AtomicBoolean(false);
-        try {
-            TerminalProgress.run(repos.size(), repos.size(),
-                    idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
-                            limiter, referencesDetached, detach),
-                    (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
-                            repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
-                    idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
-                    System.out::println);
-        } finally {
-            // Phase 3 (serial): remove any reference a worker could not detach.
+            // Phase 1 (serial): mount all host-reference disk devices up front.
+            var refs = new RepoReference[repos.size()];
+            var projectLocal = imageDef.getProjectRoot() != null;
             for (int i = 0; i < repos.size(); i++) {
-                if (refs[i] != null && refs[i].mounted() && detached.get(i) == null) {
+                refs[i] = projectLocal
+                        ? RepoReference.skipped("project-local template, host checkouts are not shared")
+                        : tryMountReference(container, repos.get(i).getUrl(), config, isVm);
+            }
+            var mountedCount = (int) java.util.Arrays.stream(refs).filter(r -> r != null && r.mounted()).count();
+            var referencesDetached = new java.util.concurrent.CountDownLatch(mountedCount);
+            var detached = new java.util.concurrent.atomic.AtomicReferenceArray<Boolean>(repos.size());
+            var detachLock = new Object();
+            java.util.function.IntPredicate detach = idx -> {
+                synchronized (detachLock) {
                     try {
-                        incus.deviceRemove(container.name(), refs[i].deviceName());
+                        incus.deviceRemove(container.name(), refs[idx].deviceName());
+                        detached.set(idx, true);
+                        return true;
                     } catch (Exception e) {
-                        System.err.println("Warning: failed to remove reference device: " + e.getMessage());
+                        return false;
+                    }
+                }
+            };
+
+            // Phase 2 (parallel, bounded): clone each repo from its reference (local)
+            // or the remote (fallback), restore the fetch refspec, then prime it —
+            // all in one worker so priming starts as soon as that repo's clone
+            // finishes rather than waiting at a barrier for the whole clone batch.
+            var states = new AtomicReferenceArray<StepProgress>(repos.size());
+            for (int i = 0; i < repos.size(); i++) {
+                states.set(i, StepProgress.running("Cloning"));
+            }
+            int concurrency = repoConcurrency(repos.size());
+            // Bounded here rather than by TerminalProgress: a worker waiting for the references to
+            // be detached must not hold a slot, or the clones that detach them could never start.
+            var limiter = new java.util.concurrent.Semaphore(concurrency);
+            var failureSeen = new AtomicBoolean(false);
+            try {
+                TerminalProgress.run(repos.size(), repos.size(),
+                        idx -> prepareOne(container, repos.get(idx), refs[idx], states, idx, failureSeen,
+                                limiter, referencesDetached, detach),
+                        (idx, frame) -> formatStepLine(repoDisplayName(repos.get(idx)),
+                                repos.get(idx).getUrl(), states.get(idx), frame, "Ready"),
+                        idx -> plainStepLine(repoDisplayName(repos.get(idx)), states.get(idx), "Ready", "prepare"),
+                        System.out::println);
+            } finally {
+                // Phase 3 (serial): remove any reference a worker could not detach.
+                for (int i = 0; i < repos.size(); i++) {
+                    if (refs[i] != null && refs[i].mounted() && detached.get(i) == null) {
+                        try {
+                            incus.deviceRemove(container.name(), refs[i].deviceName());
+                        } catch (Exception e) {
+                            System.err.println("Warning: failed to remove reference device: " + e.getMessage());
+                        }
                     }
                 }
             }
-        }
 
-        assertNoStepFailures(repos, states, "prepare");
+            assertNoStepFailures(repos, states, "prepare");
+        }
     }
 
     /** Clone a repo and, on success, immediately prime it — recording progress/failure
@@ -3500,7 +3502,7 @@ public class BuildCommand extends BaseCommand {
     static String formatStepLine(String label, String dimContext, StepProgress progress, int frame,
                                  String doneWord) {
         var runningWord = progress.activity() != null ? progress.activity() : "Working";
-        var sb = new StringBuilder(BuildOutput.STEP_INDENT);
+        var sb = new StringBuilder(BuildOutput.indent());
         switch (progress.state()) {
             case RUNNING -> sb.append(TerminalProgress.SPINNER[frame % TerminalProgress.SPINNER.length])
                     .append(" \033[2m").append(padStatus(runningWord)).append("\033[0m ");
@@ -3526,11 +3528,11 @@ public class BuildCommand extends BaseCommand {
 
     private static String plainStepLine(String label, StepProgress progress, String doneWord, String verb) {
         if (progress.state() == StepState.DONE) {
-            var line = BuildOutput.STEP_INDENT + doneWord + " " + label;
+            var line = BuildOutput.indent() + doneWord + " " + label;
             if (progress.note() != null && !progress.note().isEmpty()) line += " (" + progress.note() + ")";
             return line;
         }
-        var msg = BuildOutput.STEP_INDENT + "Warning: " + verb + " failed for " + label;
+        var msg = BuildOutput.indent() + "Warning: " + verb + " failed for " + label;
         if (progress.detail() != null && !progress.detail().isEmpty()) msg += ": " + progress.detail();
         return msg;
     }

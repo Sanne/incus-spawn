@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.BridgeAddress;
 import dev.incusspawn.incus.FirewalldCheck;
@@ -262,6 +263,7 @@ public final class ProxyConfig {
      */
     private static boolean clearFirewalldRedirectPersistent() {
         try {
+            BuildOutput.releaseTerminal(); // sudo may prompt on the tty
             var pb = new ProcessBuilder("sudo", "cat", FIREWALLD_DIRECT_XML.toString());
             pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             var process = pb.start();

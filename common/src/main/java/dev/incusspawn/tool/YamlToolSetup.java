@@ -4,6 +4,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -102,12 +103,14 @@ public class YamlToolSetup implements ToolSetup {
             if (dl.getArch() != null && !dl.getArch().equals(containerArch)) {
                 continue;
             }
+            BuildOutput.stepProgress("downloading " + fileName(dl.getUrl()));
             processDownload(dl, container);
         }
 
         // 2. Shell commands as root (with parameter substitution)
         for (var script : def.getRun()) {
             var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
+            BuildOutput.stepProgress(firstLine(substituted));
             container.runQuiet("Failed to run setup for " + def.getName(),
                     "sh", "-c", substituted);
         }
@@ -115,6 +118,7 @@ public class YamlToolSetup implements ToolSetup {
         // 3. Shell commands as agentuser (with parameter substitution)
         for (var script : def.getRunAsUser()) {
             var substituted = ParameterSubstitutor.substitute(script, resolvedParams);
+            BuildOutput.stepProgress(firstLine(substituted));
             container.runAsUserQuiet("agentuser", substituted,
                     "Failed to run user setup for " + def.getName());
         }
@@ -123,6 +127,7 @@ public class YamlToolSetup implements ToolSetup {
         for (var file : def.getFiles()) {
             var path = ParameterSubstitutor.substitute(file.getPath(), resolvedParams);
             var content = ParameterSubstitutor.substitute(file.getContent(), resolvedParams);
+            BuildOutput.stepProgress("writing " + path);
             container.writeFile(path, content);
             if (file.getOwner() != null && !file.getOwner().isEmpty()) {
                 chownWithParents(container, path, file.getOwner());
@@ -132,18 +137,60 @@ public class YamlToolSetup implements ToolSetup {
         // 5. Environment variables are collected centrally by BuildCommand
         // and written to /etc/profile.d/isx-env.sh — see envEntries().
 
-        BuildOutput.stepDone();
-
-        // 6. Verification (with parameter substitution)
+        // 6. Verification (with parameter substitution). It runs inside the step, which is not
+        // done until it returns: a first `mx version` can take seconds, and a line already
+        // saying "done" would leave that time unexplained.
+        String verifiedVersion = null;
+        String verifyFailure = null;
         if (def.getVerify() != null && !def.getVerify().isBlank()) {
             var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
+            BuildOutput.stepProgress("verifying: " + substituted);
             var result = container.exec(substituted.split("\\s+"));
             if (result.success()) {
-                BuildOutput.note(result.stdout().lines().findFirst().orElse(""));
+                verifiedVersion = result.stdout().lines().findFirst().orElse("");
             } else {
-                System.err.println(BuildOutput.STEP_INDENT + "  Warning: verification failed for " + def.getName());
+                verifyFailure = verifyFailure(substituted, result);
             }
         }
+        BuildOutput.stepDone();
+        if (verifyFailure != null) {
+            BuildOutput.stepWarn(verifyFailure);
+        } else if (verifiedVersion != null) {
+            BuildOutput.stepNote(verifiedVersion);
+        }
+    }
+
+    /** Word a failed verify with its reason, so the warning says what to fix. */
+    static String verifyFailure(String command, IncusClient.ExecResult result) {
+        var reason = firstNonBlankLine(result.stderr());
+        if (reason.isEmpty()) reason = firstNonBlankLine(result.stdout());
+        if (reason.isEmpty()) reason = "exit code " + result.exitCode();
+        return "Verification failed (" + command + "): " + reason;
+    }
+
+    private static String firstNonBlankLine(String text) {
+        if (text == null) return "";
+        return text.lines().map(String::strip).filter(l -> !l.isEmpty()).findFirst().orElse("");
+    }
+
+    private static String firstLine(String script) {
+        var line = firstNonBlankLine(script);
+        return line.length() > 60 ? line.substring(0, 59) + "…" : line;
+    }
+
+    /** The last path segment of {@code url}, for the progress line. Plain string work, never parsing:
+     *  a malformed URL must still reach {@code DownloadCache}, whose error names the tool. */
+    static String fileName(String url) {
+        if (url == null) return "";
+        var end = url.length();
+        for (var c : new char[] {'?', '#'}) {
+            var i = url.indexOf(c);
+            if (i >= 0 && i < end) end = i;
+        }
+        var path = url.substring(0, end);
+        while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        var name = path.substring(path.lastIndexOf('/') + 1);
+        return name.isEmpty() ? url : name;
     }
 
     static String canonicalArch(String arch) {
@@ -351,10 +398,14 @@ public class YamlToolSetup implements ToolSetup {
 
     private static void runProcess(String label, String... command) throws IOException {
         try {
-            int exitCode = new ProcessBuilder(command)
-                    .inheritIO().start().waitFor();
+            // Captured, not inherited: this runs under a live step line, which the child's own
+            // terminal output would be drawn over.
+            var process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            var output = new String(process.getInputStream().readAllBytes()).strip();
+            int exitCode = process.waitFor();
             if (exitCode != 0) {
-                throw new IOException(label + " failed (exit code " + exitCode + ")");
+                throw new IOException(label + " failed (exit code " + exitCode + ")"
+                        + (output.isEmpty() ? "" : ": " + output));
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

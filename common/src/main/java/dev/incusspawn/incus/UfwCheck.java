@@ -253,6 +253,7 @@ public final class UfwCheck {
 
     public static String readBeforeRules() {
         try {
+            BuildOutput.releaseTerminal(); // sudo may prompt on the tty
             var pb = new ProcessBuilder("sudo", "cat", BEFORE_RULES.toString());
             pb.redirectErrorStream(true);
             var process = pb.start();

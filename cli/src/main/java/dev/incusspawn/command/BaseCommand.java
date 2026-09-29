@@ -1,5 +1,6 @@
 package dev.incusspawn.command;
 
+import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.Command;
 import org.aesh.command.CommandResult;
 import org.aesh.command.invocation.CommandInvocation;
@@ -20,8 +21,13 @@ public abstract class BaseCommand implements Command<CommandInvocation> {
             Thread.currentThread().interrupt();
             throw e;
         } catch (Exception e) {
+            BuildOutput.abandonStep();
             System.err.println("Error: " + e.getMessage());
             return CommandResult.valueOf(1);
+        } finally {
+            // A step an exception cut short must not stay animated, nor keep the streams guarded
+            // for a TUI that resumes in this process after the command.
+            BuildOutput.abandonStep();
         }
     }
 

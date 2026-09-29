@@ -612,6 +612,9 @@ public class ListCommand extends BaseCommand {
                 }
                 case NONE -> { return; }
             }
+            // An action that failed mid-step (a branch whose copy or start threw) must not leave the
+            // step animating over the TUI we are about to redraw, nor System.out/err guarded.
+            BuildOutput.abandonStep();
         }
     }
 

@@ -1,5 +1,6 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 
 /**
@@ -115,6 +116,7 @@ public class YamlToolAction implements ToolAction {
             return ActionResult.error("Missing command for action: " + entry.getLabel());
         }
         try {
+            BuildOutput.releaseTerminal();
             var process = new ProcessBuilder("sh", "-c", cmd).inheritIO().start();
             var exitCode = process.waitFor();
             if (exitCode == 0) {

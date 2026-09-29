@@ -93,6 +93,48 @@ class YamlToolSetupTest {
     }
 
     @Test
+    void stepIsNotDoneUntilVerifyReturnsAndAFailureSaysWhy() {
+        var incus = mockIncusWithArch();
+        var out = new java.io.ByteArrayOutputStream();
+        var printedWhenVerifying = new AtomicReference<String>();
+        when(incus.shellExec(eq(CONTAINER), eq("mvn"), eq("--version"))).thenAnswer(inv -> {
+            printedWhenVerifying.set(out.toString());
+            return new IncusClient.ExecResult(1, "",
+                    "\nThe JAVA_HOME environment variable is not defined correctly\nmore");
+        });
+
+        var def = new ToolDef();
+        def.setName("maven-3");
+        def.setDescription("Apache Maven");
+        def.setVerify("mvn --version");
+
+        var original = System.out;
+        System.setOut(new java.io.PrintStream(out, true));
+        try {
+            new YamlToolSetup(def).install(new Container(incus, CONTAINER), Map.of());
+        } finally {
+            System.setOut(original);
+        }
+
+        assertFalse(printedWhenVerifying.get().contains("done"),
+                "a slow verify must not run after the step already claimed to be done");
+        assertEquals("""
+                    Installing Apache Maven... done.
+                      ⚠ Verification failed (mvn --version): The JAVA_HOME environment variable is not defined correctly
+                """, dev.incusspawn.util.BuildOutput.stripAnsi(out.toString()));
+    }
+
+    @Test
+    void progressFileNameNeverRejectsAUrl() {
+        assertEquals("apache-maven-3.9.16-bin.tar.gz", YamlToolSetup.fileName(
+                "https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz"));
+        assertEquals("tool.zip", YamlToolSetup.fileName("https://example.com/tool.zip?sig=a/b#frag"));
+        // Malformed URLs are DownloadCache's to reject, with the tool named in the error.
+        assertEquals("bad {name}.tgz", YamlToolSetup.fileName("https://example.com/bad {name}.tgz"));
+        assertEquals("", YamlToolSetup.fileName(null));
+    }
+
+    @Test
     void minimalToolDoesNothing() {
         var incus = mockIncusWithArch();
 

@@ -165,7 +165,7 @@ public class BobSetup implements ToolSetup {
                     .assertSuccess("Failed to npm install Bob Shell");
             c.exec("rm", "-f", containerTarball);
             BuildOutput.stepDone();
-            BuildOutput.note("Bob Shell " + version);
+            BuildOutput.stepNote("Bob Shell " + version);
         } catch (IOException e) {
             throw new RuntimeException("Failed to install Bob Shell: " + e.getMessage(), e);
         }

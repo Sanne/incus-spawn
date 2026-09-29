@@ -1,5 +1,6 @@
 package dev.incusspawn.proxy;
 
+import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
@@ -1095,6 +1096,8 @@ public final class ProxyService {
     }
 
     static boolean runQuiet(String... command) {
+        // sudo may ask for a password on the tty, which a live step line would be drawn over.
+        if (command.length > 0 && command[0].equals("sudo")) BuildOutput.releaseTerminal();
         try {
             var pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);

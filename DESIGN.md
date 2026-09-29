@@ -301,14 +301,28 @@ first-run flow is the one deliberate exception, kept in its own style for now.)
 - **Header** (bold bullet): `  ● Building tpl-dev  [1/3]`, `  ● my-branch  ← tpl-dev`,
   or the generic `  ● Resizing VM data disk` via `header(msg)`. Identifies the
   top-level operation. Preceded by a blank line.
-- **Step** (4-space indent): `    Configuring network...` — a complete line for
-  fast or informational actions.
-- **Step-start / step-done** (inline completion): `    Starting container... done.`
-  — for slow operations, `stepStart` prints without a newline, work runs, then
-  `stepDone` appends ` done.\n`. Use `stepDone(detail)` to report a result value
-  inline instead of on a second line — `    Extracting root disk... done (4.0G).`.
-  On error, `stepBreak` closes the line before the error message. Never print a
-  `Doing X...` line whose result lands on a *separate* line — complete it inline.
+- **Group** (`▸` title, children one level deeper): `    ▸ Tools  maven-3, mx` via
+  `try (var g = group(title, detail))`. Frames a batch of steps that belong together
+  (packages, tools, skills, repositories); closing it leaves a blank line so the next
+  top-level step does not read as part of it. `list(items)` prints a wrapping
+  comma-separated list at the current indent (the packages being installed).
+  `header()` resets the nesting, so a group an exception left open cannot skew the
+  next operation.
+- **Step** (4-space indent, deeper inside a group): `    Configuring network...` — a
+  complete line for fast or informational actions. `ok(msg)` prints a finished
+  result as `✓ msg` without a live step.
+- **Live step** (`stepStart` / `stepDone`): on an ANSI terminal the line animates a
+  braille spinner, with an optional dim detail set by `stepProgress()` (`verifying:
+  mx version`), and turns into `✓ label` when done, with the elapsed time once it
+  passes two seconds (`✓ Installing packages and dependencies  41s`). `stepDone(detail)`
+  adds a result — `✓ Extracting root disk (4.0G)`. `stepBreak()` ends it as
+  `✗ label` before an error. Without a terminal the same calls print
+  `Starting container... done.` for logs. The step is not done until *all* its work
+  is: a tool's `verify` runs inside its step, because a line saying "done" while a
+  first `mx version` takes seconds reads as a hang. Never print a `Doing X...` line
+  whose result lands on a separate line.
+- **Step detail** (`stepNote`, `stepWarn`): dim or yellow lines one level under the
+  step they describe — a tool's verified version, or why its verify failed.
 - **Note** (dim, 4-space indent): informational messages that should be visible
   but not alarming — e.g. `    Parent 'tpl-dev' already up-to-date, skipping.`
   Uses ANSI dim (`\e[2m`).
@@ -328,6 +342,18 @@ no duplicate or nested headers appear. Where a shared step would otherwise repea
 the header verbatim, reword it (the stop step reads `Shutting down VM...` under a
 `● Stopping VM` header).
 
+**Output during a live step.** While a step animates, `System.out` and
+`System.err` are wrapped: the first write from anyone else freezes the step line
+(`… label`) and moves below it, and the spinner stops drawing, so a warning printed
+mid-step is never drawn over. Its `stepDone` then prints `✓ label` on a fresh line.
+The wrap is restored when the step ends; `BaseCommand` calls `abandonStep()` after
+every command so a step an exception cut short shows `✗` and stops guarding the
+streams (the TUI resumes in the same process after a build). A child process that
+writes to the terminal directly — inherited IO, or a `sudo` that may prompt for a
+password on the tty — bypasses the Java streams, so its caller calls
+`releaseTerminal()` first (`ProxyService.runQuiet("sudo", …)`). Host commands run under a step capture their output instead of
+inheriting it (`YamlToolSetup.runProcess`).
+
 **Warnings and errors** go to stderr. Notes (dim) are for expected conditions the
 user may want to know about (skipped steps, cache hits). Warnings (`System.err`)
 are for conditions that may need action. The distinction: a note is "this is fine,
@@ -340,8 +366,10 @@ symlink" lines) from breaking alignment. `runInteractive` is reserved for
 commands that genuinely need live terminal output (e.g. interactive shells).
 
 **Adding new output:** use `BuildOutput.section()` to introduce a block of work,
-`header()` to frame a named multi-step operation within it, `step()` for quick
-actions, `stepStart()`/`stepDone()`/`stepDone(detail)` for slow ones, `note()` for
+`header()` to frame a named multi-step operation within it, `group()` for a batch
+of related steps, `step()`/`ok()` for quick actions, `stepStart()`/`stepDone()`/
+`stepDone(detail)` for slow ones (with `stepProgress()` when a phase can take a
+while), `stepNote()`/`stepWarn()` for detail about the step above, `note()` for
 informational dim messages, `warnBanner()` for bordered stderr warnings, and
 `success()` for the final confirmation. Do not add raw `System.out.println()` with
 inline ANSI escapes, and do not leave a `Doing X...` line dangling. Pure
