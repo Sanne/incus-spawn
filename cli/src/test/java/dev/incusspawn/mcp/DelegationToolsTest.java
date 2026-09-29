@@ -452,4 +452,27 @@ class DelegationToolsTest {
         assertTrue(run.contains("cd -- '/home/agentuser/repo dir'"), "resumed where it worked: " + run);
         assertTrue(run.contains("--resume"), run);
     }
+
+    @Test
+    void aRefusedEnvironmentNameGivesItsTaskSlotBack() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        var instance = JsonRpc.JSON.readTree(text(call("create_instance", "{\"template\":\"tpl-plain\"}")))
+                .path("instance").asText();
+        var bad = "{\"instance\":\"" + instance + "\",\"command\":\"true\",\"background\":true,\"env\":{\"FOO-BAR\":\"x\"}}";
+        assertTrue(call("exec", bad).path("isError").asBoolean());
+        assertTrue(call("exec", bad).path("isError").asBoolean());
+        var r = call("exec", "{\"instance\":\"" + instance + "\",\"command\":\"true\",\"background\":true}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+    }
+
+    @Test
+    void tasksOfAnInstanceAnotherSessionAdoptedStopCounting() throws Exception {
+        config.setMaxConcurrentTasks(1);
+        var task = delegateFresh();
+        var instance = instanceOf(task);
+        backend.stamp(instance, dev.incusspawn.incus.Metadata.MCP_SESSION, "8-8"); // forced adoption
+        var r = call("delegate", "{\"instruction\":\"next\",\"template\":\"tpl-agent\"}");
+        assertFalse(r.path("isError").asBoolean(), text(r));
+        assertTrue(call("task_status", "{\"task_id\":\"" + task + "\"}").path("isError").asBoolean());
+    }
 }

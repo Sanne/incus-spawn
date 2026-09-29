@@ -76,7 +76,16 @@ final class Tasks {
     }
 
     synchronized List<Task> all() {
+        forgetUnheld();
         return List.copyOf(tasks.values());
+    }
+
+    /**
+     * Forget the tasks of instances this session no longer holds -- another session adopted
+     * them, or they are gone -- so they neither count against the limit nor get watched.
+     */
+    private synchronized void forgetUnheld() {
+        tasks.values().removeIf(t -> !session.holds(t.instance()));
     }
 
     /** This session's task, after checking the session still owns its instance. */
@@ -95,14 +104,14 @@ final class Tasks {
     /** Start a background command in {@code instance}, which the caller checked is owned. */
     Task startCommand(String instance, String cwd, Map<String, String> env, String command) {
         var task = reserve(null, new Task(nextId(), instance, COMMAND, cwd, 1, true, true));
-        return launch(task, null, TaskScripts.commandRun(task.id(), cwd, env, command), "");
+        return launch(task, null, t -> TaskScripts.commandRun(t.id(), cwd, env, command), "");
     }
 
     /** Start a delegated agent in {@code instance}, which the caller checked is owned. */
     Task delegate(String instance, String cwd, String instruction, String permissionMode) {
         var task = reserve(null, new Task(nextId(), instance, AGENT, cwd, 1, true, true));
         return launch(task, null,
-                TaskScripts.agentRun(task.id(), 1, cwd, config.get().delegateMaxTurns(), permissionMode), instruction);
+                t -> TaskScripts.agentRun(t.id(), 1, cwd, config.get().delegateMaxTurns(), permissionMode), instruction);
     }
 
     /**
@@ -119,7 +128,7 @@ final class Tasks {
                     + "no longer says attached, or ask the user.");
         }
         var reserved = reserve(task.id(), null);
-        return launch(reserved, task, TaskScripts.agentRun(task.id(), reserved.runs(), task.cwd(),
+        return launch(reserved, task, t -> TaskScripts.agentRun(t.id(), t.runs(), t.cwd(),
                 config.get().delegateMaxTurns(), permissionMode), message);
     }
 
@@ -276,11 +285,17 @@ final class Tasks {
 
     /** Ask each instance, once, which of the tasks believed running still are. */
     private void refreshStates() {
+        forgetUnheld();
         List<Task> believedRunning;
         synchronized (this) {
             believedRunning = tasks.values().stream().filter(t -> t.running() && !t.launching()).toList();
         }
         believedRunning.stream().collect(Collectors.groupingBy(Task::instance)).forEach((instance, list) -> {
+            // Adopted by another session (or gone): its tasks are no longer this session's.
+            if (!session.stillHolds(instance)) {
+                forgetInstance(instance);
+                return;
+            }
             try {
                 probe(instance, list.stream().map(Task::id).toList());
             } catch (RuntimeException e) {
@@ -297,12 +312,16 @@ final class Tasks {
     }
 
     /**
-     * Launch a reserved run. On failure the reservation is undone: a fresh task is forgotten, a
-     * continued one goes back to how it was.
+     * Launch a reserved run. On any failure -- building its run script included, which refuses
+     * what an agent sent (a bad environment name) -- the reservation is undone: a fresh task is
+     * forgotten, a continued one goes back to how it was. Otherwise the slot would stay counted
+     * for good, as nothing ever re-probes a launching task.
      */
-    private Task launch(Task reserved, Task previous, String runScript, String stdin) {
+    private Task launch(Task reserved, Task previous, java.util.function.Function<Task, String> runScript,
+                        String stdin) {
         try {
-            run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(), runScript), stdin);
+            run(reserved.instance(), TaskScripts.launch(reserved.id(), reserved.runs(), reserved.kind(),
+                    runScript.apply(reserved)), stdin);
         } catch (RuntimeException e) {
             synchronized (this) {
                 if (previous == null) tasks.remove(reserved.id());

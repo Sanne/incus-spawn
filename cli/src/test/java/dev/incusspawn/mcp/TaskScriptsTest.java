@@ -353,4 +353,46 @@ class TaskScriptsTest {
         var script = "PATH=" + bin + ":/usr/bin:/bin; " + AskScript.build("echo data", false, "q", "haiku");
         assertTrue(AskScript.parse(sh(script, "")).text().contains("no Claude Code in this instance"));
     }
+
+    @Test
+    void cancellingReachesProcessesThatLeftTheUnit() throws Exception {
+        // As PAM does to su - in a real unit: the run is no longer where stopping the unit reaches.
+        sh(TaskScripts.launch("t11-abc", 1, Tasks.COMMAND, TaskScripts.commandRun("t11-abc", work.toString(), Map.of(),
+                "setsid sleep 300 & echo $! > \"$HOME/escaped\"; wait")), "");
+        var escaped = Path.of(home.toString(), "escaped");
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!Files.exists(escaped) || Files.readString(escaped).isBlank()) {
+            assertTrue(System.nanoTime() < deadline, "the task never started");
+            Thread.sleep(50);
+        }
+        var pid = Long.parseLong(Files.readString(escaped).strip());
+        assertTrue(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+        sh(TaskScripts.cancel("t11-abc"), "");
+        var gone = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) {
+            assertTrue(System.nanoTime() < gone, "the escaped process survived the cancel");
+            Thread.sleep(50);
+        }
+    }
+
+    @Test
+    void aRunThatFailsToStartLeavesThePreviousOneCurrent() throws Exception {
+        sh(TaskScripts.launch("t12-abc", 1, Tasks.AGENT,
+                TaskScripts.agentRun("t12-abc", 1, work.toString(), null, "bypassPermissions")), "go");
+        assertEquals("finished", awaitFinished("t12-abc").state());
+        stub("systemd-run", "exit 1");
+        var pb = new ProcessBuilder("bash", "-c", TaskScripts.launch("t12-abc", 2, Tasks.AGENT,
+                TaskScripts.agentRun("t12-abc", 2, work.toString(), null, "bypassPermissions")))
+                .directory(home.toFile());
+        pb.environment().put("HOME", home.toString());
+        pb.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        var p = pb.start();
+        p.getOutputStream().close();
+        assertTrue(p.waitFor(30, TimeUnit.SECONDS));
+        assertTrue(p.exitValue() != 0, "the launch reports the failure");
+        var status = Tasks.parse(sh(TaskScripts.status("t12-abc", 65536), ""));
+        assertEquals(1, status.run());
+        assertEquals("finished", status.state(), "the first run's result is still there");
+        assertTrue(StreamJsonEvents.summarize(status.output(), 0).finished());
+    }
 }

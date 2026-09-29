@@ -126,12 +126,14 @@ final class TaskScripts {
         sb.append("echo ").append(b64(runScript)).append(" | base64 -d > \"$D/run-").append(run).append(".sh\"; ");
         if (Tasks.AGENT.equals(kind) && run == 1) sb.append("echo ").append(b64(DELEGATE_BRIEF)).append(" | base64 -d > \"$D/brief.md\"; ");
         sb.append("echo ").append(kind).append(" > \"$D/kind\"; ");
-        sb.append("echo ").append(run).append(" > \"$D/current\"; ");
         // A system unit, so the task survives this exec and any session; su - gives the same
         // login environment exec has.
         sb.append("sudo -n systemd-run --quiet --collect --unit=").append(unit(taskId, String.valueOf(run)))
                 .append(" --property=KillMode=control-group -- su - agentuser -c \"bash $D/run-")
-                .append(run).append(".sh\"");
+                .append(run).append(".sh\"; ");
+        // Only once the unit started (set -e): a run that never started must not become the
+        // current one, hiding the previous run's result behind a run with no exit and no unit.
+        sb.append("echo ").append(run).append(" > \"$D/current\"");
         return sb.toString();
     }
 
@@ -199,11 +201,21 @@ final class TaskScripts {
                 + "echo; echo '--- stderr'; cat \"$D/stderr\" 2>/dev/null; exit 0";
     }
 
-    /** Stop the task's current run, and everything it started. */
+    /**
+     * Stop the task's current run, and everything it started. Stopping the unit is not enough:
+     * {@code su -} goes through PAM, which moves the run out of the unit's cgroup into a user
+     * session scope, so the unit's KillMode never reaches it. Every process carrying the task's
+     * {@link #TASK_ENV} is signalled too, TERM first, then KILL.
+     */
     static String cancel(String taskId) {
         var d = dir(taskId);
+        var kill = "for s in TERM KILL; do for p in /proc/[0-9]*; do "
+                + "grep -qzx '" + TASK_ENV + "=" + taskId + "' \"$p/environ\" 2>/dev/null && kill -$s \"${p#/proc/}\" 2>/dev/null; "
+                + "done; [ $s = TERM ] && sleep 2; done; exit 0";
+        var quoted = ExecScript.quote(kill);
         return "D=" + d + "; n=$(cat \"$D/current\" 2>/dev/null) || exit 0; "
                 + "sudo -n systemctl stop " + unit(taskId, "$n") + " 2>/dev/null; "
+                + "{ sudo -n bash -c " + quoted + " 2>/dev/null || bash -c " + quoted + "; }; "
                 + "[ -f \"$D/exit-$n\" ] || echo 143 > \"$D/exit-$n\"";
     }
 

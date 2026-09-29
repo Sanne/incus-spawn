@@ -258,4 +258,16 @@ class McpSessionTest {
         assertEquals(List.of(), s.instances());
         assertThrows(ToolError.class, () -> s.destroy(name));
     }
+
+    @Test
+    void anInstanceStillBeingCreatedCannotBeDestroyed() {
+        var s = session(3);
+        var name = s.reserve(TEMPLATE, null, null);
+        // The copy exists, but its stamp arrives with the configuring write.
+        backend.instance(name, Map.of(Metadata.TYPE, Metadata.TYPE_CLONE));
+        var e = assertThrows(ToolError.class, () -> s.destroy(name));
+        assertTrue(e.getMessage().contains("still being created"), e.getMessage());
+        assertTrue(s.holds(name), "the reservation survives");
+        assertTrue(backend.instances.containsKey(name));
+    }
 }

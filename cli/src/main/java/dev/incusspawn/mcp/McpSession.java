@@ -276,6 +276,28 @@ final class McpSession {
         }
     }
 
+    /**
+     * Whether this session still holds {@code name}, by its stamp in Incus; forgets it if not.
+     * An instance still being created counts as held. When Incus cannot be asked, it stays held:
+     * this is for letting go of what is certainly gone, never for guessing.
+     */
+    boolean stillHolds(String name) {
+        synchronized (this) {
+            var entry = owned.get(name);
+            if (entry == null) return false;
+            if (!entry.ready()) return true;
+        }
+        Map<String, String> metadata;
+        try {
+            metadata = backend.metadata(name);
+        } catch (RuntimeException e) {
+            return true;
+        }
+        if (metadata != null && ours(metadata)) return true;
+        abandon(name);
+        return false;
+    }
+
     /** Hand an instance to the user: never adopted, counted or reaped again. */
     void keep(String name) {
         requireOwned(name);
@@ -287,7 +309,8 @@ final class McpSession {
 
     /** Destroy a held instance. Idempotent for instances already gone. */
     boolean destroy(String name) {
-        lookup(name);
+        // Mid-create the copy exists but is not stamped yet: it would read as someone else's.
+        if (!lookup(name).ready()) throw new ToolError("'" + name + "' is still being created; destroy it once it is.");
         var metadata = backend.metadata(name);
         if (metadata != null && !ours(metadata)) {
             abandon(name);
