@@ -1091,17 +1091,15 @@ public class DoctorCommand extends BaseCommand {
 
     private Finding checkBridgeDns(IncusClient incus) {
         Set<String> allDomains;
-        String overrides;
-        String gatewayIp;
+        BridgeDns.Status status;
         try {
             var toolProxyDomains = ToolProxyResolver.resolvedDomains(SpawnConfig.load());
             allDomains = ProxyConfig.interceptedDomains(toolProxyDomains);
-            overrides = ProxyConfig.readDnsOverrides(incus);
-            gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+            status = ProxyConfig.bridgeDnsStatus(incus, allDomains);
         } catch (Exception e) {
             return Finding.warn("Bridge DNS overrides", "(could not check: " + e.getMessage() + ")", null);
         }
-        return bridgeDnsFinding(ProxyHealthCheck.check(incus), overrides, allDomains, gatewayIp,
+        return bridgeDnsFinding(ProxyHealthCheck.check(incus), status, allDomains,
                 () -> ProxyConfig.writeBridgeDns(RuntimeServices.incus(), allDomains));
     }
 
@@ -1111,13 +1109,12 @@ public class DoctorCommand extends BaseCommand {
      * So with the proxy down this reports nothing to fix (the "Proxy running" finding carries
      * the problem), and with it up, missing overrides are a failure the rewrite repairs (#839).
      */
-    static Finding bridgeDnsFinding(ProxyHealthCheck.ProxyStatus proxy, String overrides,
-                                    Set<String> domains, String gatewayIp, Action rewrite) {
+    static Finding bridgeDnsFinding(ProxyHealthCheck.ProxyStatus proxy, BridgeDns.Status status,
+                                    Set<String> domains, Action rewrite) {
         if (proxy == ProxyHealthCheck.ProxyStatus.NOT_RUNNING
                 || proxy == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             return Finding.note("Bridge DNS overrides", "(not checked: the proxy is not running)");
         }
-        var status = BridgeDns.status(overrides, domains, gatewayIp);
         if (status.complete()) {
             return Finding.ok("Bridge DNS overrides", "all " + domains.size() + " domains configured");
         }

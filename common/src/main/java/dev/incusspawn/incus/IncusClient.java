@@ -1353,6 +1353,19 @@ public class IncusClient {
         return value.isMissingNode() || value.isNull() ? "" : value.asText();
     }
 
+    /** Every config value of a named network, from one read; for callers that need several. */
+    public Map<String, String> networkConfig(String networkName) {
+        var resp = http().get("/1.0/networks/" + networkName);
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to get network config from " + networkName);
+        }
+        var config = new HashMap<String, String>();
+        resp.body().path("metadata").path("config").properties().forEach(e -> {
+            if (!e.getValue().isNull()) config.put(e.getKey(), e.getValue().asText());
+        });
+        return config;
+    }
+
     /**
      * Set a config value on a named network (e.g. "incusbr0").
      */

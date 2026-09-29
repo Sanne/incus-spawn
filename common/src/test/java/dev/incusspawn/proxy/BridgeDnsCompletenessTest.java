@@ -45,6 +45,14 @@ class BridgeDnsCompletenessTest {
     }
 
     @Test
+    void theOverridesAndTheGatewayComeFromOneReadOfTheBridge() {
+        var daemon = bridge(BridgeDns.render("", DOMAINS, "10.1.2.1"));
+        daemon.clearRequests();
+        ProxyConfig.isBridgeDnsComplete(daemon.client(), DOMAINS);
+        assertEquals(java.util.List.of("GET /1.0/networks/incusbr0"), daemon.requests());
+    }
+
+    @Test
     void anUnreadableBridgeIsNotReportedAsComplete() {
         var incus = new FakeIncusDaemon().withoutNetwork("incusbr0").client();
         assertThrows(IncusException.class, () -> ProxyConfig.isBridgeDnsComplete(incus, DOMAINS));

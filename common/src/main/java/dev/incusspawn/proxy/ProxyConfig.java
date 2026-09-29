@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -92,17 +93,25 @@ public final class ProxyConfig {
     }
 
     public static String resolveGatewayIp(IncusClient incus) {
-        RuntimeException error = null;
+        Optional<BridgeAddress> bridge;
         try {
-            var bridge = BridgeAddress.read(incus);
-            if (bridge.isPresent()) return bridge.get().gateway();
+            bridge = BridgeAddress.read(incus);
         } catch (RuntimeException e) {
-            error = e;
+            return cachedGatewayIp(e);
         }
+        return gatewayIp(bridge);
+    }
+
+    private static String gatewayIp(Optional<BridgeAddress> bridge) {
+        return bridge.map(BridgeAddress::gateway).orElseGet(() -> cachedGatewayIp(
+                new IncusException("Bridge incusbr0 has no ipv4.address configured")));
+    }
+
+    /** The gateway {@code isx init} recorded, for when the bridge cannot tell; else {@code error}. */
+    private static String cachedGatewayIp(RuntimeException error) {
         var cached = SpawnConfig.load().getIncusBridgeGateway();
         if (!cached.isEmpty()) return cached;
-        if (error != null) throw error;
-        throw new IncusException("Bridge incusbr0 has no ipv4.address configured");
+        throw error;
     }
 
     public static String resolvConfContent(IncusClient incus) {
@@ -367,6 +376,16 @@ public final class ProxyConfig {
      */
     public static boolean isBridgeDnsComplete(IncusClient incus, Set<String> allDomains) {
         var domains = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        return BridgeDns.status(readDnsOverrides(incus), domains, resolveGatewayIp(incus)).complete();
+        return bridgeDnsStatus(incus, domains).complete();
+    }
+
+    /**
+     * {@link BridgeDns#status} of the bridge's overrides against its current gateway, both from
+     * one read of the bridge. Throws when Incus cannot be read.
+     */
+    public static BridgeDns.Status bridgeDnsStatus(IncusClient incus, Set<String> domains) {
+        var bridge = incus.networkConfig(BridgeAddress.BRIDGE);
+        return BridgeDns.status(bridge.getOrDefault("raw.dnsmasq", ""), domains,
+                gatewayIp(BridgeAddress.of(bridge)));
     }
 }

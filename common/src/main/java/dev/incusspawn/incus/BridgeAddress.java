@@ -1,5 +1,6 @@
 package dev.incusspawn.incus;
 
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -14,6 +15,11 @@ public record BridgeAddress(String gateway, CidrUtils.Cidr subnet) {
     /** The bridge's address, or empty if it has no IPv4 address configured. */
     public static Optional<BridgeAddress> read(IncusClient incus) {
         return parse(incus.networkConfigGet(BRIDGE, "ipv4.address"));
+    }
+
+    /** {@link #read}, from the bridge's config a caller already holds. */
+    public static Optional<BridgeAddress> of(Map<String, String> bridgeConfig) {
+        return parse(bridgeConfig.getOrDefault("ipv4.address", ""));
     }
 
     /** The bridge's address; throws if it has none, since nothing can be addressed without it. */
