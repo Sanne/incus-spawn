@@ -10,6 +10,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceSubvolumes;
+import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
 import dev.incusspawn.tool.ToolDefLoader;
@@ -1939,6 +1940,223 @@ class BuildCommandTest {
 
         assertTrue(BuildCommand.isImageOutdated("tpl-test", imageDef, incus, toolDefLoader, defs),
                 "Image with changed definition should be outdated");
+    }
+
+    // --- default-action sync after every build (#284) ---
+
+    private static Map<String, ImageDef> parentAndChild(String parentDefaultAction) throws Exception {
+        var parent = ImageDef.parseYaml("name: tpl-parent\npackages: [git]\n"
+                + (parentDefaultAction != null ? "default-action: " + parentDefaultAction + "\n" : ""));
+        var child = ImageDef.parseYaml("name: tpl-child\nparent: tpl-parent\n");
+        return Map.of("tpl-parent", parent, "tpl-child", child);
+    }
+
+    /**
+     * {@code name} as {@code GET /1.0/instances?recursion=1} lists a template this isx built
+     * from {@code defs}, stamped with {@code defaultAction}.
+     */
+    private static ObjectNode template(String name, Map<String, ImageDef> defs, String defaultAction) {
+        var built = new LinkedHashMap<String, ImageDef>();
+        BuildCommand.definitionChain(defs.get(name), defs).forEach(d -> built.put(d.getName(), d));
+        var instance = new ObjectMapper().createObjectNode().put("name", name);
+        var config = instance.putObject("config")
+                .put(Metadata.TYPE, Metadata.TYPE_BASE)
+                .put(Metadata.BUILD_VERSION, dev.incusspawn.BuildInfo.instance().version())
+                .put(Metadata.DEFINITION_SHA, defs.get(name).contentFingerprint(Map.of()))
+                .put(Metadata.BUILD_SOURCE, new BuildSource(built, null, null, null).toJson());
+        if (defaultAction != null) config.put(Metadata.DEFAULT_ACTION, defaultAction);
+        return instance;
+    }
+
+    private static BuildCommand commandListing(IncusClient incus, ObjectNode... instances) {
+        when(incus.listJsonConfig()).thenReturn(List.of(instances).toString());
+        var cmd = new BuildCommand();
+        cmd.incus = incus;
+        cmd.toolDefLoader = mock(ToolDefLoader.class);
+        return cmd;
+    }
+
+    /**
+     * default-action is left out of the fingerprint, so editing it never rebuilds anything:
+     * the build still has to bring the stamp of every template in line, inherited values included.
+     */
+    @Test
+    void editedDefaultActionReachesTemplatesTheBuildDidNotRebuild() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-parent", defs, null),
+                template("tpl-child", defs, "codex"));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus).configSet("tpl-parent", Metadata.DEFAULT_ACTION, "claude");
+        verify(incus).configSet("tpl-child", Metadata.DEFAULT_ACTION, "claude");
+    }
+
+    @Test
+    void removedDefaultActionIsUnstamped() throws Exception {
+        var defs = parentAndChild(null);
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-parent", defs, "claude"),
+                template("tpl-child", defs, null));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus).configUnset("tpl-parent", Metadata.DEFAULT_ACTION);
+        verify(incus, never()).configUnset(eq("tpl-child"), anyString());
+    }
+
+    /** One list request covers every template, and a current stamp costs no write. */
+    @Test
+    void currentStampsAndNonTemplatesAreLeftAlone() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var clone = template("tpl-child", defs, null);
+        ((ObjectNode) clone.get("config")).put(Metadata.TYPE, Metadata.TYPE_CLONE);
+        var cmd = commandListing(incus, template("tpl-parent", defs, "claude"), clone);
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus).listJsonConfig();
+        verifyNoMoreInteractions(incus);
+    }
+
+    /** An outdated template keeps the stamp matching what it has installed until it is rebuilt. */
+    @Test
+    void outdatedTemplateKeepsItsStamp() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var outdated = template("tpl-parent", defs, null);
+        ((ObjectNode) outdated.get("config")).put(Metadata.DEFINITION_SHA, "old-sha");
+        var cmd = commandListing(incus, outdated);
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus, never()).configSet(anyString(), anyString(), anyString());
+    }
+
+    /** A project-local definition must not reach a same-named template built from elsewhere (#765). */
+    @Test
+    void templateBuiltFromAnotherProjectKeepsItsStamp() throws Exception {
+        var defs = parentAndChild(null);
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus, template("tpl-parent", parentAndChild(null), "codex"));
+        defs.get("tpl-parent").setProjectRoot(Path.of("/home/user/cloned-repo"));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus, never()).configUnset(anyString(), anyString());
+    }
+
+    /**
+     * A child inherits its default-action, so it must have been built from the parent as it
+     * stands: one built before the parent added a tool would be stamped with a tool it lacks.
+     */
+    @Test
+    void childBuiltFromAnOlderParentKeepsItsStamp() throws Exception {
+        var builtFrom = parentAndChild(null);
+        var defs = new LinkedHashMap<>(parentAndChild("codex"));
+        defs.put("tpl-parent", ImageDef.parseYaml(
+                "name: tpl-parent\npackages: [git, nodejs]\ndefault-action: codex\n"));
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-parent", defs, null),
+                template("tpl-child", builtFrom, null));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus).configSet("tpl-parent", Metadata.DEFAULT_ACTION, "codex");
+        verify(incus, never()).configSet(eq("tpl-child"), anyString(), anyString());
+    }
+
+    /** With a parent's definition gone, the inherited value is unknown: the stamp is the fallback. */
+    @Test
+    void childWhoseParentDefinitionIsGoneKeepsItsStamp() throws Exception {
+        var builtFrom = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus, template("tpl-child", builtFrom, "claude"));
+
+        cmd.syncDefaultActions(Map.of("tpl-child", builtFrom.get("tpl-child")));
+
+        verify(incus, never()).configUnset(anyString(), anyString());
+    }
+
+    /** A project-local parent override must not reach a child built from the user's definitions (#765). */
+    @Test
+    void projectLocalParentOverrideDoesNotReachTemplatesBuiltElsewhere() throws Exception {
+        var builtFrom = parentAndChild(null);
+        var defs = new LinkedHashMap<>(parentAndChild("codex"));
+        defs.get("tpl-parent").setProjectRoot(Path.of("/home/user/cloned-repo"));
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus, template("tpl-child", builtFrom, null));
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus, never()).configSet(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void parentCycleEndsTheWalk() throws Exception {
+        var defs = Map.of(
+                "tpl-a", ImageDef.parseYaml("name: tpl-a\nparent: tpl-b\n"),
+                "tpl-b", ImageDef.parseYaml("name: tpl-b\nparent: tpl-a\ndefault-action: claude\n"));
+        assertNull(BuildCommand.definitionChain(defs.get("tpl-a"), defs));
+    }
+
+    /** A template stamped by another isx build may differ in what it installed: it waits for its rebuild. */
+    @Test
+    void templateBuiltByAnotherIsxVersionKeepsItsStamp() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var older = template("tpl-parent", defs, null);
+        ((ObjectNode) older.get("config")).put(Metadata.BUILD_VERSION, "0.0.1-older");
+        var cmd = commandListing(incus, older);
+
+        cmd.syncDefaultActions(defs);
+
+        verify(incus, never()).configSet(anyString(), anyString(), anyString());
+    }
+
+    /**
+     * An unrelated template whose tool parameters no longer validate must not fail the build
+     * that triggered the sync, nor stop the other templates from being synced.
+     */
+    @Test
+    void templateThatNoLongerValidatesDoesNotFailTheBuild() throws Exception {
+        var defs = new LinkedHashMap<>(parentAndChild("claude"));
+        var broken = ImageDef.parseYaml("name: tpl-broken\ndefault-action: maven-3\n");
+        broken.setTools(List.of(new ToolDef.ToolRef("maven-3", Map.of("version", "9"))));
+        defs.put("tpl-broken", broken);
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-broken", defs, null),
+                template("tpl-parent", defs, null));
+        // The tool no longer declares the parameter the template still passes
+        when(cmd.toolDefLoader.find("maven-3")).thenReturn(simpleToolSetup("maven-3"));
+
+        assertDoesNotThrow(() -> cmd.syncDefaultActions(defs));
+
+        verify(incus, never()).configSet(eq("tpl-broken"), anyString(), anyString());
+        verify(incus).configSet("tpl-parent", Metadata.DEFAULT_ACTION, "claude");
+    }
+
+    /** The build has already succeeded or failed: a sync error must not replace that outcome. */
+    @Test
+    void syncErrorsAreOnlyWarnings() throws Exception {
+        var defs = parentAndChild("claude");
+        var incus = mock(IncusClient.class);
+        var cmd = commandListing(incus,
+                template("tpl-parent", defs, null),
+                template("tpl-child", defs, null));
+        doThrow(new IncusException("gone")).when(incus).configSet(eq("tpl-parent"), anyString(), anyString());
+
+        assertDoesNotThrow(() -> cmd.syncDefaultActions(defs));
+        verify(incus).configSet("tpl-child", Metadata.DEFAULT_ACTION, "claude");
+
+        when(incus.listJsonConfig()).thenThrow(new IncusException("daemon gone"));
+        assertDoesNotThrow(() -> cmd.syncDefaultActions(defs));
     }
 
     // --- collectDescendants ---

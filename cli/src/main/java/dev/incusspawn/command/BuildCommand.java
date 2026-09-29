@@ -1,5 +1,7 @@
 package dev.incusspawn.command;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -65,6 +67,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
@@ -212,86 +215,96 @@ public class BuildCommand extends BaseCommand {
             t.setDaemon(true);
             return t;
         });
+        // Only definitions read from disk: dispatch may add stale build-source snapshots to defs
+        var loadedDefs = Map.copyOf(defs);
         try {
-            if (withParents) {
-                if (name == null) {
-                    System.err.println("Usage: isx build <template-name> --with-parents");
-                    return CommandResult.valueOf(1);
-                }
-                var imageDef = defs.get(name);
-                if (imageDef == null) {
-                    System.err.println("Unknown image: " + name);
-                    System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                    return CommandResult.valueOf(1);
-                }
-                startHostRepoRefresh(List.of(imageDef), defs, executor);
-                buildWithParents(imageDef, defs);
-                return CommandResult.SUCCESS;
-            }
-            if (withDescendants) {
-                if (name == null) {
-                    System.err.println("Usage: isx build <template-name> --with-descendants");
-                    return CommandResult.valueOf(1);
-                }
-                var imageDef = defs.get(name);
-                if (imageDef == null) {
-                    System.err.println("Unknown image: " + name);
-                    System.err.println("Available images: " + String.join(", ", defs.keySet()));
-                    return CommandResult.valueOf(1);
-                }
-                startHostRepoRefresh(List.of(imageDef), defs, executor);
-                buildWithDescendants(imageDef, defs);
-                return CommandResult.SUCCESS;
-            }
-            if (missing) {
-                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
-                buildMissing(defs);
-                return CommandResult.SUCCESS;
-            }
-            if (outOfSync) {
-                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
-                buildAll(defs, true);
-                return CommandResult.SUCCESS;
-            }
-            if (all) {
-                startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
-                buildAll(defs, false);
-                return CommandResult.SUCCESS;
-            }
+            var result = dispatch(defs, executor);
+            if (result.equals(CommandResult.SUCCESS)) syncDefaultActions(loadedDefs);
+            return result;
+        } catch (BuildFailedException e) {
+            // Templates this build skipped or had already promoted are still worth syncing
+            syncDefaultActions(loadedDefs);
+            return CommandResult.valueOf(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 
+    private CommandResult dispatch(Map<String, ImageDef> defs, ExecutorService executor) {
+        if (withParents) {
             if (name == null) {
-                System.err.println("Usage: isx build <image-name>  or  isx build --all");
-                System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                System.err.println("Usage: isx build <template-name> --with-parents");
                 return CommandResult.valueOf(1);
             }
-
             var imageDef = defs.get(name);
-            if (imageDef == null && incus.exists(name)) {
-                var buildSource = BuildSource.fromJson(
-                        incus.configGet(name, Metadata.BUILD_SOURCE));
-                if (buildSource != null) {
-                    for (var entry : buildSource.getDefinitions().entrySet()) {
-                        defs.putIfAbsent(entry.getKey(), entry.getValue());
-                    }
-                    toolDefLoader.addFallbacks(buildSource.getTools());
-                    imageDef = defs.get(name);
-                }
-            }
             if (imageDef == null) {
                 System.err.println("Unknown image: " + name);
                 System.err.println("Available images: " + String.join(", ", defs.keySet()));
                 return CommandResult.valueOf(1);
             }
-            // buildChain may rebuild any ancestor that turns out to be missing or outdated
-            requireValidAccounts(ImageDef.chain(imageDef, defs).stream().map(ImageDef::getName).toList(), defs);
             startHostRepoRefresh(List.of(imageDef), defs, executor);
-            build(imageDef, defs);
+            buildWithParents(imageDef, defs);
             return CommandResult.SUCCESS;
-        } catch (BuildFailedException e) {
-            return CommandResult.valueOf(1);
-        } finally {
-            executor.shutdownNow();
         }
+        if (withDescendants) {
+            if (name == null) {
+                System.err.println("Usage: isx build <template-name> --with-descendants");
+                return CommandResult.valueOf(1);
+            }
+            var imageDef = defs.get(name);
+            if (imageDef == null) {
+                System.err.println("Unknown image: " + name);
+                System.err.println("Available images: " + String.join(", ", defs.keySet()));
+                return CommandResult.valueOf(1);
+            }
+            startHostRepoRefresh(List.of(imageDef), defs, executor);
+            buildWithDescendants(imageDef, defs);
+            return CommandResult.SUCCESS;
+        }
+        if (missing) {
+            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
+            buildMissing(defs);
+            return CommandResult.SUCCESS;
+        }
+        if (outOfSync) {
+            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
+            buildAll(defs, true);
+            return CommandResult.SUCCESS;
+        }
+        if (all) {
+            startHostRepoRefresh(new ArrayList<>(defs.values()), defs, executor);
+            buildAll(defs, false);
+            return CommandResult.SUCCESS;
+        }
+
+        if (name == null) {
+            System.err.println("Usage: isx build <image-name>  or  isx build --all");
+            System.err.println("Available images: " + String.join(", ", defs.keySet()));
+            return CommandResult.valueOf(1);
+        }
+
+        var imageDef = defs.get(name);
+        if (imageDef == null && incus.exists(name)) {
+            var buildSource = BuildSource.fromJson(
+                    incus.configGet(name, Metadata.BUILD_SOURCE));
+            if (buildSource != null) {
+                for (var entry : buildSource.getDefinitions().entrySet()) {
+                    defs.putIfAbsent(entry.getKey(), entry.getValue());
+                }
+                toolDefLoader.addFallbacks(buildSource.getTools());
+                imageDef = defs.get(name);
+            }
+        }
+        if (imageDef == null) {
+            System.err.println("Unknown image: " + name);
+            System.err.println("Available images: " + String.join(", ", defs.keySet()));
+            return CommandResult.valueOf(1);
+        }
+        // buildChain may rebuild any ancestor that turns out to be missing or outdated
+        requireValidAccounts(ImageDef.chain(imageDef, defs).stream().map(ImageDef::getName).toList(), defs);
+        startHostRepoRefresh(List.of(imageDef), defs, executor);
+        build(imageDef, defs);
+        return CommandResult.SUCCESS;
     }
 
     /** The refusal for definition files that failed to parse, or null when there are none. */
@@ -2791,6 +2804,90 @@ public class BuildCommand extends BaseCommand {
         } else {
             incus.configUnset(buildName, Metadata.DEFAULT_ACTION);
         }
+    }
+
+    /**
+     * Bring the default-action stamp of every up-to-date template in line with its definition
+     * (#284). default-action is left out of the fingerprint, since changing it does not change
+     * the image, so editing it never makes a template outdated and would otherwise never reach
+     * the stamp ActionResolver falls back to. One list request covers every template, whichever
+     * ones this build skipped; a stamp is written only where it differs.
+     */
+    void syncDefaultActions(Map<String, ImageDef> defs) {
+        JsonNode instances;
+        try {
+            instances = JSON.readTree(incus.listJsonConfig());
+        } catch (IncusException | JsonProcessingException e) {
+            System.err.println("Warning: could not sync default-action onto templates: " + e.getMessage());
+            return;
+        }
+        for (var instance : instances) {
+            var name = instance.path("name").asText("");
+            var def = defs.get(name);
+            var config = instance.path("config");
+            if (def == null || !Metadata.TYPE_BASE.equals(config.path(Metadata.TYPE).asText(""))) continue;
+            var chain = definitionChain(def, defs);
+            if (chain == null) continue;
+            var effective = resolveEffectiveDefaultAction(def, defs);
+            if (Objects.requireNonNullElse(effective, "").equals(config.path(Metadata.DEFAULT_ACTION).asText(""))) {
+                continue;
+            }
+            // Any template may fail here, e.g. on tool parameters that no longer validate. It is
+            // not the one this build was about, so it must not turn a finished build into an error.
+            try {
+                if (!builtFromCurrentChain(chain, config, defs)) continue;
+                if (effective != null) {
+                    incus.configSet(name, Metadata.DEFAULT_ACTION, effective);
+                } else {
+                    incus.configUnset(name, Metadata.DEFAULT_ACTION);
+                }
+            } catch (RuntimeException e) {
+                System.err.println("Warning: could not sync default-action onto " + name + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * {@code def} and its ancestors, child first, or null when the chain does not reach a root
+     * in {@code defs}: with a parent's definition gone, its default-action is unknown.
+     */
+    static List<ImageDef> definitionChain(ImageDef def, Map<String, ImageDef> defs) {
+        var chain = new ArrayList<ImageDef>();
+        var seen = new HashSet<String>();
+        for (var current = def; current != null; current = defs.get(current.getParent())) {
+            if (!seen.add(current.getName())) return null;
+            chain.add(current);
+            if (current.isRoot()) return chain;
+        }
+        return null;
+    }
+
+    /**
+     * Whether a template is the build of {@code chain} as it stands, and so may take its
+     * default-action: its own definition-sha is current, and its build-source recorded every
+     * ancestor with the definition and project it has now (an ancestor's tools are not
+     * compared). An outdated template, or one built before a parent changed, keeps the stamp
+     * that matches what it has installed until it is rebuilt, and a template built from another
+     * project's definitions is not theirs to change.
+     */
+    private boolean builtFromCurrentChain(List<ImageDef> chain, JsonNode config, Map<String, ImageDef> defs) {
+        var def = chain.getFirst();
+        if (!BuildInfo.instance().version().equals(config.path(Metadata.BUILD_VERSION).asText(""))
+                || !def.contentFingerprint(computeToolFingerprints(def, toolDefLoader, defs))
+                        .equals(config.path(Metadata.DEFINITION_SHA).asText(""))) {
+            return false;
+        }
+        var buildSource = BuildSource.fromJson(config.path(Metadata.BUILD_SOURCE).asText(""));
+        if (buildSource == null) return false;
+        for (var current : chain) {
+            var built = buildSource.getDefinitions().get(current.getName());
+            if (built == null
+                    || !Objects.equals(built.getProjectRoot(), current.getProjectRoot())
+                    || !built.contentFingerprint(Map.of()).equals(current.contentFingerprint(Map.of()))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static String resolveEffectiveWorkdir(ImageDef imageDef, Map<String, ImageDef> defs) {
