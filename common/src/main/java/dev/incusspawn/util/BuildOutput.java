@@ -479,12 +479,15 @@ public final class BuildOutput {
     }
 
     /**
-     * Print a yellow warning line, then a blank line separating it from the regular flow.
-     * Blank messages are skipped.
+     * Print a yellow warning line and any dim {@code details} under it (e.g. what to do about
+     * it), then a blank line separating them from the regular flow. Blank messages are skipped.
      */
-    public static void warn(String msg) {
+    public static void warn(String msg, String... details) {
         if (msg == null || msg.isBlank()) return;
         System.out.println(indent() + YELLOW + "⚠ " + msg + RESET);
+        for (var detail : details) {
+            System.out.println(indent() + GROUP_INDENT + DIM + detail + RESET);
+        }
         endWithBlankLine();
     }
 

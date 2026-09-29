@@ -159,7 +159,7 @@ class BuildOutputTest {
             BuildOutput.step("mx");
             BuildOutput.stepWarn("broken too");
         }
-        BuildOutput.warn("top-level");
+        BuildOutput.warn("top-level", "what to do");
         BuildOutput.step("next");
         // The blank line before the group depends on how the previous test's output ended.
         assertEquals("""
@@ -171,6 +171,7 @@ class BuildOutputTest {
                         ⚠ broken too
 
                     ⚠ top-level
+                      what to do
 
                     next
                 """, BuildOutput.stripAnsi(text()).replaceFirst("^\n", ""));

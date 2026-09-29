@@ -755,8 +755,8 @@ public class BuildCommand extends BaseCommand {
         var removed = findDroppedTools(oldSourceJson, imageDef, defs);
         if (!removed.isEmpty()) {
             BuildOutput.warn("Tools no longer included in " + imageDef.getName() + ": "
-                    + String.join(", ", removed));
-            BuildOutput.note("  Add them to your template's tools: list if you still need them.");
+                    + String.join(", ", removed),
+                    "Add them to your template's tools: list if you still need them.");
         }
     }
 
