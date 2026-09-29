@@ -2153,7 +2153,8 @@ public class BuildCommand extends BaseCommand {
     private static void verifyTools(Container container, List<ResolvedTool> tools) {
         var checks = tools.stream()
                 .filter(t -> !t.reconfigureOnly())
-                .map(t -> new ToolVerifier.Check(t.name(), t.setup().verifyCommand(t.parameters())))
+                .map(t -> new ToolVerifier.Check(t.name(), t.setup().verifyCommand(t.parameters()),
+                        t.setup().verifyAsRoot()))
                 .filter(check -> check.command() != null)
                 .toList();
         ToolVerifier.verifyAll(container, checks);

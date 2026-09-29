@@ -24,6 +24,16 @@ class ToolDefLoaderTest {
     }
 
     @Test
+    void onlyChecksThatNeedRootVerifyAsRoot() {
+        // A verify runs as the image's user unless it says otherwise: run as root, zmx left a
+        // root-owned ~/.zmx/logs behind and every later zmx run failed with "error: AccessDenied".
+        var loader = new ToolDefLoader();
+        assertTrue(loader.find("sshd").verifyAsRoot(), "sshd -t reads root-only host keys");
+        assertFalse(loader.find("zmx").verifyAsRoot());
+        assertFalse(loader.find("maven-3").verifyAsRoot());
+    }
+
+    @Test
     void findsBuiltinMaven() {
         var loader = new ToolDefLoader();
         var tool = loader.find("maven-3");

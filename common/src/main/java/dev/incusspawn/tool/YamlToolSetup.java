@@ -144,6 +144,11 @@ public class YamlToolSetup implements ToolSetup {
     }
 
     @Override
+    public boolean verifyAsRoot() {
+        return def.isVerifyAsRoot();
+    }
+
+    @Override
     public String verifyCommand(java.util.Map<String, String> resolvedParams) {
         var verify = def.getVerify();
         if (verify == null || verify.isBlank()) return null;

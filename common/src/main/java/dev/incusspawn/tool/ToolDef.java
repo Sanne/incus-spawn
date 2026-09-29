@@ -52,6 +52,8 @@ public class ToolDef {
     @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = ToolRef.Serializer.class)
     private List<ToolRef> requires = List.of();
     private String verify;
+    @JsonProperty("verify_as_root")
+    private boolean verifyAsRoot;
     private String ready;
     private List<ActionEntry> actions = List.of();
     @JsonProperty("package_repos")
@@ -86,6 +88,8 @@ public class ToolDef {
     public void setRequires(List<ToolRef> requires) { this.requires = requires; }
     public String getVerify() { return verify; }
     public void setVerify(String verify) { this.verify = verify; }
+    public boolean isVerifyAsRoot() { return verifyAsRoot; }
+    public void setVerifyAsRoot(boolean verifyAsRoot) { this.verifyAsRoot = verifyAsRoot; }
     public String getReady() { return ready; }
     public void setReady(String ready) { this.ready = ready; }
     public List<ActionEntry> getActions() { return actions; }
@@ -520,6 +524,7 @@ public class ToolDef {
             }
         }
         if (verify != null) sb.append("verify=").append(verify).append('\n');
+        if (verifyAsRoot) sb.append("verify_as_root=true\n");
         // Included (unlike description) because the note is baked into the image.
         if (agentNote != null && !agentNote.isBlank()) {
             sb.append("agent_note=").append(agentNote).append('\n');

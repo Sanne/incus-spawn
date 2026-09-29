@@ -242,6 +242,15 @@ public interface ToolSetup {
     }
 
     /**
+     * Whether {@link #verifyCommand} needs root. By default it runs as the image's user in a login
+     * shell -- what that user gets, and nothing a root-only run could leave behind in their home.
+     * A check that reads root-only files (sshd's host keys) says so.
+     */
+    default boolean verifyAsRoot() {
+        return false;
+    }
+
+    /**
      * Apply only reconfigurable parameter changes without a full reinstall.
      * Called when a child template overrides reconfigurable parameters of a
      * tool already installed by an ancestor. Defaults to {@link #install}.
