@@ -35,6 +35,7 @@ import dev.incusspawn.tool.CodexSetup;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
+import dev.incusspawn.tool.ToolVerifier;
 import dev.incusspawn.tool.YamlToolSetup;
 import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.util.CpuInfo;
@@ -1086,6 +1087,7 @@ public class BuildCommand extends BaseCommand {
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+        verifyTools(container, toolResolution.effective());
         linkJavaTrustStores(container);
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
@@ -1349,6 +1351,7 @@ public class BuildCommand extends BaseCommand {
             updateCodexTrust(container, layer);
         }
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
+        verifyTools(container, allTools);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
         if (effectiveVm) {
@@ -2140,6 +2143,20 @@ public class BuildCommand extends BaseCommand {
                 }
             }
         }
+    }
+
+    /**
+     * Verify the tools this build installed, after {@link #writeEnvFile}: a verify runs in the
+     * environment the image will have, so one tool may rely on another's (Maven on the JDK's
+     * {@code JAVA_HOME}). A reconfigure-only tool was verified when its ancestor installed it.
+     */
+    private static void verifyTools(Container container, List<ResolvedTool> tools) {
+        var checks = tools.stream()
+                .filter(t -> !t.reconfigureOnly())
+                .map(t -> new ToolVerifier.Check(t.name(), t.setup().verifyCommand(t.parameters())))
+                .filter(check -> check.command() != null)
+                .toList();
+        ToolVerifier.verifyAll(container, checks);
     }
 
     static void syncInheritedGcloudStub(Container container, ToolResolution toolResolution) {

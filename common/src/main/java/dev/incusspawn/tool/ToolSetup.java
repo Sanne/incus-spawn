@@ -232,6 +232,16 @@ public interface ToolSetup {
     void install(Container container, java.util.Map<String, String> resolvedParams);
 
     /**
+     * A command that exits 0 when this tool works, its first output line reported as the
+     * version -- or {@code null} for none. It runs after every tool is installed, with
+     * {@code isx-env.sh} sourced, so it may rely on another tool's environment; see
+     * {@link ToolVerifier}.
+     */
+    default String verifyCommand(java.util.Map<String, String> resolvedParams) {
+        return null;
+    }
+
+    /**
      * Apply only reconfigurable parameter changes without a full reinstall.
      * Called when a child template overrides reconfigurable parameters of a
      * tool already installed by an ancestor. Defaults to {@link #install}.

@@ -87,41 +87,21 @@ class YamlToolSetupTest {
 
         // 5. env is no longer written by install() — collected centrally by BuildCommand
 
-        // 6. verify -> shellExec
-        order.verify(incus).shellExec(eq(CONTAINER),
-                eq("test-tool"), eq("--version"));
+        // 6. verify is not run by install() -- ToolVerifier runs it once isx-env.sh exists
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("test-tool"), eq("--version"));
+        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), contains("test-tool"));
     }
 
     @Test
-    void stepIsNotDoneUntilVerifyReturnsAndAFailureSaysWhy() {
-        var incus = mockIncusWithArch();
-        var out = new java.io.ByteArrayOutputStream();
-        var printedWhenVerifying = new AtomicReference<String>();
-        when(incus.shellExec(eq(CONTAINER), eq("mvn"), eq("--version"))).thenAnswer(inv -> {
-            printedWhenVerifying.set(out.toString());
-            return new IncusClient.ExecResult(1, "",
-                    "\nThe JAVA_HOME environment variable is not defined correctly\nmore");
-        });
-
+    void verifyCommandSubstitutesParameters() {
         var def = new ToolDef();
-        def.setName("maven-3");
-        def.setDescription("Apache Maven");
-        def.setVerify("mvn --version");
+        def.setName("jdk");
+        def.setVerify("/opt/jdks/${param_jdk_id}/bin/java -version");
+        assertEquals("/opt/jdks/labsjdk/bin/java -version",
+                new YamlToolSetup(def).verifyCommand(Map.of("jdk_id", "labsjdk")));
 
-        var original = System.out;
-        System.setOut(new java.io.PrintStream(out, true));
-        try {
-            new YamlToolSetup(def).install(new Container(incus, CONTAINER), Map.of());
-        } finally {
-            System.setOut(original);
-        }
-
-        assertFalse(printedWhenVerifying.get().contains("done"),
-                "a slow verify must not run after the step already claimed to be done");
-        assertEquals("""
-                    Installing Apache Maven... done.
-                      ⚠ Verification failed (mvn --version): The JAVA_HOME environment variable is not defined correctly
-                """, dev.incusspawn.util.BuildOutput.stripAnsi(out.toString()));
+        def.setVerify(null);
+        assertNull(new YamlToolSetup(def).verifyCommand(Map.of()));
     }
 
     @Test

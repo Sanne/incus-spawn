@@ -629,7 +629,7 @@ Tool schema fields (all optional except `name`):
 - `run_as_user` -- shell commands as agentuser
 - `files` -- files to write (with optional `owner`)
 - `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies; see below)
-- `verify` -- verification command (logged, non-fatal)
+- `verify` -- verification command (logged, non-fatal); runs after every tool is installed, with the image environment (`/etc/profile.d/isx-env.sh`) loaded, so it may rely on another tool's variables such as `JAVA_HOME`
 - `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
 - `agent_note` -- always-true fact about this tool that an agent must know before acting (see [Agent Environment Context](#agent-environment-context))
 - `skills` -- skills to install alongside the tool, teaching an agent how to drive it; same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`
@@ -645,7 +645,7 @@ Download entry fields:
 
 Each download must set `extract`, `destination_file`, or both. Setting both preserves the downloaded archive at `destination_file` and also exposes its extracted contents. Supported archive formats for `extract` are `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.zip`.
 
-Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files` → `verify`. Environment variables are collected from all tools and the template chain after install, then written centrally. Resolution follows the same order as templates (see [Configuration](#configuration)).
+Execution order during `install()`: packages → downloads → `run` → `run_as_user` → `files`. Environment variables are collected from all tools and the template chain after install, then written centrally; each tool's `verify` runs after that. Resolution follows the same order as templates (see [Configuration](#configuration)).
 
 #### Environment Variables
 

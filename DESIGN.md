@@ -181,9 +181,9 @@ Schema fields (all optional except `name`):
 - `run_as_user` — shell commands as agentuser
 - `files` — files to write (path, content, optional owner)
 - `env` — environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies)
-- `verify` — verification command (logged, non-fatal)
+- `verify` — verification command (logged, non-fatal), run with `isx-env.sh` sourced
 
-Execution order: packages → downloads → run → run_as_user → files → verify. Environment variables are collected centrally after all tools run.
+Execution order: packages → downloads → run → run_as_user → files. Environment variables are collected centrally after all tools run, and only then does `ToolVerifier` run each installed tool's `verify` (`ToolSetup.verifyCommand()`), with `/etc/profile.d/isx-env.sh` sourced. A verify often depends on another tool: Maven's `mvn --version` needs the `JAVA_HOME` a JDK tool declares, and verifying it right after its own install (before the JDK, without the env file) failed in an image where Maven works. A failed verify's warning keeps every line of the reason, joined and capped, since messages such as Maven's wrap mid-sentence.
 
 **Environment variable system** (`EnvEntry` + `EnvResolver`): Env entries from the full template parent chain and all tools are collected by `BuildCommand.writeEnvFile()` into a single `/etc/profile.d/isx-env.sh`. Four strategies: `set` (unconditional), `set-if-unset` (conditional default), `prepend`/`append` (additive with separator). Conflict detection: two `set` entries for the same variable with different values fail the build with both sources named. Templates (`ImageDef`) can also declare env entries. Java tools participate via `ToolSetup.envEntries()`. Definitions accept only the structured form: a shell string (`- export FOO=bar`) is rejected at load, with the structured equivalent in the error, because it would bypass conflict detection. There is no verbatim-line escape hatch, not even for built-in code: every entry has a name and a strategy, so every entry is conflict-checked. Values are escaped so they are taken literally; built-in Java code that needs the shell to expand a value at login (`$HOME` in Claude's `PATH` prepend, `$HOSTNAME` for `ISX_CONTAINER`) marks the entry `expandingAtLogin()`, which leaves plain `$NAME`/`${NAME}` references live but still escapes every other `$` (no `$(...)`), quotes, backslashes and backticks. YAML cannot set that flag, and an expanded `$HOME` and a literal `$HOME` count as different values.
 
@@ -318,8 +318,8 @@ first-run flow is the one deliberate exception, kept in its own style for now.)
   adds a result — `✓ Extracting root disk (4.0G)`. `stepBreak()` ends it as
   `✗ label` before an error. Without a terminal the same calls print
   `Starting container... done.` for logs. The step is not done until *all* its work
-  is: a tool's `verify` runs inside its step, because a line saying "done" while a
-  first `mx version` takes seconds reads as a hang. Never print a `Doing X...` line
+  is: each tool's `verify` is its own step under `▸ Verifying`, because a line saying
+  "done" while a first `mx version` takes seconds reads as a hang. Never print a `Doing X...` line
   whose result lands on a separate line.
 - **Step detail** (`stepNote`, `stepWarn`): dim or yellow lines one level under the
   step they describe — a tool's verified version, or why its verify failed.

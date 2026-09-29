@@ -4,7 +4,6 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
-import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -137,35 +136,18 @@ public class YamlToolSetup implements ToolSetup {
         // 5. Environment variables are collected centrally by BuildCommand
         // and written to /etc/profile.d/isx-env.sh — see envEntries().
 
-        // 6. Verification (with parameter substitution). It runs inside the step, which is not
-        // done until it returns: a first `mx version` can take seconds, and a line already
-        // saying "done" would leave that time unexplained.
-        String verifiedVersion = null;
-        String verifyFailure = null;
-        if (def.getVerify() != null && !def.getVerify().isBlank()) {
-            var substituted = ParameterSubstitutor.substitute(def.getVerify(), resolvedParams);
-            BuildOutput.stepProgress("verifying: " + substituted);
-            var result = container.exec(substituted.split("\\s+"));
-            if (result.success()) {
-                verifiedVersion = result.stdout().lines().findFirst().orElse("");
-            } else {
-                verifyFailure = verifyFailure(substituted, result);
-            }
-        }
+        // 6. Verification runs later, from ToolVerifier: a verify often needs another tool's
+        // environment (Maven needs the JDK's JAVA_HOME), which exists only once every tool is
+        // installed and isx-env.sh is written.
+
         BuildOutput.stepDone();
-        if (verifyFailure != null) {
-            BuildOutput.stepWarn(verifyFailure);
-        } else if (verifiedVersion != null) {
-            BuildOutput.stepNote(verifiedVersion);
-        }
     }
 
-    /** Word a failed verify with its reason, so the warning says what to fix. */
-    static String verifyFailure(String command, IncusClient.ExecResult result) {
-        var reason = firstNonBlankLine(result.stderr());
-        if (reason.isEmpty()) reason = firstNonBlankLine(result.stdout());
-        if (reason.isEmpty()) reason = "exit code " + result.exitCode();
-        return "Verification failed (" + command + "): " + reason;
+    @Override
+    public String verifyCommand(java.util.Map<String, String> resolvedParams) {
+        var verify = def.getVerify();
+        if (verify == null || verify.isBlank()) return null;
+        return ParameterSubstitutor.substitute(verify, resolvedParams);
     }
 
     private static String firstNonBlankLine(String text) {
