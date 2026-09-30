@@ -778,6 +778,13 @@ kbd {
   text-wrap: balance;
 }
 
+.closing p {
+  margin-top: 0.9rem;
+  color: var(--fg-muted);
+  font-size: 1.1rem;
+  text-wrap: balance;
+}
+
 .closing .cta-links {
   margin-top: 1.75rem;
 }
