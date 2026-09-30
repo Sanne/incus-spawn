@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>isx &mdash; Give your AI coding agents their own machines</title>
-  <meta name="description" content="Give your AI coding agents their own machines — not your credentials. Full Linux workstations with copy-on-write branching and transparent credential isolation, on your hardware.">
+  <meta name="description" content="Give your AI coding agents their own machines — not your credentials. A full Linux workstation per agent, with full autonomy and nothing inside worth stealing. Free, open source, and light enough to run on a laptop.">
   <meta property="og:title" content="isx">
-  <meta property="og:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
+  <meta property="og:description" content="Give your AI coding agents their own machines — not your credentials. A full Linux workstation per agent, with full autonomy and nothing inside worth stealing. Free, open source, and light enough to run on a laptop.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://isx.run/">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="isx">
-  <meta name="twitter:description" content="Give your AI coding agents their own machines — not your credentials. Isolated Linux workstations with CoW branching and transparent credential isolation.">
+  <meta name="twitter:description" content="Give your AI coding agents their own machines — not your credentials. A full Linux workstation per agent, with full autonomy and nothing inside worth stealing. Free, open source, and light enough to run on a laptop.">
   <meta property="og:image" content="https://isx.run/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -24,7 +24,7 @@
     "@type": "SoftwareApplication",
     "name": "isx",
     "alternateName": "incus-spawn",
-    "description": "Give your AI coding agents their own machines — not your credentials. Full Linux workstations with copy-on-write branching and transparent credential isolation, on your hardware.",
+    "description": "Give your AI coding agents their own machines — not your credentials. A full Linux workstation per agent, with full autonomy and nothing inside worth stealing. Free, open source, and light enough to run on a laptop.",
     "url": "https://isx.run/",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -77,15 +77,15 @@
 <header class="hero">
   <div class="hero-bg" aria-hidden="true"></div>
   <div class="hero-inner">
-    <p class="eyebrow-pill"><span class="dot"></span>Open source &middot; Linux &amp; macOS &middot; on your hardware</p>
+    <p class="eyebrow-pill"><span class="dot"></span>Open source &middot; Linux &amp; macOS &middot; runs locally</p>
     <h1>Give your AI coding agents their own machines &mdash; <span class="hl">not your credentials</span></h1>
     <p class="subtitle">
       isx onboards agents the way you'd onboard a new teammate: a real Linux workstation of their own,
-      credentials that never enter the environment, disposable copy-on-write branches, and full autonomy
-      &mdash; no permission prompts to babysit, because the blast radius is the branch.
+      the accounts you assign them with nothing worth stealing, and full autonomy &mdash; they install
+      what they need and work without permission prompts, while your computer stays out of their reach.
     </p>
     <p class="subtitle subtitle-secondary">
-      Just as good for triaging untrusted patches and reproducing bug reports &mdash; without risking your host.
+      Just as good for triaging untrusted patches and reproducing bug reports &mdash; without risking your computer.
     </p>
 
     <div class="install-tabs" id="install">
@@ -157,17 +157,17 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
   <a class="pillar" href="#credentials">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
     <h3>Zero credential exposure</h3>
-    <p>A host-side TLS proxy injects keys upstream. Nothing inside is worth stealing.</p>
+    <p>Tools work with the accounts you assign, such as the agent's own GitHub identity. The workstation holds no credentials.</p>
   </a>
   <a class="pillar" href="#real-machines">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span>
     <h3>A real machine, full autonomy</h3>
-    <p>Root, init system, nested containers &mdash; and no permission prompts, because the blast radius is the branch.</p>
+    <p>Root, packages, services, nested containers &mdash; and no permission prompts, because your computer stays out of reach.</p>
   </a>
   <a class="pillar" href="#branching">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/></svg></span>
-    <h3>New machines in seconds</h3>
-    <p>Copy-on-write branches from a template. Use, throw away, branch again.</p>
+    <h3>New machines, instantly</h3>
+    <p>Prepare a template once with your tools and repositories. Every new workstation starts from it, ready to work.</p>
   </a>
   <a class="pillar" href="#workflows">
     <span class="pillar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M18 16c0-6-5-8-10-9.5"/></svg></span>
@@ -181,7 +181,7 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
   <section class="feature" id="credentials">
     <div class="feature-head">
       <p class="eyebrow"><span>01</span> Credential isolation</p>
-      <h2>Credentials never enter containers</h2>
+      <h2>Signed in, with nothing to steal</h2>
     </div>
     <div class="feature-body">
       <p>
@@ -232,7 +232,7 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
       <p>
         Like <code>git branch</code>, each clone is a copy-on-write snapshot that shares storage
         with its parent. Build a template once with your preferred tools and repos, then spin up
-        complete, disposable environments in seconds &mdash; each with its own filesystem,
+        complete environments instantly &mdash; each with its own filesystem,
         networking, and process tree.
       </p>
     </div>
