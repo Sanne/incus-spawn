@@ -35,6 +35,7 @@ Cloudflare Pages behaves differently from GitHub Pages in two ways the site acco
 | `isx.run` | MX | `0 .` (null MX: the domain accepts no mail) | DNS only |
 | `isx.run` | TXT | `v=spf1 -all` (nothing may send mail as isx.run) | DNS only |
 | `_dmarc` | TXT | `v=DMARC1; p=reject;` | DNS only |
+| `isx.run` | TXT | `google-site-verification=…` (Google Search Console; removing it loses access to the property) | DNS only |
 
 There is no CAA record. If one is ever added, it must allow `letsencrypt.org` and `pki.goog`, which Cloudflare uses for
 the edge certificates.
@@ -60,6 +61,10 @@ the mode only matters for anything proxied to another server later.
 - **Web Analytics** on, in the Pages project's Metrics tab. Cloudflare adds its beacon script to the pages at deploy time, so
   enabling it takes effect on the next deploy.
 - **Observatory** (Speed → Observatory) runs scheduled Lighthouse tests against `https://isx.run/`.
+
+**Search engines:** isx.run is a *Domain* property in Google Search Console, verified by the TXT record above, with
+`https://isx.run/sitemap.xml` submitted; Bing Webmaster Tools can import it from there. The Performance and Pages
+reports show what Google indexes and which searches find the site.
 - Left off on purpose: Smart Shield, Argo, Cache Reserve, APO, Polish, Rocket Loader. They help an origin server or a
   heavy site, and a Pages site has no origin server; Rocket Loader rewrites the page's scripts.
 
