@@ -1,6 +1,6 @@
 # isx
 
-> An AI agent in your terminal can read your API keys, tokens and SSH keys. isx gives each agent a full Linux workstation of its own instead, created instantly from a template you've prepared. There it has full autonomy: it can install software, run services and containers, and work without permission prompts, while your computer stays out of its reach. It works with the accounts you assign it, such as its own GitHub identity, with nothing in its workstation worth stealing. Free and open source, and light enough to run on a laptop, on Linux and macOS.
+> An AI agent in your terminal can read your API keys, tokens and SSH keys. isx gives each agent a full Linux workstation of its own instead, created instantly from a template you've prepared. There it has full autonomy: it can install software, run services and containers, and work without permission prompts, while your computer stays out of its reach. It works with the accounts you assign it, such as its own GitHub identity, yet its workstation holds no credentials. Free and open source, and light enough to run on a laptop, on Linux and macOS.
 
 isx was formerly known as incus-spawn; the command is `isx`. It works with Claude Code, Codex CLI, GitHub Copilot CLI and other coding agents, and with everyday tools like `gh`, `git` and `curl`, unchanged. Install with `curl -fsSL https://isx.run | sh`, Homebrew, DNF, APT or JBang.
 
