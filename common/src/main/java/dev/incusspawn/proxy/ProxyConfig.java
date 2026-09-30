@@ -135,10 +135,15 @@ public final class ProxyConfig {
     }
 
     public static void configureBridgeDns(IncusClient incus, Set<String> allDomains) {
+        configureBridgeDns(incus, allDomains, resolveGatewayIp(incus));
+    }
+
+    /** {@link #configureBridgeDns(IncusClient, Set)}, pointing the overrides at {@code gatewayIp}. */
+    public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
         var effective = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
-        writeBridgeDns(incus, effective);
+        writeBridgeDns(incus, effective, gatewayIp);
         System.out.println("  DNS overrides: " + effective.size() +
-                " domains -> " + resolveGatewayIp(incus) + " (via bridge dnsmasq)");
+                " domains -> " + gatewayIp + " (via bridge dnsmasq)");
     }
 
     public static void writeBridgeDns(IncusClient incus) {
@@ -147,8 +152,16 @@ public final class ProxyConfig {
 
     /** Rewrite isx's block of bridge DNS overrides; see {@link BridgeDns} for the layout. */
     public static void writeBridgeDns(IncusClient incus, Set<String> allDomains) {
+        writeBridgeDns(incus, allDomains, resolveGatewayIp(incus));
+    }
+
+    /**
+     * {@link #writeBridgeDns(IncusClient, Set)}, pointing the overrides at {@code gatewayIp}: the
+     * proxy passes the address it listens on, which {@code --gateway-ip} may have decided (#892).
+     */
+    public static void writeBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
         var existing = incus.networkConfigGet("incusbr0", "raw.dnsmasq");
-        var dnsmasqConfig = BridgeDns.render(existing, allDomains, resolveGatewayIp(incus));
+        var dnsmasqConfig = BridgeDns.render(existing, allDomains, gatewayIp);
         if (dnsmasqConfig.equals(existing)) {
             return;
         }
@@ -156,9 +169,9 @@ public final class ProxyConfig {
     }
 
     public static void configureBridgeDnsWithRetry(IncusClient incus, Set<String> allDomains,
-                                                    Runnable onDnsConfigured) {
+                                                    String gatewayIp, Runnable onDnsConfigured) {
         try {
-            configureBridgeDns(incus, allDomains);
+            configureBridgeDns(incus, allDomains, gatewayIp);
             ProxyLog.info("DNS overrides configured");
             if (onDnsConfigured != null) onDnsConfigured.run();
             return;
@@ -180,7 +193,7 @@ public final class ProxyConfig {
                 }
                 attempt++;
                 try {
-                    configureBridgeDns(incus, domains);
+                    configureBridgeDns(incus, domains, gatewayIp);
                     ProxyLog.info("DNS overrides configured (attempt " + attempt + ")");
                     if (onDnsConfigured != null) onDnsConfigured.run();
                     return;

@@ -195,7 +195,7 @@ public class MitmProxy {
     ) {}
     /** What {@code config.yaml} and {@code tools/} looked like when the running config was read. */
     private volatile ConfigFingerprint configFingerprint;
-    private dev.incusspawn.incus.IncusClient incusClient;
+    private java.util.function.Consumer<java.util.Set<String>> bridgeDnsWriter;
 
     /**
      * Source address → instance → pinned accounts. Null until {@link #setIncusClient} runs,
@@ -345,8 +345,13 @@ public class MitmProxy {
         this.instanceRegistry = registry;
     }
 
-    public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
-        this.incusClient = incusClient;
+    /**
+     * @param bridgeDnsWriter rewrites the bridge DNS block for a set of intercepted domains on
+     *                        reload, pointing it wherever the proxy was started to serve
+     */
+    public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient,
+                               java.util.function.Consumer<java.util.Set<String>> bridgeDnsWriter) {
+        this.bridgeDnsWriter = bridgeDnsWriter;
         var registry = new InstanceRegistry(incusClient);
         this.instanceRegistry = registry;
         // Populate before serving: an empty snapshot would hand defaults to every pinned
@@ -648,9 +653,9 @@ public class MitmProxy {
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
-            if (incusClient != null) {
+            if (bridgeDnsWriter != null) {
                 try {
-                    ProxyConfig.writeBridgeDns(incusClient, configState.routing().allInterceptedDomains());
+                    bridgeDnsWriter.accept(configState.routing().allInterceptedDomains());
                 } catch (Exception dnsEx) {
                     ProxyLog.warn("DNS override update failed during reload: " + dnsEx.getMessage());
                 }

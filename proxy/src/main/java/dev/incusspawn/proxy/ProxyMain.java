@@ -126,7 +126,7 @@ public class ProxyMain implements QuarkusApplication {
         System.out.println("  Log file:      " + Environment.proxyLogFile());
         System.out.println();
 
-        proxy.setIncusClient(incus);
+        proxy.setIncusClient(incus, domains -> addresses.writeBridgeDns(incus, domains));
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {
@@ -192,7 +192,8 @@ public class ProxyMain implements QuarkusApplication {
                 proxy.setDnsConfigured(true);
             };
         } else {
-            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, allDomains, () -> proxy.setDnsConfigured(true));
+            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, allDomains,
+                    addresses.bridgeDns(), () -> proxy.setDnsConfigured(true));
         }
         try {
             proxy.start(dnsCallback);
@@ -205,19 +206,37 @@ public class ProxyMain implements QuarkusApplication {
         return 0;
     }
 
-    /** Where the MITM listener serves instances, and where the health endpoint listens. */
-    record Addresses(String gateway, String healthBind) {}
+    /**
+     * Where the MITM listener serves instances, where the health endpoint listens, and where
+     * bridge DNS sends intercepted domains -- null on macOS, where DNS inside the VM points at
+     * the VM's own bridge gateway, not at the host address the proxy listens on.
+     */
+    record Addresses(String gateway, String healthBind, String bridgeDns) {
+        /** Rewrite the bridge DNS block, pointing it where {@link #bridgeDns} says. */
+        void writeBridgeDns(IncusClient incus, java.util.Set<String> domains) {
+            if (bridgeDns == null) {
+                ProxyConfig.writeBridgeDns(incus, domains);
+            } else {
+                ProxyConfig.writeBridgeDns(incus, domains, bridgeDns);
+            }
+        }
+    }
 
     /**
-     * The gateway comes from {@code --gateway-ip} when given, else from the bridge; the
-     * health endpoint then binds to that same address (localhost on macOS). Deriving it from a
-     * second bridge lookup would ignore the override, and throw past the error below when the
-     * override is how the user worked around a failing lookup (#892).
+     * The gateway comes from {@code --gateway-ip} when given, else from the bridge; the health
+     * endpoint and, on Linux, bridge DNS then use that same address. Deriving them from a second
+     * bridge lookup would ignore the override, and fail when the override is how the user worked
+     * around a bridge with no address to read (#892).
      * Returns null after printing why when the gateway cannot be determined.
      */
     static Addresses resolveAddresses(String gatewayIpOption, IncusClient incus) {
         String gatewayIp;
         if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
+            if (!Platform.isMacOS() && !isBridgeGatewayLiteral(gatewayIpOption)) {
+                System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
+                System.err.println("Pass the Incus bridge's own IPv4 address; see 'incus network get incusbr0 ipv4.address'.");
+                return null;
+            }
             gatewayIp = gatewayIpOption;
         } else if (Platform.isMacOS()) {
             gatewayIp = VmNetwork.discoverHostBridgeIp();
@@ -235,7 +254,24 @@ public class ProxyMain implements QuarkusApplication {
                 return null;
             }
         }
-        return new Addresses(gatewayIp, ProxyHealthCheck.healthAddress(gatewayIp));
+        return new Addresses(gatewayIp, ProxyHealthCheck.healthAddress(gatewayIp),
+                Platform.isMacOS() ? null : gatewayIp);
+    }
+
+    /**
+     * On Linux the override is written into dnsmasq as every intercepted domain's A record, and
+     * the unauthenticated health endpoint binds to it: anything but a routable IPv4 literal would
+     * break the bridge's DNS or send instances to themselves, and a wildcard would also expose
+     * /health on every interface.
+     */
+    private static boolean isBridgeGatewayLiteral(String address) {
+        try {
+            var parsed = java.net.InetAddress.ofLiteral(address);
+            return parsed instanceof java.net.Inet4Address && !parsed.isAnyLocalAddress()
+                    && !parsed.isLoopbackAddress() && !parsed.isLinkLocalAddress();
+        } catch (IllegalArgumentException notALiteral) {
+            return false;
+        }
     }
 
     private static void installLogTee() {
