@@ -1238,10 +1238,11 @@ kbd {
 
 .feature .cast-frame + .cast-frame { margin-top: 1.25rem; }
 
-/* Wider than a phone, the player draws the terminal at a fixed text size (see the
-   player options in index.html). Every terminal frame, recorded or static, takes
-   that terminal's width -- 80 columns plus the player's 0.75em border, in the
-   terminal font -- so stacked frames line up. */
+/* Wider than a phone, every terminal frame, recorded or static, is as wide as an
+   80-column terminal at 0.84rem (the static snippets' size) plus the player's 0.75em
+   border, in the terminal font. The player fits the recording to that width, which
+   draws it at exactly 0.84rem, and stacked frames line up. On a phone the frames
+   take the screen width and the recording scales down with them. */
 @media (min-width: 721px) {
   .cast-frame,
   .feature > .cast-frame {
@@ -1249,11 +1250,6 @@ kbd {
     font-size: 0.84rem;
     width: calc(80ch + 1.5em);
     max-width: 100%;
-  }
-
-  /* The player caps itself at max-width: 100%; its size is fixed here instead. */
-  .castbox div.ap-wrapper div.ap-player {
-    max-width: none;
   }
 }
 

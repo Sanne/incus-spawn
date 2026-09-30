@@ -368,17 +368,24 @@ document.addEventListener("DOMContentLoaded", function () {
     realmachine: { poster: "npt:15.3" }
   };
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // Terminal text at the size of the page's static terminal snippets (0.84rem), with the
-  // frame fitted to it; a phone is narrower than an 80-column terminal at that size, so
-  // there the recording is scaled to the screen width instead.
-  var narrow = window.matchMedia("(max-width: 720px)").matches;
+  // The player scales the terminal from one character it measures in terminalFontFamily
+  // at 15px, whatever the theme or terminalFontSize say. So it is given the site's mono
+  // font, created only once that font has loaded, and left to fit the frame's width:
+  // style.css sizes the frame to 80 columns at 0.84rem, and fullscreen scales correctly.
+  var monoFont = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+  var monoReady = document.fonts ? document.fonts.load('15px "JetBrains Mono"').catch(function () {})
+                                 : Promise.resolve();
 
   function init(box) {
+    monoReady.then(function () { create(box); });
+  }
+
+  function create(box) {
     var name = box.dataset.cast;
     var opts = OPTS[name] || {};
     if (reduced) { opts.autoPlay = false; opts.loop = false; }
     var player = AsciinemaPlayer.create("casts/" + name + ".cast", box, {
-      fit: narrow ? "width" : false, terminalFontSize: "0.84rem", theme: "isx", controls: true,
+      fit: "width", terminalFontFamily: monoFont, theme: "isx", controls: true,
       poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
     });
     if (!opts.loop) {
