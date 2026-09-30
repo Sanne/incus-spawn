@@ -9,6 +9,7 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 cp "$SCRIPT_DIR/index.html" "$OUT_DIR/"
+cp "$SCRIPT_DIR/404.html" "$OUT_DIR/"
 cp "$SCRIPT_DIR/style.css" "$OUT_DIR/"
 cp "$SCRIPT_DIR/favicon.svg" "$OUT_DIR/"
 cp "$SCRIPT_DIR/robots.txt" "$OUT_DIR/"
