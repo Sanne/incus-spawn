@@ -137,6 +137,20 @@ cat > "$OUT_DIR/sitemap.xml" <<SITEMAP
 </urlset>
 SITEMAP
 
+# Fingerprint the stylesheet's address. The pages are revalidated on every visit, but the
+# isx.run zone lets browsers keep style.css for hours, so without this a returning visitor
+# gets new HTML with an old stylesheet (seen after the terminal-frame change).
+# (Node rather than sed -i and sha256sum, which differ or are missing on macOS.)
+OUT_DIR="$OUT_DIR" node -e '
+  const fs = require("fs"), path = require("path"), out = process.env.OUT_DIR;
+  const v = require("crypto").createHash("sha256")
+    .update(fs.readFileSync(path.join(out, "style.css"))).digest("hex").slice(0, 10);
+  for (const f of fs.readdirSync(out).filter(f => f.endsWith(".html"))) {
+    const p = path.join(out, f);
+    fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace(/href="(\/?)style\.css"/g, `href="$1style.css?v=${v}"`));
+  }
+'
+
 # llms.txt (https://llmstxt.org): a map of the site for AI tools, plus the full
 # docs as one Markdown file -- the README the docs page is built from.
 cp "$SCRIPT_DIR/llms.txt" "$OUT_DIR/"
