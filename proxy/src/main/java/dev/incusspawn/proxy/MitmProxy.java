@@ -715,7 +715,7 @@ public class MitmProxy {
                 .setTrustAll(upstreamTrustAll)
                 .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
-                .setConnectTimeout(30_000)
+                .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
                 // Outlasts the MITM server's idle timeout, so a stalled relay is dropped by that,
                 // silently; waits for the cache take clientSilenceBudgetSeconds instead. Not lowered
                 // for everything: an upload gets no bytes back for as long as it sends.
@@ -1268,6 +1268,8 @@ public class MitmProxy {
 
     private Future<HttpClientRequest> requestWithAsyncDns(HttpClient client, RequestOptions options) {
         var host = options.getHost();
+        // Cut to fit what a waiting client has left, a connect timeout says nothing about the domain
+        var cutShort = options.getConnectTimeout() > 0 && options.getConnectTimeout() < UPSTREAM_CONNECT_TIMEOUT_MILLIS;
         var override = upstreamOverrides.get(host);
         Future<HttpClientRequest> connected;
         if (override != null) {
@@ -1287,6 +1289,9 @@ public class MitmProxy {
         return connected.andThen(ar -> {
             if (ar.succeeded()) {
                 ar.result().response().onSuccess(resp -> unreachableSince.remove(host));
+            } else if (cutShort && (ar.cause() instanceof java.util.concurrent.TimeoutException
+                    || ar.cause() instanceof io.netty.channel.ConnectTimeoutException)) {
+                return;
             } else if (unreachableSince.put(host, System.nanoTime()) == null) {
                 ProxyLog.warn("Cannot reach " + host + " (" + ar.cause().getMessage() +
                         "); serving cached copies unconfirmed for " + UNREACHABLE_BACKOFF_SECONDS + "s");
@@ -1490,7 +1495,7 @@ public class MitmProxy {
                 .setHost(domain)
                 .setPort(443)
                 .setURI(clientReq.uri())
-                .setConnectTimeout(Math.min(30_000, timeoutLeftMillis(started)));
+                .setConnectTimeout(Math.min(UPSTREAM_CONNECT_TIMEOUT_MILLIS, timeoutLeftMillis(started)));
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A head that never comes is an error the client can retry, not a silent drop
@@ -1569,7 +1574,7 @@ public class MitmProxy {
                 .setHost(redirectHost)
                 .setPort(redirectPort)
                 .setURI(redirectPath)
-                .setConnectTimeout(Math.min(30_000, timeoutLeftMillis(started)));
+                .setConnectTimeout(Math.min(UPSTREAM_CONNECT_TIMEOUT_MILLIS, timeoutLeftMillis(started)));
 
         requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.idleTimeout(timeoutLeftMillis(started));
@@ -1612,6 +1617,7 @@ public class MitmProxy {
         return Math.max(1, silenceLeftMillis(since));
     }
 
+    private static final int UPSTREAM_CONNECT_TIMEOUT_MILLIS = 30_000;
     // How often a download may be resumed in a row without getting further
     private static final int MAX_DOWNLOAD_RESUMES = 3;
     // The least of the client's silence budget worth starting a resume with
@@ -1634,6 +1640,8 @@ public class MitmProxy {
         // What the rest must still be for a Range request to continue it (If-Range); without
         // one, a changed file would be spliced onto the old one's first bytes
         private final String validator;
+        // Why a break could never be resumed, whatever happens: then a stall is not cut either
+        private final String neverResumable;
         // The response bytes are coming from; null while a resume is being asked for
         private HttpClientResponse current;
         private io.vertx.core.file.AsyncFile file;
@@ -1670,29 +1678,31 @@ public class MitmProxy {
             var etag = first.getHeader("ETag");
             this.validator = etag == null ? strongLastModified(first)
                     : etag.startsWith("W/") ? null : etag;
+            // Compressed on the fly, the same file need not give the same bytes twice
+            this.neverResumable = isGzip ? "it is gzip-encoded"
+                    : length < 0 ? "its length is unknown"
+                    : validator == null
+                    ? "upstream gave nothing to resume against (a strong ETag, or Last-Modified without one)"
+                    : null;
         }
 
         void start() {
             clientResp.setStatusCode(200);
             clientResp.putHeader("Content-Type", "application/octet-stream");
-            var clHeader = first.getHeader("Content-Length");
-            if (clHeader != null) {
-                clientResp.putHeader("Content-Length", clHeader);
+            // What length the resumes and the end-of-body check go by, not a header they could not parse
+            if (length >= 0) {
+                clientResp.putHeader("Content-Length", String.valueOf(length));
             }
             verification.responseHeaders().accept(clientResp, first);
-            if (clHeader == null) {
+            if (length < 0) {
                 clientResp.setChunked(true);
             }
             // Before anything asynchronous: an error with no handler yet is only logged by Vert.x
             attach(first);
             watchForStalls();
-            clientResp.closeHandler(v -> {
-                if (failed || done) return;
-                ProxyLog.info("Client left before " + ref + " was downloaded (" + received
-                        + " of " + length + " bytes); finishing it for the cache");
-                clientGone = true;
-                resumeWhenWritable();
-            });
+            clientResp.closeHandler(v -> clientLeft());
+            // It may have left while we waited for the head, before there was a handler to tell
+            if (clientResp.closed()) clientLeft();
 
             vertx.executeBlocking(() -> {
                 Files.createDirectories(cacheFile.getParent());
@@ -1718,7 +1728,7 @@ public class MitmProxy {
                 ProxyLog.warn("Failed to open temp file for caching: " + err.getMessage());
                 if (tempFile != null) discardTempFile();
                 if (failed) return;
-                if (current == null) {
+                if (current == null || clientGone) {
                     fail("Cache write error");
                 } else {
                     finish();
@@ -1728,6 +1738,14 @@ public class MitmProxy {
                     current.resume();
                 }
             });
+        }
+
+        private void clientLeft() {
+            if (failed || done || clientGone) return;
+            ProxyLog.info("Client left before " + ref + " was downloaded (" + received
+                    + " of " + length + " bytes); finishing it for the cache");
+            clientGone = true;
+            resumeWhenWritable();
         }
 
         private void attach(HttpClientResponse upResp) {
@@ -1804,9 +1822,21 @@ public class MitmProxy {
             } else {
                 var quiet = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - upstreamActive);
                 // However little budget is left, upstream just let go of gets a moment to send
-                wait = Math.min(idleMillis() - quiet, Math.max(resumeBudgetMillis(), MIN_RESUME_MILLIS - quiet));
+                var grace = MIN_RESUME_MILLIS - quiet;
+                String why;
+                if (neverResumable != null) {
+                    // Cutting a stall could only fail the download, which may yet go on: only the
+                    // client's budget ends it, with a line. With nobody waiting, nothing does
+                    // but the upstream client's read-idle timeout, as before resumes
+                    if (clientGone) return;
+                    wait = Math.max(silenceLeftMillis(clientActive), grace);
+                    why = "no byte for the client in " + clientSilenceBudgetSeconds + "s";
+                } else {
+                    wait = Math.min(idleMillis() - quiet, Math.max(resumeBudgetMillis(), grace));
+                    why = "no data for " + quiet / 1000 + "s";
+                }
                 if (wait <= 0) {
-                    broken(new java.util.concurrent.TimeoutException("no data for " + quiet / 1000 + "s"), false);
+                    broken(new java.util.concurrent.TimeoutException(why), false);
                     if (!failed) watchForStalls();
                     return;
                 }
@@ -1870,13 +1900,8 @@ public class MitmProxy {
         }
 
         private String whyNotResumable() {
-            // Compressed on the fly, the same file need not give the same bytes twice
-            if (isGzip) return "it is gzip-encoded";
-            if (length < 0) return "its length is unknown";
+            if (neverResumable != null) return neverResumable;
             if (received >= length) return "every byte had arrived";
-            if (validator == null) {
-                return "upstream gave nothing to resume against (a strong ETag, or Last-Modified without one)";
-            }
             if (resumes >= MAX_DOWNLOAD_RESUMES) return MAX_DOWNLOAD_RESUMES + " resumes in a row got nowhere";
             if (resumeBudgetMillis() < 0) {
                 return "the client has waited " + clientSilenceBudgetSeconds + "s for the next byte";
@@ -1892,7 +1917,7 @@ public class MitmProxy {
                     .setHost(from.getHost())
                     .setPort(from.getPort())
                     .setURI(from.getURI())
-                    .setConnectTimeout(resumeTimeoutMillis(30_000));
+                    .setConnectTimeout(resumeTimeoutMillis(UPSTREAM_CONNECT_TIMEOUT_MILLIS));
             var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());
             var resumeAt = received;
             requestWithAsyncDns(options).compose(req -> {
@@ -3543,8 +3568,9 @@ public class MitmProxy {
                 if (resp.headWritten()) {
                     resp.reset();
                 } else {
-                    resp.headers().remove("Content-Length");
-                    resp.headers().remove("Content-Encoding");
+                    // Whatever was set for the answer that failed (copied from upstream, or an
+                    // artifact's type and checksum) would describe the error as that answer
+                    resp.headers().clear();
                     resp.setStatusCode(statusCode).end(message);
                 }
             }

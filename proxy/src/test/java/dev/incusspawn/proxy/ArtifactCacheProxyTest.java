@@ -123,6 +123,8 @@ class ArtifactCacheProxyTest {
     /** How long the next GET's head takes; a cut then comes before any of its body when {@link #cutBeforeBody}. */
     static volatile long nextGetDelayMs;
     static volatile boolean cutBeforeBody;
+    /** When set, a cut GET is not left stalled: the rest follows after this pause. */
+    static volatile long cutPauseMs;
     /** Range requests left to answer 503, like an overloaded CDN. */
     static final AtomicInteger rangesToRefuse = new AtomicInteger();
 
@@ -257,10 +259,15 @@ class ArtifactCacheProxyTest {
                 && getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             resp.putHeader("Content-Length", String.valueOf(body.length));
             if (changeOnCut) etag = "\"changed\"";
-            resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, cutBeforeBody ? 0 : body.length / 2)))
+            var cutAt = cutBeforeBody ? 0 : body.length / 2;
+            var pause = cutPauseMs;
+            resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, cutAt)))
                     .onComplete(written -> {
                         if (cutByClosing) req.connection().close();
                     });
+            if (pause > 0) {
+                vertx.setTimer(pause, t -> resp.end(Buffer.buffer(java.util.Arrays.copyOfRange(body, cutAt, body.length))));
+            }
             return;
         }
         resp.end(Buffer.buffer(body));
@@ -300,6 +307,7 @@ class ArtifactCacheProxyTest {
         getsToIgnore.set(0);
         nextGetDelayMs = 0;
         cutBeforeBody = false;
+        cutPauseMs = 0;
         rangesToRefuse.set(0);
         proxy.downloadIdleSeconds = 20;
         proxy.clientSilenceBudgetSeconds = 110;
@@ -375,15 +383,18 @@ class ArtifactCacheProxyTest {
     /** A GET through the proxy, its response handled by {@code read}, all on the client's context. */
     static <T> Future<T> sendAsync(String host, String path,
                                    Function<io.vertx.core.http.HttpClientResponse, Future<T>> read) {
+        return requestAsync(host, path, req -> req.send().compose(read));
+    }
+
+    /** A GET through the proxy, sent (or not) by {@code send}, on the client's context. */
+    static <T> Future<T> requestAsync(String host, String path, Function<HttpClientRequest, Future<T>> send) {
         var options = new RequestOptions()
                 .setMethod(HttpMethod.GET)
                 .setServer(SocketAddress.inetSocketAddress(mitmPort, "127.0.0.1"))
                 .setHost(host)
                 .setPort(443)
                 .setURI(path);
-        return onClientContext(() -> client.request(options)
-                .compose(HttpClientRequest::send)
-                .compose(read));
+        return onClientContext(() -> client.request(options).compose(send));
     }
 
     static void publish(String host, String path, String content, String algorithm, String extension)
@@ -919,8 +930,13 @@ class ArtifactCacheProxyTest {
 
     /** A reset connection, or a 502 if nothing had been sent yet: never a body that looks whole. */
     static void assertDownloadFails() throws Exception {
+        assertDownloadFails(20);
+    }
+
+    static void assertDownloadFails(int timeoutSeconds) throws Exception {
         try {
-            var response = get(CENTRAL, JAR);
+            var response = getAsync(CENTRAL, JAR).toCompletionStage().toCompletableFuture()
+                    .get(timeoutSeconds, TimeUnit.SECONDS);
             assertEquals(502, response.status(), "got " + response.body().length + " bytes");
         } catch (java.util.concurrent.ExecutionException e) {
             // reset mid-body
@@ -1052,6 +1068,66 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void downloadThatCannotBeResumedIsNotCutWhenItPauses() throws Exception {
+        // Cutting it could only fail it; before resumes, it carried on after the pause
+        var content = publishCutJar(false);
+        etag = null;
+        cutPauseMs = 1_500;
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(List.of(), rangesAsked);
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void downloadThatCannotBeResumedIsCutAtTheClientsBudget() throws Exception {
+        // A stall it never recovers from ends with a line, not a silent drop at 120s
+        publishCutJar(false);
+        etag = null;
+        proxy.downloadIdleSeconds = 20;
+        proxy.clientSilenceBudgetSeconds = 2;
+
+        // A reset (bytes were sent) long before a stall check would come
+        assertDownloadFails(8);
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void downloadGoesOnIntoTheCacheWhenTheClientLeftBeforeItsHead() throws Exception {
+        // Left while the head was awaited: no budget for anyone, so the stall is resumed
+        var content = publishCutJar(false);
+        cutBeforeBody = true;
+        // The head gets 1.5s of slack; after it, less of the budget is left than a resume needs
+        nextGetDelayMs = 2_500;
+        proxy.clientSilenceBudgetSeconds = 4;
+
+        requestAsync(CENTRAL, JAR, req -> {
+            req.send();
+            vertx.setTimer(300, t -> req.connection().close());
+            return Future.succeededFuture();
+        });
+
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
+    void connectCutShortByTheClientsBudgetDoesNotStartTheBackoff() throws Exception {
+        // A listener whose accept queue is full drops further SYNs: the connect times out
+        publishJar(CENTRAL, JAR, "v1");
+        try (var blackHole = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
+             var first = new java.net.Socket();
+             var second = new java.net.Socket()) {
+            first.connect(blackHole.getLocalSocketAddress());
+            second.connect(blackHole.getLocalSocketAddress());
+            proxy.overrideUpstream(CENTRAL, "127.0.0.1", blackHole.getLocalPort());
+            proxy.clientSilenceBudgetSeconds = 2;
+
+            assertEquals(502, get(CENTRAL, JAR).status());
+            assertFalse(proxy.inBackoff(CENTRAL), "our own short timeout says nothing about the domain");
+        }
+    }
+
+    @Test
     void clientThatStopsReadingIsNotTakenForAStalledUpstream() throws Exception {
         // Enough to fill every socket buffer between here and upstream, so upstream is paused
         var content = randomText(64 * 1024).repeat(256);
@@ -1105,6 +1181,7 @@ class ArtifactCacheProxyTest {
         // drop the client (10s past the budget in production), not a stall check 20s away
         var response = getAsync(CENTRAL, JAR).toCompletionStage().toCompletableFuture().get(8, TimeUnit.SECONDS);
         assertEquals(502, response.status(), "an error the client retries");
+        assertNull(response.checksumHeader(), "the error does not describe itself as the artifact");
     }
 
     @Test
