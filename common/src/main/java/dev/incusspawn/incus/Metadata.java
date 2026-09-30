@@ -31,6 +31,11 @@ public final class Metadata {
     public static final String SHELL_COMMAND = PREFIX + "shell-command";
     public static final String DEFAULT_ACTION = PREFIX + "default-action";
     public static final String PENDING_OP = PREFIX + "pending-op";
+
+    /** The operation another isx process has under way on an instance, from its config; "" for none. */
+    public static String pendingOp(java.util.Map<String, String> config) {
+        return config.getOrDefault(PENDING_OP, "");
+    }
     public static final String STATIC_IP = PREFIX + "static-ip";
     public static final String STATIC_GATEWAY = PREFIX + "static-gateway";
     /**

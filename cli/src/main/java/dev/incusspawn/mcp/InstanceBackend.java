@@ -50,6 +50,16 @@ interface InstanceBackend {
      */
     void destroy(String name);
 
+    /**
+     * Destroy an instance only if {@code session} still holds it, for a caller that does not:
+     * the orphan sweep. Marks it {@link dev.incusspawn.incus.Metadata#OP_DELETING} first and
+     * re-reads the holder under that mark; an adoption stamps first and reads the mark after
+     * ({@link McpSession#adopt}), so of the two, one always sees the other. Returns whether it
+     * was destroyed, and throws {@link ToolError} when another isx process holds its lock; like
+     * {@link #destroy}, does not tell the proxy.
+     */
+    boolean destroyIfHeldBy(String name, String session);
+
     /** Tell the proxy instances went away, so a reused address never maps to one of them. */
     void refreshProxy();
 

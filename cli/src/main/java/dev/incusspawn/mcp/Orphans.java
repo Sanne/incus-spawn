@@ -46,12 +46,27 @@ final class Orphans {
         return result;
     }
 
-    /** When the instance became an orphan, or null if nobody has stamped it yet. */
+    /**
+     * The {@code mcp-orphaned} value saying {@code session}'s holding of the instance ended at
+     * {@code at}. It names the session so that a stamp which lost a race -- a sweep stamping an
+     * instance an adoption took meanwhile -- never counts for the next holder: its grace period
+     * starts when that holder is known to be gone, not earlier.
+     */
+    static String orphanedStamp(Instant at, String session) {
+        return at + " " + session;
+    }
+
+    /**
+     * When the instance became an orphan, or null if nobody has stamped it yet for the session
+     * that holds it now ({@link #orphanedStamp}).
+     */
     static Instant orphanedSince(Map<String, String> config) {
         var value = config.get(Metadata.MCP_ORPHANED);
         if (value == null) return null;
+        var space = value.indexOf(' ');
+        if (space >= 0 && !value.substring(space + 1).equals(config.get(Metadata.MCP_SESSION))) return null;
         try {
-            return Instant.parse(value);
+            return Instant.parse(space >= 0 ? value.substring(0, space) : value);
         } catch (DateTimeParseException e) {
             return null;
         }
@@ -71,12 +86,13 @@ final class Orphans {
         var destroyed = new ArrayList<String>();
         othersOf(backend.mcpInstances(), owner, self, alive).values().forEach(other -> {
             if (!other.orphaned()) return;
-            if (!other.config().getOrDefault(Metadata.PENDING_OP, "").isEmpty()) return;
+            if (!Metadata.pendingOp(other.config()).isEmpty()) return;
             var name = other.name();
             try {
                 var since = orphanedSince(other.config());
                 if (since == null) {
-                    backend.stamp(name, Map.of(Metadata.MCP_ORPHANED, now.toString()));
+                    backend.stamp(name, Map.of(Metadata.MCP_ORPHANED,
+                            orphanedStamp(now, other.config().get(Metadata.MCP_SESSION))));
                     return;
                 }
                 if (now.isBefore(since.plus(grace))) return;
@@ -85,13 +101,8 @@ final class Orphans {
                             + ": someone, or a task it was given, is still working in it");
                     return;
                 }
-                // Adopted while we looked: it is somebody's again.
-                var current = backend.metadata(name);
-                if (current == null || !other.config().get(Metadata.MCP_SESSION).equals(current.get(Metadata.MCP_SESSION))) {
-                    return;
-                }
-                backend.destroy(name);
-                destroyed.add(name);
+                // Not if it was adopted while we looked, or is being adopted now.
+                if (backend.destroyIfHeldBy(name, other.config().get(Metadata.MCP_SESSION))) destroyed.add(name);
             } catch (RuntimeException e) {
                 System.err.println("isx mcp: could not handle orphaned instance " + name + ": " + e.getMessage());
             }

@@ -116,6 +116,18 @@ final class IncusInstanceBackend implements InstanceBackend {
     }
 
     @Override
+    public boolean destroyIfHeldBy(String name, String session) {
+        var lock = locks.tryAcquire(name, Metadata.OP_DELETING);
+        if (lock.isEmpty()) throw new ToolError("'" + name + "' is locked by another isx process.");
+        try (var held = lock.get()) {
+            return InstanceDestroyer.deleteHeldIf(incus, name,
+                    config -> session.equals(config.path(Metadata.MCP_SESSION).asText(null)));
+        } catch (IncusException e) {
+            throw new ToolError("cannot remove '" + name + "': " + e.getMessage());
+        }
+    }
+
+    @Override
     public void refreshProxy() {
         InstanceDestroyer.refreshProxy();
     }

@@ -80,6 +80,43 @@ class McpSessionTest {
         s.reserve(TEMPLATE, null, null);
     }
 
+    /**
+     * A sweep marks the orphan for deletion after adopt's checks and before its stamp lands;
+     * {@code outcome} is what the sweep does next, seen on adopt's first read after that.
+     */
+    private McpSession adoptWhileASweepMarks(Runnable outcome) {
+        var s = session(3);
+        s.settleStep = java.time.Duration.ofMillis(1);
+        other("worker", DEAD, "alice", Metadata.MCP_ORPHANED, "2026-09-01T00:00:00Z");
+        var marked = new java.util.concurrent.atomic.AtomicInteger();
+        backend.onStamp = () -> {
+            backend.instances.get("worker").put(Metadata.PENDING_OP, Metadata.OP_DELETING);
+            marked.set(1);
+        };
+        backend.onRead = () -> {
+            // The read-back right after the stamp still sees the mark; the next one the outcome.
+            if (marked.get() > 0 && marked.getAndIncrement() == 2) outcome.run();
+        };
+        return s;
+    }
+
+    @Test
+    void anAdoptionTheSweepDeletesUnderneathIsNeverReportedAsAdopted() {
+        // The sweep read the holder before the stamp, so it deletes the instance.
+        var s = adoptWhileASweepMarks(() -> backend.instances.remove("worker"));
+        var e = assertThrows(ToolError.class, () -> s.adopt("worker", false));
+        assertTrue(e.getMessage().contains("removed as an orphan"), e.getMessage());
+        assertFalse(s.holds("worker"));
+    }
+
+    @Test
+    void anAdoptionTheSweepBacksOffFromIsHeld() {
+        // The sweep read the holder after the stamp: it takes its mark back, and the adoption stands.
+        var s = adoptWhileASweepMarks(() -> backend.instances.get("worker").remove(Metadata.PENDING_OP));
+        assertEquals("worker", s.adopt("worker", false).name());
+        assertTrue(s.holds("worker"), "never left stamped as ours without being held");
+    }
+
     @Test
     void namesSayWhereTheyCameFrom() {
         var s = session(3);

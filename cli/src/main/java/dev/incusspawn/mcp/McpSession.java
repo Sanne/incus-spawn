@@ -3,6 +3,7 @@ package dev.incusspawn.mcp;
 import dev.incusspawn.config.McpConfig;
 import dev.incusspawn.incus.Metadata;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -218,9 +219,8 @@ final class McpSession {
             abandon(name);
             throw new ToolError("'" + name + "' is no longer held by this session: another session adopted it.");
         }
-        if (!metadata.getOrDefault(Metadata.PENDING_OP, "").isEmpty()) {
-            throw new ToolError("'" + name + "' is busy (" + metadata.get(Metadata.PENDING_OP) + ").");
-        }
+        var busy = Metadata.pendingOp(metadata);
+        if (!busy.isEmpty()) throw new ToolError("'" + name + "' is busy (" + busy + "); try again shortly.");
         return metadata;
     }
 
@@ -231,14 +231,16 @@ final class McpSession {
      * Returns what was adopted, with the config read for the check.
      */
     Owned adopt(String name, boolean force) {
+        Owned held;
         synchronized (this) {
-            var held = owned.get(name);
-            // Mid-create the copy already carries our stamp: adopting would mark it ready early.
-            if (held != null && !held.ready()) throw new ToolError("'" + name + "' is still being created.");
-            if (held != null) {
-                requireOwned(name);
-                return held;
-            }
+            held = owned.get(name);
+        }
+        // Mid-create the copy already carries our stamp: adopting would mark it ready early.
+        if (held != null && !held.ready()) throw new ToolError("'" + name + "' is still being created.");
+        if (held != null) {
+            // Outside the lock: a round trip to Incus must not hold up every other call.
+            requireOwned(name);
+            return held;
         }
         var metadata = backend.metadata(name);
         if (metadata == null) throw new ToolError("'" + name + "' does not exist.");
@@ -250,9 +252,8 @@ final class McpSession {
         if (metadata.containsKey(Metadata.MCP_KEPT)) {
             throw new ToolError("'" + name + "' was kept: it belongs to the user now, not to agents.");
         }
-        if (!metadata.getOrDefault(Metadata.PENDING_OP, "").isEmpty()) {
-            throw new ToolError("'" + name + "' is busy (" + metadata.get(Metadata.PENDING_OP) + ").");
-        }
+        var busy = Metadata.pendingOp(metadata);
+        if (!busy.isEmpty()) throw new ToolError("'" + name + "' is busy (" + busy + "); try again shortly.");
         var holder = SessionId.parse(session);
         if (!force && holder.isPresent() && !holder.get().equals(id) && alive.test(holder.get())) {
             throw new ToolError("'" + name + "' is held by a session that is still running (isx mcp pid "
@@ -268,6 +269,7 @@ final class McpSession {
         // Two sessions adopting at once both write; only the last writer holds it.
         var after = backend.metadata(name);
         if (after == null || !ours(after)) throw new ToolError("another session adopted '" + name + "' first.");
+        after = settled(name, after);
         var delegate = backend.template(template).map(InstanceBackend.TemplateInfo::supportsDelegate).orElse(false);
         var adopted = new Owned(name, template, delegate, after.get(Metadata.MCP_PURPOSE),
                 createdOf(after), true, false);
@@ -275,6 +277,39 @@ final class McpSession {
             owned.put(name, adopted);
         }
         return adopted;
+    }
+
+    /** How long {@link #adopt} waits for an operation it finds under way to end. */
+    static final Duration ADOPT_SETTLE = Duration.ofSeconds(30);
+    /** How often it looks meanwhile; shorter in tests. */
+    volatile Duration settleStep = Duration.ofMillis(500);
+
+    /**
+     * {@code after}, the config read back after this session stamped an adoption, once no
+     * operation is under way on it. Read after the stamp, a mark means an orphan sweep may have
+     * read the holder before the stamp and be deleting the instance, or saw the stamp and is
+     * taking its mark back -- or another isx operation (a stop) is running. Only the outcome
+     * tells: waits for the mark to go, then answers from what is left. Refusing at once would
+     * leave the instance stamped as held by this session without it holding it.
+     */
+    private Map<String, String> settled(String name, Map<String, String> after) {
+        var deadline = System.nanoTime() + ADOPT_SETTLE.toNanos();
+        while (!Metadata.pendingOp(after).isEmpty() && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(settleStep);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ToolError("interrupted while '" + name + "' was busy; adopt_instance again.");
+            }
+            after = backend.metadata(name);
+            if (after == null) {
+                throw new ToolError("'" + name + "' was removed as an orphan past its grace period "
+                        + "before the adoption could take it.");
+            }
+            if (!ours(after)) throw new ToolError("another session adopted '" + name + "' first.");
+        }
+        // Still marked after the wait: it is ours by its stamp, so held like any busy instance.
+        return after;
     }
 
     private static String describeClient(Map<String, String> metadata) {
@@ -353,7 +388,7 @@ final class McpSession {
             targets = owned.values().stream().filter(o -> o.ready() && !o.kept()).toList();
         }
         var released = new ArrayList<String>();
-        var now = Instant.now().toString();
+        var now = Orphans.orphanedStamp(Instant.now(), id.toString());
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             var futures = targets.stream().map(o -> pool.submit(() -> {
                 try {

@@ -70,7 +70,7 @@ class OrphansTest {
         assertEquals(List.of("expired"), destroyed);
         assertEquals(List.of("expired"), backend.destroyed);
         assertEquals(1, backend.proxyRefreshes);
-        assertEquals(NOW.toString(), backend.instances.get("unstamped").get(Metadata.MCP_ORPHANED),
+        assertEquals(NOW, Orphans.orphanedSince(backend.instances.get("unstamped")),
                 "a killed session's orphan starts its grace period when first noticed");
     }
 
@@ -105,6 +105,26 @@ class OrphansTest {
             return false;
         });
         assertEquals(List.of(), destroyed);
+    }
+
+    @Test
+    void anOrphanAdoptedWhileTheSweepMarksItIsSpared() {
+        var backend = new FakeBackend().instance("expired", stamped(DEAD, "alice", Metadata.MCP_ORPHANED, LONG_AGO));
+        // Adopted between the sweep's mark and its re-read: the adopter's stamp is what it reads.
+        backend.onMarked = () -> backend.stamp("expired", Metadata.MCP_SESSION, ALIVE);
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertFalse(backend.instances.get("expired").containsKey(Metadata.PENDING_OP), "the mark is taken back");
+    }
+
+    @Test
+    void anOrphanedStampLeftForAnEarlierHolderDoesNotStartTheNextOnesGracePeriod() {
+        // A sweep stamped the killed holder DEAD just as another session adopted; that session
+        // was then killed too. Its grace period starts when it is first noticed, not before.
+        var backend = new FakeBackend().instance("worker", stamped("4-400", "alice",
+                Metadata.MCP_ORPHANED, Orphans.orphanedStamp(Instant.parse(LONG_AGO), DEAD)));
+        assertEquals(null, Orphans.orphanedSince(backend.instances.get("worker")));
+        assertEquals(List.of(), Orphans.sweep(backend, SELF, "alice", alive::contains, GRACE, NOW, name -> false));
+        assertEquals(NOW, Orphans.orphanedSince(backend.instances.get("worker")));
     }
 
     @Test

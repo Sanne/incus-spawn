@@ -73,6 +73,25 @@ class FakeBackend implements InstanceBackend {
         destroyed.add(name);
     }
 
+    /** Run between {@link #destroyIfHeldBy}'s mark and its re-read: what another session does meanwhile. */
+    volatile Runnable onMarked;
+    /** Run before each {@link #stamp} is applied: what another session did just before it. */
+    volatile Runnable onStamp;
+
+    @Override
+    public boolean destroyIfHeldBy(String name, String session) {
+        var instance = instances.get(name);
+        if (instance == null) return false;
+        instance.put(Metadata.PENDING_OP, Metadata.OP_DELETING);
+        if (onMarked != null) onMarked.run();
+        if (!session.equals(instance.get(Metadata.MCP_SESSION))) {
+            instance.remove(Metadata.PENDING_OP);
+            return false;
+        }
+        destroy(name);
+        return true;
+    }
+
     volatile int proxyRefreshes;
 
     @Override
@@ -83,12 +102,16 @@ class FakeBackend implements InstanceBackend {
     /** When set, every metadata read throws it, as a backend whose daemon cannot answer does. */
     volatile RuntimeException metadataFailure;
 
+    /** Run before each {@link #metadata} read: what happened meanwhile. */
+    volatile Runnable onRead;
+
     /** Every {@link #metadata} call, as a real backend's instance GETs. */
     final java.util.concurrent.atomic.AtomicInteger metadataReads = new java.util.concurrent.atomic.AtomicInteger();
 
     @Override
     public Map<String, String> metadata(String name) {
         metadataReads.incrementAndGet();
+        if (onRead != null) onRead.run();
         if (metadataFailure != null) throw metadataFailure;
         var config = instances.get(name);
         return config == null ? null : new LinkedHashMap<>(config);
@@ -96,6 +119,7 @@ class FakeBackend implements InstanceBackend {
 
     @Override
     public void stamp(String name, Map<String, String> config) {
+        if (onStamp != null) onStamp.run();
         var instance = instances.get(name);
         config.forEach((k, v) -> {
             if (v == null) instance.remove(k);
