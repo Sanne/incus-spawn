@@ -19,7 +19,7 @@ To try a change against a real Incus on a disposable Linux machine (a scratch VM
 
 ## Website Development
 
-The project website is hosted on GitHub Pages. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).
+The project website is hosted on Cloudflare Pages (project `isx`): `.github/workflows/pages.yml` deploys `main` to production and `preview.yml` deploys each PR to its own preview URL. The build script requires Node.js (for `npx` and `node`). Install it from [nodejs.org](https://nodejs.org/) or via your package manager (`brew install node`, `dnf install nodejs`, `apt install nodejs npm`).
 
 To preview changes locally:
 

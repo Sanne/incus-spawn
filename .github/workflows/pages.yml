@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -28,18 +26,13 @@ jobs:
       - name: Build site
         run: site/build.sh
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+      # Served by Cloudflare Pages, not GitHub Pages: isx.run is proxied by
+      # Cloudflare, which stops GitHub from renewing its own certificate for
+      # the domain (it expired on 2026-09-30 and the site went down with a 526).
+      # A branch named after the project's production branch deploys to production.
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          path: _site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deploy
-        uses: actions/deploy-pages@v5
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy _site --project-name=isx --branch=main
