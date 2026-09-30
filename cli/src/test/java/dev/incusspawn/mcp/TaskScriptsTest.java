@@ -414,6 +414,7 @@ class TaskScriptsTest {
         assertEquals("task t11-abc running\n", sh(TaskScripts.unfinished(), ""));
         Files.createDirectories(home.resolve(".isx-mcp/tasks/a b*"));
         Files.writeString(home.resolve(".isx-mcp/tasks/a b*/kind"), "agent\n");
+        Files.writeString(home.resolve(".isx-mcp/tasks/a b*/current"), "1\n"); // unfinished, but no task id
         stub("systemctl", "exit 1"); // systemd cannot be asked: that is not "finished"
         assertEquals("task t11-abc unknown\n", sh(TaskScripts.unfinished(), ""), "only task ids are asked about");
         for (var id : java.util.List.of("t11-abc", "t14-abc")) {
