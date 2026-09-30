@@ -28,7 +28,7 @@ class ToolVerifierTest {
         // As the image's user in a login shell, which sources isx-env.sh (JAVA_HOME from another
         // tool's env entry) -- and never as root, which could leave root-owned state in their home.
         verify(incus).execInContainer(CONTAINER, "agentuser", "mvn --version");
-        verify(incus, never()).shellExec(eq(CONTAINER), eq("sh"), eq("-c"), startsWith(". /etc/profile.d"));
+        verifyNoMoreInteractions(incus);
         // The blank line before a group depends on what the previous output ended with.
         assertEquals("""
                     ▸ Verifying  maven-3
@@ -39,9 +39,9 @@ class ToolVerifierTest {
     }
 
     @Test
-    void handsBackAnythingRootLeftInAgentusersHomeOnceEveryVerifyHasRun() {
+    void aRootCheckRunsInRootsOwnEnvironmentAndNothingElseRunsAsRoot() {
         var incus = mock(IncusClient.class);
-        when(incus.shellExec(eq(CONTAINER), eq("sh"), eq("-c"), anyString()))
+        when(incus.shellExec(eq(CONTAINER), any(String[].class)))
                 .thenReturn(new IncusClient.ExecResult(0, "v1\n", ""));
         when(incus.execInContainer(eq(CONTAINER), eq("agentuser"), anyString()))
                 .thenReturn(new IncusClient.ExecResult(0, "v1\n", ""));
@@ -50,17 +50,12 @@ class ToolVerifierTest {
                 List.of(new ToolVerifier.Check("a", "a --version"),
                         new ToolVerifier.Check("b", "b --version", true))));
 
-        var order = inOrder(incus);
-        order.verify(incus).shellExec(CONTAINER, "sh", "-c", "touch /run/isx-verify-start");
-        order.verify(incus).execInContainer(CONTAINER, "agentuser", "a --version");
-        order.verify(incus).shellExec(CONTAINER, "sh", "-c", ". /etc/profile.d/isx-env.sh && b --version");
-        order.verify(incus).shellExec(CONTAINER, "sh", "-c",
-                ToolVerifier.REPAIR_HOME_OWNERSHIP + "; rm -f /run/isx-verify-start");
-        // Only what appeared during verification, not what was root-owned on purpose before.
-        assertTrue(ToolVerifier.REPAIR_HOME_OWNERSHIP.contains("-newer /run/isx-verify-start"));
-        // Never crosses into a mounted host resource, nor chowns a mount point itself.
-        assertTrue(ToolVerifier.REPAIR_HOME_OWNERSHIP.contains("-xdev"));
-        assertTrue(ToolVerifier.REPAIR_HOME_OWNERSHIP.contains("! -exec mountpoint -q"));
+        // Root's own environment, not isx-env.sh, which points into agentuser's home (#931) --
+        // and no other root exec: nothing is left to hand back afterwards.
+        verify(incus).execInContainer(CONTAINER, "agentuser", "a --version");
+        verify(incus).shellExec(CONTAINER, "env", "-i", "HOME=/root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "sh", "-c", "b --version");
+        verifyNoMoreInteractions(incus);
     }
 
     @Test

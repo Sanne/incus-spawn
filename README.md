@@ -630,7 +630,7 @@ Tool schema fields (all optional except `name`):
 - `files` -- files to write (with optional `owner`)
 - `env` -- environment variables written to `/etc/profile.d/isx-env.sh` (supports structured entries with merge strategies; see below)
 - `verify` -- verification command (logged, non-fatal); runs after every tool is installed, as `agentuser` in a login shell with the image environment (`/etc/profile.d/isx-env.sh`) loaded, so it may rely on another tool's variables such as `JAVA_HOME`
-- `verify_as_root` -- set to `true` when the verify needs root (for example `sshd -t`, which reads the host keys); it then runs as root with the environment file sourced
+- `verify_as_root` -- set to `true` when the verify needs root (for example `sshd -t`, which reads the host keys); it then runs as root in root's own environment (`HOME=/root`, the default `PATH`), **without** the environment file, so it cannot rely on another tool's variables
 - `actions` -- runtime actions available from the TUI when the tool is installed (see [Tool Actions](#tool-actions))
 - `agent_note` -- always-true fact about this tool that an agent must know before acting (see [Agent Environment Context](#agent-environment-context))
 - `skills` -- skills to install alongside the tool, teaching an agent how to drive it; same forms as the image-level field, but bare names resolve against this tool's own `skills.repo`

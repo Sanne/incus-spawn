@@ -233,9 +233,10 @@ public interface ToolSetup {
 
     /**
      * A command that exits 0 when this tool works, its first output line reported as the
-     * version -- or {@code null} for none. It runs after every tool is installed, with
-     * {@code isx-env.sh} sourced, so it may rely on another tool's environment; see
-     * {@link ToolVerifier}.
+     * version -- or {@code null} for none. It runs after every tool is installed, as the image's
+     * user in a login shell that loads {@code isx-env.sh}, so it may rely on another tool's
+     * environment -- unless {@link #verifyAsRoot} says it needs root, when it gets root's own
+     * environment instead and cannot; see {@link ToolVerifier}.
      */
     default String verifyCommand(java.util.Map<String, String> resolvedParams) {
         return null;
@@ -244,7 +245,8 @@ public interface ToolSetup {
     /**
      * Whether {@link #verifyCommand} needs root. By default it runs as the image's user in a login
      * shell -- what that user gets, and nothing a root-only run could leave behind in their home.
-     * A check that reads root-only files (sshd's host keys) says so.
+     * A check that reads root-only files (sshd's host keys) says so, and then runs in root's own
+     * environment, without {@code isx-env.sh}: it cannot rely on another tool's env entries.
      */
     default boolean verifyAsRoot() {
         return false;

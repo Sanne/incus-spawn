@@ -2152,7 +2152,9 @@ public class BuildCommand extends BaseCommand {
     /**
      * Verify the tools this build installed, after {@link #writeEnvFile}: a verify runs in the
      * environment the image will have, so one tool may rely on another's (Maven on the JDK's
-     * {@code JAVA_HOME}). A reconfigure-only tool was verified when its ancestor installed it.
+     * {@code JAVA_HOME}) -- except a {@code verify_as_root} check, which gets root's own
+     * environment (see {@link ToolVerifier}). A reconfigure-only tool was verified when its
+     * ancestor installed it.
      */
     private static void verifyTools(Container container, List<ResolvedTool> tools) {
         var checks = tools.stream()
