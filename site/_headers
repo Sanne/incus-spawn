@@ -7,6 +7,9 @@
   Content-Type: text/plain; charset=utf-8
 
 # Versioned file names: a change ships under a new name, so browsers may keep these.
+# style.css is linked as style.css?v=<content hash> (build.sh), so it counts as versioned too.
+/style.css
+  Cache-Control: public, max-age=31536000, immutable
 /vendor/asciinema-player-*
   Cache-Control: public, max-age=31536000, immutable
 /vendor/fonts/*

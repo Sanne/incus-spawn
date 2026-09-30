@@ -81,7 +81,9 @@ Everything below is produced by `site/build.sh` from files in `site/`, unless a 
 **Headers** (`site/_headers`): the demo casts are served as `text/plain`, because Cloudflare does not compress the
 `application/octet-stream` an unknown extension gets (`hero.cast` 84 KB -> 12 KB). Files with a version in their name
 (`vendor/asciinema-player-*`, `vendor/fonts/*`) are cached for a year as `immutable`, so **replacing one means a new
-file name**.
+file name**. `style.css` is cached the same way: `build.sh` links it as `style.css?v=<content hash>`, so every change
+gets a new address. That also keeps pages and stylesheet in step: the pages are revalidated on every visit, and a
+stylesheet cached under a fixed address once left returning visitors with new HTML and old CSS.
 
 **Fonts** (`site/vendor/fonts/`, written by `site/subset-fonts.py`, which also writes the `fonts:begin`/`fonts:end`
 block in `style.css`). Inter, JetBrains Mono and Space Grotesk are self-hosted: no request leaves isx.run. Per family:
