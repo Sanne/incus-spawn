@@ -354,9 +354,11 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
 })();
 </script>
 
-<script src="vendor/asciinema-player-3.13.5.min.js"></script>
+<!-- Deferred so the player does not hold up the first paint; deferred scripts run
+     before DOMContentLoaded, so the casts are set up once it is there. -->
+<script defer src="vendor/asciinema-player-3.13.5.min.js"></script>
 <script>
-(function () {
+document.addEventListener("DOMContentLoaded", function () {
   var OPTS = {
     hero:        { poster: "npt:44" },
     tui:         { poster: "npt:3", loop: true, autoPlay: true },
@@ -392,7 +394,7 @@ sudo apt update &amp;&amp; sudo apt install incus-spawn</code></pre>
     });
   }, { rootMargin: "250px" });
   Array.prototype.forEach.call(boxes, function (b) { io.observe(b); });
-})();
+});
 </script>
 </body>
 </html>
