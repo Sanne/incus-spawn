@@ -51,11 +51,67 @@ the edge certificates.
 **SSL/TLS:** encryption mode **Full (strict)**, **Always Use HTTPS** on, and HSTS off. Pages has no GitHub server behind it, so
 the mode only matters for anything proxied to another server later.
 
+**Other zone settings:**
+- **DNSSEC** on, for both zones. The DS record is published at each domain's registrar, from the values in Cloudflare's
+  DNS → Settings.
+- **Minimum TLS version** 1.2.
+- **Bot Fight Mode** off, and AI crawlers allowed with no Cloudflare-managed `robots.txt`. A bot challenge would break
+  `curl … | sh` without a clear error, and AI assistants reading the site (`llms.txt`) is intended.
+- **Web Analytics** on, in the Pages project's Metrics tab. Cloudflare adds its beacon script to the pages at deploy time, so
+  enabling it takes effect on the next deploy.
+- **Observatory** (Speed → Observatory) runs scheduled Lighthouse tests against `https://isx.run/`.
+- Left off on purpose: Smart Shield, Argo, Cache Reserve, APO, Polish, Rocket Loader. They help an origin server or a
+  heavy site, and a Pages site has no origin server; Rocket Loader rewrites the page's scripts.
+
 ### getisx.com zone
 
 This zone only redirects: `getisx.com` and `www.getisx.com`, over HTTP and HTTPS, send a 301 to `https://isx.run/` with the path kept.
 `curl -fsSL https://getisx.com | sh` works by following that redirect into the installer rule above. It has the same
 email records as isx.run.
+
+## How the site is built
+
+Everything below is produced by `site/build.sh` from files in `site/`, unless a generator script is named.
+
+**Headers** (`site/_headers`): the demo casts are served as `text/plain`, because Cloudflare does not compress the
+`application/octet-stream` an unknown extension gets (`hero.cast` 84 KB -> 12 KB). Files with a version in their name
+(`vendor/asciinema-player-*`, `vendor/fonts/*`) are cached for a year as `immutable`, so **replacing one means a new
+file name**.
+
+**Fonts** (`site/vendor/fonts/`, written by `site/subset-fonts.py`, which also writes the `fonts:begin`/`fonts:end`
+block in `style.css`). Inter, JetBrains Mono and Space Grotesk are self-hosted: no request leaves isx.run. Per family:
+- `*-core.woff2`: ASCII and the site's punctuation, the file every page needs, preloaded for Inter and Space Grotesk.
+  It keeps every weight: cutting the weight axis saved ~11 KB but shifted the text's anti-aliasing.
+- `*-latin.woff2`, `*-latin-ext.woff2`: Google Fonts' files, unchanged, for every other character. A browser only
+  fetches them for a page that has such a character, so no character falls back to another font.
+- `jetbrains-mono-2.304-symbols.woff2`: box drawing, blocks, arrows, shapes and the Powerline branch icon, cut from
+  the upstream JetBrains Mono release (Google does not serve them). The casts' TUIs and prompts, and the docs' diagrams,
+  draw with it.
+
+The script's output is reproducible. After changing it, compare screenshots of the pages before and after: the core
+files were checked to render pixel-identically to Google's.
+
+**Demo casts** (`site/demo/`, made with `record.py` and `compress.py`, see `SCRIPT.md`). The asciinema player is
+loaded with `defer`, so it does not hold up the first paint. How the player is set up matters:
+- It sizes the terminal from one character it measures in `terminalFontFamily` at a hard-coded 15px, ignoring both
+  `terminalFontSize` and the theme's font. So `index.html` passes JetBrains Mono as `terminalFontFamily`, creates each
+  player only once that font has loaded, and uses `fit: "width"`; `style.css` makes every terminal frame 80 columns
+  wide at 0.84rem, which is what sets the text size. Setting `terminalFontSize` instead breaks fullscreen, which
+  scales from that measurement.
+- The `isx` theme in `style.css` maps ANSI colours to the site's palette: greys, the site's green, muted red and
+  amber. The player draws bold in the bright variant (colour + 8), so colours 9-14 repeat 1-6 and bold stays a
+  weight rather than a brighter colour. Colours a program sets as 24-bit RGB (Claude Code, btop, the TUI) are not
+  remapped; only a new recording changes those.
+
+**Link previews and search:**
+- `og.png`, the 1200x630 card for `og:image`/`twitter:image`, is drawn by `site/og-image.py` from the headline and
+  `screenshot.png`. Rerun it and commit the result when either changes.
+- The home page's meta, Open Graph and Twitter descriptions and its JSON-LD `SoftwareApplication` description are one
+  text; change them together.
+- `sitemap.xml` is generated, dated by each page's last commit, which is why the deploy workflows fetch the full
+  history (`fetch-depth: 0`).
+- `llms.txt` is written by hand and should say what the home page says; `llms-full.txt` is the README, copied at build
+  time.
 
 ## Why not GitHub Pages
 
@@ -75,4 +131,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://isx.run/no-such-page   # 404
 curl -sS -o /dev/null -w '%{redirect_url}\n' http://www.isx.run/docs     # https://isx.run/docs
 curl -fsSL https://isx.run | head -1                                      # #!/bin/sh
 curl -fsSL https://getisx.com | head -1                                   # #!/bin/sh
+curl -sSI -H 'Accept-Encoding: br' https://isx.run/casts/hero.cast | grep -i '^content-encoding'   # br
+curl -sSI https://isx.run/vendor/fonts/inter-v20-core.woff2 | grep -i '^cache-control'      # max-age=31536000, immutable
 ```
+
+For speed, `npx lighthouse https://isx.run/ --only-categories=performance` (mobile, simulated slow 4G) scored 100
+after these changes, with the first paint at about 0.9 s.
