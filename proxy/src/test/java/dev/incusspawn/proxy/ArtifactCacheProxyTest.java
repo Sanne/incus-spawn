@@ -113,11 +113,18 @@ class ArtifactCacheProxyTest {
     /** The ETag GETs answer with, if any; with {@link #changeOnCut} a cut changes it, as a republish would. */
     static volatile String etag;
     static volatile String lastModified;
+    /** The Date GETs answer with, if any: what makes Last-Modified a strong validator or not. */
+    static volatile String date;
     /** Range answers left to end short, as if the connection closed early without an error. */
     static final AtomicInteger rangesToShorten = new AtomicInteger();
     static volatile boolean changeOnCut;
     /** GETs left to receive but never answer. */
     static final AtomicInteger getsToIgnore = new AtomicInteger();
+    /** How long the next GET's head takes; a cut then comes before any of its body when {@link #cutBeforeBody}. */
+    static volatile long nextGetDelayMs;
+    static volatile boolean cutBeforeBody;
+    /** Range requests left to answer 503, like an overloaded CDN. */
+    static final AtomicInteger rangesToRefuse = new AtomicInteger();
 
     @BeforeAll
     static void start() throws Exception {
@@ -189,6 +196,12 @@ class ArtifactCacheProxyTest {
         if (req.method() == HttpMethod.GET && getsToIgnore.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             return;
         }
+        var delay = req.method() == HttpMethod.GET ? nextGetDelayMs : 0;
+        if (delay > 0) {
+            nextGetDelayMs = 0;
+            vertx.setTimer(delay, t -> reply(req, key));
+            return;
+        }
         reply(req, key);
     }
 
@@ -212,10 +225,16 @@ class ArtifactCacheProxyTest {
         if (currentEtag != null && reply.status() == 200) resp.putHeader("ETag", currentEtag);
         var currentLastModified = lastModified;
         if (currentLastModified != null && reply.status() == 200) resp.putHeader("Last-Modified", currentLastModified);
+        var currentDate = date;
+        if (currentDate != null) resp.putHeader("Date", currentDate);
         var range = req.getHeader("Range");
         if (range != null) rangesAsked.add(range);
         var ifRange = req.getHeader("If-Range");
         if (ifRange != null) ifRangesAsked.add(ifRange);
+        if (range != null && rangesToRefuse.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            resp.setStatusCode(503).end();
+            return;
+        }
         if (range != null && honourRange && reply.status() == 200
                 && (ifRange == null || ifRange.equals(currentEtag) || ifRange.equals(currentLastModified))) {
             var from = Integer.parseInt(range.substring("bytes=".length(), range.length() - 1));
@@ -238,7 +257,7 @@ class ArtifactCacheProxyTest {
                 && getsToCut.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             resp.putHeader("Content-Length", String.valueOf(body.length));
             if (changeOnCut) etag = "\"changed\"";
-            resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, body.length / 2)))
+            resp.write(Buffer.buffer(java.util.Arrays.copyOf(body, cutBeforeBody ? 0 : body.length / 2)))
                     .onComplete(written -> {
                         if (cutByClosing) req.connection().close();
                     });
@@ -275,9 +294,13 @@ class ArtifactCacheProxyTest {
         ifRangesAsked.clear();
         etag = null;
         lastModified = null;
+        date = null;
         rangesToShorten.set(0);
         changeOnCut = false;
         getsToIgnore.set(0);
+        nextGetDelayMs = 0;
+        cutBeforeBody = false;
+        rangesToRefuse.set(0);
         proxy.downloadIdleSeconds = 20;
         proxy.clientSilenceBudgetSeconds = 110;
         proxy.maxBackgroundConfirmations = 16;
@@ -929,6 +952,7 @@ class ArtifactCacheProxyTest {
         var content = publishCutJar(false);
         etag = null;
         lastModified = "Tue, 29 Sep 2026 08:10:59 GMT";
+        date = "Wed, 30 Sep 2026 09:00:00 GMT";
 
         assertEquals(content, get(CENTRAL, JAR).text());
         assertEquals(List.of(lastModified), ifRangesAsked);
@@ -936,14 +960,40 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
-    void downloadWithOnlyAWeakEtagIsNotResumed() throws Exception {
-        // A server ignores a weak If-Range and answers the whole file
+    void downloadWhoseLastModifiedIsNotAStrongValidatorIsNotResumed() throws Exception {
+        // Modified in the second it was sent: a change later that second keeps the same date
         publishCutJar(true);
-        etag = "W/\"v1\"";
+        etag = null;
+        lastModified = "Wed, 30 Sep 2026 09:00:00 GMT";
+        date = lastModified;
 
         assertDownloadFails();
         assertEquals(List.of(), rangesAsked, "not even tried");
         assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void downloadWithOnlyAWeakEtagIsNotResumed() throws Exception {
+        // A server ignores a weak If-Range and answers the whole file, and with an ETag
+        // present, Last-Modified may not stand in for it (RFC 9110 13.1.5)
+        publishCutJar(true);
+        etag = "W/\"v1\"";
+        lastModified = "Tue, 29 Sep 2026 08:10:59 GMT";
+
+        assertDownloadFails();
+        assertEquals(List.of(), rangesAsked, "not even tried");
+        assertStaysAbsent(cached(CENTRAL, JAR));
+    }
+
+    @Test
+    void resumeAnsweredWithAServerErrorIsTriedAgain() throws Exception {
+        // A stall is often an overloaded CDN, which is as likely to answer the Range with a 503
+        var content = publishCutJar(false);
+        rangesToRefuse.set(1);
+
+        assertEquals(content, get(CENTRAL, JAR).text(), "the client sees one unbroken download");
+        assertEquals(2, rangesAsked.size(), rangesAsked.toString());
+        awaitFile(cached(CENTRAL, JAR), content);
     }
 
     @Test
@@ -1007,14 +1057,15 @@ class ArtifactCacheProxyTest {
         var content = randomText(64 * 1024).repeat(256);
         publishJar(CENTRAL, JAR, content);
         etag = ETAG;
-        proxy.downloadIdleSeconds = 1;
+        // Not 1s: a pause of the whole JVM that long on a loaded runner would look like a stall
+        proxy.downloadIdleSeconds = 2;
 
         var body = sendAsync(CENTRAL, JAR, resp -> {
             var received = io.vertx.core.Promise.<Buffer>promise();
             var buffer = Buffer.buffer(content.length());
             resp.pause();
             // Longer than two stall checks
-            vertx.setTimer(2_500, t -> resp.resume());
+            vertx.setTimer(4_500, t -> resp.resume());
             resp.handler(buffer::appendBuffer);
             resp.endHandler(end -> received.complete(buffer));
             resp.exceptionHandler(received::tryFail);
@@ -1034,6 +1085,26 @@ class ArtifactCacheProxyTest {
         proxy.clientSilenceBudgetSeconds = 1;
 
         assertEquals(502, get(CENTRAL, JAR).status());
+    }
+
+    @Test
+    void lateHeadWhoseBodyStallsIsAnsweredWithinTheClientsBudget() throws Exception {
+        // The head takes most of the budget (an npm shasum lookup before it counts too), then
+        // no body follows. A stall check a whole downloadIdleSeconds away came after the MITM
+        // server had dropped the client, silently (#925)
+        publishCutJar(false);
+        cutBeforeBody = true;
+        // The check lands where the budget leaves too little to resume, or a resume is refused:
+        // a 502 either way, not a timing race between the two
+        honourRange = false;
+        proxy.downloadIdleSeconds = 20;
+        nextGetDelayMs = 2_000;
+        proxy.clientSilenceBudgetSeconds = 4;
+
+        // What is under test is the timeout: the proxy answers before the MITM server would
+        // drop the client (10s past the budget in production), not a stall check 20s away
+        var response = getAsync(CENTRAL, JAR).toCompletionStage().toCompletableFuture().get(8, TimeUnit.SECONDS);
+        assertEquals(502, response.status(), "an error the client retries");
     }
 
     @Test

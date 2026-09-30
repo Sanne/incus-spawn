@@ -1489,7 +1489,8 @@ public class MitmProxy {
                 .setMethod(clientReq.method())
                 .setHost(domain)
                 .setPort(443)
-                .setURI(clientReq.uri());
+                .setURI(clientReq.uri())
+                .setConnectTimeout(Math.min(30_000, timeoutLeftMillis(started)));
 
         requestWithAsyncDns(options).onSuccess(upReq -> {
             // A head that never comes is an error the client can retry, not a silent drop
@@ -1567,7 +1568,8 @@ public class MitmProxy {
                 .setMethod(HttpMethod.GET)
                 .setHost(redirectHost)
                 .setPort(redirectPort)
-                .setURI(redirectPath);
+                .setURI(redirectPath)
+                .setConnectTimeout(Math.min(30_000, timeoutLeftMillis(started)));
 
         requestWithAsyncDns(redirectOptions).onSuccess(redReq -> {
             redReq.idleTimeout(timeoutLeftMillis(started));
@@ -1663,9 +1665,11 @@ public class MitmProxy {
             var contentEncoding = first.getHeader("Content-Encoding");
             this.isGzip = contentEncoding != null && contentEncoding.toLowerCase().contains("gzip");
             this.length = contentLength(first);
-            // A weak ETag makes the server ignore If-Range (RFC 9110), so it could never resume
+            // A server ignores a weak ETag in If-Range, and where there is an ETag, RFC 9110
+            // (13.1.5) does not let Last-Modified stand in for it: then there is no resume
             var etag = first.getHeader("ETag");
-            this.validator = etag != null && !etag.startsWith("W/") ? etag : first.getHeader("Last-Modified");
+            this.validator = etag == null ? strongLastModified(first)
+                    : etag.startsWith("W/") ? null : etag;
         }
 
         void start() {
@@ -1706,6 +1710,8 @@ public class MitmProxy {
                 if (failed) {
                     discardTempFile();
                 } else {
+                    // Upstream sat paused on us while the file opened: that was no stall
+                    upstreamActive = System.nanoTime();
                     resumeWhenWritable();
                 }
             }).onFailure(err -> {
@@ -1757,16 +1763,24 @@ public class MitmProxy {
         private void resumeWhenWritable() {
             if (failed || done || file == null) return;
             if (clientBackedUp()) {
-                clientResp.drainHandler(v -> resumeWhenWritable());
+                clientResp.drainHandler(v -> {
+                    // The client took what we had: it was not left waiting. A disk that drains
+                    // tells it nothing, so only this renews its budget
+                    clientActive = System.nanoTime();
+                    resumeWhenWritable();
+                });
             } else if (file.writeQueueFull()) {
                 file.drainHandler(v -> resumeWhenWritable());
             } else if (current != null) {
                 if (waitingForDrain) {
-                    // The client took what we had: it was not left waiting, nor upstream stalled
+                    // Paused on us, upstream did not stall
                     waitingForDrain = false;
-                    clientActive = upstreamActive = System.nanoTime();
+                    upstreamActive = System.nanoTime();
                 }
                 current.resume();
+                // Checked again now, not an idle period after the pause began
+                vertx.cancelTimer(stallTimer);
+                watchForStalls();
             }
         }
 
@@ -1778,7 +1792,10 @@ public class MitmProxy {
          * Vert.x's request idle timeout stops at the response head, and the upstream client's
          * read-idle timeout outlasts the MITM server's, so a body that stops arriving is noticed here.
          * Not while upstream waits on our own backpressure or for the temp file to open, or while
-         * a resume is being asked for (that request has its own timeouts).
+         * a resume is being asked for (that request has its own timeouts). Each of those ends in
+         * {@link #resumeWhenWritable}, which checks at once: a head or a resume that arrived late
+         * may leave less of the client's budget than one stall check, and past it the MITM server
+         * drops the client silently.
          */
         private void watchForStalls() {
             long wait;
@@ -1786,7 +1803,8 @@ public class MitmProxy {
                 wait = idleMillis();
             } else {
                 var quiet = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - upstreamActive);
-                wait = Math.min(idleMillis() - quiet, resumeBudgetMillis());
+                // However little budget is left, upstream just let go of gets a moment to send
+                wait = Math.min(idleMillis() - quiet, Math.max(resumeBudgetMillis(), MIN_RESUME_MILLIS - quiet));
                 if (wait <= 0) {
                     broken(new java.util.concurrent.TimeoutException("no data for " + quiet / 1000 + "s"), false);
                     if (!failed) watchForStalls();
@@ -1856,7 +1874,9 @@ public class MitmProxy {
             if (isGzip) return "it is gzip-encoded";
             if (length < 0) return "its length is unknown";
             if (received >= length) return "every byte had arrived";
-            if (validator == null) return "upstream gave no ETag or Last-Modified to resume against";
+            if (validator == null) {
+                return "upstream gave nothing to resume against (a strong ETag, or Last-Modified without one)";
+            }
             if (resumes >= MAX_DOWNLOAD_RESUMES) return MAX_DOWNLOAD_RESUMES + " resumes in a row got nowhere";
             if (resumeBudgetMillis() < 0) {
                 return "the client has waited " + clientSilenceBudgetSeconds + "s for the next byte";
@@ -1891,6 +1911,11 @@ public class MitmProxy {
                     resumeWhenWritable();
                 } else {
                     resp.request().reset();
+                    if (resp.statusCode() >= 500 || resp.statusCode() == 429) {
+                        // An overloaded upstream, as a stall often is: tried again like a failed connect
+                        broken(new IOException("upstream answered " + resp.statusCode()), true);
+                        return;
+                    }
                     ProxyLog.warn("Could not resume " + ref + ": upstream answered " + resp.statusCode()
                             + " to a Range request");
                     fail("Upstream stream error");
@@ -1925,6 +1950,24 @@ public class MitmProxy {
                 Files.deleteIfExists(tempFile);
                 return null;
             }));
+        }
+    }
+
+    /**
+     * Last-Modified if it is a strong validator: at least a second before the response's Date
+     * (RFC 9110 8.8.2.2), or a file changed twice within that second would pass If-Range.
+     */
+    static String strongLastModified(HttpClientResponse resp) {
+        var lastModified = resp.getHeader("Last-Modified");
+        var date = resp.getHeader("Date");
+        if (lastModified == null || date == null) return null;
+        try {
+            var format = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME;
+            var modified = java.time.ZonedDateTime.parse(lastModified, format).toInstant();
+            var sent = java.time.ZonedDateTime.parse(date, format).toInstant();
+            return sent.minusSeconds(1).isBefore(modified) ? null : lastModified;
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
         }
     }
 
@@ -2109,6 +2152,8 @@ public class MitmProxy {
                     () -> fetchNpmShasum(domain, packageName, version));
         }).onSuccess(result -> {
             if (result == null) {
+                // Said here, since a relay that stalls is dropped without a line (#929)
+                ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
                 relayRequest(clientReq, domain);
             } else if (result.cacheHit()) {
                 System.out.println("npm cache hit: " + ref +
