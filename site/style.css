@@ -69,6 +69,15 @@
 }
 
 @font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("vendor/fonts/jetbrains-mono-2.304-symbols.woff2") format("woff2");
+  unicode-range: U+2070, U+2074-207A, U+207C, U+2080-2089, U+2102, U+210D, U+2115-2116, U+2119-211A, U+211D, U+2124, U+212E, U+2140, U+218A-218B, U+2190, U+2192, U+2194-2199, U+219D-219E, U+21A0, U+21A2-21A3, U+21A5-21A7, U+21A9-21AA, U+21AD, U+21BE, U+21C9, U+21D0-21D4, U+21DB, U+21DE-21DF, U+21E5, U+21E7-21E8, U+21EA, U+2200-220C, U+220E-2211, U+2213, U+2218-221A, U+221E, U+2223-2225, U+2227-222B, U+2234-2239, U+223C, U+223E, U+2243, U+2245, U+2247-2249, U+224B, U+224D, U+2254, U+2257, U+225F-2265, U+226A-2273, U+227A-227C, U+2282-2289, U+228E-2299, U+229B-22A5, U+22B4, U+22B8, U+22BB-22BD, U+22C2-22C4, U+22C6, U+22C8-22CA, U+22CE, U+22D0, U+22E2, U+22EE-22F1, U+2302-2305, U+2308-230B, U+2318, U+231C-231F, U+2324-2326, U+2328, U+232B, U+2336-237A, U+2389-238B, U+2395, U+239B-23AD, U+23CE, U+23FB-23FE, U+2400-2421, U+2423-2424, U+2500-25A1, U+25AA-25AB, U+25B2-25CC, U+25CE-25CF, U+25D4-25D5, U+25E6-25EB, U+25EF, U+25F6, U+266D, U+266F, U+2687, U+26A0-26A1, U+2713, U+2715, U+2717, U+2736, U+276E-2771, U+2794, U+279C-279E, U+27C5-27C6, U+27DC, U+27E6-27EB, U+27F5-27F7, U+E0A0-E0A2, U+E0B0-E0B3;
+}
+
+@font-face {
   font-family: "Space Grotesk";
   font-style: normal;
   font-weight: 500 700;
@@ -1120,27 +1129,35 @@ kbd {
    Terminal frames (animated casts and static snippets)
    ========================================================================== */
 
-@font-face {
-  font-family: "Powerline Subset";
-  src: url("vendor/powerline-subset.woff2") format("woff2");
-  font-display: swap;
-}
-
-/* Custom asciinema theme: monokai colours on the site's terminal background,
-   so the player blends into its frame instead of showing a second, browner box. */
+/* Custom asciinema theme, calm to sit in the page: the recordings' prompts and
+   TUIs use ANSI colours, so cyan, blue and magenta become greys and slate, green
+   is the site's accent, and red and amber are muted. The player draws bold text
+   in the bright variant (colour + 8), so 9-14 repeat 1-6: bold stays a weight,
+   not a neon colour. Colours a program sets as 24-bit RGB are not remapped. */
 .asciinema-player-theme-isx {
-  --term-color-foreground: #e6e8eb;
+  --term-font-family: var(--font-mono);
+  --term-color-foreground: #d7dce2;
   --term-color-background: #0f1216;
   --term-color-0: #0f1216;
-  --term-color-1: #f92672;
-  --term-color-2: #a6e22e;
-  --term-color-3: #f4bf75;
-  --term-color-4: #66d9ef;
-  --term-color-5: #ae81ff;
-  --term-color-6: #a1efe4;
-  --term-color-7: #e6e8eb;
+  --term-color-1: #e8837a;
+  --term-color-2: #34d399;
+  --term-color-3: #d9b56a;
+  --term-color-4: #8b98a8;
+  --term-color-5: #a79fb8;
+  --term-color-6: #b8c0ca;
+  --term-color-7: #d7dce2;
   --term-color-8: #6f7883;
-  --term-color-15: #f9f8f5;
+  --term-color-9: #e8837a;
+  --term-color-10: #34d399;
+  --term-color-11: #d9b56a;
+  --term-color-12: #8b98a8;
+  --term-color-13: #a79fb8;
+  --term-color-14: #b8c0ca;
+  --term-color-15: #eef0f2;
+}
+
+.asciinema-player-theme-isx .ap-term-text .ap-bright {
+  font-weight: 600;
 }
 
 .cast-frame {
@@ -1220,6 +1237,25 @@ kbd {
 .castbox.done .endcard { display: flex; }
 
 .feature .cast-frame + .cast-frame { margin-top: 1.25rem; }
+
+/* Wider than a phone, the player draws the terminal at a fixed text size (see the
+   player options in index.html). Every terminal frame, recorded or static, takes
+   that terminal's width -- 80 columns plus the player's 0.75em border, in the
+   terminal font -- so stacked frames line up. */
+@media (min-width: 721px) {
+  .cast-frame,
+  .feature > .cast-frame {
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    width: calc(80ch + 1.5em);
+    max-width: 100%;
+  }
+
+  /* The player caps itself at max-width: 100%; its size is fixed here instead. */
+  .castbox div.ap-wrapper div.ap-player {
+    max-width: none;
+  }
+}
 
 /* Static terminal snippets (branch tree, git commands): same frame chrome and
    dark terminal look as the animated casts, contained so they scroll within the

@@ -368,13 +368,17 @@ document.addEventListener("DOMContentLoaded", function () {
     realmachine: { poster: "npt:15.3" }
   };
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Terminal text at the size of the page's static terminal snippets (0.84rem), with the
+  // frame fitted to it; a phone is narrower than an 80-column terminal at that size, so
+  // there the recording is scaled to the screen width instead.
+  var narrow = window.matchMedia("(max-width: 720px)").matches;
 
   function init(box) {
     var name = box.dataset.cast;
     var opts = OPTS[name] || {};
     if (reduced) { opts.autoPlay = false; opts.loop = false; }
     var player = AsciinemaPlayer.create("casts/" + name + ".cast", box, {
-      fit: "width", theme: "isx", controls: true,
+      fit: narrow ? "width" : false, terminalFontSize: "0.84rem", theme: "isx", controls: true,
       poster: opts.poster, loop: !!opts.loop, autoPlay: !!opts.autoPlay
     });
     if (!opts.loop) {
