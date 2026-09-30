@@ -63,8 +63,13 @@ the mode only matters for anything proxied to another server later.
 - **Observatory** (Speed → Observatory) runs scheduled Lighthouse tests against `https://isx.run/`.
 
 **Search engines:** isx.run is a *Domain* property in Google Search Console, verified by the TXT record above, with
-`https://isx.run/sitemap.xml` submitted; Bing Webmaster Tools can import it from there. The Performance and Pages
-reports show what Google indexes and which searches find the site.
+`https://isx.run/sitemap.xml` submitted; Bing Webmaster Tools imported it from there. The Performance and Pages
+reports show what Google indexes and which searches find the site. After each production deploy, `pages.yml` also
+pings **IndexNow** with the home page, `/docs` and `llms.txt`, so Bing, Yandex, Seznam and the other participating
+engines recrawl within minutes. It is authenticated by the key in `site/indexnow-key.txt`, published at
+`https://isx.run/indexnow-key.txt`, which must stay there; to replace the key, put a new random token in that file.
+`pages.yml` reads it from the file rather than spelling it out, because secret scanners (gitleaks) take a
+`"key": "…"` pair for a leaked API key. A failed ping does not fail the deploy.
 - Left off on purpose: Smart Shield, Argo, Cache Reserve, APO, Polish, Rocket Loader. They help an origin server or a
   heavy site, and a Pages site has no origin server; Rocket Loader rewrites the page's scripts.
 

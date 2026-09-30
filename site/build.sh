@@ -13,6 +13,8 @@ cp "$SCRIPT_DIR/404.html" "$OUT_DIR/"
 cp "$SCRIPT_DIR/style.css" "$OUT_DIR/"
 cp "$SCRIPT_DIR/favicon.svg" "$OUT_DIR/"
 cp "$SCRIPT_DIR/robots.txt" "$OUT_DIR/"
+# IndexNow key file: proves the pings sent after a deploy (pages.yml) come from this site.
+cp "$SCRIPT_DIR/indexnow-key.txt" "$OUT_DIR/"
 cp "$SCRIPT_DIR/_headers" "$OUT_DIR/"
 cp "$SCRIPT_DIR/og.png" "$OUT_DIR/"
 

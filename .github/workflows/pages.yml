@@ -38,3 +38,20 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy _site --project-name=isx --branch=main
+
+      # IndexNow (https://www.indexnow.org): tell Bing, Yandex, Seznam and the other
+      # participating engines the pages changed, so they recrawl now rather than whenever
+      # they next visit. The key is public by design: https://isx.run/indexnow-key.txt
+      # proves the ping comes from isx.run. It is read from that file rather than written
+      # here, where secret scanners take a key-value pair for a leaked API key. A failed
+      # ping must not fail the deploy.
+      - name: Notify search engines (IndexNow)
+        continue-on-error: true
+        run: |
+          KEY=$(cat site/indexnow-key.txt)
+          curl -sS --fail-with-body --retry 3 --retry-delay 10 -X POST https://api.indexnow.org/indexnow \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            -d "{\"host\": \"isx.run\", \"key\": \"$KEY\",
+                 \"keyLocation\": \"https://isx.run/indexnow-key.txt\",
+                 \"urlList\": [\"https://isx.run/\", \"https://isx.run/docs\", \"https://isx.run/llms.txt\"]}" \
+            -w '\nIndexNow: HTTP %{http_code}\n'
