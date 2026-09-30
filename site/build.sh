@@ -13,7 +13,8 @@ cp "$SCRIPT_DIR/404.html" "$OUT_DIR/"
 cp "$SCRIPT_DIR/style.css" "$OUT_DIR/"
 cp "$SCRIPT_DIR/favicon.svg" "$OUT_DIR/"
 cp "$SCRIPT_DIR/robots.txt" "$OUT_DIR/"
-cp "$SCRIPT_DIR/sitemap.xml" "$OUT_DIR/"
+cp "$SCRIPT_DIR/_headers" "$OUT_DIR/"
+cp "$SCRIPT_DIR/og.png" "$OUT_DIR/"
 
 if [ -f "$SCRIPT_DIR/screenshot.png" ]; then
   cp "$SCRIPT_DIR/screenshot.png" "$OUT_DIR/"
@@ -21,7 +22,7 @@ fi
 
 # Vendored player + font subset
 mkdir -p "$OUT_DIR/vendor"
-cp "$SCRIPT_DIR"/vendor/* "$OUT_DIR/vendor/"
+cp -R "$SCRIPT_DIR"/vendor/. "$OUT_DIR/vendor/"
 
 # Casts: copy at stable names, referenced directly from index.html. No content
 # hashing and no separate manifest: those introduced a cache-desync bug where a
@@ -118,5 +119,27 @@ node -e "
   html = html.replace('<!-- TOC -->', tocHtml);
   fs.writeFileSync('$OUT_DIR/docs.html', html);
 "
+
+# Sitemap, dated by the last commit that changed each page's content. Needs the
+# history: the deploy workflows check out with fetch-depth: 0.
+lastmod() { git -C "$PROJECT_ROOT" log -1 --format=%cs -- "$@"; }
+cat > "$OUT_DIR/sitemap.xml" <<SITEMAP
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://isx.run/</loc>
+    <lastmod>$(lastmod site/index.html)</lastmod>
+  </url>
+  <url>
+    <loc>https://isx.run/docs</loc>
+    <lastmod>$(lastmod README.md site/docs.html)</lastmod>
+  </url>
+</urlset>
+SITEMAP
+
+# llms.txt (https://llmstxt.org): a map of the site for AI tools, plus the full
+# docs as one Markdown file -- the README the docs page is built from.
+cp "$SCRIPT_DIR/llms.txt" "$OUT_DIR/"
+cp "$PROJECT_ROOT/README.md" "$OUT_DIR/llms-full.txt"
 
 echo "Site built at $OUT_DIR"

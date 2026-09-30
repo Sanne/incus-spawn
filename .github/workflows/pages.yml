@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # build.sh dates the sitemap from each page's last commit
 
       - name: Build site
         run: site/build.sh

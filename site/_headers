@@ -1,0 +1,13 @@
+# Cloudflare Pages response headers: https://developers.cloudflare.com/pages/configuration/headers/
+
+# Casts are newline-delimited JSON. Served as application/octet-stream (the
+# default for an unknown extension), Cloudflare does not compress them;
+# as text they shrink about 7x.
+/casts/*
+  Content-Type: text/plain; charset=utf-8
+
+# Versioned file names: a change ships under a new name, so browsers may keep these.
+/vendor/asciinema-player-*
+  Cache-Control: public, max-age=31536000, immutable
+/vendor/fonts/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -1,0 +1,23 @@
+# isx
+
+> An AI agent in your terminal can read your API keys, tokens and SSH keys. isx gives each agent a full Linux workstation of its own instead, created instantly from a template you've prepared. There it has full autonomy: it can install software, run services and containers, and work without permission prompts, while your computer stays out of its reach. It works with the accounts you assign it, such as its own GitHub identity, with nothing in its workstation worth stealing. Free and open source, and light enough to run on a laptop, on Linux and macOS.
+
+isx was formerly known as incus-spawn; the command is `isx`. It works with Claude Code, Codex CLI, GitHub Copilot CLI and other coding agents, and with everyday tools like `gh`, `git` and `curl`, unchanged. Install with `curl -fsSL https://isx.run | sh`, Homebrew, DNF, APT or JBang.
+
+## Docs
+
+- [Full documentation](https://isx.run/llms-full.txt): the complete README as Markdown
+- [Quick start](https://isx.run/docs#quick-start): install, one-time host setup, first template and the TUI
+- [Installation](https://isx.run/docs#installation): Homebrew, DNF, APT, native binary and JBang
+- [Credential isolation](https://isx.run/docs#credential-isolation): how agents use their accounts with no credentials in their workstation
+- [Branching](https://isx.run/docs#branching): creating workstations from templates, network modes, and fetching an agent's commits
+- [Template images](https://isx.run/docs#template-images): defining, building and rebuilding templates
+- [Custom tools](https://isx.run/docs#custom-tools): adding tools with YAML definitions
+- [Credential accounts](https://isx.run/docs#credential-accounts): several accounts per service, chosen per instance
+- [FAQ](https://isx.run/docs#faq)
+
+## Optional
+
+- [Why full system containers?](https://isx.run/docs#why-full-system-containers)
+- [Source code on GitHub](https://github.com/Sanne/incus-spawn)
+- [Issues](https://github.com/Sanne/incus-spawn/issues)
