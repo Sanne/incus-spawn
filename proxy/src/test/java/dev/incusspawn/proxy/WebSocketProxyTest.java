@@ -3,13 +3,18 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.tool.ToolDef;
 
+import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.dns.AddressResolverOptions;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.PemKeyCertOptions;
 
@@ -29,6 +34,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -40,6 +47,11 @@ class WebSocketProxyTest {
     static String origHome;
     static Vertx serverVertx;
     static Vertx clientVertx;
+    // Every WebSocket of the test client is opened, written to and closed on this one
+    // context, never from the test thread: driving the client from the test thread is
+    // the pattern that corrupted ArtifactCacheProxyTest's client TLS stream under
+    // load (#880).
+    static Context clientContext;
     static MitmProxy proxy;
     static int mitmPort;
     static HttpServer mockUpstream;
@@ -91,9 +103,7 @@ class WebSocketProxyTest {
                     ws.writeBinaryMessage(Buffer.buffer("echo:").appendBuffer(buf)));
             ws.closeHandler(v -> upstreamCloseCount.incrementAndGet());
         });
-        int mockPort = mockUpstream.listen(0, "127.0.0.1")
-                .toCompletionStage().toCompletableFuture()
-                .get(5, TimeUnit.SECONDS).actualPort();
+        int mockPort = await(mockUpstream.listen(0, "127.0.0.1"), 5).actualPort();
 
         mitmPort = findFreePort();
         int healthPort = findFreePort();
@@ -124,18 +134,16 @@ class WebSocketProxyTest {
         assertTrue(readyLatch.await(15, TimeUnit.SECONDS), "Proxy did not start in time");
 
         clientVertx = Vertx.vertx(new VertxOptions().setAddressResolverOptions(resolver));
+        clientContext = clientVertx.getOrCreateContext();
     }
 
     @AfterAll
     static void stopProxy() throws Exception {
         try {
             if (proxy != null) proxy.stop();
-            if (mockUpstream != null) mockUpstream.close()
-                    .toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
-            if (clientVertx != null) clientVertx.close()
-                    .toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
-            if (serverVertx != null) serverVertx.close()
-                    .toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+            if (mockUpstream != null) await(mockUpstream.close(), 2);
+            if (clientVertx != null) await(clientVertx.close(), 2);
+            if (serverVertx != null) await(serverVertx.close(), 2);
         } finally {
             System.setProperty("user.home", origHome);
         }
@@ -154,9 +162,42 @@ class WebSocketProxyTest {
                 .setURI(path);
     }
 
-    private io.vertx.core.http.HttpClient createClient() {
+    private HttpClient createClient() {
         return clientVertx.createHttpClient(new HttpClientOptions()
                 .setSsl(true).setTrustAll(true).setVerifyHost(false));
+    }
+
+    /** Runs {@code action} on {@link #clientContext}, completing with the future it returns. */
+    private static <T> Future<T> onClient(Supplier<Future<T>> action) {
+        var result = Promise.<T>promise();
+        clientContext.runOnContext(v -> {
+            try {
+                action.get().onComplete(result);
+            } catch (RuntimeException e) {
+                result.fail(e);
+            }
+        });
+        return result.future();
+    }
+
+    private static <T> T await(Future<T> future, long seconds) throws Exception {
+        return future.toCompletionStage().toCompletableFuture().get(seconds, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Opens a WebSocket and runs {@code setup} on it in the same event-loop turn, so its
+     * handlers are in place before any frame can arrive.
+     */
+    private static WebSocket connect(HttpClient client, WebSocketConnectOptions options,
+            Consumer<WebSocket> setup) throws Exception {
+        return await(onClient(() -> client.webSocket(options).map(ws -> {
+            setup.accept(ws);
+            return ws;
+        })), 5);
+    }
+
+    private static void close(HttpClient client) throws Exception {
+        await(onClient(client::close), 2);
     }
 
     @Test
@@ -164,13 +205,13 @@ class WebSocketProxyTest {
         var client = createClient();
         var result = new CompletableFuture<String>();
 
-        client.webSocket(connectOptions("/v1/realtime")).onSuccess(ws -> {
+        connect(client, connectOptions("/v1/realtime"), ws -> {
             ws.textMessageHandler(result::complete);
             ws.writeTextMessage("hello-ws");
-        }).onFailure(result::completeExceptionally);
+        });
 
         assertEquals("echo:hello-ws", result.get(5, TimeUnit.SECONDS));
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -178,14 +219,14 @@ class WebSocketProxyTest {
         var client = createClient();
         var result = new CompletableFuture<Buffer>();
 
-        client.webSocket(connectOptions("/v1/data")).onSuccess(ws -> {
+        connect(client, connectOptions("/v1/data"), ws -> {
             ws.binaryMessageHandler(result::complete);
             ws.writeBinaryMessage(Buffer.buffer(new byte[]{0x01, 0x02, 0x03}));
-        }).onFailure(result::completeExceptionally);
+        });
 
         var expected = Buffer.buffer("echo:").appendBytes(new byte[]{0x01, 0x02, 0x03});
         assertEquals(expected, result.get(5, TimeUnit.SECONDS));
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -195,10 +236,10 @@ class WebSocketProxyTest {
         var opts = connectOptions("/v1/realtime");
         opts.addHeader("Authorization", "Bearer sk-placeholder");
 
-        client.webSocket(opts).onSuccess(ws -> {
+        connect(client, opts, ws -> {
             ws.textMessageHandler(result::complete);
             ws.writeTextMessage("ping");
-        }).onFailure(result::completeExceptionally);
+        });
 
         result.get(5, TimeUnit.SECONDS);
 
@@ -206,7 +247,7 @@ class WebSocketProxyTest {
                 "Mock upstream should have received an auth header");
         assertEquals("Bearer sk-real-openai-key", capturedAuthHeaders.peek(),
                 "Proxy should inject real API key, not the placeholder");
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -214,22 +255,21 @@ class WebSocketProxyTest {
         var countBefore = upstreamCloseCount.get();
         var client = createClient();
 
-        var ws = client.webSocket(connectOptions("/v1/close-test"))
-                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-
         var echo = new CompletableFuture<String>();
-        ws.textMessageHandler(echo::complete);
-        ws.writeTextMessage("hi");
+        var ws = connect(client, connectOptions("/v1/close-test"), socket -> {
+            socket.textMessageHandler(echo::complete);
+            socket.writeTextMessage("hi");
+        });
         assertEquals("echo:hi", echo.get(5, TimeUnit.SECONDS));
 
-        ws.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        await(onClient(ws::close), 2);
 
         for (int i = 0; i < 50 && upstreamCloseCount.get() <= countBefore; i++) {
             Thread.sleep(100);
         }
         assertTrue(upstreamCloseCount.get() > countBefore,
                 "Upstream WebSocket should close when client disconnects");
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -237,15 +277,14 @@ class WebSocketProxyTest {
         var client = createClient();
         var closeCode = new CompletableFuture<Short>();
 
-        var ws = client.webSocket(connectOptions("/v1/close-code-test"))
-                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-
-        ws.closeHandler(v -> closeCode.complete(ws.closeStatusCode()));
-        ws.writeTextMessage("close-with-4008");
+        connect(client, connectOptions("/v1/close-code-test"), ws -> {
+            ws.closeHandler(v -> closeCode.complete(ws.closeStatusCode()));
+            ws.writeTextMessage("close-with-4008");
+        });
 
         assertEquals((short) 4008, closeCode.get(5, TimeUnit.SECONDS),
                 "Upstream close status code should propagate through the proxy");
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -255,15 +294,13 @@ class WebSocketProxyTest {
         var origStderr = System.err;
         var captureErr = new java.io.PrintStream(stderrCapture);
 
-        var ws = client.webSocket(connectOptions("/v1/close-quiet-test"))
-                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-
         var closed = new CompletableFuture<Void>();
-        ws.closeHandler(v -> closed.complete(null));
+        var ws = connect(client, connectOptions("/v1/close-quiet-test"),
+                socket -> socket.closeHandler(v -> closed.complete(null)));
 
         System.setErr(captureErr);
         try {
-            ws.writeTextMessage("close-with-4008");
+            await(onClient(() -> ws.writeTextMessage("close-with-4008")), 2);
             closed.get(5, TimeUnit.SECONDS);
             // Wait for any async exception handlers on the server event loop
             // to fire while stderr is still captured.
@@ -276,7 +313,7 @@ class WebSocketProxyTest {
         var captured = stderrCapture.toString(java.nio.charset.StandardCharsets.UTF_8);
         assertFalse(captured.contains("WebSocket client error"),
                 "Normal upstream close should not log a client error, got: " + captured);
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        close(client);
     }
 
     @Test
@@ -284,22 +321,19 @@ class WebSocketProxyTest {
         var client = createClient();
         var pingReceived = new CompletableFuture<Void>();
 
-        var ws = client.webSocket(connectOptions("/v1/ping-test"))
-                .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-
         // Detect the proxy's keepalive ping via raw frame handler since
         // Vert.x handles ping/pong at the protocol level automatically.
-        ws.frameHandler(frame -> {
+        var ws = connect(client, connectOptions("/v1/ping-test"), socket -> socket.frameHandler(frame -> {
             if (frame.isPing()) {
                 pingReceived.complete(null);
             }
-        });
+        }));
 
         // The proxy sends keepalive pings every 30s. The periodic timer
         // starts on connect, so we wait up to 35s.
         pingReceived.get(35, TimeUnit.SECONDS);
-        ws.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
-        client.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        await(onClient(ws::close), 2);
+        close(client);
     }
 
     static int findFreePort() throws Exception {
