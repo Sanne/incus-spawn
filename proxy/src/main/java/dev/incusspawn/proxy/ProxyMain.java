@@ -79,29 +79,13 @@ public class ProxyMain implements QuarkusApplication {
             }
         }
 
-        String gatewayIp;
-        if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
-            gatewayIp = gatewayIpOption;
-        } else if (Platform.isMacOS()) {
-            gatewayIp = VmNetwork.discoverHostBridgeIp();
-            if (gatewayIp == null) {
-                System.err.println("Error: could not discover VM-facing bridge interface.");
-                System.err.println("Is the VM running? Try 'isx vm status'.");
-                return 1;
-            }
-        } else {
-            try {
-                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
-            } catch (Exception e) {
-                System.err.println("Error: could not determine Incus bridge gateway IP.");
-                System.err.println("Is Incus running? Try 'incus network list'.");
-                return 1;
-            }
-        }
+        var addresses = resolveAddresses(gatewayIpOption, incus);
+        if (addresses == null) return 1;
+        var gatewayIp = addresses.gateway();
+        var healthBindAddress = addresses.healthBind();
 
         // Everything the proxy serves is derived from this one read, the same way reload()
         // derives it -- so no later read escapes the fingerprint taken ahead of it (#837).
-        var healthBindAddress = ProxyHealthCheck.healthAddress(incus);
         var vertx = Arc.container().instance(Vertx.class).get();
         var proxy = new MitmProxy(vertx, gatewayIp, port, healthPort, healthBindAddress, loaded);
         var creds = proxy.credentials();
@@ -219,6 +203,39 @@ public class ProxyMain implements QuarkusApplication {
             return 1;
         }
         return 0;
+    }
+
+    /** Where the MITM listener serves instances, and where the health endpoint listens. */
+    record Addresses(String gateway, String healthBind) {}
+
+    /**
+     * The gateway comes from {@code --gateway-ip} when given, else from the bridge; the
+     * health endpoint then binds to that same address (localhost on macOS). Deriving it from a
+     * second bridge lookup would ignore the override, and throw past the error below when the
+     * override is how the user worked around a failing lookup (#892).
+     * Returns null after printing why when the gateway cannot be determined.
+     */
+    static Addresses resolveAddresses(String gatewayIpOption, IncusClient incus) {
+        String gatewayIp;
+        if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
+            gatewayIp = gatewayIpOption;
+        } else if (Platform.isMacOS()) {
+            gatewayIp = VmNetwork.discoverHostBridgeIp();
+            if (gatewayIp == null) {
+                System.err.println("Error: could not discover VM-facing bridge interface.");
+                System.err.println("Is the VM running? Try 'isx vm status'.");
+                return null;
+            }
+        } else {
+            try {
+                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+            } catch (Exception e) {
+                System.err.println("Error: could not determine Incus bridge gateway IP.");
+                System.err.println("Is Incus running? Try 'incus network list'.");
+                return null;
+            }
+        }
+        return new Addresses(gatewayIp, ProxyHealthCheck.healthAddress(gatewayIp));
     }
 
     private static void installLogTee() {

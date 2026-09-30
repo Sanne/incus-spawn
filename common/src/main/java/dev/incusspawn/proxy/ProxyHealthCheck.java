@@ -61,6 +61,11 @@ public final class ProxyHealthCheck {
                 ? "127.0.0.1" : ProxyConfig.resolveGatewayIp(incus);
     }
 
+    /** {@link #healthAddress(IncusClient)} for a proxy that already knows its gateway. */
+    public static String healthAddress(String gatewayIp) {
+        return dev.incusspawn.Platform.isMacOS() ? "127.0.0.1" : gatewayIp;
+    }
+
     private record CacheEntry(IncusClient client, ProxyStatus status, long timestamp) {}
     private static volatile CacheEntry cache;
     private static final long CACHE_TTL_MS = 2000;
