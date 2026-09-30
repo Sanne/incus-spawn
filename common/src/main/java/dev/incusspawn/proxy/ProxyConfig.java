@@ -131,14 +131,10 @@ public final class ProxyConfig {
     }
 
     public static void configureBridgeDns(IncusClient incus) {
-        configureBridgeDns(incus, Set.of());
+        configureBridgeDns(incus, Set.of(), resolveGatewayIp(incus));
     }
 
-    public static void configureBridgeDns(IncusClient incus, Set<String> allDomains) {
-        configureBridgeDns(incus, allDomains, resolveGatewayIp(incus));
-    }
-
-    /** {@link #configureBridgeDns(IncusClient, Set)}, pointing the overrides at {@code gatewayIp}. */
+    /** Write the overrides for {@code allDomains} (the built-in set if empty), pointing at {@code gatewayIp}. */
     public static void configureBridgeDns(IncusClient incus, Set<String> allDomains, String gatewayIp) {
         var effective = allDomains.isEmpty() ? BUILTIN_INTERCEPTED_DOMAINS : allDomains;
         writeBridgeDns(incus, effective, gatewayIp);
@@ -168,10 +164,10 @@ public final class ProxyConfig {
         incus.networkConfigSet("incusbr0", "raw.dnsmasq", dnsmasqConfig);
     }
 
-    public static void configureBridgeDnsWithRetry(IncusClient incus, Set<String> allDomains,
-                                                    String gatewayIp, Runnable onDnsConfigured) {
+    /** Run {@code configure} until it succeeds, retrying in the background, then {@code onDnsConfigured}. */
+    public static void configureBridgeDnsWithRetry(Runnable configure, Runnable onDnsConfigured) {
         try {
-            configureBridgeDns(incus, allDomains, gatewayIp);
+            configure.run();
             ProxyLog.info("DNS overrides configured");
             if (onDnsConfigured != null) onDnsConfigured.run();
             return;
@@ -179,7 +175,6 @@ public final class ProxyConfig {
             ProxyLog.warn("DNS override failed, will retry in background: " + e.getMessage());
         }
 
-        final Set<String> domains = allDomains;
         var thread = new Thread(() -> {
             long delaySec = 2;
             long maxDelaySec = 60;
@@ -193,7 +188,7 @@ public final class ProxyConfig {
                 }
                 attempt++;
                 try {
-                    configureBridgeDns(incus, domains, gatewayIp);
+                    configure.run();
                     ProxyLog.info("DNS overrides configured (attempt " + attempt + ")");
                     if (onDnsConfigured != null) onDnsConfigured.run();
                     return;

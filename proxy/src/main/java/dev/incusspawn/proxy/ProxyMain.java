@@ -62,6 +62,9 @@ public class ProxyMain implements QuarkusApplication {
 
         installLogTee();
 
+        var badOverride = checkGatewayOverride(gatewayIpOption);
+        if (badOverride != 0) return badOverride;
+
         var incus = new IncusClient();
         if (!Environment.hasBeenInitialized()) {
             System.err.println("Error: incus-spawn has not been initialized. Run 'isx init' first.");
@@ -126,7 +129,8 @@ public class ProxyMain implements QuarkusApplication {
         System.out.println("  Log file:      " + Environment.proxyLogFile());
         System.out.println();
 
-        proxy.setIncusClient(incus, domains -> addresses.writeBridgeDns(incus, domains));
+        proxy.setIncusClient(incus);
+        proxy.setBridgeDnsWriter(domains -> addresses.writeBridgeDns(incus, domains));
         if (!applyBenchUpstream(proxy)) return ProxyService.EXIT_CONFIG;
 
         if (debug) {
@@ -184,7 +188,7 @@ public class ProxyMain implements QuarkusApplication {
         if (Platform.isMacOS()) {
             dnsCallback = () -> {
                 try {
-                    ProxyConfig.configureBridgeDns(incus, allDomains);
+                    addresses.configureBridgeDns(incus, allDomains);
                     ProxyLog.info("DNS overrides configured");
                 } catch (Exception e) {
                     ProxyLog.info("Using install-time DNS configuration (VM API not reachable from launchd)");
@@ -192,8 +196,8 @@ public class ProxyMain implements QuarkusApplication {
                 proxy.setDnsConfigured(true);
             };
         } else {
-            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(incus, allDomains,
-                    addresses.bridgeDns(), () -> proxy.setDnsConfigured(true));
+            dnsCallback = () -> ProxyConfig.configureBridgeDnsWithRetry(
+                    () -> addresses.configureBridgeDns(incus, allDomains), () -> proxy.setDnsConfigured(true));
         }
         try {
             proxy.start(dnsCallback);
@@ -212,13 +216,18 @@ public class ProxyMain implements QuarkusApplication {
      * the VM's own bridge gateway, not at the host address the proxy listens on.
      */
     record Addresses(String gateway, String healthBind, String bridgeDns) {
-        /** Rewrite the bridge DNS block, pointing it where {@link #bridgeDns} says. */
+        /** Write the bridge DNS block at startup, and say where it points. */
+        void configureBridgeDns(IncusClient incus, java.util.Set<String> domains) {
+            ProxyConfig.configureBridgeDns(incus, domains, bridgeDnsTarget(incus));
+        }
+
+        /** Rewrite the bridge DNS block on reload. */
         void writeBridgeDns(IncusClient incus, java.util.Set<String> domains) {
-            if (bridgeDns == null) {
-                ProxyConfig.writeBridgeDns(incus, domains);
-            } else {
-                ProxyConfig.writeBridgeDns(incus, domains, bridgeDns);
-            }
+            ProxyConfig.writeBridgeDns(incus, domains, bridgeDnsTarget(incus));
+        }
+
+        private String bridgeDnsTarget(IncusClient incus) {
+            return bridgeDns != null ? bridgeDns : ProxyConfig.resolveGatewayIp(incus);
         }
     }
 
@@ -232,11 +241,6 @@ public class ProxyMain implements QuarkusApplication {
     static Addresses resolveAddresses(String gatewayIpOption, IncusClient incus) {
         String gatewayIp;
         if (gatewayIpOption != null && !gatewayIpOption.isBlank()) {
-            if (!Platform.isMacOS() && !isBridgeGatewayLiteral(gatewayIpOption)) {
-                System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
-                System.err.println("Pass the Incus bridge's own IPv4 address; see 'incus network get incusbr0 ipv4.address'.");
-                return null;
-            }
             gatewayIp = gatewayIpOption;
         } else if (Platform.isMacOS()) {
             gatewayIp = VmNetwork.discoverHostBridgeIp();
@@ -259,16 +263,30 @@ public class ProxyMain implements QuarkusApplication {
     }
 
     /**
-     * On Linux the override is written into dnsmasq as every intercepted domain's A record, and
-     * the unauthenticated health endpoint binds to it: anything but a routable IPv4 literal would
-     * break the bridge's DNS or send instances to themselves, and a wildcard would also expose
-     * /health on every interface.
+     * {@code --gateway-ip} as the exit code to stop with, after saying why, or 0 to go on. On
+     * Linux the override is written verbatim into dnsmasq as every intercepted domain's A record,
+     * and the unauthenticated health endpoint binds to it, so it must be a unicast IPv4 address
+     * in the canonical form: {@code 10.1} or {@code ::ffff:10.99.0.1} parse as the same address
+     * but are not what dnsmasq would read, and a wildcard would expose /health everywhere.
      */
+    static int checkGatewayOverride(String gatewayIpOption) {
+        if (gatewayIpOption == null || gatewayIpOption.isBlank() || Platform.isMacOS()
+                || isBridgeGatewayLiteral(gatewayIpOption)) {
+            return 0;
+        }
+        System.err.println("Error: --gateway-ip " + gatewayIpOption + " is not a bridge gateway address.");
+        System.err.println("Pass the Incus bridge's own IPv4 address, without the prefix length that");
+        System.err.println("'incus network get incusbr0 ipv4.address' shows (10.166.11.1, not 10.166.11.1/24).");
+        return ProxyService.EXIT_CONFIG;
+    }
+
     private static boolean isBridgeGatewayLiteral(String address) {
         try {
             var parsed = java.net.InetAddress.ofLiteral(address);
-            return parsed instanceof java.net.Inet4Address && !parsed.isAnyLocalAddress()
-                    && !parsed.isLoopbackAddress() && !parsed.isLinkLocalAddress();
+            return parsed instanceof java.net.Inet4Address && parsed.getHostAddress().equals(address)
+                    && !parsed.isAnyLocalAddress() && !parsed.isLoopbackAddress()
+                    && !parsed.isLinkLocalAddress() && !parsed.isMulticastAddress()
+                    && !"255.255.255.255".equals(address);
         } catch (IllegalArgumentException notALiteral) {
             return false;
         }

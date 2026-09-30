@@ -346,12 +346,14 @@ public class MitmProxy {
     }
 
     /**
-     * @param bridgeDnsWriter rewrites the bridge DNS block for a set of intercepted domains on
-     *                        reload, pointing it wherever the proxy was started to serve
+     * What rewrites the bridge DNS block for a set of intercepted domains on reload, pointing it
+     * wherever the proxy was started to serve; none by default.
      */
-    public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient,
-                               java.util.function.Consumer<java.util.Set<String>> bridgeDnsWriter) {
+    public void setBridgeDnsWriter(java.util.function.Consumer<java.util.Set<String>> bridgeDnsWriter) {
         this.bridgeDnsWriter = bridgeDnsWriter;
+    }
+
+    public void setIncusClient(dev.incusspawn.incus.IncusClient incusClient) {
         var registry = new InstanceRegistry(incusClient);
         this.instanceRegistry = registry;
         // Populate before serving: an empty snapshot would hand defaults to every pinned
