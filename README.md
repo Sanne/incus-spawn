@@ -7,7 +7,7 @@ You're about to hand an AI agent a terminal. On your laptop, that terminal can r
 isx onboards agents the way you'd onboard a new teammate:
 
 - **A real machine of their own.** Each agent gets a full Linux workstation — its own filesystem, init system, networking, and process tree. It can `dnf install`, run Docker Compose, use `strace` and nested containers — everything works, because it *is* a real system, not an app container. Hardware-isolated KVM virtual machines are one flag away for untrusted code.
-- **Zero credential exposure.** API keys and tokens never enter the environment in any form. A host-side TLS proxy injects real credentials upstream, so `claude`, `pi`, `gh`, `git`, and `curl` work unmodified inside — with nothing worth stealing. See [Credential Isolation](#credential-isolation).
+- **Zero credential exposure.** API keys and tokens never enter the environment in any form. A host-side TLS proxy injects real credentials upstream, so `claude`, `pi`, `gh`, `git`, and `curl` work unmodified inside — yet no credential is ever stored there. See [Credential Isolation](#credential-isolation).
 - **Disposable in seconds.** Branch a prepared template like you'd branch a repo — instant copy-on-write clones. Use them, throw them away, branch again from a clean state.
 - **Full autonomy, no babysitting.** Agents commit under their own identity and run without permission prompts — safe to let run, because the blast radius is the branch.
 
