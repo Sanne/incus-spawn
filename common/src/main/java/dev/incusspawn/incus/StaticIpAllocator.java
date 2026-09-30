@@ -55,17 +55,33 @@ public final class StaticIpAllocator {
 
     public static String claim(IncusClient incus, BridgeAddress bridge, Output output,
                                Consumer<String> write) {
-        return claim(incus, bridge, Environment.lockDir().resolve(LOCK_FILE), output, write);
+        return claim(incus, bridge, Set.of(), output, write);
+    }
+
+    /**
+     * As {@link #claim(IncusClient, BridgeAddress, Output, Consumer)}, never handing out one of
+     * {@code alsoTaken} either: addresses no NIC declares that are still not free, such as the
+     * DHCP leases a claimant that relies on DHCP must avoid.
+     */
+    public static String claim(IncusClient incus, BridgeAddress bridge, Set<String> alsoTaken,
+                               Output output, Consumer<String> write) {
+        return claim(incus, bridge, Environment.lockDir().resolve(LOCK_FILE), alsoTaken, output, write);
     }
 
     static String claim(IncusClient incus, BridgeAddress bridge, Path lockFile, Output output,
                         Consumer<String> write) {
+        return claim(incus, bridge, lockFile, Set.of(), output, write);
+    }
+
+    static String claim(IncusClient incus, BridgeAddress bridge, Path lockFile, Set<String> alsoTaken,
+                        Output output, Consumer<String> write) {
         // Nesting would hand the inner claim the outer's still unwritten address: HostLock
         // refuses it
         try (var lock = HostLock.acquireOrDegrade(lockFile, "assigning a static IP",
                 output.step(), output.warn())) {
             var claimed = getClaimedIps(incus);
             claimed.add(CidrUtils.ipToLong(bridge.gateway()));
+            alsoTaken.forEach(ip -> claimed.add(CidrUtils.ipToLong(ip)));
             var ip = pickFreeIp(bridge.subnet(), claimed);
             write.accept(ip);
             return ip;

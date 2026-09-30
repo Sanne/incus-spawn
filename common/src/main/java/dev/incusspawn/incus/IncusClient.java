@@ -1087,6 +1087,23 @@ public class IncusClient {
         }
     }
 
+    /** Every global IPv4 address a running instance's interfaces hold, as its state reports them. */
+    public List<String> ipv4Addresses(String name) {
+        var resp = http().get("/1.0/instances/" + name + "/state");
+        var addresses = new ArrayList<String>();
+        if (!resp.isSuccess()) return addresses;
+        resp.body().path("metadata").path("network").properties().forEach(iface -> {
+            if (iface.getKey().equals("lo")) return;
+            for (var addr : iface.getValue().path("addresses")) {
+                if ("inet".equals(addr.path("family").asText())
+                        && "global".equals(addr.path("scope").asText())) {
+                    addresses.add(addr.path("address").asText());
+                }
+            }
+        });
+        return addresses;
+    }
+
     /**
      * Get the IPv4 address for a running container, or null if unavailable.
      */
@@ -1351,6 +1368,24 @@ public class IncusClient {
         }
         var value = resp.body().path("metadata").path("config").path(key);
         return value.isMissingNode() || value.isNull() ? "" : value.asText();
+    }
+
+    /**
+     * The IPv4 addresses a network's DHCP server holds for someone: its leases, live or left by
+     * a stopped instance until they expire, and its reservations. dnsmasq will not hand a
+     * reserved address to a new client while another MAC holds a lease on it.
+     */
+    public Set<String> networkLeaseAddresses(String networkName) {
+        var resp = http().get("/1.0/networks/" + networkName + "/leases");
+        if (!resp.isSuccess()) {
+            throw new IncusException("Failed to read the DHCP leases of " + networkName);
+        }
+        var addresses = new HashSet<String>();
+        for (var lease : resp.body().path("metadata")) {
+            var address = lease.path("address").asText("");
+            if (!address.isEmpty() && !address.contains(":")) addresses.add(address);
+        }
+        return addresses;
     }
 
     /** Every config value of a named network, from one read; for callers that need several. */

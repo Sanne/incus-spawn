@@ -25,13 +25,14 @@ import dev.incusspawn.util.BuildOutput;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 import java.util.function.Consumer;
 
 /**
@@ -142,7 +143,7 @@ public final class InstanceLifecycle {
         }
 
         if (nicDevice == null) incus.update(name, instance, update);
-        else claimAndWrite(incus, name, instance, update, nicDevice, bridge, true);
+        else claimAndWrite(incus, name, instance, update, nicDevice, bridge, Set.of(), true);
     }
 
     /**
@@ -154,49 +155,97 @@ public final class InstanceLifecycle {
      * default account, whatever its template's {@code accounts:} chose (#903). The address comes
      * from the same allocator as a branch's, with the same {@code security.ipv4_filtering} that
      * makes it trustworthy. Unlike a branch no {@code .network} file is pushed: the build's guest
-     * keeps DHCP, and Incus's DHCP server hands out the NIC's {@code ipv4.address}. Undone by
-     * {@link #releaseBuildAddress} once the build has stopped.
+     * keeps DHCP, and Incus's DHCP server hands out the NIC's {@code ipv4.address}. It will not
+     * while another MAC holds a lease on that address -- Incus clears only IPv6 leases when a
+     * NIC's {@code ipv4.address} changes, and a force-stopped guest never releases its own -- so
+     * the allocator also skips every address the bridge has leased, such as the one the parent
+     * template's build has just given back. {@link #requireBuildAddress} checks the outcome once
+     * the guest is up. Undone by {@link #releaseBuildAddress} once the build has stopped.
      *
-     * @param configFor the config to write, given the {@code config} the instance has now
+     * @param instance the build container, as read by the caller
      * @return the address assigned
      */
-    public static String assignBuildAddress(IncusClient incus, String name,
-                                            Function<JsonNode, Map<String, String>> configFor) {
-        var instance = incus.instanceMetadata(name);
+    public static String assignBuildAddress(IncusClient incus, String name, JsonNode instance,
+                                            Map<String, String> config) {
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var bridge = BridgeAddress.require(incus);
         var nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
         if (nicDevice == null) {
             throw new IncusException("No NIC device for " + BridgeAddress.BRIDGE + " found on " + name);
         }
+        var leased = incus.networkLeaseAddresses(BridgeAddress.BRIDGE);
         var update = new InstanceUpdate();
         update.device(nicDevice, "security.ipv4_filtering", "true");
-        update.config(configFor.apply(instance.path("config")));
-        return claimAndWrite(incus, name, instance, update, nicDevice, bridge, false);
+        update.config(config);
+        return claimAndWrite(incus, name, instance, update, nicDevice, bridge, leased, false);
+    }
+
+    /** How long {@link #requireBuildAddress} waits for the guest to hold an address at all. */
+    static final Duration BUILD_ADDRESS_WAIT = Duration.ofSeconds(15);
+
+    /**
+     * Fail the build unless its started guest holds the address {@link #assignBuildAddress}
+     * gave it. If the bridge's DHCP server handed it another one, {@code ipv4_filtering} drops
+     * all its traffic, and the build would otherwise fail much later as a DNS error that says
+     * nothing about why. Waits up to {@link #BUILD_ADDRESS_WAIT} for the address, then fails
+     * only if the guest holds another one on the bridge's subnet: addresses on other interfaces
+     * (a parent's docker0 or podman bridge) say nothing, and a guest with no bridge address yet
+     * is left to the build's own network waits, which diagnose that case.
+     */
+    public static void requireBuildAddress(IncusClient incus, String name, String assigned) {
+        requireBuildAddress(incus, name, assigned, BUILD_ADDRESS_WAIT);
+    }
+
+    static void requireBuildAddress(IncusClient incus, String name, String assigned, Duration wait) {
+        var deadline = System.nanoTime() + wait.toNanos();
+        var held = incus.ipv4Addresses(name);
+        while (!held.contains(assigned) && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            held = incus.ipv4Addresses(name);
+        }
+        if (held.contains(assigned)) return;
+        // Only now, so a build that got its address pays nothing for it
+        var subnet = BridgeAddress.require(incus).subnet();
+        var mask = subnet.prefixLen() == 0 ? 0L : (0xFFFFFFFFL << (32 - subnet.prefixLen())) & 0xFFFFFFFFL;
+        var onBridge = held.stream().filter(ip -> (CidrUtils.ipToLong(ip) & mask) == subnet.network()).toList();
+        if (onBridge.isEmpty()) return;
+        throw new IncusException("Build container " + name + " was given " + assigned
+                + " but its DHCP client got " + String.join(", ", onBridge) + ". The bridge's DHCP"
+                + " server did not hand out the reserved address, most likely because another"
+                + " instance still holds a lease on it, and the proxy drops traffic from any other"
+                + " address. Retry the build once that lease has expired, or report this with"
+                + " 'isx doctor --bundle'.");
     }
 
     /**
      * Give back the address {@link #assignBuildAddress} claimed, on the stopped template. A
      * template makes no requests of its own and its copies never keep an address, so holding
-     * one would only use up the bridge's addresses, one per template. The NIC goes back to the
-     * profile's when all the build changed was the address and its filtering.
+     * one would only use up the bridge's addresses, one per template. Only the bridge NIC the
+     * address was claimed on is touched, and it goes back to the profile's when all the build
+     * changed was the address and its filtering.
      */
     public static void releaseBuildAddress(IncusClient incus, String name) {
         var instance = incus.instanceMetadata(name);
         if (instance.isMissingNode()) throw new IncusException("Failed to read instance " + name);
         var update = new InstanceUpdate();
         update.unset(Metadata.STATIC_IP);
-        var addressed = IncusClient.withoutStaticAddress(instance.path("devices"));
-        var fromProfiles = addressed.isEmpty() ? Map.<String, JsonNode>of() : profileDevices(incus, instance);
-        addressed.forEach((device, remaining) -> {
+        var nicDevice = IncusClient.nicDeviceName(instance, BridgeAddress.BRIDGE);
+        var remaining = nicDevice == null ? null
+                : IncusClient.withoutStaticAddress(instance.path("devices")).get(nicDevice);
+        if (remaining != null) {
             remaining.remove("security.ipv4_filtering");
-            var profileDevice = fromProfiles.get(device);
+            var profileDevice = profileDevices(incus, instance).get(nicDevice);
             if (profileDevice != null && remaining.equals(IncusClient.deviceConfig(profileDevice))) {
-                update.removeDevice(device);
+                update.removeDevice(nicDevice);
             } else {
-                update.replaceDevice(device, remaining);
+                update.replaceDevice(nicDevice, remaining);
             }
-        });
+        }
         incus.update(name, instance, update);
     }
 
@@ -216,15 +265,19 @@ public final class InstanceLifecycle {
      * lock throughout. Everything that does not depend on the address is read before it, so
      * concurrent branches wait on each other only for the listing, the push and the write (#815).
      *
+     * @param alsoTaken         addresses to skip besides those NICs declare, see
+     *                          {@link StaticIpAllocator#claim(IncusClient, BridgeAddress, Set,
+     *                          StaticIpAllocator.Output, java.util.function.Consumer)}
      * @param pushNetworkConfig whether to push a static {@code .network} file into a container,
      *                          so it boots without asking DHCP; a branch does, a build does not
      */
     private static String claimAndWrite(IncusClient incus, String name, JsonNode instance,
                                         InstanceUpdate update, String nicDevice, BridgeAddress bridge,
-                                        boolean pushNetworkConfig) {
+                                        Set<String> alsoTaken, boolean pushNetworkConfig) {
         var isVm = IncusClient.isVm(instance);
         var filteringRefused = new AtomicBoolean();
-        var assigned = StaticIpAllocator.claim(incus, bridge, ip -> {
+        var output = StaticIpAllocator.Output.TERMINAL;
+        var assigned = StaticIpAllocator.claim(incus, bridge, alsoTaken, output, ip -> {
             // A static IP, so no DHCP lease is ever acquired: leases expire across host
             // sleep/wake. See pushStaticNetworkConfig for the guest side.
             if (pushNetworkConfig) BuildOutput.step("Assigning static IP " + ip + ".");

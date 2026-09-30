@@ -65,6 +65,19 @@ class CleanCommandTest {
     }
 
     @Test
+    void thePoolCleanupReportsEachAndTellsTheProxyOnce() {
+        // isx clean pool lists and confirms the failed builds itself, then deletes the ones shown
+        var incus = withInstances();
+        var deleted = new ArrayList<String>();
+
+        assertEquals(2, CleanCommand.deleteFailedBuilds(incus, List.of("tpl-a-failed-build", "tpl-b-failed-build"),
+                deleted::add, (name, e) -> { throw new AssertionError(name, e); }));
+
+        assertEquals(List.of("tpl-a-failed-build", "tpl-b-failed-build"), deleted);
+        assertEquals(1, refreshes.get());
+    }
+
+    @Test
     void doctorsSingleDeleteTellsTheProxy() {
         var incus = withInstances();
         CleanCommand.deleteFailedBuild(incus, "tpl-a-failed-build");

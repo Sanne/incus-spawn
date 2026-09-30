@@ -23,6 +23,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 @CommandDefinition(
         name = "clean",
@@ -372,17 +374,25 @@ public class CleanCommand extends BaseCommand {
      * holder of that address would be served the deleted build's accounts.
      */
     static int deleteFailedBuilds(IncusClient incus, List<String> warnings) {
-        int deleted = 0;
-        for (var name : findFailedBuilds(incus)) {
+        return deleteFailedBuilds(incus, findFailedBuilds(incus), name -> {},
+                (name, e) -> warnings.add("Could not delete " + name + ": " + e.getMessage()));
+    }
+
+    /** Delete these failed builds, reporting each, then tell the proxy once if any went. */
+    static int deleteFailedBuilds(IncusClient incus, List<String> names, Consumer<String> deleted,
+                                  BiConsumer<String, Exception> failed) {
+        int count = 0;
+        for (var name : names) {
             try {
                 incus.delete(name, true);
-                deleted++;
+                count++;
+                deleted.accept(name);
             } catch (Exception e) {
-                warnings.add("Could not delete " + name + ": " + e.getMessage());
+                failed.accept(name, e);
             }
         }
-        if (deleted > 0) proxyRefresh.run();
-        return deleted;
+        if (count > 0) proxyRefresh.run();
+        return count;
     }
 
     /** Delete one failed build and tell the proxy, as {@link #deleteFailedBuilds} does. */
@@ -601,14 +611,9 @@ public class CleanCommand extends BaseCommand {
                 return true;
             }
 
-            for (var name : failed) {
-                try {
-                    incus.delete(name, true);
-                    BuildOutput.step("  Deleted " + name);
-                } catch (Exception e) {
-                    System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete " + name + ": " + e.getMessage());
-                }
-            }
+            deleteFailedBuilds(incus, failed, name -> BuildOutput.step("  Deleted " + name),
+                    (name, e) -> System.err.println(BuildOutput.STEP_INDENT + "  Warning: could not delete "
+                            + name + ": " + e.getMessage()));
             return true;
         }
 

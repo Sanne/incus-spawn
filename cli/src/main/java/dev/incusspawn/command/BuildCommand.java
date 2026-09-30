@@ -1,6 +1,5 @@
 package dev.incusspawn.command;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -12,7 +11,6 @@ import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.EnvResolver;
 import dev.incusspawn.config.HostResourceSetup;
-import dev.incusspawn.config.AccountOrigin;
 import dev.incusspawn.config.AccountSelection;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
@@ -27,6 +25,7 @@ import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
+import dev.incusspawn.lifecycle.BuildAccounts;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -1038,8 +1037,7 @@ public class BuildCommand extends BaseCommand {
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
-        var inheritedIdentities = assignBuildAddress(buildName, imageDef, defs);
-        InstanceLifecycle.startInstance(incus, buildName);
+        var started = startBuild(buildName, imageDef, defs);
         incus.waitForReady(buildName);
 
         var container = new Container(incus, buildName);
@@ -1066,6 +1064,7 @@ public class BuildCommand extends BaseCommand {
             BuildOutput.step("Refreshed MITM proxy CA certificate.");
         }
 
+        requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
 
         if (!hostResources.isEmpty()) {
@@ -1088,7 +1087,7 @@ public class BuildCommand extends BaseCommand {
         // After tool setup, not before: a parent without gh still carries a GitHub stamp, and
         // writing an identity first would create the .gitconfig whose absence is how gh's setup
         // knows to write its git defaults.
-        refreshInheritedIdentities(container, imageDef, defs, inheritedIdentities);
+        refreshInheritedIdentities(container, imageDef, defs, started.inheritedIdentities());
         var allTools = new ArrayList<>(toolResolution.ancestors());
         allTools.addAll(toolResolution.effective());
         writeEnvFile(container, imageDef, defs, allTools, canonicalName);
@@ -1111,12 +1110,10 @@ public class BuildCommand extends BaseCommand {
 
         cleanCaches(buildName);
 
-        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
+        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
+                started.inheritedIdentities());
 
-        BuildOutput.stepStart("Stopping image...");
-        incus.stop(buildName);
-        BuildOutput.stepDone();
-        releaseBuildAddress(buildName);
+        stopBuild(buildName, started);
     }
 
     private boolean effectiveVm(ImageDef imageDef) {
@@ -1207,8 +1204,7 @@ public class BuildCommand extends BaseCommand {
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
-        assignBuildAddress(buildName, imageDef, defs);
-        InstanceLifecycle.startInstance(incus, buildName);
+        var started = startBuild(buildName, imageDef, defs);
         incus.waitForReady(buildName);
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
@@ -1258,6 +1254,7 @@ public class BuildCommand extends BaseCommand {
                 .assertSuccess("Failed to configure DNS");
         BuildOutput.stepDone();
 
+        requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
 
         if (effectiveVm) {
@@ -1372,12 +1369,10 @@ public class BuildCommand extends BaseCommand {
         cleanCaches(buildName);
 
         var parentCanonical = imageDef.isRoot() ? null : imageDef.getParent();
-        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs);
+        tagTemplateMetadata(buildName, canonicalName, imageDef, parentCanonical, hostResources, defs,
+                started.inheritedIdentities());
 
-        BuildOutput.stepStart("Stopping image...");
-        incus.stop(buildName);
-        BuildOutput.stepDone();
-        releaseBuildAddress(buildName);
+        stopBuild(buildName, started);
     }
 
     /**
@@ -2560,14 +2555,14 @@ public class BuildCommand extends BaseCommand {
     }
 
     private void stampBuildVersion(String container, dev.incusspawn.config.ImageDef imageDef,
-                                    Map<String, ImageDef> defs) {
+                                    Map<String, ImageDef> defs, Map<String, String> inheritedIdentities) {
         var info = BuildInfo.instance();
         incus.configSet(container, Metadata.BUILD_VERSION, info.version());
         incus.configSet(container, Metadata.BUILD_SHA, info.gitSha());
         incus.configSet(container, Metadata.CA_FINGERPRINT, CertificateAuthority.currentCaFingerprint());
         incus.configSet(container, Metadata.DEFINITION_SHA,
                 imageDef.contentFingerprint(computeToolFingerprints(imageDef, toolDefLoader, defs)));
-        stampAccountIdentities(container, imageDef, defs);
+        stampAccountIdentities(container, imageDef, defs, inheritedIdentities);
     }
 
     /**
@@ -2605,47 +2600,27 @@ public class BuildCommand extends BaseCommand {
     }
 
     /**
-     * Make the stopped build container known to the proxy as its template, before anything in
-     * it can make a request (#903): a static address the proxy identifies it by, and the
-     * template's account pins, in one write, then a signal so the proxy reads them.
-     *
-     * <p>Without this the proxy cannot tell a build from host traffic and serves every
-     * namespace's default account: repos are cloned, {@code prime} runs and the git identity is
-     * derived with credentials the template chose not to use. The pins travel to every branch
-     * through the CoW copy. A successful build gives the address back once it has stopped
-     * ({@link #releaseBuildAddress}). A failed one keeps it, and its pins, as {@code
-     * <template>-failed-build}: started for inspection, it is served its template's accounts
-     * rather than the defaults. Deleting it frees the address, as the next failure of the
-     * same template, {@code isx clean} or a destroy does.
-     *
-     * @return the {@code account-identity} stamps the container was copied with, by namespace
+     * Start the stopped build container, first making it known to the proxy as its template
+     * when that template pins any account (#903): see {@link BuildAccounts#start}.
      */
-    private Map<String, String> assignBuildAddress(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
-        var selection = ImageDef.resolveAccounts(imageDef, defs);
-        var inherited = new LinkedHashMap<String, String>();
-        InstanceLifecycle.assignBuildAddress(incus, buildName, config -> {
-            inherited.putAll(inheritedIdentities(config));
-            return buildAccountConfig(config, selection, imageDef.getName());
-        });
-        // Before the start, so the first request from inside already sees the pins
-        ProxyService.signalAccountRefresh();
-        return inherited;
+    private BuildAccounts.Started startBuild(String buildName, ImageDef imageDef, Map<String, ImageDef> defs) {
+        return BuildAccounts.start(incus, buildName, ImageDef.resolveAccounts(imageDef, defs),
+                imageDef.getName(), ProxyService::signalAccountRefresh);
     }
 
-    /**
-     * The {@code account-identity} stamps, by namespace, that a build container was copied with
-     * from its parent. Read before {@link #buildAccountConfig} clears them, since
-     * {@link #refreshInheritedIdentities} needs them to tell what the parent baked.
-     */
-    static Map<String, String> inheritedIdentities(JsonNode config) {
-        var result = new LinkedHashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (e.getKey().startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX) && !e.getValue().isNull()) {
-                result.put(e.getKey().substring(Metadata.ACCOUNT_IDENTITY_PREFIX.length()),
-                        e.getValue().asText(""));
-            }
-        });
-        return result;
+    /** Fail the build if its guest did not take the address {@link #startBuild} gave it. */
+    private void requireBuildAddress(String buildName, BuildAccounts.Started started) {
+        if (started.address() != null) {
+            InstanceLifecycle.requireBuildAddress(incus, buildName, started.address());
+        }
+    }
+
+    /** Stop the finished template and give back the address {@link #startBuild} gave it. */
+    private void stopBuild(String buildName, BuildAccounts.Started started) {
+        BuildOutput.stepStart("Stopping image...");
+        incus.stop(buildName);
+        BuildOutput.stepDone();
+        if (started.address() != null) releaseBuildAddress(buildName);
     }
 
     /**
@@ -2662,30 +2637,6 @@ public class BuildCommand extends BaseCommand {
         }
     }
 
-    /**
-     * The config a build container starts with, given the {@code config} it was created or
-     * copied with: the template's account pins, named after the definition rather than the
-     * container (a rebuild uses a temporary one), and none of the {@code account-identity}
-     * stamps a copy carries from its parent. Those describe what the parent's build baked; this
-     * build bakes its own, stamped when it is done, and the proxy refuses an account that does
-     * not match a stamp.
-     */
-    static Map<String, String> buildAccountConfig(JsonNode config,
-                                                  Map<String, String> selection, String template) {
-        var updates = new LinkedHashMap<String, String>();
-        config.properties().forEach(e -> {
-            if (e.getKey().startsWith(Metadata.ACCOUNT_IDENTITY_PREFIX)) updates.put(e.getKey(), null);
-        });
-        if (!selection.isEmpty()) {
-            var origins = new LinkedHashMap<String, AccountOrigin>();
-            selection.keySet().forEach(ns ->
-                    origins.put(ns, AccountOrigin.template(template)));
-            updates.putAll(AccountSelection.stampUpdates(selection, origins,
-                    AccountSelection.fromConfig(config)));
-        }
-        return updates;
-    }
-
     /** Say which accounts the build is served, so a wrong one is not silent. */
     private static void announceBuildAccounts(ImageDef imageDef, Map<String, ImageDef> defs) {
         var selection = ImageDef.resolveAccounts(imageDef, defs);
@@ -2696,14 +2647,17 @@ public class BuildCommand extends BaseCommand {
 
     /**
      * Record the env class each account this template was built against implies. The pins
-     * themselves were stamped before the build started ({@link #assignBuildAddress}).
+     * themselves were stamped before the build started ({@link BuildAccounts#start}).
      *
      * <p>They travel to every branch through the CoW copy. The env class is what
      * {@link dev.incusspawn.config.AccountSelection#incompatibilityReason} compares against to
      * refuse a swap that the baked environment could not honour.
+     *
+     * @param inherited the stamps the container was copied with, by namespace: see
+     *                  {@link BuildAccounts#identityStamps}
      */
     private void stampAccountIdentities(String container, ImageDef imageDef,
-                                        Map<String, ImageDef> defs) {
+                                        Map<String, ImageDef> defs, Map<String, String> inherited) {
         var selection = ImageDef.resolveAccounts(imageDef, defs);
         // Every namespace gets an env class, not just the ones this template selected: the
         // build baked *some* auth mode either way, and a later swap has to be checked against
@@ -2715,12 +2669,8 @@ public class BuildCommand extends BaseCommand {
         for (var namespace : setups.keySet()) {
             effective.put(namespace, selection.get(namespace));
         }
-        var classes = AccountSelection.bakedIdentities(config, effective, setups);
-        if (classes.isEmpty()) return;
-        var updates = new java.util.LinkedHashMap<String, String>();
-        classes.forEach((namespace, envClass) ->
-                updates.put(Metadata.accountIdentityKey(namespace), envClass));
-        incus.configSetAll(container, updates);
+        var updates = BuildAccounts.identityStamps(AccountSelection.bakedIdentities(config, effective, setups), inherited);
+        if (!updates.isEmpty()) incus.configSetAll(container, updates);
     }
 
     private static Map<String, String> computeToolFingerprints(
@@ -2806,7 +2756,8 @@ public class BuildCommand extends BaseCommand {
     private void tagTemplateMetadata(String buildName, String canonicalName, ImageDef imageDef,
                                     String parentCanonicalName,
                                     List<ImageDef.HostResource> hostResources,
-                                    Map<String, ImageDef> defs) {
+                                    Map<String, ImageDef> defs,
+                                    Map<String, String> inheritedIdentities) {
         incus.configSet(buildName, Metadata.TYPE, Metadata.TYPE_BASE);
         incus.configSet(buildName, Metadata.PROFILE, canonicalName);
         incus.configSet(buildName, Metadata.INSTANCE_MODE, effectiveType(imageDef));
@@ -2814,7 +2765,7 @@ public class BuildCommand extends BaseCommand {
             incus.configSet(buildName, Metadata.PARENT, parentCanonicalName);
         }
         incus.configSet(buildName, Metadata.CREATED, Metadata.today());
-        stampBuildVersion(buildName, imageDef, defs);
+        stampBuildVersion(buildName, imageDef, defs, inheritedIdentities);
         if (!hostResources.isEmpty()) {
             incus.configSet(buildName, Metadata.HOST_RESOURCES,
                     HostResourceSetup.serialize(hostResources));

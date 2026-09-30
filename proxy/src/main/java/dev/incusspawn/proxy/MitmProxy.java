@@ -360,8 +360,8 @@ public class MitmProxy {
      * Credentials for whoever sent this request.
      *
      * <p>An address that is not a known instance -- host-side traffic -- gets the configured
-     * defaults, and so does an instance that pins nothing. Template build containers are known
-     * instances: they hold a static IP while they build (#903).
+     * defaults, and so does an instance that pins nothing. A template build that pins an
+     * account is a known instance: it holds a static IP while it builds (#903).
      * Only an explicit pin diverges, and a pin naming an account that is not configured
      * raises {@link dev.incusspawn.config.AccountResolver.UnknownAccountException} so the
      * caller can fail the request instead of spending the wrong credential (#351).

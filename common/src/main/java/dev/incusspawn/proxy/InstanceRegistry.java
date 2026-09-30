@@ -17,9 +17,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <h3>Why source address identifies an instance</h3>
  * Every branch is given a static IP on the bridge by {@code InstanceLifecycle.configureBranch},
- * and every template build container by {@code InstanceLifecycle.assignBuildAddress} for as long
- * as it builds (#903), recorded as {@link Metadata#STATIC_IP}, and the iptables REDIRECT that sends :443 to the
- * proxy preserves the source address. So the address a connection arrives from is the
+ * and every template build container that pins an account by
+ * {@code InstanceLifecycle.assignBuildAddress} for as long as it builds (#903), recorded as
+ * {@link Metadata#STATIC_IP}, and the iptables REDIRECT that sends :443 to the proxy preserves
+ * the source address. So the address a connection arrives from is the
  * instance's own, and one {@code /1.0/instances?recursion=1} call maps every address at once.
  *
  * <p>That identity is only trustworthy because {@code security.ipv4_filtering} is set on the

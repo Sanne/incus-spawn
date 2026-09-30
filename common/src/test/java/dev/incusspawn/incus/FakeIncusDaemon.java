@@ -20,7 +20,7 @@ import java.util.Map;
  *
  * <p>Serves the subset of the API those flows use: server info, instance GET/PUT/PATCH/state,
  * instance listing, rename and DELETE, the {@code default} pool's volume listing, console log GET,
- * network and profile GET, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
+ * network, network lease and profile GET, a running guest's address in its state, file push and async-operation waits. Anything else answers 404, so an unexpected request still shows up in
  * {@link #requests()}. Exec is among them: every instance behaves as one whose agent never
  * answers.
  */
@@ -46,6 +46,11 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final Map<String, Long> pids = new LinkedHashMap<>();
     private final List<String> shutdownIgnored = new ArrayList<>();
     private final List<String> stateActions = new ArrayList<>();
+    /** Dynamic DHCP leases on the bridge, by address, as another MAC holds them. */
+    private final List<String> leases = new ArrayList<>();
+    /** The address a running instance's DHCP client got, where it is not its NIC's reservation. */
+    private final Map<String, String> dhcpAnswers = new LinkedHashMap<>();
+    private final Map<String, String> guestInterfaces = new LinkedHashMap<>();
     private boolean refuseNextWrite;
     private int nextOperation = 1;
     private long nextPid = 1000;
@@ -106,6 +111,30 @@ public final class FakeIncusDaemon implements IncusTransport {
     /** Have the guest ignore a graceful stop, as a wedged one does: only a forced stop works. */
     public FakeIncusDaemon ignoreShutdown(String instanceName) {
         shutdownIgnored.add(instanceName);
+        return this;
+    }
+
+    /**
+     * A dynamic lease on the bridge held by some other MAC, as a stopped or deleted instance
+     * leaves one behind until it expires.
+     */
+    public FakeIncusDaemon lease(String address) {
+        leases.add(address);
+        return this;
+    }
+
+    /**
+     * Have the instance's DHCP client get {@code address} instead of its NIC's reservation, as
+     * dnsmasq answers when another MAC still holds a lease on the reserved one.
+     */
+    public FakeIncusDaemon dhcpAnswers(String instanceName, String address) {
+        dhcpAnswers.put(instanceName, address);
+        return this;
+    }
+
+    /** Another interface of the running guest holding {@code address}, as a docker0 bridge does. */
+    public FakeIncusDaemon guestInterface(String instanceName, String address) {
+        guestInterfaces.put(instanceName, address);
         return this;
     }
 
@@ -278,6 +307,15 @@ public final class FakeIncusDaemon implements IncusTransport {
             list.addAll(extraVolumes);
             return sync(list);
         }
+        if (path.startsWith("/1.0/networks/") && path.endsWith("/leases") && method.equals("GET")) {
+            var list = JSON.createArrayNode();
+            leases.forEach(address -> list.addObject().put("address", address).put("type", "dynamic"));
+            instances.values().forEach(i -> {
+                var reserved = bridgeNicAddress(i);
+                if (!reserved.isEmpty()) list.addObject().put("address", reserved).put("type", "static");
+            });
+            return sync(list);
+        }
         if (path.startsWith("/1.0/networks/") && method.equals("GET")) {
             var network = networks.get(path.substring("/1.0/networks/".length()));
             return network == null ? notFound() : sync(network);
@@ -328,6 +366,13 @@ public final class FakeIncusDaemon implements IncusTransport {
             var state = JSON.createObjectNode();
             state.put("status", instance.path("status").asText());
             state.put("pid", pids.getOrDefault(name, 0L));
+            // A running guest holds what DHCP gave it: its reservation, unless told otherwise
+            var held = dhcpAnswers.getOrDefault(name, bridgeNicAddress(instance));
+            if (instance.path("status").asText().equals("Running")) {
+                var network = state.putObject("network");
+                if (guestInterfaces.containsKey(name)) addInet(network, "docker0", guestInterfaces.get(name));
+                if (!held.isEmpty()) addInet(network, "eth0", held);
+            }
             return sync(state);
         }
         if (rest.equals("/state") && method.equals("PUT")) {
@@ -381,6 +426,23 @@ public final class FakeIncusDaemon implements IncusTransport {
         // Each device in a PATCH replaces the instance's device of that name whole
         var devices = (ObjectNode) instance.get("devices");
         patch.path("devices").properties().forEach(e -> devices.set(e.getKey(), e.getValue()));
+    }
+
+    private static void addInet(ObjectNode network, String iface, String address) {
+        var entry = network.putObject(iface).putArray("addresses").addObject();
+        entry.put("family", "inet");
+        entry.put("scope", "global");
+        entry.put("address", address);
+    }
+
+    /** The {@code ipv4.address} of the instance's bridge NIC, or empty. */
+    private static String bridgeNicAddress(JsonNode instance) {
+        for (var device : instance.path("expanded_devices")) {
+            if ("nic".equals(device.path("type").asText()) && "incusbr0".equals(device.path("network").asText())) {
+                return device.path("ipv4.address").asText("");
+            }
+        }
+        return "";
     }
 
     /** The instance a {@code /1.0/instances/<name>[/...][?...]} path addresses, or null. */
