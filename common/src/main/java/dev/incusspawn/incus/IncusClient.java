@@ -289,21 +289,22 @@ public class IncusClient {
      * Wait until {@code name} answers exec. For a VM that means its incus-agent is up, so a
      * failure names the agent and quotes whatever its console log says about it (#844).
      *
-     * <p>When {@code isVm} is unknown, the type is learnt from the status GET that follows a
-     * failed probe, so an instance that is ready at once costs no extra request. Pass {@code true}
-     * when the caller already knows the instance is a VM: this avoids type-detection overhead and
-     * guarantees the 120s VM timeout applies from the start (#878).
+     * <p>When the caller does not know the type, the container timeout is used and the type is
+     * learnt from the status GET that follows a failed probe, so an instance that is ready at once
+     * costs no extra request. Pass {@code true} when the caller already knows the instance is a VM:
+     * this avoids type-detection overhead and guarantees the 120s VM timeout applies from the
+     * start (#878).
      */
     public void waitForReady(String name) {
-        waitForReady(name, null);
+        waitForReady(name, false);
     }
 
     /** See {@link #waitForReady(String)}. */
-    public void waitForReady(String name, Boolean isVm) {
+    public void waitForReady(String name, boolean isVm) {
         var t = readyTimeouts();
         long start = System.nanoTime();
-        long deadline = start + (isVm == Boolean.TRUE ? t.vm() : t.container()).toNanos();
-        boolean vm = isVm == Boolean.TRUE;
+        long deadline = start + (isVm ? t.vm() : t.container()).toNanos();
+        boolean vm = isVm;
         boolean agentFailed = false;
         long nextConsoleCheck = start;
         while (System.nanoTime() < deadline) {
