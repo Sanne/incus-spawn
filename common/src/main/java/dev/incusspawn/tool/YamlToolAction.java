@@ -103,11 +103,61 @@ public class YamlToolAction implements ToolAction {
             return prereq;
         }
 
+        var cliResult = tryOpenWithVscodeCli(url);
+        if (cliResult != null) {
+            return cliResult;
+        }
+
         if (dev.incusspawn.Platform.openUrl(url)) {
             return ActionResult.ok("Opened " + url);
         } else {
             return ActionResult.error("Could not open URL (no handler found): " + url);
         }
+    }
+
+    /**
+     * For vscode-remote SSH URLs, launch via the {@code code} CLI with
+     * {@code --disable-workspace-trust} to suppress the trust prompt.
+     * The remote-side machine setting alone does not suppress it because
+     * the prompt is rendered by the local VS Code client.
+     *
+     * @return an ActionResult if handled (success or failure), null to fall back to Platform.openUrl
+     */
+    private static ActionResult tryOpenWithVscodeCli(String url) {
+        var folderUri = toVscodeRemoteFolderUri(url);
+        if (folderUri == null) {
+            return null;
+        }
+        var codePath = findVscodeCli();
+        if (codePath == null) {
+            return null;
+        }
+        try {
+            var pb = new ProcessBuilder(codePath, "--folder-uri", folderUri, "--disable-workspace-trust");
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            var p = pb.start();
+            if (p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                if (p.exitValue() == 0) {
+                    return ActionResult.ok("Opened " + folderUri);
+                }
+                return ActionResult.error("VS Code CLI exited with code " + p.exitValue());
+            }
+            return ActionResult.ok("Opened " + folderUri);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ActionResult.error("VS Code CLI execution interrupted");
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    static String toVscodeRemoteFolderUri(String vscodeUrl) {
+        var prefix = "vscode://vscode-remote/";
+        if (!vscodeUrl.startsWith(prefix)) {
+            return null;
+        }
+        return "vscode-remote://" + vscodeUrl.substring(prefix.length());
     }
 
     private ActionResult executeCommand(ActionContext context) {

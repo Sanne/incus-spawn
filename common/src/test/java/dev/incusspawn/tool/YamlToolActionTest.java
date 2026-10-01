@@ -219,6 +219,25 @@ class YamlToolActionTest {
         assertNull(YamlToolAction.checkUrlPrerequisites("custom://something"));
     }
 
+    // --- vscode-remote folder URI conversion ---
+
+    @Test
+    void testToVscodeRemoteFolderUri() {
+        assertEquals("vscode-remote://ssh-remote+my-instance/home/agentuser/project",
+                YamlToolAction.toVscodeRemoteFolderUri("vscode://vscode-remote/ssh-remote+my-instance/home/agentuser/project"));
+    }
+
+    @Test
+    void testToVscodeRemoteFolderUriReturnsNullForNonVscodeUrl() {
+        assertNull(YamlToolAction.toVscodeRemoteFolderUri("http://example.com"));
+        assertNull(YamlToolAction.toVscodeRemoteFolderUri("jetbrains-gateway://connect#host=10.0.0.1"));
+    }
+
+    @Test
+    void testToVscodeRemoteFolderUriReturnsNullForPlainVscodeUrl() {
+        assertNull(YamlToolAction.toVscodeRemoteFolderUri("vscode://extension/ms-vscode-remote.remote-ssh"));
+    }
+
     @Test
     void testAllVariableInterpolation() {
         var entry = new ActionEntry();
