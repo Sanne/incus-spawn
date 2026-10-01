@@ -144,7 +144,8 @@ public class BuildCommand extends BaseCommand {
     private volatile boolean savedFailureSummary;
     private volatile boolean savedHostReport;
 
-    private volatile String[] activeBuild;
+    record ActiveBuild(String tempName, String canonicalName, MachineType machineType) {}
+    private volatile ActiveBuild activeBuild;
 
     private HostRepoRefresh.AsyncRefresh hostRepoRefresh;
 
@@ -167,8 +168,10 @@ public class BuildCommand extends BaseCommand {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             var build = activeBuild;
             if (build != null) {
-                reportBuildFailure(build[0], build[1], "Build interrupted for " + build[1]);
-                promoteToFailedInstance(build[0], build[1]);
+                reportBuildFailure(build.tempName(), build.canonicalName(),
+                        "Build interrupted for " + build.canonicalName());
+                promoteToFailedInstance(build.tempName(), build.canonicalName(),
+                        build.machineType());
             }
         }));
 
@@ -614,7 +617,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         incus.deleteIfExists(tempName);
-        activeBuild = new String[]{tempName, canonicalName};
+        activeBuild = new ActiveBuild(tempName, canonicalName, effectiveMachineType(imageDef));
 
         long referenced;
         try {
@@ -647,7 +650,7 @@ public class BuildCommand extends BaseCommand {
                     HostResourceSetup.removeBuildDevices(incus, tempName, failedHostResources);
                 }
             } catch (Exception ignored) {}
-            promoteToFailedInstance(tempName, canonicalName);
+            promoteToFailedInstance(tempName, canonicalName, activeBuild.machineType());
             activeBuild = null;
             throw new BuildFailedException(canonicalName);
         }
@@ -685,7 +688,7 @@ public class BuildCommand extends BaseCommand {
     /** Builds the template under {@code tempName}, from scratch or from its parent. */
     void buildInto(ImageDef imageDef, Map<String, ImageDef> defs, String tempName) {
         boolean typeChange = !imageDef.isRoot()
-                && effectiveMachineType(imageDef) != incus.machineType(imageDef.getParent());
+                && activeBuild.machineType() != effectiveMachineType(defs.get(imageDef.getParent()));
         if (imageDef.isRoot() || typeChange) {
             buildFromScratch(imageDef, defs, tempName);
         } else {
@@ -924,11 +927,11 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
-    private void promoteToFailedInstance(String buildName, String canonicalName) {
+    private void promoteToFailedInstance(String buildName, String canonicalName, MachineType machineType) {
         var promotedName = canonicalName + "-failed-build";
         try {
             incus.deleteIfExists(promotedName);
-            try { unmountDnfCache(buildName); } catch (Exception ignored) {}
+            try { unmountDnfCache(buildName, machineType); } catch (Exception ignored) {}
             if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(buildName))) {
                 incus.forceStop(buildName);
             }
@@ -1013,7 +1016,7 @@ public class BuildCommand extends BaseCommand {
                                   String buildName, String parentSource) {
         var canonicalName = imageDef.getName();
         var parentCanonical = imageDef.getParent();
-        var machineType = effectiveMachineType(imageDef);
+        var machineType = activeBuild.machineType();
 
         var copyPlan = incus.planCopy(parentSource);
         if (!copyPlan.cow()) {
@@ -1107,7 +1110,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName);
+        unmountDnfCache(buildName, machineType);
 
         cleanCaches(buildName);
 
@@ -1138,7 +1141,7 @@ public class BuildCommand extends BaseCommand {
         var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
         resolveTrackedBaseImage(rootDef);
         var image = rootDef.getImage();
-        var machineType = effectiveMachineType(imageDef);
+        var machineType = activeBuild.machineType();
         var prebaked = false;
 
         if (machineType == MachineType.VM && rootDef.getVmImageUrl() != null) {
@@ -1364,7 +1367,7 @@ public class BuildCommand extends BaseCommand {
         }
 
         HostResourceSetup.removeBuildDevices(incus, buildName, hostResources);
-        unmountDnfCache(buildName);
+        unmountDnfCache(buildName, machineType);
 
         cleanCaches(buildName);
 
@@ -2913,10 +2916,10 @@ public class BuildCommand extends BaseCommand {
         return dnfCacheWarning;
     }
 
-    void unmountDnfCache(String container) {
+    void unmountDnfCache(String container, MachineType machineType) {
         // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
         // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
-        if (incus.machineType(container) == MachineType.VM) {
+        if (machineType == MachineType.VM) {
             incus.shellExec(container, "sh", "-c",
                     "mountpoint -q " + DNF_CACHE_PATH + " && umount " + DNF_CACHE_PATH + "; true");
         }

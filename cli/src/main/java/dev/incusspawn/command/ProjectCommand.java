@@ -2,6 +2,7 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ProjectConfig;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
 import dev.incusspawn.util.BuildOutput;
@@ -69,10 +70,11 @@ public class ProjectCommand extends BaseCommand {
             }
 
             // Clone from parent
+            var machineType = incus.machineType(parent);
             BuildOutput.stepStart("Cloning from " + parent + "...");
             incus.copy(parent, imageName);
             incus.start(imageName);
-            incus.waitForReady(imageName, incus.machineType(imageName));
+            incus.waitForReady(imageName, machineType);
             BuildOutput.stepDone();
 
             // Clone repos
@@ -146,8 +148,9 @@ public class ProjectCommand extends BaseCommand {
             BuildOutput.header("Updating project template " + name);
 
             // Start if stopped
+            var machineType = incus.machineType(name);
             incus.start(name);
-            incus.waitForReady(name, incus.machineType(name));
+            incus.waitForReady(name, machineType);
 
             // System updates
             BuildOutput.stepStart("Running system updates...");

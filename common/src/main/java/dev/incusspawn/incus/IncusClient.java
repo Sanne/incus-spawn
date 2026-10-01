@@ -6,6 +6,7 @@ import dev.incusspawn.ClientLog;
 import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
+import dev.incusspawn.config.ReadyTimeoutsConfig;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -43,12 +44,15 @@ public class IncusClient {
     private volatile boolean apiInitialized;
     private volatile IncusApi api;
 
-    public IncusClient() {}
+    public IncusClient() {
+        this.readyTimeouts = ReadyTimeoutsConfig.fromConfig();
+    }
 
     /** Talk to {@code api} instead of discovering the local daemon; lets tests count requests. */
     IncusClient(IncusApi api) {
         this.api = api;
         this.apiInitialized = true;
+        this.readyTimeouts = ReadyTimeouts.DEFAULT;
     }
 
     private IncusApi api() {
@@ -270,15 +274,7 @@ public class IncusClient {
     /** A VM's agent takes seconds to come up, so probing it at the container cadence buys nothing. */
     private static final long VM_POLL_INTERVAL_MS = 250;
 
-    private volatile ReadyTimeouts readyTimeouts;
-
-    private ReadyTimeouts readyTimeouts() {
-        var t = readyTimeouts;
-        if (t != null) return t;
-        var config = dev.incusspawn.config.ReadyTimeoutsConfig.fromConfig();
-        readyTimeouts = config;
-        return config;
-    }
+    private ReadyTimeouts readyTimeouts;
 
     /** Override {@link #waitForReady}'s timeouts; tests only. */
     void readyTimeouts(ReadyTimeouts timeouts) {
@@ -301,7 +297,7 @@ public class IncusClient {
 
     /** See {@link #waitForReady(String)}. */
     public void waitForReady(String name, MachineType type) {
-        var t = readyTimeouts();
+        var t = readyTimeouts;
         long start = System.nanoTime();
         long deadline = start + (type == MachineType.VM ? t.vm() : t.container()).toNanos();
         boolean vm = type == MachineType.VM;

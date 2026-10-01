@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -43,7 +44,8 @@ class IpFilteringRearmTest {
         // FakeIncusDaemon serves no exec, so the readiness wait after the start can only time
         // out; what matters here is what reached Incus before it.
         assertThrows(IncusException.class, () -> InstanceLifecycle.ensureReady(
-                daemon.clientWithShortReadyWait(), NAME, "Stopped", false, said::add));
+                daemon.clientWithShortReadyWait(), NAME, "Stopped", false,
+                MachineType.CONTAINER, said::add));
 
         assertEquals("true", filtering(daemon));
         var requests = daemon.requests();

@@ -6,6 +6,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
+import dev.incusspawn.incus.StaticIpAllocator;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -48,18 +49,19 @@ public class InstancePrep {
         var templateName = (profile != null && !profile.isEmpty()) ? profile : parent;
 
         var networkMode = incus.configGet(name, Metadata.NETWORK_MODE);
+        var machineType = incus.machineType(name);
         boolean ipFixed = false;
         if (!NetworkMode.AIRGAP.name().equals(networkMode)) {
             if (!ProxyHealthCheck.checkOrWarn(incus)) return null;
             BridgeSubnetCheck.warnIfConflict(incus);
             FirewallDetector.warnIfNotRunning();
-            ipFixed = fixStaticIpMismatch(incus, name);
-            fixCaMismatch(incus, name);
+            ipFixed = fixStaticIpMismatch(incus, name, machineType);
+            fixCaMismatch(incus, name, machineType);
             fixResolvConfMismatch(incus, name);
         }
 
-        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name), ipFixed && incus.machineType(name) == MachineType.VM,
-                System.out::println);
+        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name),
+                ipFixed && machineType == MachineType.VM, machineType, System.out::println);
 
         GuiPassthrough.checkGuiHealth(incus, name);
         InstanceLifecycle.reconcileAccountIdentities(incus, name);
@@ -67,10 +69,10 @@ public class InstancePrep {
         return templateName;
     }
 
-    private static boolean fixStaticIpMismatch(IncusClient incus, String name) {
+    private static boolean fixStaticIpMismatch(IncusClient incus, String name, MachineType machineType) {
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return false;
         try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name)) {
+            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, StaticIpAllocator.Output.TERMINAL, machineType)) {
                 BuildOutput.warnBanner("Static IP mismatch",
                         "Reassigned to current bridge subnet.");
                 return true;
@@ -93,12 +95,12 @@ public class InstancePrep {
         }
     }
 
-    private static void fixCaMismatch(IncusClient incus, String container) {
+    private static void fixCaMismatch(IncusClient incus, String container, MachineType machineType) {
         // Ensure the container is running so we can push the cert
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             InstanceLifecycle.prepareHostDevicesForStart(incus, container);
             InstanceLifecycle.startInstance(incus, container);
-            incus.waitForReady(container, incus.machineType(container));
+            incus.waitForReady(container, machineType);
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {

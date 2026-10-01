@@ -218,11 +218,12 @@ public final class BranchFlow {
                 (cpu != null ? cpu + " CPUs, " : "") + memory + " memory, " + disk + " disk.");
         var enableKvm = req.kvm() != null ? req.kvm()
                 : "kvm".equals(incus.configGet(source, Metadata.INSTANCE_MODE));
+        var machineType = sourceMachineType;
         InstanceLifecycle.configureBranch(incus, name, new InstanceLifecycle.BranchSettings(
                 cpu, memory, disk, networkMode, source, preflight.accounts(),
                 preflight.accountOrigins(), enableKvm, req.extraConfig()));
         announceAccountSelection(preflight.accounts());
-        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE);
+        InstanceLifecycle.integrateWithHost(incus, name, InstanceType.INSTANCE, machineType);
 
         // Inherited KVM passthrough was already dropped by configureBranch when not enabled.
         if (enableKvm && !KvmPassthrough.configureKvm(incus, name)) {
@@ -237,7 +238,6 @@ public final class BranchFlow {
 
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
-        var machineType = incus.machineType(name);
         var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, machineType);
 
         if (machineType == MachineType.VM) {

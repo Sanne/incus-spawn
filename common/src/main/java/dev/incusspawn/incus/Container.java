@@ -9,6 +9,7 @@ public class Container {
     private final IncusClient incus;
     private final String name;
     private String architecture;
+    private MachineType machineType;
 
     public Container(IncusClient incus, String name) {
         this.incus = incus;
@@ -19,8 +20,12 @@ public class Container {
         return name;
     }
 
+    /** The Incus machine type (container or VM). Cached after first lookup. */
     public MachineType machineType() {
-        return incus.machineType(name);
+        if (machineType == null) {
+            machineType = incus.machineType(name);
+        }
+        return machineType;
     }
 
     public void waitForPath(String path) {

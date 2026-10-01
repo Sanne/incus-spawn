@@ -1,5 +1,7 @@
 package dev.incusspawn.tool;
 
+import dev.incusspawn.incus.MachineType;
+
 import java.util.List;
 import java.util.Set;
 
@@ -14,7 +16,8 @@ public record ActionContext(
         String parent,
         Set<String> installedTools,
         String networkMode,
-        List<RepoInfo> repos
+        List<RepoInfo> repos,
+        MachineType machineType
 ) {
     public boolean isRunning() {
         return "RUNNING".equalsIgnoreCase(status);

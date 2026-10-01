@@ -2632,7 +2632,7 @@ class BuildCommandTest {
         cmd.incus = incus;
         cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
-        verify(cmd, never()).tryMountReference(any(), any(), any(), anyBoolean());
+        verify(cmd, never()).tryMountReference(any(), any(), any(), any());
         verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
@@ -2782,9 +2782,8 @@ class BuildCommandTest {
     @Test
     void unmountDnfCacheUnmountsInVmGuestBeforeRemovingDevice() {
         var incus = mock(IncusClient.class);
-        when(incus.machineType("b")).thenReturn(MachineType.VM);
         when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
-        dnfCacheCommand(incus).unmountDnfCache("b");
+        dnfCacheCommand(incus).unmountDnfCache("b", MachineType.VM);
 
         var captor = ArgumentCaptor.forClass(String.class);
         var order = inOrder(incus);
@@ -2797,8 +2796,7 @@ class BuildCommandTest {
     @Test
     void unmountDnfCacheSkipsGuestUnmountForContainers() {
         var incus = mock(IncusClient.class);
-        when(incus.machineType("b")).thenReturn(MachineType.CONTAINER);
-        dnfCacheCommand(incus).unmountDnfCache("b");
+        dnfCacheCommand(incus).unmountDnfCache("b", MachineType.CONTAINER);
 
         verify(incus, never()).shellExec(anyString(), any(String[].class));
         verify(incus).deviceRemove("b", "dnf-cache");

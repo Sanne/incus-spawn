@@ -577,13 +577,13 @@ public final class InstanceLifecycle {
      * that owns the terminal (the TUI) can route them.
      */
     public static void ensureReady(IncusClient incus, String name, String status, boolean pushNetworkConfig,
-                                   Consumer<String> say) {
+                                   MachineType machineType, Consumer<String> say) {
         if ("Stopped".equalsIgnoreCase(status)) {
             say.accept("Starting " + name + "...");
             prepareHostDevicesForStart(incus, name, say);
             startInstance(incus, name, say);
-            incus.waitForReady(name, incus.machineType(name));
-        } else if (incus.machineType(name) == MachineType.VM && !agentAnswers(incus, name)) {
+            incus.waitForReady(name, machineType);
+        } else if (machineType == MachineType.VM && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
         if (pushNetworkConfig) pushDeferredNetworkConfig(incus, name);
@@ -741,14 +741,21 @@ public final class InstanceLifecycle {
     /** @param output where the reassignment, and any wait for the allocation lock, is reported */
     public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
                                               StaticIpAllocator.Output output) {
+        return fixStaticIpIfNeeded(incus, name, output, null);
+    }
+
+    public static boolean fixStaticIpIfNeeded(IncusClient incus, String name,
+                                              StaticIpAllocator.Output output,
+                                              MachineType machineType) {
         var storedIp = incus.configGet(name, Metadata.STATIC_IP);
         if (storedIp.isEmpty()) return false;
         var bridge = BridgeAddress.read(incus);
-        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get(), output);
+        return bridge.isPresent() && fixStaticIp(incus, name, storedIp, bridge.get(), output, machineType);
     }
 
     private static boolean fixStaticIp(IncusClient incus, String name, String storedIp,
-                                       BridgeAddress bridge, StaticIpAllocator.Output output) {
+                                       BridgeAddress bridge, StaticIpAllocator.Output output,
+                                       MachineType machineType) {
         if (storedIp.isEmpty() || CidrUtils.isInSubnet(storedIp, bridge.subnet())) return false;
 
         var newGateway = bridge.gateway();
@@ -769,7 +776,8 @@ public final class InstanceLifecycle {
         }
         incus.configSetAll(name, updates);
 
-        if (incus.machineType(name) == MachineType.CONTAINER) {
+        var resolvedType = machineType != null ? machineType : incus.machineType(name);
+        if (resolvedType == MachineType.CONTAINER) {
             pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen(),
                     output.warn());
         }
@@ -792,7 +800,7 @@ public final class InstanceLifecycle {
             for (var stale : staleStaticIps(incus, bridge.get()).entrySet()) {
                 try {
                     if (fixStaticIp(incus, stale.getKey(), stale.getValue(), bridge.get(),
-                            StaticIpAllocator.Output.TERMINAL)) {
+                            StaticIpAllocator.Output.TERMINAL, incus.machineType(stale.getKey()))) {
                         fixed++;
                     }
                 } catch (Exception e) {
@@ -953,12 +961,13 @@ public final class InstanceLifecycle {
     /**
      * Apply host resource devices and (for instances) add git remotes.
      */
-    public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType) {
+    public static void integrateWithHost(IncusClient incus, String name, InstanceType instanceType,
+                                         MachineType machineType) {
         var hrJson = incus.configGet(name, Metadata.HOST_RESOURCES);
         var hostResources = HostResourceSetup.deserialize(hrJson);
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
-            HostResourceSetup.applyForInstance(incus, name, hostResources, incus.machineType(name));
+            HostResourceSetup.applyForInstance(incus, name, hostResources, machineType);
         }
 
         if (instanceType == InstanceType.INSTANCE) {

@@ -5,6 +5,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.git.HostRepoRefresh;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.util.BuildOutput;
 import org.aesh.command.CommandDefinition;
@@ -113,8 +114,9 @@ public class UpdateAllCommand extends BaseCommand {
     private record UpdateResult(boolean primesSkipped, boolean primesFailed, boolean npmFailed) {}
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
+        var machineType = incus.machineType(name);
         incus.start(name);
-        incus.waitForReady(name, incus.machineType(name));
+        incus.waitForReady(name, machineType);
 
         // System updates
         BuildOutput.stepStart("Running system updates...");

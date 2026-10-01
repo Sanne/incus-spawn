@@ -240,7 +240,8 @@ public class ActionResolver {
                 parentTemplate,
                 installedTools,
                 networkMode,
-                repos
+                repos,
+                incus.machineType(instanceName)
         );
     }
 

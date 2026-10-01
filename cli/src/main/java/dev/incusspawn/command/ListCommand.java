@@ -241,7 +241,7 @@ public class ListCommand extends BaseCommand {
     private SelectState newTemplateLocationSelect;
     private int newTemplateFieldIndex;
     private String statusMessage;
-    private boolean vmIpFixApplied;
+    private boolean ipFixApplied;
     private String progressMessage;
     // Search/filter state
     private boolean searchActive = false;
@@ -269,8 +269,11 @@ public class ListCommand extends BaseCommand {
     private boolean deferredBuildForBranch;
 
     private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
+    private record PendingTarget(String name, MachineType machineType) {
+        PendingTarget(String name) { this(name, null); }
+    }
     private PendingAction pendingAction = PendingAction.NONE;
-    private String pendingActionTarget;
+    private PendingTarget pendingActionTarget;
     private String pendingShellCommand;
     private ToolAction pendingToolAction;
     private ActionContext pendingToolActionContext;
@@ -541,20 +544,20 @@ public class ListCommand extends BaseCommand {
 
             switch (pendingAction) {
                 case SHELL -> {
-                    returnToInstance = pendingActionTarget;
-                    shellInto(pendingActionTarget);
+                    returnToInstance = pendingActionTarget.name();
+                    shellInto(pendingActionTarget.name(), pendingActionTarget.machineType());
                 }
                 case SHELL_WITH_COMMAND -> {
-                    returnToInstance = pendingActionTarget;
-                    shellInto(pendingActionTarget, pendingShellCommand);
+                    returnToInstance = pendingActionTarget.name();
+                    shellInto(pendingActionTarget.name(), pendingActionTarget.machineType(), pendingShellCommand);
                 }
                 case BRANCH -> {
-                    returnToInstance = pendingActionTarget;
+                    returnToInstance = pendingActionTarget.name();
                     try {
-                        createBranchFromModal(pendingActionTarget);
-                        statusMessage = "Created branch " + pendingActionTarget;
+                        createBranchFromModal(pendingActionTarget.name());
+                        statusMessage = "Created branch " + pendingActionTarget.name();
                     } catch (Exception e) {
-                        statusMessage = "Failed to create branch " + pendingActionTarget + ": " + e.getMessage();
+                        statusMessage = "Failed to create branch " + pendingActionTarget.name() + ": " + e.getMessage();
                     }
                 }
                 case BUILD_TEMPLATE, BUILD_THEN_BRANCH -> {
@@ -588,20 +591,20 @@ public class ListCommand extends BaseCommand {
                     }
                 }
                 case NEW_TEMPLATE -> {
-                    returnToTemplate = pendingActionTarget;
+                    returnToTemplate = pendingActionTarget.name();
                     try {
                         var parent = newTemplateParentInput.text().strip();
                         var dir = newTemplateLocations.get(newTemplateLocationSelect.selectedIndex()).dir();
-                        var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget, parent, dir);
-                        TemplatesCommand.editLoop(targetPath, pendingActionTarget, false);
-                        statusMessage = "Created template " + pendingActionTarget;
+                        var targetPath = TemplatesCommand.createTemplateFile(pendingActionTarget.name(), parent, dir);
+                        TemplatesCommand.editLoop(targetPath, pendingActionTarget.name(), false);
+                        statusMessage = "Created template " + pendingActionTarget.name();
                     } catch (Exception e) {
                         statusMessage = "Failed to create template: " + e.getMessage();
                     }
                 }
                 case EDIT_TEMPLATE -> {
-                    returnToTemplate = pendingActionTarget;
-                    try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget; editCmd.doExecute(); }
+                    returnToTemplate = pendingActionTarget.name();
+                    try { var editCmd = new TemplatesCommand.Edit(); editCmd.name = pendingActionTarget.name(); editCmd.doExecute(); }
                     catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                 }
                 case EXECUTE_ACTION -> {
@@ -1494,9 +1497,9 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
-            if (showProxyErrorIfNeeded(selected.name)) return true;
+            if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
             pendingAction = PendingAction.SHELL;
-            pendingActionTarget = selected.name;
+            pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
             tui.quit();
             return true;
         }
@@ -1505,7 +1508,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            if (showProxyErrorIfNeeded(selected.name)) return true;
+            if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
             if (dispatchDefaultAction(selected)) tui.quit();
             return true;
         }
@@ -1769,7 +1772,7 @@ public class ListCommand extends BaseCommand {
             }
             if (vanished(branchSourceName)) return true;
             pendingAction = PendingAction.BRANCH;
-            pendingActionTarget = name;
+            pendingActionTarget = new PendingTarget(name);
             tui.quit();
             return true;
         }
@@ -1892,7 +1895,7 @@ public class ListCommand extends BaseCommand {
                 return true;
             }
             pendingAction = PendingAction.NEW_TEMPLATE;
-            pendingActionTarget = name;
+            pendingActionTarget = new PendingTarget(name);
             mode = Mode.BROWSE;
             tui.quit();
             return true;
@@ -3253,7 +3256,7 @@ public class ListCommand extends BaseCommand {
             var template = selectedTemplate();
             if (template != null) {
                 pendingAction = PendingAction.EDIT_TEMPLATE;
-                pendingActionTarget = template.name;
+                pendingActionTarget = new PendingTarget(template.name);
                 mode = Mode.BROWSE;
                 tui.quit();
             }
@@ -3290,9 +3293,9 @@ public class ListCommand extends BaseCommand {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
                 if (vanished(selected.name)) return true;
-                if (showProxyErrorIfNeeded(selected.name)) return true;
+                if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
                 pendingAction = PendingAction.SHELL;
-                pendingActionTarget = selected.name;
+                pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
                 mode = Mode.BROWSE;
                 tui.quit();
             }
@@ -3302,7 +3305,7 @@ public class ListCommand extends BaseCommand {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
                 if (vanished(selected.name)) return true;
-                if (showProxyErrorIfNeeded(selected.name)) return true;
+                if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
                 mode = Mode.BROWSE;
                 if (dispatchDefaultAction(selected)) tui.quit();
             }
@@ -4326,7 +4329,7 @@ public class ListCommand extends BaseCommand {
         var ref = defaultActionRef.get(selected.name);
         if (ref == null || ref.isBlank()) {
             pendingAction = PendingAction.SHELL;
-            pendingActionTarget = selected.name;
+            pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
             return true;
         }
         var result = findDefaultAction(ref, selected);
@@ -4341,14 +4344,14 @@ public class ListCommand extends BaseCommand {
         if (cmd.isPresent()) {
             pendingAction = PendingAction.SHELL_WITH_COMMAND;
             pendingShellCommand = cmd.get();
-            pendingActionTarget = context.instanceName();
+            pendingActionTarget = new PendingTarget(context.instanceName(), context.machineType());
             return true;
         }
         if (action.needsDeferredExecution()) {
             pendingAction = PendingAction.EXECUTE_ACTION;
             pendingToolAction = action;
             pendingToolActionContext = context;
-            pendingActionTarget = context.instanceName();
+            pendingActionTarget = new PendingTarget(context.instanceName(), context.machineType());
             return true;
         }
         var execResult = action.execute(context);
@@ -4543,7 +4546,8 @@ public class ListCommand extends BaseCommand {
         var repos = collectRepos(instance);
         return new ActionContext(
                 instance.name, instance.ipv4, instance.status,
-                instance.parent, tools, instance.networkMode, repos);
+                instance.parent, tools, instance.networkMode, repos,
+                instance.machineType());
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5444,14 +5448,14 @@ public class ListCommand extends BaseCommand {
         return true;
     }
 
-    private boolean showProxyErrorIfNeeded(String containerName) {
+    private boolean showProxyErrorIfNeeded(String containerName, MachineType machineType) {
         try {
             var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
             showSubnetWarning();
-            fixStaticIpIfNeeded(containerName);
-            fixCaMismatchIfNeeded(containerName);
+            fixStaticIpIfNeeded(containerName, machineType);
+            fixCaMismatchIfNeeded(containerName, machineType);
             fixResolvConfIfNeeded(containerName);
             return false;
         } catch (IncusException e) {
@@ -5471,16 +5475,16 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private void fixStaticIpIfNeeded(String name) {
-        vmIpFixApplied = false;
+    private void fixStaticIpIfNeeded(String name, MachineType machineType) {
+        ipFixApplied = false;
         if (!"Stopped".equalsIgnoreCase(incus.getInstanceStatus(name))) return;
         // Runs on the TUI's own screen: printing would draw over it. A warning (spoofing
         // protection refused, an unusable allocation lock) goes to the warning log; progress
         // does not, since nothing can render until this returns.
         var output = new StaticIpAllocator.Output(msg -> {}, warningLog::add);
         try {
-            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output)) {
-                vmIpFixApplied = incus.machineType(name) == MachineType.VM;
+            if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output, machineType)) {
+                ipFixApplied = true;
                 statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
@@ -5495,7 +5499,7 @@ public class ListCommand extends BaseCommand {
         }
     }
 
-    private void fixCaMismatchIfNeeded(String containerName) {
+    private void fixCaMismatchIfNeeded(String containerName, MachineType machineType) {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(containerName))) {
             // Runs on the TUI's own screen, where stderr would be drawn over: a mount dropped
             // because its host directory is gone must not go unannounced (#852), so it goes to
@@ -5504,16 +5508,16 @@ public class ListCommand extends BaseCommand {
             // protection (#905) and startInstance falls back where the host cannot enforce it.
             InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warningLog::add);
             InstanceLifecycle.startInstance(incus, containerName, warningLog::add);
-            incus.waitForReady(containerName, incus.machineType(containerName));
+            incus.waitForReady(containerName, machineType);
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }
 
-    private void shellInto(String name) {
-        shellInto(name, null);
+    private void shellInto(String name, MachineType machineType) {
+        shellInto(name, machineType, null);
     }
 
-    private void shellInto(String name, String commandOverride) {
+    private void shellInto(String name, MachineType machineType, String commandOverride) {
         var status = incus.getInstanceStatus(name);
         // An empty status means any failed lookup, not just a missing instance, so confirm before
         // giving up: a daemon hiccup must not cancel a shell on an instance that's still there.
@@ -5524,7 +5528,8 @@ public class ListCommand extends BaseCommand {
             return;
         }
         // Runs after the TUI has released the terminal, so plain stdout is safe here.
-        InstanceLifecycle.ensureReady(incus, name, status, vmIpFixApplied, System.out::println);
+        InstanceLifecycle.ensureReady(incus, name, status, ipFixApplied && machineType == MachineType.VM,
+                machineType, System.out::println);
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
@@ -5690,5 +5695,7 @@ public class ListCommand extends BaseCommand {
                                 String buildVersion, String definitionSha,
                                 String type, String buildSourceJson, String pendingOp,
                                 String defaultAction, long diskUsage, long referencedBytes,
-                                String instanceMode, boolean kvmEnabled) {}
+                                String instanceMode, boolean kvmEnabled) {
+        MachineType machineType() { return MachineType.fromIncus(runtime); }
+    }
 }
