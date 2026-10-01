@@ -35,9 +35,9 @@ To check a change against a real Incus on a disposable Linux host, `scripts/loca
 
 ## Tech Stack
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 / Netty 4.2; see [docs/quarkus-4/MIGRATION.md](docs/quarkus-4/MIGRATION.md))
 - **Tamboui** for the interactive TUI (terminal UI framework)
-- **Jackson YAML** for configuration/definition parsing
+- **Jackson 2 YAML** for configuration/definition parsing, used directly (no `quarkus-jackson`: under Quarkus 4 that extension is Jackson 3, which the BOM manages beside a transitional Jackson 2)
 - **Quarkus CDI** for dependency injection (tool discovery, command wiring)
 
 ## Module Structure
