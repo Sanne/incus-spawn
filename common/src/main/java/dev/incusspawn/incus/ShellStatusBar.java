@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ToolAction;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -14,19 +15,6 @@ public class ShellStatusBar {
 
     private static final String TYPE_URL = "url";
     private static final String TYPE_COMMAND = "command";
-    private static final byte[] CLEAR_SCREEN = {0x1B, 0x5B, 0x32, 0x4A};
-    private static final byte[] SCROLL_REGION_RESET = {0x1B, 0x5B, 0x72};
-
-    private static final byte[][] ALT_SCREEN_ENTER = {
-            {0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68}, // \e[?1049h
-            {0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x37, 0x68}, // \e[?1047h
-            {0x1B, 0x5B, 0x3F, 0x34, 0x37, 0x68},             // \e[?47h
-    };
-    private static final byte[][] ALT_SCREEN_LEAVE = {
-            {0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x6C}, // \e[?1049l
-            {0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x37, 0x6C}, // \e[?1047l
-            {0x1B, 0x5B, 0x3F, 0x34, 0x37, 0x6C},             // \e[?47l
-    };
 
     private final String instanceName;
     private final String templateName;
@@ -46,7 +34,9 @@ public class ShellStatusBar {
     public ShellStatusBar(String instanceName, String templateName, OutputStream out) {
         this.instanceName = instanceName;
         this.templateName = templateName;
-        this.out = out;
+        // Buffer all writes so child output + scroll region fixup + bar repaint
+        // reach the terminal in one write syscall (one rendering frame).
+        this.out = new BufferedOutputStream(out, 131072);
     }
 
     public Object renderLock() {
@@ -83,6 +73,7 @@ public class ShellStatusBar {
             emit("\033[2J");
             emit("\033[1;1H");
             renderBarUnsync();
+            flush();
         }
     }
 
@@ -94,95 +85,23 @@ public class ShellStatusBar {
             emit("\033[2J");
             emit("\033[1;1H");
             renderBarUnsync();
+            flush();
         }
     }
 
     public void writeOutput(byte[] data, int off, int len) throws IOException {
         synchronized (lock) {
-            boolean hasScrollReset = containsBytes(data, off, len, SCROLL_REGION_RESET);
-            boolean hasAltEnter = hasAnySequence(data, off, len, ALT_SCREEN_ENTER);
-
-            if (hasScrollReset || hasAltEnter) {
-                writeProtectingScrollRegion(data, off, len);
-            } else {
-                out.write(data, off, len);
-            }
-            out.flush();
-            if (hasScrollReset || hasAltEnter
-                    || hasAnySequence(data, off, len, ALT_SCREEN_LEAVE)
-                    || containsBytes(data, off, len, CLEAR_SCREEN)) {
-                emit(setScrollRegion(1, height - BAR_LINES));
-                renderBarUnsync();
-            }
+            out.write(data, off, len);
+            emit(setScrollRegion(1, height - BAR_LINES));
+            renderBarUnsync();
+            flush();
         }
-    }
-
-    private void writeProtectingScrollRegion(byte[] data, int off, int len) throws IOException {
-        byte[] scrollRegion = setScrollRegion(1, height - BAR_LINES).getBytes(StandardCharsets.US_ASCII);
-        int pos = off;
-        int end = off + len;
-
-        while (pos < end) {
-            int matchIdx = -1;
-            int matchLen = 0;
-            boolean replace = false;
-
-            int idx = indexOf(data, pos, end, SCROLL_REGION_RESET);
-            if (idx >= 0) {
-                matchIdx = idx;
-                matchLen = SCROLL_REGION_RESET.length;
-                replace = true;
-            }
-
-            for (var seq : ALT_SCREEN_ENTER) {
-                int i = indexOf(data, pos, end, seq);
-                if (i >= 0 && (matchIdx < 0 || i < matchIdx)) {
-                    matchIdx = i;
-                    matchLen = seq.length;
-                    replace = false;
-                }
-            }
-
-            if (matchIdx < 0) {
-                out.write(data, pos, end - pos);
-                break;
-            }
-
-            if (replace) {
-                if (matchIdx > pos) {
-                    out.write(data, pos, matchIdx - pos);
-                }
-                out.write(scrollRegion);
-            } else {
-                out.write(data, pos, matchIdx + matchLen - pos);
-                out.write(scrollRegion);
-            }
-            pos = matchIdx + matchLen;
-        }
-    }
-
-    private static boolean hasAnySequence(byte[] data, int off, int len, byte[][] sequences) {
-        for (var seq : sequences) {
-            if (containsBytes(data, off, len, seq)) return true;
-        }
-        return false;
-    }
-
-    private static int indexOf(byte[] data, int from, int to, byte[] pattern) {
-        int searchEnd = to - pattern.length;
-        outer:
-        for (int i = from; i <= searchEnd; i++) {
-            for (int j = 0; j < pattern.length; j++) {
-                if (data[i + j] != pattern[j]) continue outer;
-            }
-            return i;
-        }
-        return -1;
     }
 
     public void renderBar() {
         synchronized (lock) {
             renderBarUnsync();
+            flush();
         }
     }
 
@@ -199,6 +118,7 @@ public class ShellStatusBar {
         menuActive = true;
         synchronized (lock) {
             renderBarUnsync();
+            flush();
         }
     }
 
@@ -207,6 +127,7 @@ public class ShellStatusBar {
         clearFlash();
         synchronized (lock) {
             renderBarUnsync();
+            flush();
         }
     }
 
@@ -249,7 +170,10 @@ public class ShellStatusBar {
             try {
                 Thread.sleep(1500);
                 synchronized (lock) {
-                    if (menuActive) renderBarUnsync();
+                    if (menuActive) {
+                        renderBarUnsync();
+                        flush();
+                    }
                 }
             } catch (InterruptedException ignored) {}
         });
@@ -282,6 +206,7 @@ public class ShellStatusBar {
         this.flashIsError = isError;
         synchronized (lock) {
             renderBarUnsync();
+            flush();
         }
         var prev = flashThread;
         if (prev != null) prev.interrupt();
@@ -291,7 +216,10 @@ public class ShellStatusBar {
                     Thread.sleep(3000);
                     clearFlash();
                     synchronized (lock) {
-                        if (!menuActive) renderBarUnsync();
+                        if (!menuActive) {
+                            renderBarUnsync();
+                            flush();
+                        }
                     }
                 } catch (InterruptedException ignored) {}
             });
@@ -333,7 +261,6 @@ public class ShellStatusBar {
             bottomContent = "";
         }
         emitLine(bottomRow, bottomContent, false);
-        flush();
     }
 
     private String buildInfoLine() {
@@ -381,7 +308,6 @@ public class ShellStatusBar {
             }
         }
         emitLine(bottomRow, sb.toString(), true);
-        flush();
     }
 
     private String padLine(String left, String right) {
@@ -431,17 +357,5 @@ public class ShellStatusBar {
 
     private static String setScrollRegion(int top, int bottom) {
         return "\033[" + top + ";" + bottom + "r";
-    }
-
-    private static boolean containsBytes(byte[] data, int off, int len, byte[] pattern) {
-        int end = off + len - pattern.length;
-        outer:
-        for (int i = off; i <= end; i++) {
-            for (int j = 0; j < pattern.length; j++) {
-                if (data[i + j] != pattern[j]) continue outer;
-            }
-            return true;
-        }
-        return false;
     }
 }
