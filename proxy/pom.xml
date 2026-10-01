@@ -37,6 +37,12 @@
                     <groupId>io.smallrye</groupId>
                     <artifactId>smallrye-fault-tolerance-vertx</artifactId>
                 </exclusion>
+                <exclusion>
+                    <!-- Vert.x 5 pulls Jackson 3 databind for its JSON codec, which we never use;
+                         it would ship a second databind (plus the JDK XML stack) in the image. -->
+                    <groupId>tools.jackson.core</groupId>
+                    <artifactId>jackson-databind</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
         <dependency>
