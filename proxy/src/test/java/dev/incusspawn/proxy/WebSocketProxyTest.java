@@ -92,6 +92,11 @@ class WebSocketProxyTest {
         mockUpstream.webSocketHandler(ws -> {
             var auth = ws.headers().get("Authorization");
             if (auth != null) capturedAuthHeaders.add(auth);
+            if (ws.path().startsWith("/v1/greet")) {
+                // Speaks first, in the handshake's own event-loop turn: the proxy must
+                // not lose a frame that reaches it before it has wired the relay
+                ws.writeTextMessage("greeting");
+            }
             ws.textMessageHandler(msg -> {
                 if ("close-with-4008".equals(msg)) {
                     ws.close((short) 4008, "quota_exceeded");
@@ -334,6 +339,156 @@ class WebSocketProxyTest {
         pingReceived.get(35, TimeUnit.SECONDS);
         await(onClient(ws::close), 2);
         close(client);
+    }
+
+    /**
+     * Frames a client sends the moment its handshake completes must reach upstream.
+     * Vert.x 4 handed the proxy the client's {@code ServerWebSocket} before the 101 was
+     * written, so pausing it there buffered everything; Vert.x 5 hands it over only when
+     * {@code accept()} completes, and a {@code ServerWebSocket} starts flowing, so a
+     * frame delivered before the relay is wired would be dropped. Many sockets at once,
+     * each writing in the turn its handshake completed, to give that window a chance.
+     */
+    @Test
+    void framesSentRightAfterTheHandshakeAreNotLost() throws Exception {
+        var client = createClient();
+        int sockets = 40;
+        var echoes = new ConcurrentLinkedQueue<String>();
+        var allEchoed = new CountDownLatch(sockets);
+        var opened = new java.util.ArrayList<Future<WebSocket>>();
+        for (int i = 0; i < sockets; i++) {
+            var message = "burst-" + i;
+            opened.add(onClient(() -> client.connect(connectOptions("/v1/burst")).map(ws -> {
+                ws.textMessageHandler(msg -> {
+                    echoes.add(msg);
+                    allEchoed.countDown();
+                });
+                ws.writeTextMessage(message);
+                return ws;
+            })));
+        }
+        for (var f : opened) await(f, 10);
+        assertTrue(allEchoed.await(10, TimeUnit.SECONDS),
+                "Every frame sent right after the handshake should be relayed, got " + echoes);
+        close(client);
+    }
+
+    @Test
+    void upstreamFrameSentRightAfterTheHandshakeIsNotLost() throws Exception {
+        var client = createClient();
+        var greeting = new CompletableFuture<String>();
+
+        connect(client, connectOptions("/v1/greet"), ws -> ws.textMessageHandler(greeting::complete));
+
+        assertEquals("greeting", greeting.get(5, TimeUnit.SECONDS));
+        close(client);
+    }
+
+    /**
+     * A handshake Vert.x accepts for routing but Netty then refuses (no
+     * {@code Sec-WebSocket-Key}) fails {@code accept()}: the client gets a 400, and the
+     * proxy says why instead of dropping the failure.
+     */
+    @Test
+    void failedAcceptAnswers400AndIsLogged() throws Exception {
+        ProxyLog.setDebugEnabled(true);
+        try (var socket = openTls()) {
+            var out = socket.getOutputStream();
+            out.write(("GET /v1/no-key HTTP/1.1\r\n"
+                    + "Host: api.openai.com\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n\r\n")
+                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            out.flush();
+            var head = readHead(socket.getInputStream());
+            assertTrue(head.startsWith("HTTP/1.1 400"), "Expected a 400, got: " + head);
+        } finally {
+            ProxyLog.setDebugEnabled(false);
+        }
+        var log = dev.incusspawn.Environment.proxyLifecycleLogFile();
+        String logged = "";
+        for (int i = 0; i < 50 && !logged.contains("WebSocket handshake"); i++) {
+            if (Files.exists(log)) logged = Files.readString(log);
+            if (!logged.contains("WebSocket handshake")) Thread.sleep(100);
+        }
+        assertTrue(logged.contains("WebSocket handshake to api.openai.com failed"),
+                "The failed accept should be logged, log was: " + logged);
+    }
+
+    /**
+     * A frame pipelined in the same TCP segment as the upgrade request. RFC 6455 4.1
+     * says a client waits for the 101 first, so this is not a requirement -- but the
+     * Vert.x 4 proxy relayed it. Vert.x 5.1.8 decodes such a frame before it has
+     * swapped in the WebSocket handler, so the HTTP connection drops it (and leaks
+     * its buffer) before {@code accept()} hands us the socket: nothing here can
+     * catch it. Re-enable once Vert.x delivers it.
+     */
+    @Test
+    @org.junit.jupiter.api.Disabled("Vert.x 5.1.8 drops a frame pipelined with the upgrade request")
+    void framePipelinedWithTheUpgradeRequest() throws Exception {
+        try (var socket = openTls()) {
+            socket.setSoTimeout(5_000);
+            var request = ("GET /v1/pipelined HTTP/1.1\r\n"
+                    + "Host: api.openai.com\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n\r\n")
+                    .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            var payload = "pipelined".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var frame = new java.io.ByteArrayOutputStream();
+            frame.write(0x81);
+            frame.write(0x80 | payload.length);
+            byte[] mask = {1, 2, 3, 4};
+            frame.write(mask);
+            for (int i = 0; i < payload.length; i++) frame.write(payload[i] ^ mask[i % 4]);
+            var all = new java.io.ByteArrayOutputStream();
+            all.write(request);
+            all.write(frame.toByteArray());
+            var out = socket.getOutputStream();
+            out.write(all.toByteArray());
+            out.flush();
+
+            var in = socket.getInputStream();
+            var head = readHead(in);
+            assertTrue(head.startsWith("HTTP/1.1 101"), "Expected a 101, got: " + head);
+            int b0 = in.read();
+            int len = in.read() & 0x7f;
+            var body = in.readNBytes(len);
+            assertEquals(0x81, b0);
+            assertEquals("echo:pipelined", new String(body, java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    private javax.net.ssl.SSLSocket openTls() throws Exception {
+        var trustAll = new javax.net.ssl.X509TrustManager() {
+            public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) {}
+            public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) {}
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return new java.security.cert.X509Certificate[0];
+            }
+        };
+        var ssl = javax.net.ssl.SSLContext.getInstance("TLS");
+        ssl.init(null, new javax.net.ssl.TrustManager[]{trustAll}, null);
+        var socket = (javax.net.ssl.SSLSocket) ssl.getSocketFactory().createSocket("127.0.0.1", mitmPort);
+        var params = socket.getSSLParameters();
+        params.setServerNames(List.of(new javax.net.ssl.SNIHostName("api.openai.com")));
+        socket.setSSLParameters(params);
+        socket.setSoTimeout(5_000);
+        socket.startHandshake();
+        return socket;
+    }
+
+    /** Reads an HTTP response head up to and including the blank line, byte by byte. */
+    private static String readHead(java.io.InputStream in) throws java.io.IOException {
+        var head = new StringBuilder();
+        while (!head.toString().endsWith("\r\n\r\n")) {
+            int b = in.read();
+            if (b < 0) break;
+            head.append((char) b);
+        }
+        return head.toString();
     }
 
     static int findFreePort() throws Exception {

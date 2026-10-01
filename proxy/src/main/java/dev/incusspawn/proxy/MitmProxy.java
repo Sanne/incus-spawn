@@ -1047,35 +1047,80 @@ public class MitmProxy {
 
     // --- WebSocket passthrough ---
 
+    /**
+     * Decides the handshake: every path must {@code accept()} or {@code reject()} it, since
+     * Vert.x 5 leaves an undecided handshake (one whose handler threw, say) hanging until
+     * the MITM server's idle timeout.
+     */
     private void routeWebSocket(ServerWebSocketHandshake clientWs) {
-        var host = clientWs.headers().get("Host");
-        if (host == null) {
-            clientWs.reject(400);
-            return;
-        }
-        var colon = host.indexOf(':');
-        var domain = colon > 0 ? host.substring(0, colon) : host;
+        String domain = null;
         RequestContext ctx;
         try {
-            ctx = contextFor(domain, sourceAddressOf(clientWs));
-        } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
-            // Same fail-closed rule as the HTTP path: an instance pinned to an account
-            // that is gone gets an error, never someone else's credential.
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
-                    + e.namespace() + " account '" + e.accountName() + "'");
-            clientWs.reject(502);
-            return;
-        } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
-            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
-                    + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
+            var host = clientWs.headers().get("Host");
+            if (host == null) {
+                clientWs.reject(400);
+                return;
+            }
+            var colon = host.indexOf(':');
+            domain = colon > 0 ? host.substring(0, colon) : host;
+            try {
+                ctx = contextFor(domain, sourceAddressOf(clientWs));
+            } catch (dev.incusspawn.config.AccountResolver.UnknownAccountException e) {
+                // Same fail-closed rule as the HTTP path: an instance pinned to an account
+                // that is gone gets an error, never someone else's credential.
+                ProxyLog.warn("Refusing WebSocket to " + domain + " for "
+                        + describeCaller(sourceAddressOf(clientWs)) + ", pinned to missing "
+                        + e.namespace() + " account '" + e.accountName() + "'");
+                clientWs.reject(502);
+                return;
+            } catch (dev.incusspawn.config.AccountSelection.UnservableAccountException e) {
+                ProxyLog.warn("Refusing WebSocket to " + domain + " for "
+                        + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
+                clientWs.reject(502);
+                return;
+            }
+        } catch (RuntimeException e) {
+            System.err.println("Unexpected error routing WebSocket to " + domain + ": " + e.getMessage());
+            e.printStackTrace(System.err);
             clientWs.reject(502);
             return;
         }
-        clientWs.accept().onSuccess(ws -> handleWebSocketUpgrade(ws, ctx));
+        var target = domain;
+        // accept() fails when Netty refuses the handshake after routing (Vert.x has
+        // then already answered 400) or the 101 cannot be written because the client
+        // left. Either way nothing of ours is allocated yet; just say so.
+        clientWs.accept()
+                .onSuccess(ws -> handleWebSocketUpgrade(ws, ctx))
+                .onFailure(err -> {
+                    if (ProxyLog.isDebugEnabled()) {
+                        ProxyLog.debug("WebSocket handshake to " + target + " failed for "
+                                + describeCaller(sourceAddressOf(clientWs)) + ": " + err);
+                    }
+                });
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx) {
+        // First thing: an accepted ServerWebSocket starts flowing, and a frame delivered
+        // before the relay is wired would be dropped. Vert.x 4 handed us the socket before
+        // writing the 101, so pausing anywhere in the handler was early enough; Vert.x 5
+        // hands it over only once accept() completes. When the 101 is written at once, as it
+        // is in practice, that is the same event-loop turn as the handshake handler, so no
+        // read comes before this. Should the write complete later, Vert.x completes the
+        // future in a queued task and a read could slip in first; there is no API to pause
+        // before accept(), so that window is Vert.x's to close. A frame pipelined with the
+        // upgrade request itself is lost inside Vert.x 5 before we ever see the socket
+        // (RFC 6455 4.1 forbids sending one).
+        clientWs.pause();
+        try {
+            connectUpstreamWebSocket(clientWs, ctx);
+        } catch (RuntimeException e) {
+            System.err.println("Unexpected error opening WebSocket to " + ctx.domain() + ": " + e.getMessage());
+            e.printStackTrace(System.err);
+            if (!clientWs.isClosed()) clientWs.close((short) 1011, "Internal proxy error");
+        }
+    }
+
+    private void connectUpstreamWebSocket(ServerWebSocket clientWs, RequestContext ctx) {
         var domain = ctx.domain();
         var wsOptions = new WebSocketConnectOptions()
                 .setHost(domain)
@@ -1100,13 +1145,14 @@ public class MitmProxy {
 
         injectWebSocketAuth(wsOptions, ctx);
 
-        // Pause the client socket so frames arriving before the upstream
-        // connection is ready are buffered, not dropped.
-        clientWs.pause();
-
+        // The client socket stays paused (see handleWebSocketUpgrade) until the upstream
+        // connection is ready, so frames sent meanwhile are buffered, not dropped.
+        //
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
-        // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
-        // so manual resolveHost() + setHost(ip) would break TLS SNI.
+        // Vertx instance).  Unlike HTTP requests, WebSocketClient dials host:port and
+        // reads setServer() only as a fallback when no host is set (Vert.x 5
+        // WebSocketClientImpl.getHost/getPort), so it cannot pin the address the way
+        // the HTTP path does; manual resolveHost() + setHost(ip) would break TLS SNI.
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
         wsUpstreamClient.connect(wsOptions).onSuccess(upstreamWs -> {
