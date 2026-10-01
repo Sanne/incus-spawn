@@ -663,8 +663,13 @@ public class MitmProxy {
             refreshInstanceRegistry();
             var keyCertOptions = buildKeyCertOptions();
             if (mitmServer != null) {
-                var sslOptions = new io.vertx.core.net.ServerSSLOptions()
-                        .setKeyCertOptions(keyCertOptions);
+                // From the same options the server was started with, not a bare
+                // ServerSSLOptions: Vert.x 5 takes client auth, protocols and cipher suites
+                // from the update (SNI, ALPN and the handshake timeout stay as at listen), so
+                // a fresh object would quietly reset any of those the server sets. It only
+                // rebuilds when the key/cert options differ by equals(), which a fresh
+                // InterceptedCertOptions always does.
+                var sslOptions = mitmServerOptions(bindAddress, mitmPort, keyCertOptions).getSslOptions();
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
             }
@@ -688,6 +693,30 @@ public class MitmProxy {
     }
 
     /**
+     * The MITM TLS server: certificates chosen per SNI name by {@link InterceptedCertOptions}.
+     * <p>
+     * Worker threads for the SSL engine, because the SNI lookup can mint a leaf (an RSA key
+     * generation and a file write). Vert.x 4 always ran that lookup on a worker; Vert.x 5 runs
+     * it on whatever executes the engine's delegated tasks, which is the event loop unless
+     * {@code useWorkerThread} is set.
+     */
+    static HttpServerOptions mitmServerOptions(String bindAddress, int mitmPort,
+                                               io.vertx.core.net.KeyCertOptions keyCertOptions) {
+        return new HttpServerOptions()
+                .setHost(bindAddress)
+                .setPort(mitmPort)
+                .setSsl(true)
+                .setSni(true)
+                .setSslEngineOptions(new io.vertx.core.net.JdkSSLEngineOptions().setUseWorkerThread(true))
+                .setKeyCertOptions(keyCertOptions)
+                .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
+                .setIdleTimeoutUnit(TimeUnit.SECONDS)
+                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
+                .setMaxWebSocketFrameSize(1024 * 1024)
+                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+    }
+
+    /**
      * Start the MITM proxy and health server. Blocks until {@link #stop()} is called.
      *
      * @param onReady called after both servers are listening, before blocking on the stop latch.
@@ -704,18 +733,7 @@ public class MitmProxy {
         // on hosts whose container clock lags (e.g. macOS VM after resume).
         var keyCertOptions = buildKeyCertOptions();
 
-        // MITM TLS server with SNI
-        var serverOptions = new HttpServerOptions()
-                .setHost(bindAddress)
-                .setPort(mitmPort)
-                .setSsl(true)
-                .setSni(true)
-                .setKeyCertOptions(keyCertOptions)
-                .setIdleTimeout(MITM_IDLE_TIMEOUT_SECONDS)
-                .setIdleTimeoutUnit(TimeUnit.SECONDS)
-                .setAlpnVersions(List.of(HttpVersion.HTTP_1_1))
-                .setMaxWebSocketFrameSize(1024 * 1024)
-                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+        var serverOptions = mitmServerOptions(bindAddress, mitmPort, keyCertOptions);
 
         // Upstream HTTPS client with connection pooling.
         // GraalVM native images don't embed the build-time trust store reliably
