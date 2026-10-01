@@ -46,6 +46,22 @@ public interface ToolAction {
         return java.util.Optional.empty();
     }
 
+    default boolean isShellMenu() {
+        return false;
+    }
+
+    default java.util.Optional<String> shortcut() {
+        return java.util.Optional.empty();
+    }
+
+    default java.util.Optional<String> type() {
+        return java.util.Optional.empty();
+    }
+
+    default java.util.Optional<String> repoPath() {
+        return java.util.Optional.empty();
+    }
+
     /**
      * Execute the action. Returns a result indicating what happened.
      *

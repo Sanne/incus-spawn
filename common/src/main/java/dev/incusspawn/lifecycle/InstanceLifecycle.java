@@ -1003,8 +1003,10 @@ public final class InstanceLifecycle {
         var shellCommand = config.getOrDefault(Metadata.SHELL_COMMAND, "");
         var subnetDiag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
         var terminfo = captureHostTerminfo();
+        var profile = config.getOrDefault(Metadata.PROFILE, "");
+        if (profile.isBlank()) profile = config.getOrDefault(Metadata.PARENT, "");
         return new RuntimeConfig(buildSourceJson, hasSshKeys, workdir, shellCommand,
-                subnetDiag, terminfo);
+                subnetDiag, terminfo, profile.isBlank() ? null : profile);
     }
 
     private static String captureHostTerminfo() {
@@ -1023,12 +1025,13 @@ public final class InstanceLifecycle {
 
     public record RuntimeConfig(String buildSourceJson, boolean hasSshKeys,
                                 String workdir, String shellCommand,
-                                String subnetDiagnostic, String terminfo) {
+                                String subnetDiagnostic, String terminfo,
+                                String templateName) {
 
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(
                     workdir, shellCommand, buildSourceJson, subnetDiagnostic,
-                    terminfo != null);
+                    terminfo != null, templateName);
         }
     }
 

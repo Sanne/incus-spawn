@@ -51,7 +51,11 @@ public class RunCommand extends BaseCommand {
             if (defaultAction.isEmpty()) {
                 // No default action configured, fall back to shell
                 System.out.println("No default action configured for " + name + ", opening shell...\n");
-                incus.interactiveShell(name, "agentuser");
+                var menuActions = resolver.resolveShellMenuActions(name, parent);
+                var fallbackContext = resolver.buildActionContext(name, parent);
+                incus.interactiveShell(name, "agentuser",
+                        dev.incusspawn.incus.IncusClient.ShellPrep.from(incus, name),
+                        menuActions, fallbackContext);
                 return CommandResult.SUCCESS;
             }
             toolAction = defaultAction.get();
@@ -100,8 +104,9 @@ public class RunCommand extends BaseCommand {
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(
                     prep.workdir(), shellCmd, prep.autoAttachTmux(), prep.autoAttachZmx(),
-                    prep.subnetDiagnostic(), prep.terminfoHandled());
-            incus.interactiveShell(name, "agentuser", updatedPrep);
+                    prep.subnetDiagnostic(), prep.terminfoHandled(), prep.templateName());
+            var shellMenuActions = resolver.resolveShellMenuActions(name, parent);
+            incus.interactiveShell(name, "agentuser", updatedPrep, shellMenuActions, context);
             return CommandResult.SUCCESS;
         }
 

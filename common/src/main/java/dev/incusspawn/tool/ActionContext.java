@@ -23,5 +23,9 @@ public record ActionContext(
     /**
      * Repository information from the ImageDef inheritance chain.
      */
-    public record RepoInfo(String name, String path, String url) {}
+    public record RepoInfo(String name, String path, String url, String hostPath) {
+        public RepoInfo(String name, String path, String url) {
+            this(name, path, url, null);
+        }
+    }
 }

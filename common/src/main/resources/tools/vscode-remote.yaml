@@ -16,3 +16,5 @@ actions:
     type: url
     expand: repos
     url: "vscode://vscode-remote/ssh-remote+${name}${repo_path}"
+    shell_menu: true
+    shortcut: v

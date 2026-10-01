@@ -26,7 +26,7 @@ class SetupScriptTest {
             \tuse=$HOME,""";
 
     private static InstanceLifecycle.RuntimeConfig prefetched(String terminfo) {
-        return new InstanceLifecycle.RuntimeConfig(null, true, null, null, null, terminfo);
+        return new InstanceLifecycle.RuntimeConfig(null, true, null, null, null, terminfo, null);
     }
 
     private static int syntaxCheck(String script) throws Exception {

@@ -670,7 +670,14 @@ class IncusApi {
     boolean execPty(String instance, List<String> command,
                     Integer uid, Integer gid, String cwd, Map<String, String> env,
                     int width, int height) {
-        var exec = postExec(instance, command, uid, gid, cwd, env, true, width, height);
+        return execPty(instance, command, uid, gid, cwd, env, width, height, null);
+    }
+
+    boolean execPty(String instance, List<String> command,
+                    Integer uid, Integer gid, String cwd, Map<String, String> env,
+                    int width, int height, ShellStatusBar statusBar) {
+        var effectiveHeight = statusBar != null ? statusBar.effectiveHeight(height) : height;
+        var exec = postExec(instance, command, uid, gid, cwd, env, true, width, effectiveHeight);
 
         // Interactive PTY uses two WebSockets:
         //   fd "0" — muxed stdin+stdout
@@ -735,8 +742,12 @@ class IncusApi {
                             if (size[0] != lastWidth || size[1] != lastHeight) {
                                 lastWidth = size[0];
                                 lastHeight = size[1];
+                                var reportedHeight = statusBar != null ? statusBar.effectiveHeight(lastHeight) : lastHeight;
+                                if (statusBar != null) {
+                                    statusBar.resize(lastWidth, lastHeight);
+                                }
                                 try {
-                                    controlWs.sendText(windowResizeMessage(lastWidth, lastHeight));
+                                    controlWs.sendText(windowResizeMessage(lastWidth, reportedHeight));
                                 } catch (IOException ignored) { break; }
                             }
                         }
@@ -750,25 +761,66 @@ class IncusApi {
                 // reader and eats the first keypress.
                 var stdinChannel = java.nio.channels.FileChannel.open(
                         Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
+                var f12Parser = statusBar != null ? new EscapeSequenceParser() : null;
                 var stdinThread = Thread.ofPlatform().daemon().start(() -> {
                     try {
                         var buf = java.nio.ByteBuffer.allocate(4096);
                         while (stdinChannel.read(buf) != -1) {
                             buf.flip();
-                            ws.sendData(buf.array(), 0, buf.remaining());
+                            if (f12Parser != null) {
+                                var data = new byte[buf.remaining()];
+                                buf.get(data);
+                                int off = 0;
+                                while (off < data.length) {
+                                    var result = f12Parser.feed(data, off, data.length - off);
+                                    off = data.length;
+                                    if (result.f12Detected()) {
+                                        if (statusBar.isMenuActive()) {
+                                            statusBar.hideMenu();
+                                            f12Parser.setMenuMode(false);
+                                        } else if (!statusBar.menuActions().isEmpty()) {
+                                            statusBar.showMenu();
+                                            f12Parser.setMenuMode(true);
+                                        }
+                                        if (result.toForward().length > 0) {
+                                            ws.sendData(result.toForward(), 0, result.toForward().length);
+                                        }
+                                    } else if (f12Parser.isMenuMode() && result.menuKey() != 0) {
+                                        statusBar.handleMenuKey(result.menuKey());
+                                        if (!statusBar.isMenuActive()) {
+                                            f12Parser.setMenuMode(false);
+                                        }
+                                    } else if (result.toForward().length > 0) {
+                                        ws.sendData(result.toForward(), 0, result.toForward().length);
+                                    }
+                                }
+                            } else {
+                                ws.sendData(buf.array(), 0, buf.remaining());
+                            }
                             buf.clear();
                         }
                     } catch (IOException ignored) {}
                 });
-                var terminalHook = new Thread(IncusApi::restoreTerminal);
+                final var statusBarRef = statusBar;
+                var terminalHook = new Thread(() -> {
+                    if (statusBarRef != null) statusBarRef.cleanup();
+                    restoreTerminal();
+                });
                 Runtime.getRuntime().addShutdownHook(terminalHook);
                 setRawTerminal();
+                if (statusBar != null) {
+                    statusBar.setup(width, height);
+                }
                 try {
                     // Main: WebSocket → System.out (exits when watcher closes the connection).
                     byte[] payload;
                     while ((payload = ws.readPayload()) != null) {
-                        System.out.write(payload);
-                        System.out.flush();
+                        if (statusBar != null) {
+                            statusBar.writeOutput(payload, 0, payload.length);
+                        } else {
+                            System.out.write(payload);
+                            System.out.flush();
+                        }
                     }
                 } catch (IOException ignored) {
                     // Connection closed by watcher — normal PTY session end.
@@ -780,6 +832,9 @@ class IncusApi {
                     try { stdinChannel.close(); } catch (IOException ignored) {}
                     keepaliveThread.interrupt();
                     resizeThread.interrupt();
+                    if (statusBar != null) {
+                        statusBar.cleanup();
+                    }
                     restoreTerminal();
                     try { Runtime.getRuntime().removeShutdownHook(terminalHook); } catch (IllegalStateException ignored) {}
                 }
