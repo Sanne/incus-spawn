@@ -97,7 +97,7 @@ final class HostRouteRelay {
      * As above, for a WebSocket, which a route refuses in this version: a controller streams
      * with long-poll or server-sent events, which the plain request path carries.
      */
-    static boolean claims(Map<String, Served> routes, io.vertx.core.http.ServerWebSocket ws) {
+    static boolean claims(Map<String, Served> routes, io.vertx.core.http.ServerWebSocketHandshake ws) {
         if (routes.isEmpty()) return false;
         String sni = null;
         if (ws.sslSession() instanceof javax.net.ssl.ExtendedSSLSession session) {
@@ -283,9 +283,9 @@ final class HostRouteRelay {
             // Long-polls and event streams each hold a connection: room for several instances at once,
             // and nothing held past the MITM server's own idle timeout, which ends the client side anyway
             client = vertx.createHttpClient(new HttpClientOptions().setConnectTimeout(CONNECT_TIMEOUT_MILLIS)
-                    .setMaxPoolSize(MAX_CONNECTIONS_PER_ROUTE)
                     .setIdleTimeout(MitmProxy.MITM_IDLE_TIMEOUT_SECONDS)
-                    .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS));
+                    .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS),
+                    new io.vertx.core.http.PoolOptions().setHttp1MaxSize(MAX_CONNECTIONS_PER_ROUTE));
         }
         return client;
     }

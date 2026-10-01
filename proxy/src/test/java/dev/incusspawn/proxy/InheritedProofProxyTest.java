@@ -308,9 +308,9 @@ class InheritedProofProxyTest {
         assertEquals(forged, received.get("/forged"));
         var options = new WebSocketConnectOptions().setHost(API).setPort(proxy.mitmPort()).setSsl(true)
                 .setURI("/forged").addHeader("Authorization", forged);
-        var wsClient = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        var wsClient = vertx.createWebSocketClient(new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         try {
-            wsClient.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
             for (int i = 0; i < 100 && !received.containsKey("ws:/forged"); i++) Thread.sleep(10);
             assertEquals(forged, received.get("ws:/forged"));
         } finally { wsClient.close(); }
@@ -352,9 +352,9 @@ class InheritedProofProxyTest {
         var options = new WebSocketConnectOptions()
                 .setHost(API).setPort(proxy.mitmPort()).setSsl(true).setURI("/socket")
                 .addHeader("Authorization", "token " + INSTANCE_PROOF);
-        var wsClient = vertx.createHttpClient(new HttpClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
+        var wsClient = vertx.createWebSocketClient(new io.vertx.core.http.WebSocketClientOptions().setSsl(true).setTrustAll(true).setVerifyHost(false));
         try {
-            wsClient.webSocket(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            wsClient.connect(options).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
             for (int i = 0; i < 100 && !received.containsKey("ws:/socket"); i++) Thread.sleep(50);
         } finally {
             wsClient.close();

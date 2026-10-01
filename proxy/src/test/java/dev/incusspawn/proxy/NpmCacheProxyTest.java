@@ -111,7 +111,8 @@ class NpmCacheProxyTest {
 
         clientContext = vertx.getOrCreateContext();
         client = vertx.createHttpClient(new HttpClientOptions()
-                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false).setMaxPoolSize(16));
+                .setSsl(true).setTrustAll(true).setVerifyHost(false).setKeepAlive(false),
+                new io.vertx.core.http.PoolOptions().setHttp1MaxSize(16));
     }
 
     static PemKeyCertOptions keyCert(CertificateAuthority ca, String name) throws Exception {

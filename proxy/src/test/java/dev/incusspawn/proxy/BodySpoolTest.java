@@ -1,6 +1,5 @@
 package dev.incusspawn.proxy;
 
-import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -187,8 +186,6 @@ class BodySpoolTest {
         }
 
         @Override public WriteStream<Buffer> exceptionHandler(Handler<Throwable> handler) { return this; }
-        @Override public void write(Buffer data, Handler<AsyncResult<Void>> handler) { write(data).onComplete(handler); }
-        @Override public void end(Handler<AsyncResult<Void>> handler) {}
         @Override public Future<Void> end() { return Future.succeededFuture(); }
         @Override public WriteStream<Buffer> setWriteQueueMaxSize(int maxSize) { return this; }
     }
