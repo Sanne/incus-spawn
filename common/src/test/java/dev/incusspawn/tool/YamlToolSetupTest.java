@@ -29,6 +29,7 @@ class YamlToolSetupTest {
     private static IncusClient mockIncusWithArch() {
         var incus = mock(IncusClient.class);
         when(incus.getInstanceArchitecture(CONTAINER)).thenReturn("x86_64");
+        when(incus.machineType(CONTAINER)).thenReturn(dev.incusspawn.incus.MachineType.CONTAINER);
         return incus;
     }
 
@@ -245,7 +246,7 @@ class YamlToolSetupTest {
     @Test
     void destinationFileStagesCopyForVmWithoutChangingCachePermissions(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
-        when(incus.isVm(CONTAINER)).thenReturn(true);
+        when(incus.machineType(CONTAINER)).thenReturn(dev.incusspawn.incus.MachineType.VM);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var cacheDir = Files.createDirectory(tempDir.resolve("downloads"));
@@ -291,7 +292,7 @@ class YamlToolSetupTest {
     @Test
     void destinationFileTranslatesVmMountPathOnMac(@TempDir Path tempDir) throws IOException {
         var incus = mockIncusWithArch();
-        when(incus.isVm(CONTAINER)).thenReturn(true);
+        when(incus.machineType(CONTAINER)).thenReturn(dev.incusspawn.incus.MachineType.VM);
         when(incus.shellExec(anyString(), any(String[].class))).thenReturn(OK);
 
         var cacheDir = Files.createDirectory(tempDir.resolve("downloads"));

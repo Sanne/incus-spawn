@@ -13,6 +13,7 @@ import dev.incusspawn.git.AutoRemoteService;
 import dev.incusspawn.git.GitRemoteUtils;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
@@ -5479,7 +5480,7 @@ public class ListCommand extends BaseCommand {
         var output = new StaticIpAllocator.Output(msg -> {}, warningLog::add);
         try {
             if (InstanceLifecycle.fixStaticIpIfNeeded(incus, name, output)) {
-                vmIpFixApplied = incus.isVm(name);
+                vmIpFixApplied = incus.machineType(name) == MachineType.VM;
                 statusMessage = "Static IP reassigned to current bridge subnet";
             }
         } catch (Exception ignored) {
@@ -5503,7 +5504,7 @@ public class ListCommand extends BaseCommand {
             // protection (#905) and startInstance falls back where the host cannot enforce it.
             InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warningLog::add);
             InstanceLifecycle.startInstance(incus, containerName, warningLog::add);
-            incus.waitForReady(containerName, incus.isVm(containerName));
+            incus.waitForReady(containerName, incus.machineType(containerName));
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }

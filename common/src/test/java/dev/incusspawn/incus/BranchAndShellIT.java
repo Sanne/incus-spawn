@@ -44,7 +44,7 @@ class BranchAndShellIT {
 
     @Test @Order(1)
     void launchContainer() {
-        client.launch(IMAGE, CONTAINER, false);
+        client.launch(IMAGE, CONTAINER, MachineType.CONTAINER);
         assertTrue(client.exists(CONTAINER));
         client.waitForReady(CONTAINER);
     }

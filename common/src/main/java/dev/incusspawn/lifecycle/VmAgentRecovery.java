@@ -2,6 +2,7 @@ package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.VmAgentFailure;
 
@@ -42,7 +43,7 @@ public final class VmAgentRecovery {
             // systemd may still be restarting the agent: waitForReady gives it that grace,
             // then reports the failure it logged.
             try {
-                incus.waitForReady(name, true);
+                incus.waitForReady(name, MachineType.VM);
                 return;
             } catch (IncusException failed) {
                 throw refusal(name, failed.getMessage()
@@ -71,7 +72,7 @@ public final class VmAgentRecovery {
         // however the wait ends.
         long restarted = incus.pid(name);
         if (restarted > 0) incus.configSet(name, Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
-        incus.waitForReady(name, true);
+        incus.waitForReady(name, MachineType.VM);
     }
 
     private static IncusException refusal(String name, String why) {

@@ -13,6 +13,7 @@ import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.IncusException;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.proxy.CertificateAuthority;
@@ -200,17 +201,17 @@ public final class BranchFlow {
             warnIfTemplateWantsGui(incus, source, defs);
         }
 
-        boolean sourceIsVm = incus.isVm(source);
+        var sourceMachineType = incus.machineType(source);
         String cpu;
         if (req.cpu() != null) {
             cpu = String.valueOf(req.cpu());
-        } else if (sourceIsVm) {
+        } else if (sourceMachineType == MachineType.VM) {
             cpu = String.valueOf(Math.max(1, ResourceLimits.hostProcessorCount() - 2));
         } else {
             cpu = null;
         }
         var memory = req.memory() != null ? req.memory()
-                : sourceIsVm ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
+                : sourceMachineType == MachineType.VM ? ResourceLimits.defaultVmMemoryLimit() : ResourceLimits.adaptiveMemoryLimit();
         var disk = req.disk() != null ? req.disk() : ResourceLimits.defaultDiskLimit();
 
         BuildOutput.step("Resource limits: " +
@@ -236,12 +237,12 @@ public final class BranchFlow {
 
         // Pre-fetch config while instance is stopped — the Incus daemon blocks
         // API calls after start due to seccomp_notify lock contention.
-        boolean isVm = incus.isVm(name);
-        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, isVm);
+        var machineType = incus.machineType(name);
+        var prefetched = InstanceLifecycle.prefetchAndStart(incus, name, machineType);
 
-        if (isVm) {
+        if (machineType == MachineType.VM) {
             BuildOutput.stepStart("Waiting for VM agent...");
-            incus.waitForReady(name, true);
+            incus.waitForReady(name, MachineType.VM);
             BuildOutput.stepDone();
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }

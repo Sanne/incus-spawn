@@ -72,7 +72,7 @@ public class ProjectCommand extends BaseCommand {
             BuildOutput.stepStart("Cloning from " + parent + "...");
             incus.copy(parent, imageName);
             incus.start(imageName);
-            incus.waitForReady(imageName, incus.isVm(imageName));
+            incus.waitForReady(imageName, incus.machineType(imageName));
             BuildOutput.stepDone();
 
             // Clone repos
@@ -147,7 +147,7 @@ public class ProjectCommand extends BaseCommand {
 
             // Start if stopped
             incus.start(name);
-            incus.waitForReady(name, incus.isVm(name));
+            incus.waitForReady(name, incus.machineType(name));
 
             // System updates
             BuildOutput.stepStart("Running system updates...");

@@ -19,8 +19,8 @@ public class Container {
         return name;
     }
 
-    public boolean isVm() {
-        return incus.isVm(name);
+    public MachineType machineType() {
+        return incus.machineType(name);
     }
 
     public void waitForPath(String path) {

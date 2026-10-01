@@ -23,6 +23,7 @@ import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.Platform;
 import static dev.incusspawn.incus.Container.shellQuote;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.ResourceLimits;
 import dev.incusspawn.lifecycle.BuildAccounts;
@@ -561,7 +562,7 @@ public class BuildCommand extends BaseCommand {
             // (e.g. building a VM from container parents), buildFromScratch
             // applies the entire ancestor chain from definitions alone —
             // parent Incus instances are not needed.
-            boolean typeChange = effectiveVm(imageDef) != effectiveVm(parentDef);
+            boolean typeChange = effectiveMachineType(imageDef) != effectiveMachineType(parentDef);
             if (!typeChange) {
                 boolean parentMissing = !incus.exists(parentName);
                 boolean needsRebuild = parentMissing || isImageOutdated(parentName, parentDef, incus, toolDefLoader, defs);
@@ -684,7 +685,7 @@ public class BuildCommand extends BaseCommand {
     /** Builds the template under {@code tempName}, from scratch or from its parent. */
     void buildInto(ImageDef imageDef, Map<String, ImageDef> defs, String tempName) {
         boolean typeChange = !imageDef.isRoot()
-                && effectiveVm(imageDef) != incus.isVm(imageDef.getParent());
+                && effectiveMachineType(imageDef) != incus.machineType(imageDef.getParent());
         if (imageDef.isRoot() || typeChange) {
             buildFromScratch(imageDef, defs, tempName);
         } else {
@@ -1012,7 +1013,7 @@ public class BuildCommand extends BaseCommand {
                                   String buildName, String parentSource) {
         var canonicalName = imageDef.getName();
         var parentCanonical = imageDef.getParent();
-        var effectiveVm = effectiveVm(imageDef);
+        var machineType = effectiveMachineType(imageDef);
 
         var copyPlan = incus.planCopy(parentSource);
         if (!copyPlan.cow()) {
@@ -1021,7 +1022,7 @@ public class BuildCommand extends BaseCommand {
         }
         BuildOutput.stepStart("Deriving from parent image '" + parentCanonical + "'...");
         incus.copy(parentSource, buildName, copyPlan);
-        if (!effectiveVm) {
+        if (machineType == MachineType.CONTAINER) {
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");
             if (Platform.isLinux()) {
@@ -1036,12 +1037,12 @@ public class BuildCommand extends BaseCommand {
             InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
-        var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
+        var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName, effectiveVm);
+        incus.waitForReady(buildName, machineType);
 
         var container = new Container(incus, buildName);
-        if (!effectiveVm) {
+        if (machineType == MachineType.CONTAINER) {
             prepareContainerForPackageInstall(container);
         }
 
@@ -1050,7 +1051,7 @@ public class BuildCommand extends BaseCommand {
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);
 
-        if (!effectiveVm) {
+        if (machineType == MachineType.CONTAINER) {
             waitForIpv4(container);
         }
 
@@ -1069,10 +1070,10 @@ public class BuildCommand extends BaseCommand {
 
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
-            HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
+            HostResourceSetup.applyForBuild(incus, container, hostResources, machineType);
         }
 
-        if (effectiveVm) {
+        if (machineType == MachineType.VM) {
             disableGuestSelinux(container);
         }
 
@@ -1096,12 +1097,12 @@ public class BuildCommand extends BaseCommand {
         maskServices(container, imageDef);
         // Only this layer's tools: an ancestor's tool skills came in with the parent copy.
         installSkills(container, imageDef, defs, toolResolution.effective());
-        cloneRepos(container, imageDef, effectiveVm);
+        cloneRepos(container, imageDef, machineType);
         updateClaudeJsonTrust(container, imageDef);
         updateCodexTrust(container, imageDef);
         // After the repos it lists have actually been cloned, matching buildFromScratch.
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
-        if (effectiveVm) {
+        if (machineType == MachineType.VM) {
             assertGuestSelinuxNotEnforcing(container);
         }
 
@@ -1116,9 +1117,9 @@ public class BuildCommand extends BaseCommand {
         stopBuild(buildName, started);
     }
 
-    private boolean effectiveVm(ImageDef imageDef) {
-        if (type != null) return type == InstanceType.vm;
-        return imageDef.isVm();
+    private MachineType effectiveMachineType(ImageDef imageDef) {
+        if (type != null) return type == InstanceType.vm ? MachineType.VM : MachineType.CONTAINER;
+        return imageDef.machineType();
     }
 
     /** The local alias a template's prebaked {@code vm_image_url} is imported under. */
@@ -1128,8 +1129,7 @@ public class BuildCommand extends BaseCommand {
 
     private String effectiveType(ImageDef imageDef) {
         if (type != null) return type.name();
-        if (imageDef.getType() != null) return imageDef.getType();
-        return "container";
+        return imageDef.getType() != null ? imageDef.getType() : "container";
     }
 
     private void buildFromScratch(ImageDef imageDef, Map<String, ImageDef> defs, String buildName) {
@@ -1138,10 +1138,10 @@ public class BuildCommand extends BaseCommand {
         var rootDef = ancestors.isEmpty() ? imageDef : ancestors.get(ancestors.size() - 1);
         resolveTrackedBaseImage(rootDef);
         var image = rootDef.getImage();
-        var effectiveVm = effectiveVm(imageDef);
+        var machineType = effectiveMachineType(imageDef);
         var prebaked = false;
 
-        if (effectiveVm && rootDef.getVmImageUrl() != null) {
+        if (machineType == MachineType.VM && rootDef.getVmImageUrl() != null) {
             // Prebaked VM disk image available — use it directly
             var vmAlias = vmImageAlias(rootDef.getImage());
             ensureBaseImage(imageDef);
@@ -1155,7 +1155,7 @@ public class BuildCommand extends BaseCommand {
 
             // Prebaked images are container format (.tar.xz) — VMs need a disk image.
             // Detect container-only images and fall back to the standard remote source.
-            if (effectiveVm && !image.contains(":")) {
+            if (machineType == MachineType.VM && !image.contains(":")) {
                 var fingerprint = incus.imageAliasTarget(image);
                 if (fingerprint != null) {
                     var imageType = incus.getImageType(fingerprint);
@@ -1180,9 +1180,9 @@ public class BuildCommand extends BaseCommand {
 
         // Create instance — for VMs, expand the disk before first boot so
         // cloud-init's growpart module handles partition + filesystem resize.
-        BuildOutput.stepStart("Launching " + image + (effectiveVm ? " (VM)..." : "..."));
+        BuildOutput.stepStart("Launching " + image + (machineType == MachineType.VM ? " (VM)..." : "..."));
         try {
-            incus.create(image, buildName, effectiveVm);
+            incus.create(image, buildName, machineType);
         } catch (IncusException e) {
             BuildOutput.stepBreak();
             if (incus.exists(buildName)) {
@@ -1197,15 +1197,15 @@ public class BuildCommand extends BaseCommand {
             }
             throw e;
         }
-        if (effectiveVm) {
+        if (machineType == MachineType.VM) {
             incus.deviceConfigSet(buildName, "root", "size", ResourceLimits.defaultDiskLimit());
             incus.configSet(buildName, "limits.memory", ResourceLimits.defaultVmMemoryLimit());
             InstanceLifecycle.enableFreePageReporting(incus, buildName);
         }
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
-        var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
+        var dnfCacheWarning = attachBootDevices(buildName, hostResources, machineType);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName, effectiveVm);
+        incus.waitForReady(buildName, machineType);
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);
@@ -1226,7 +1226,7 @@ public class BuildCommand extends BaseCommand {
         // Container-only security tweaks: UID mapping, nesting, capability
         // retention, and setxattr interception. VMs run a full kernel and
         // don't need any of these. Restart activates the new config.
-        if (!effectiveVm) {
+        if (machineType == MachineType.CONTAINER) {
             incus.configSet(buildName, "raw.idmap", "both 1000 1000");
             incus.configSet(buildName, "security.idmap.size", "165536");
             incus.configSet(buildName, "security.nesting", "true");
@@ -1257,7 +1257,7 @@ public class BuildCommand extends BaseCommand {
         requireBuildAddress(buildName, started);
         waitForNetwork(buildName);
 
-        if (effectiveVm) {
+        if (machineType == MachineType.VM) {
             // Before the first dnf run below: the resize tools' install is a package install too.
             disableGuestSelinux(container);
             // The prebaked VM image ships these tools; dnf would still spend seconds (tens
@@ -1278,7 +1278,7 @@ public class BuildCommand extends BaseCommand {
             runDnf(container, "Updating system packages", "Failed to update system packages",
                     dnfCommand("-y", "upgrade"));
 
-            if (effectiveVm) {
+            if (machineType == MachineType.VM) {
                 BuildOutput.stepStart("Regenerating initramfs for VM...");
                 container.runQuiet("Failed to regenerate initramfs",
                         "dracut", "--force", "--regenerate-all");
@@ -1331,7 +1331,7 @@ public class BuildCommand extends BaseCommand {
 
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
-            HostResourceSetup.applyForBuild(incus, container, hostResources, effectiveVm);
+            HostResourceSetup.applyForBuild(incus, container, hostResources, machineType);
         }
 
         // Root-first, so each layer's packages, tools, repos and skills are applied in order.
@@ -1351,7 +1351,7 @@ public class BuildCommand extends BaseCommand {
             allTools.addAll(toolResolution.effective());
             maskServices(container, layer);
             installSkills(container, layer, defs, toolResolution.effective());
-            cloneRepos(container, layer, effectiveVm);
+            cloneRepos(container, layer, machineType);
             updateClaudeJsonTrust(container, layer);
             updateCodexTrust(container, layer);
         }
@@ -1359,7 +1359,7 @@ public class BuildCommand extends BaseCommand {
         verifyTools(container, allTools);
         writeAgentContext(container, imageDef, defs, allTools, canonicalName);
         linkJavaTrustStores(container);
-        if (effectiveVm) {
+        if (machineType == MachineType.VM) {
             assertGuestSelinuxNotEnforcing(container);
         }
 
@@ -2839,12 +2839,6 @@ public class BuildCommand extends BaseCommand {
         return null;
     }
 
-    enum InstanceType {
-        container,
-        vm,
-        kvm
-    }
-
     static class BuildFailedException extends RuntimeException {
         final String containerName;
 
@@ -2913,16 +2907,16 @@ public class BuildCommand extends BaseCommand {
      * serves the first exec, so nothing has to poll for them. Returns the DNF cache warning, if any.
      */
     private String attachBootDevices(String buildName, List<ImageDef.HostResource> hostResources,
-                                     boolean effectiveVm) {
+                                     MachineType machineType) {
         var dnfCacheWarning = attachDnfCache(buildName);
-        HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, effectiveVm);
+        HostResourceSetup.attachBuildDevices(incus, buildName, hostResources, machineType);
         return dnfCacheWarning;
     }
 
     void unmountDnfCache(String container) {
         // A VM's virtiofs mount is owned by incus-agent and goes away asynchronously after
         // deviceRemove; unmount it in the guest first so cleanCaches can't run against it.
-        if (incus.isVm(container)) {
+        if (incus.machineType(container) == MachineType.VM) {
             incus.shellExec(container, "sh", "-c",
                     "mountpoint -q " + DNF_CACHE_PATH + " && umount " + DNF_CACHE_PATH + "; true");
         }
@@ -3278,7 +3272,7 @@ public class BuildCommand extends BaseCommand {
      * the local clone, the remote URL is fixed to the real origin and a
      * {@code git fetch} picks up any commits added since the last host refresh.
      */
-    void cloneRepos(Container container, ImageDef imageDef, boolean isVm) {
+    void cloneRepos(Container container, ImageDef imageDef, MachineType machineType) {
         if (hostRepoRefresh != null) {
             if (!hostRepoRefresh.isDone()) {
                 BuildOutput.stepStart("Waiting for host repo refresh");
@@ -3306,7 +3300,7 @@ public class BuildCommand extends BaseCommand {
             for (int i = 0; i < repos.size(); i++) {
                 refs[i] = projectLocal
                         ? RepoReference.skipped("project-local template, host checkouts are not shared")
-                        : tryMountReference(container, repos.get(i).getUrl(), config, isVm);
+                        : tryMountReference(container, repos.get(i).getUrl(), config, machineType);
             }
             var mountedCount = (int) java.util.Arrays.stream(refs).filter(r -> r != null && r.mounted()).count();
             var referencesDetached = new java.util.concurrent.CountDownLatch(mountedCount);
@@ -3695,7 +3689,7 @@ public class BuildCommand extends BaseCommand {
         return cmd.toString();
     }
 
-    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config, boolean isVm) {
+    RepoReference tryMountReference(Container container, String cloneUrl, SpawnConfig config, MachineType machineType) {
         try {
             var repoName = GitRemoteUtils.repoNameFromUrl(cloneUrl);
             if (repoName.isEmpty()) return null;
@@ -3714,7 +3708,7 @@ public class BuildCommand extends BaseCommand {
                     "source=" + HostResourceSetup.translateForVm(hostPath.toString()),
                     "path=" + containerPath,
                     "readonly=true"));
-            HostResourceSetup.addShiftIfSupported(refArgs, isVm);
+            HostResourceSetup.addShiftIfSupported(refArgs, machineType);
             incus.deviceAdd(container.name(), deviceName, "disk", refArgs.toArray(String[]::new));
 
             return new RepoReference(deviceName, containerPath, null);
@@ -3847,6 +3841,12 @@ public class BuildCommand extends BaseCommand {
             return null;
         }
         return parts[0] + "/" + parts[1];
+    }
+
+    enum InstanceType {
+        container,
+        vm,
+        kvm
     }
 
 }

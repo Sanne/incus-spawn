@@ -5,6 +5,7 @@ import dev.incusspawn.util.BuildOutput;
 import dev.incusspawn.incus.BridgeSubnetCheck;
 import dev.incusspawn.incus.FirewallDetector;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.lifecycle.GuiPassthrough;
 import dev.incusspawn.lifecycle.InstanceLifecycle;
@@ -57,7 +58,7 @@ public class InstancePrep {
             fixResolvConfMismatch(incus, name);
         }
 
-        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name), ipFixed && incus.isVm(name),
+        InstanceLifecycle.ensureReady(incus, name, incus.getInstanceStatus(name), ipFixed && incus.machineType(name) == MachineType.VM,
                 System.out::println);
 
         GuiPassthrough.checkGuiHealth(incus, name);
@@ -97,7 +98,7 @@ public class InstancePrep {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             InstanceLifecycle.prepareHostDevicesForStart(incus, container);
             InstanceLifecycle.startInstance(incus, container);
-            incus.waitForReady(container, incus.isVm(container));
+            incus.waitForReady(container, incus.machineType(container));
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {

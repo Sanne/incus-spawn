@@ -15,6 +15,7 @@ import dev.incusspawn.incus.CidrUtils;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceUpdate;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.incus.StaticIpAllocator;
@@ -137,7 +138,7 @@ public final class InstanceLifecycle {
         if (!settings.kvm()) KvmPassthrough.removeKvm(instance, update);
         update.config(settings.extraConfig());
         // Templates built before free page reporting existed don't carry it to their copies
-        if (IncusClient.isVm(instance)
+        if (IncusClient.machineType(instance) == MachineType.VM
                 && instance.path("config").path(RAW_QEMU_CONF).asText("").isBlank()) {
             update.config(RAW_QEMU_CONF, FREE_PAGE_REPORTING_CONF);
         }
@@ -274,7 +275,7 @@ public final class InstanceLifecycle {
     private static String claimAndWrite(IncusClient incus, String name, JsonNode instance,
                                         InstanceUpdate update, String nicDevice, BridgeAddress bridge,
                                         Set<String> alsoTaken, boolean pushNetworkConfig) {
-        var isVm = IncusClient.isVm(instance);
+        var vm = IncusClient.machineType(instance) == MachineType.VM;
         var filteringRefused = new AtomicBoolean();
         var output = StaticIpAllocator.Output.TERMINAL;
         var assigned = StaticIpAllocator.claim(incus, bridge, alsoTaken, output, ip -> {
@@ -286,7 +287,7 @@ public final class InstanceLifecycle {
             // Pushed before the write rather than after, so the push is not the last thing
             // before the start: see "Why nothing is pushed into an instance just before it
             // starts".
-            if (!isVm && pushNetworkConfig) {
+            if (!vm && pushNetworkConfig) {
                 pushStaticNetworkConfig(incus, name, ip, bridge.gateway(), bridge.prefixLen());
             }
             try {
@@ -581,8 +582,8 @@ public final class InstanceLifecycle {
             say.accept("Starting " + name + "...");
             prepareHostDevicesForStart(incus, name, say);
             startInstance(incus, name, say);
-            incus.waitForReady(name, incus.isVm(name));
-        } else if (incus.isVm(name) && !agentAnswers(incus, name)) {
+            incus.waitForReady(name, incus.machineType(name));
+        } else if (incus.machineType(name) == MachineType.VM && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
         if (pushNetworkConfig) pushDeferredNetworkConfig(incus, name);
@@ -768,7 +769,7 @@ public final class InstanceLifecycle {
         }
         incus.configSetAll(name, updates);
 
-        if (!incus.isVm(name)) {
+        if (incus.machineType(name) == MachineType.CONTAINER) {
             pushStaticNetworkConfig(incus, name, newIp, newGateway, bridge.prefixLen(),
                     output.warn());
         }
@@ -957,7 +958,7 @@ public final class InstanceLifecycle {
         var hostResources = HostResourceSetup.deserialize(hrJson);
         if (!hostResources.isEmpty()) {
             BuildOutput.step("Applying host resources.");
-            HostResourceSetup.applyForInstance(incus, name, hostResources, incus.isVm(name));
+            HostResourceSetup.applyForInstance(incus, name, hostResources, incus.machineType(name));
         }
 
         if (instanceType == InstanceType.INSTANCE) {
@@ -978,9 +979,9 @@ public final class InstanceLifecycle {
      * server on start, and one still finishing a push makes the start wait a full second.
      * Anything the instance needs goes into the post-start setup script instead.
      */
-    public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, boolean isVm) {
+    public static RuntimeConfig prefetchAndStart(IncusClient incus, String name, MachineType machineType) {
         var prefetched = prefetchRuntimeConfig(incus, name);
-        BuildOutput.stepStart(isVm ? "Starting VM..." : "Starting container...");
+        BuildOutput.stepStart(machineType == MachineType.VM ? "Starting VM..." : "Starting container...");
         // Plain stderr for the fallback warning, like the rest of BranchFlow's output: the TUI
         // branches only as a pendingAction, after its runner has released the terminal.
         startInstance(incus, name);

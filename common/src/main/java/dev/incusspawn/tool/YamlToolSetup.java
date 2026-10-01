@@ -4,6 +4,7 @@ import dev.incusspawn.FileTrees;
 import dev.incusspawn.config.EnvEntry;
 import dev.incusspawn.config.HostResourceSetup;
 import dev.incusspawn.incus.Container;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.util.BuildOutput;
 
 import java.io.IOException;
@@ -198,17 +199,17 @@ public class YamlToolSetup implements ToolSetup {
             }
 
             var cached = downloadCache.download(dl.getUrl(), dl.getSha256());
-            var vm = container.isVm();
+            var machineType = container.machineType();
 
             if (hasDestinationFile) {
-                copyToDestination(dl, cached, container, vm);
+                copyToDestination(dl, cached, container, machineType);
             }
 
             if (!hasExtract) {
                 return;
             }
 
-            if (vm) {
+            if (machineType == MachineType.VM) {
                 // VMs use the incus-agent for file I/O (over vsock), which
                 // cannot handle pushing large files. Mount the host directory
                 // as a disk device and copy locally inside the VM instead.
@@ -224,15 +225,15 @@ public class YamlToolSetup implements ToolSetup {
         }
     }
 
-    private void copyToDestination(ToolDef.DownloadEntry dl, Path cached, Container container, boolean vm)
-            throws IOException {
+    private void copyToDestination(ToolDef.DownloadEntry dl, Path cached, Container container,
+                                   MachineType machineType) throws IOException {
         var destination = expandUserHome(dl.getDestinationFile());
         var parent = Path.of(destination).getParent();
         if (parent != null) {
             container.exec("mkdir", "-p", parent.toString());
         }
 
-        if (vm) {
+        if (machineType == MachineType.VM) {
             copyFileViaMount(cached, destination, container);
         } else {
             container.filePush(cached.toString(), destination);

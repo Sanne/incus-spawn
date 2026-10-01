@@ -265,7 +265,8 @@ class HostResourceSetupTest {
         assertThrows(HostResourceSetup.ForbiddenMountTargetException.class,
                 () -> HostResourceSetup.applyForInstance(incus, "b", List.of(
                         new ImageDef.HostResource(System.getProperty("java.io.tmpdir"), "/opt/ok", "readonly"),
-                        new ImageDef.HostResource("~/src", "/etc/x", "overlay")), false));
+                        new ImageDef.HostResource("~/src", "/etc/x", "overlay")),
+                        dev.incusspawn.incus.MachineType.CONTAINER));
         org.mockito.Mockito.verifyNoInteractions(incus);
     }
 

@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.incusspawn.Warnings;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.tool.ToolDef;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
@@ -191,6 +192,7 @@ public class ImageDef {
     public void setPinned(boolean pinned) { this.pinned = pinned; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
+    public MachineType machineType() { return "vm".equals(type) ? MachineType.VM : MachineType.CONTAINER; }
     public boolean isVm() { return "vm".equals(type); }
     public boolean isKvm() { return "kvm".equals(type); }
     @Deprecated

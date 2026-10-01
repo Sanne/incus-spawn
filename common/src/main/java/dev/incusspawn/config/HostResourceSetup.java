@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.incusspawn.Environment;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.DownloadCache;
 import dev.incusspawn.util.BuildOutput;
@@ -49,8 +50,8 @@ public final class HostResourceSetup {
         return source;
     }
 
-    public static void addShiftIfSupported(java.util.List<String> args, boolean isVm) {
-        if (!isVm && !Platform.isMacOS()) args.add("shift=true");
+    public static void addShiftIfSupported(java.util.List<String> args, MachineType machineType) {
+        if (machineType == MachineType.CONTAINER && !Platform.isMacOS()) args.add("shift=true");
     }
 
     public static String translateForVm(String hostPath) {
@@ -324,15 +325,15 @@ public final class HostResourceSetup {
      * attached, since Incus refuses to start an instance with a missing {@code source} path.
      */
     public static void attachBuildDevices(IncusClient incus, String container,
-                                          List<ImageDef.HostResource> resources, boolean isVm) {
+                                          List<ImageDef.HostResource> resources, MachineType machineType) {
         for (var hr : resources) {
             verifyConfined(hr);
             if (!sourceExists(hr)) continue;
-            switch (effectiveMode(hr, isVm)) {
-                case "readonly" -> addReadonlyDevice(incus, container, hr, isVm);
+            switch (effectiveMode(hr, machineType)) {
+                case "readonly" -> addReadonlyDevice(incus, container, hr, machineType);
                 case "overlay" -> {
                     requireOverlaySupported(hr);
-                    addOverlayDevice(incus, container, hr, isVm);
+                    addOverlayDevice(incus, container, hr, machineType);
                 }
                 default -> {}
             }
@@ -345,11 +346,11 @@ public final class HostResourceSetup {
      * lower directory, and each resource is reported.
      */
     public static void applyForBuild(IncusClient incus, Container container, List<ImageDef.HostResource> resources,
-                                      boolean isVm) {
+                                      MachineType machineType) {
         var overlayEntries = new ArrayList<ImageDef.HostResource>();
         for (var hr : resources) {
             verifyConfined(hr);
-            switch (effectiveMode(hr, isVm)) {
+            switch (effectiveMode(hr, machineType)) {
                 case "copy" -> {
                     noteVmCopyFallback(hr);
                     applyCopy(container, hr);
@@ -428,7 +429,7 @@ public final class HostResourceSetup {
      * template was built before the rule existed, and a rebuild reports how to fix it.
      */
     public static void applyForInstance(IncusClient incus, String container, List<ImageDef.HostResource> resources,
-                                        boolean isVm) {
+                                        MachineType machineType) {
         resources.forEach(HostResourceSetup::requireAllowedMountTarget);
         for (var hr : resources) {
             if (!"copy".equals(hr.getMode())) {
@@ -440,11 +441,11 @@ public final class HostResourceSetup {
                     continue;
                 }
             }
-            switch (effectiveMode(hr, isVm)) {
+            switch (effectiveMode(hr, machineType)) {
                 case "readonly" -> {
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
                     if (warnIfMissing(hr)) continue;
-                    addReadonlyDevice(incus, container, hr, isVm);
+                    addReadonlyDevice(incus, container, hr, machineType);
                     BuildOutput.note("Mounted " + hr.getSource() + " -> "
                             + resolveContainerPath(hr.getSource(), hr.getPath()) + " (readonly)");
                 }
@@ -452,7 +453,7 @@ public final class HostResourceSetup {
                     requireOverlaySupported(hr);
                     removeExistingDevice(incus, container, deviceNameForMode(hr));
                     if (warnIfMissing(hr)) continue;
-                    addOverlayDevice(incus, container, hr, isVm);
+                    addOverlayDevice(incus, container, hr, machineType);
                 }
                 case "copy" -> noteVmCopyFallback(hr); // already baked into the template
             }
@@ -500,8 +501,8 @@ public final class HostResourceSetup {
      * VMs cannot mount individual files as disk devices (only directories).
      * Fall back to copy mode for file-level readonly/overlay host resources.
      */
-    private static String effectiveMode(ImageDef.HostResource hr, boolean isVm) {
-        if (!isVm || "copy".equals(hr.getMode())) return hr.getMode();
+    private static String effectiveMode(ImageDef.HostResource hr, MachineType machineType) {
+        if (machineType == MachineType.CONTAINER || "copy".equals(hr.getMode())) return hr.getMode();
         var expandedSource = expandHostTilde(hr.getSource());
         if (Files.exists(Path.of(expandedSource)) && !Files.isDirectory(Path.of(expandedSource))) {
             return "copy";
@@ -576,25 +577,25 @@ public final class HostResourceSetup {
     }
 
     private static void addReadonlyDevice(IncusClient incus, String container, ImageDef.HostResource hr,
-                                          boolean isVm) {
+                                          MachineType machineType) {
         var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
         var args = new java.util.ArrayList<>(java.util.List.of(
                 "source=" + translateForVm(expandHostTilde(hr.getSource())),
                 "path=" + containerPath,
                 "readonly=true"));
-        addShiftIfSupported(args, isVm);
+        addShiftIfSupported(args, machineType);
         incus.deviceAdd(container, deviceName(containerPath), "disk", args.toArray(String[]::new));
     }
 
     /** The overlay's read-only lower layer: pure device config, so it is attached before start. */
     private static void addOverlayDevice(IncusClient incus, String container, ImageDef.HostResource hr,
-                                         boolean isVm) {
+                                         MachineType machineType) {
         var containerPath = resolveContainerPath(hr.getSource(), hr.getPath());
         var devArgs = new java.util.ArrayList<>(java.util.List.of(
                 "source=" + translateForVm(expandHostTilde(hr.getSource())),
                 "path=" + overlayDir(containerPath) + "/lower",
                 "readonly=true"));
-        addShiftIfSupported(devArgs, isVm);
+        addShiftIfSupported(devArgs, machineType);
         incus.deviceAdd(container, overlayDeviceName(containerPath), "disk",
                 devArgs.toArray(String[]::new));
     }

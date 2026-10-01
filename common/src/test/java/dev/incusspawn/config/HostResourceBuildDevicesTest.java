@@ -2,6 +2,7 @@ package dev.incusspawn.config;
 
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
@@ -35,7 +36,7 @@ class HostResourceBuildDevicesTest {
         HostResourceSetup.attachBuildDevices(incus, "b", List.of(
                 new ImageDef.HostResource(ro.toString(), "/home/agentuser/ro", "readonly"),
                 new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay"),
-                new ImageDef.HostResource(copied.toString(), "/home/agentuser/cp", "copy")), true);
+                new ImageDef.HostResource(copied.toString(), "/home/agentuser/cp", "copy")), MachineType.VM);
 
         verify(incus).deviceAdd(eq("b"), eq(HostResourceSetup.deviceName("/home/agentuser/ro")), eq("disk"),
                 eq("source=" + ro), eq("path=/home/agentuser/ro"), eq("readonly=true"));
@@ -56,7 +57,7 @@ class HostResourceBuildDevicesTest {
         HostResourceSetup.attachBuildDevices(incus, "b", List.of(
                 new ImageDef.HostResource(tmp.resolve("gone").toString(), "/opt/gone", "readonly"),
                 new ImageDef.HostResource(tmp.resolve("gone2").toString(), "/opt/gone2", "overlay"),
-                new ImageDef.HostResource(file.toString(), "/opt/file", "readonly")), true);
+                new ImageDef.HostResource(file.toString(), "/opt/file", "readonly")), MachineType.VM);
 
         verify(incus, never()).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
     }
@@ -70,7 +71,7 @@ class HostResourceBuildDevicesTest {
 
         HostResourceSetup.applyForBuild(incus, new Container(incus, "b"), List.of(
                 new ImageDef.HostResource(ro.toString(), "/home/agentuser/ro", "readonly"),
-                new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay")), true);
+                new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay")), MachineType.VM);
 
         verify(incus, never()).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
         verify(incus, never()).pollUntilReady(anyString(), anyInt(), any(String[].class));
@@ -87,7 +88,7 @@ class HostResourceBuildDevicesTest {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
         HostResourceSetup.applyForBuild(incus, new Container(incus, "b"), List.of(
-                new ImageDef.HostResource(ov.toString(), "/opt/ov", "overlay")), true);
+                new ImageDef.HostResource(ov.toString(), "/opt/ov", "overlay")), MachineType.VM);
         var captor = ArgumentCaptor.forClass(String[].class);
         verify(incus, atLeastOnce()).shellExec(eq("b"), captor.capture());
         var mountCall = captor.getAllValues().stream()
@@ -128,7 +129,7 @@ class HostResourceBuildDevicesTest {
         var incus = mock(IncusClient.class);
         when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
         HostResourceSetup.applyForBuild(incus, new Container(incus, "b"), List.of(
-                new ImageDef.HostResource(ov.toString(), "/opt/ov", "overlay")), true);
+                new ImageDef.HostResource(ov.toString(), "/opt/ov", "overlay")), MachineType.VM);
         var captor = ArgumentCaptor.forClass(String[].class);
         verify(incus, atLeastOnce()).shellExec(eq("b"), captor.capture());
         var mountCall = captor.getAllValues().stream()
@@ -158,7 +159,7 @@ class HostResourceBuildDevicesTest {
         var ov = System.getProperty("java.io.tmpdir");
 
         HostResourceSetup.applyForBuild(incus, container, List.of(
-                new ImageDef.HostResource(ov, "/opt/ov", "overlay")), true);
+                new ImageDef.HostResource(ov, "/opt/ov", "overlay")), MachineType.VM);
 
         var unit = ArgumentCaptor.forClass(String.class);
         verify(container).writeFile(eq("/etc/systemd/system/incus-spawn-overlays.service"), unit.capture());

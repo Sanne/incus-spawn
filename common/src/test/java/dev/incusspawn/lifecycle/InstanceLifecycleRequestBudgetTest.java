@@ -92,7 +92,7 @@ class InstanceLifecycleRequestBudgetTest {
         // Incus stops its forkfile file server on start, and one still finishing a push makes
         // the start wait a full second. The config read, the bridge lookup, then the start.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of());
-        InstanceLifecycle.prefetchAndStart(daemon.client(), NAME, false);
+        InstanceLifecycle.prefetchAndStart(daemon.client(), NAME, dev.incusspawn.incus.MachineType.CONTAINER);
         assertBudget(4, daemon, "prefetchAndStart");
 
         var requests = daemon.requests();

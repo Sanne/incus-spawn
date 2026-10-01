@@ -78,7 +78,7 @@ public final class ZmxSocketForward {
         var args = new java.util.ArrayList<>(java.util.List.of(
                 "source=" + containerDir.toAbsolutePath(),
                 "path=" + CONTAINER_ZMX_DIR));
-        HostResourceSetup.addShiftIfSupported(args, false);
+        HostResourceSetup.addShiftIfSupported(args, dev.incusspawn.incus.MachineType.CONTAINER);
         incus.deviceAdd(name, DEVICE_NAME, "disk", args.toArray(String[]::new));
 
         ensureSymlink(zmxDir, name);

@@ -8,6 +8,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.IncusException;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.InstanceSubvolumes;
 import dev.incusspawn.tool.ClaudeSetup;
 import dev.incusspawn.tool.ToolDef;
@@ -213,7 +214,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/quarkusio/quarkus.git' '/home/agentuser/quarkus'");
@@ -1324,7 +1325,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch --branch 'feature/my branch' -- 'https://github.com/owner/repo.git' '/home/agentuser/repo'");
@@ -1349,7 +1350,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(repo));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Clone call + refspec restore, but no prime
         verify(incus, times(2)).execInContainer(eq("test"), anyString(), anyString());
@@ -1372,9 +1373,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
 
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Local clone from mounted reference
         verify(incus).execInContainer("test", "agentuser",
@@ -1414,9 +1415,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
 
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Should fall back to normal clone
         verify(incus).execInContainer("test", "agentuser",
@@ -1443,9 +1444,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
 
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Local clone (no --branch — handled after fetch)
         verify(incus).execInContainer("test", "agentuser",
@@ -1484,9 +1485,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         var ref = new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null);
-        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+        doReturn(ref).when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
 
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Should fall back to normal clone after checkout failure
         verify(incus).execInContainer("test", "agentuser",
@@ -1513,7 +1514,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(a, b));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         verify(incus).execInContainer("test", "agentuser",
                 "git clone --single-branch -- 'https://github.com/owner/alpha.git' '/home/agentuser/alpha'");
@@ -1545,7 +1546,7 @@ class BuildCommandTest {
         imageDef.setRepos(List.of(a, b));
 
         var cmd = new BuildCommand();
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         // Each repo's prime runs (pipelined with the other repo's clone), scoped to
         // its own working directory.
@@ -1599,7 +1600,7 @@ class BuildCommandTest {
 
         var cmd = new BuildCommand();
         var ex = assertThrows(dev.incusspawn.incus.IncusException.class,
-                () -> cmd.cloneRepos(container, imageDef, false));
+                () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
         assertTrue(ex.getMessage().contains("fatal: repository not found"),
                 "error message should carry the git failure detail");
     }
@@ -2629,7 +2630,7 @@ class BuildCommandTest {
 
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
-        cmd.cloneRepos(container, imageDef, false);
+        cmd.cloneRepos(container, imageDef, MachineType.CONTAINER);
 
         verify(cmd, never()).tryMountReference(any(), any(), any(), anyBoolean());
         verify(incus, never()).deviceAdd(any(), any(), any(), any(String[].class));
@@ -2677,11 +2678,11 @@ class BuildCommandTest {
             doAnswer(inv -> {
                 mounted.incrementAndGet();
                 return new BuildCommand.RepoReference("ref-" + url.hashCode(), "/mnt/ref/" + url.hashCode(), null);
-            }).when(cmd).tryMountReference(eq(container), eq(url), any(), eq(false));
+            }).when(cmd).tryMountReference(eq(container), eq(url), any(), eq(MachineType.CONTAINER));
         }
 
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(30),
-                () -> cmd.cloneRepos(container, imageDef, false));
+                () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
         assertEquals(12, primes.get());
         assertEquals(0, primesWhileMounted.get());
         assertEquals(0, mounted.get());
@@ -2703,9 +2704,9 @@ class BuildCommandTest {
         var cmd = spy(new BuildCommand());
         cmd.incus = incus;
         doReturn(new BuildCommand.RepoReference("ref-repo", "/mnt/ref/repo", null))
-                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(false));
+                .when(cmd).tryMountReference(eq(container), eq(repo.getUrl()), any(), eq(MachineType.CONTAINER));
 
-        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, false));
+        assertThrows(RuntimeException.class, () -> cmd.cloneRepos(container, imageDef, MachineType.CONTAINER));
         verify(incus, never()).execInContainer(eq("test"), eq("agentuser"), contains("echo primed"));
     }
 
@@ -2781,7 +2782,7 @@ class BuildCommandTest {
     @Test
     void unmountDnfCacheUnmountsInVmGuestBeforeRemovingDevice() {
         var incus = mock(IncusClient.class);
-        when(incus.isVm("b")).thenReturn(true);
+        when(incus.machineType("b")).thenReturn(MachineType.VM);
         when(incus.shellExec(eq("b"), any(String[].class))).thenReturn(OK);
         dnfCacheCommand(incus).unmountDnfCache("b");
 
@@ -2796,7 +2797,7 @@ class BuildCommandTest {
     @Test
     void unmountDnfCacheSkipsGuestUnmountForContainers() {
         var incus = mock(IncusClient.class);
-        when(incus.isVm("b")).thenReturn(false);
+        when(incus.machineType("b")).thenReturn(MachineType.CONTAINER);
         dnfCacheCommand(incus).unmountDnfCache("b");
 
         verify(incus, never()).shellExec(anyString(), any(String[].class));

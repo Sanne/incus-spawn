@@ -1,6 +1,7 @@
 package dev.incusspawn.lifecycle;
 
 import dev.incusspawn.incus.IncusClient;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,7 +45,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
-        when(incus.isVm("test")).thenReturn(false);
+        when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
 
         assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
 
@@ -65,7 +66,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("172.20.0.1");
-        when(incus.isVm("test")).thenReturn(false);
+        when(incus.machineType("test")).thenReturn(MachineType.CONTAINER);
 
         assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
 
@@ -82,7 +83,7 @@ class InstanceLifecycleNetworkFixTest {
         when(incus.listJsonConfig()).thenReturn("[]");
         when(incus.findNicDeviceName("test", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("test", Metadata.PROXY_GATEWAY)).thenReturn("");
-        when(incus.isVm("test")).thenReturn(true);
+        when(incus.machineType("test")).thenReturn(MachineType.VM);
 
         assertTrue(InstanceLifecycle.fixStaticIpIfNeeded(incus, "test"));
 
@@ -117,7 +118,7 @@ class InstanceLifecycleNetworkFixTest {
                 .thenThrow(new RuntimeException("no NIC"));
         when(incus.findNicDeviceName("stale-instance", "incusbr0")).thenReturn("eth0");
         when(incus.configGet("stale-instance", Metadata.PROXY_GATEWAY)).thenReturn("");
-        when(incus.isVm("stale-instance")).thenReturn(false);
+        when(incus.machineType("stale-instance")).thenReturn(MachineType.CONTAINER);
 
         assertEquals(1, InstanceLifecycle.migrateAllInstancesToNewSubnet(incus),
                 "a failure on one instance must not stop the others");

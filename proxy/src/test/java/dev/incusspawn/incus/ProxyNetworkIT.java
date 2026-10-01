@@ -1,6 +1,7 @@
 package dev.incusspawn.incus;
 
 import dev.incusspawn.Environment;
+import dev.incusspawn.incus.MachineType;
 import dev.incusspawn.proxy.CertificateAuthority;
 import dev.incusspawn.proxy.MitmProxy;
 import dev.incusspawn.proxy.ProxyConfig;
@@ -105,7 +106,7 @@ class ProxyNetworkIT {
 
     @Test @Order(2)
     void launchContainer() {
-        client.launch("images:alpine/edge", CONTAINER, false);
+        client.launch("images:alpine/edge", CONTAINER, MachineType.CONTAINER);
         assertTrue(client.pollUntilReady(CONTAINER, 30, "true"));
         // Point DNS at bridge gateway where dnsmasq runs
         var gatewayIp = ProxyConfig.resolveGatewayIp(client);

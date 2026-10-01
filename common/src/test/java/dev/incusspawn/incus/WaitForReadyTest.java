@@ -47,7 +47,7 @@ class WaitForReadyTest {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of())
                 .consoleLog("vm1", "[  OK  ] Reached target multi-user.target\n");
         long start = System.nanoTime();
-        var e = assertThrows(IncusException.class, () -> client(50, 400, 100).waitForReady("vm1", true));
+        var e = assertThrows(IncusException.class, () -> client(50, 400, 100).waitForReady("vm1", MachineType.VM));
 
         assertTrue(System.nanoTime() - start >= ms(400), "a VM must wait out the VM budget, not a container's");
         var msg = e.getMessage();
@@ -61,7 +61,7 @@ class WaitForReadyTest {
         daemon.instance("vm1", "virtual-machine", "Running", Map.of())
                 .consoleLog("vm1", "booting\n" + AVC + "\n" + FAILED + "\n" + FAILED + "\n");
         long start = System.nanoTime();
-        var e = assertThrows(IncusException.class, () -> client(50, 60_000, 150).waitForReady("vm1", true));
+        var e = assertThrows(IncusException.class, () -> client(50, 60_000, 150).waitForReady("vm1", MachineType.VM));
 
         long elapsed = System.nanoTime() - start;
         assertTrue(elapsed >= ms(150), "the agent gets its grace period to restart");
@@ -78,7 +78,7 @@ class WaitForReadyTest {
     void vmThatStopsReportsTheAgentFailureItLogged() {
         daemon.instance("vm1", "virtual-machine", "Stopped", Map.of())
                 .consoleLog("vm1", FAILED + "\n");
-        var e = assertThrows(IncusException.class, () -> client(5_000, 5_000, 1_000).waitForReady("vm1", true));
+        var e = assertThrows(IncusException.class, () -> client(5_000, 5_000, 1_000).waitForReady("vm1", MachineType.VM));
 
         var msg = e.getMessage();
         assertTrue(msg.startsWith("VM vm1 died during startup (status: Stopped)"), msg);

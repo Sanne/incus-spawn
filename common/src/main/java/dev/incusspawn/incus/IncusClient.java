@@ -291,20 +291,20 @@ public class IncusClient {
      *
      * <p>When the caller does not know the type, the container timeout is used and the type is
      * learnt from the status GET that follows a failed probe, so an instance that is ready at once
-     * costs no extra request. Pass {@code true} when the caller already knows the instance is a VM:
-     * this avoids type-detection overhead and guarantees the 120s VM timeout applies from the
-     * start (#878).
+     * costs no extra request. Pass {@link MachineType#VM} when the caller already knows the
+     * instance is a VM: this avoids type-detection overhead and guarantees the 120s VM timeout
+     * applies from the start.
      */
     public void waitForReady(String name) {
-        waitForReady(name, false);
+        waitForReady(name, MachineType.CONTAINER);
     }
 
     /** See {@link #waitForReady(String)}. */
-    public void waitForReady(String name, boolean isVm) {
+    public void waitForReady(String name, MachineType type) {
         var t = readyTimeouts();
         long start = System.nanoTime();
-        long deadline = start + (isVm ? t.vm() : t.container()).toNanos();
-        boolean vm = isVm;
+        long deadline = start + (type == MachineType.VM ? t.vm() : t.container()).toNanos();
+        boolean vm = type == MachineType.VM;
         boolean agentFailed = false;
         long nextConsoleCheck = start;
         while (System.nanoTime() < deadline) {
@@ -312,7 +312,7 @@ public class IncusClient {
                 if (shellExec(name, "echo", "ready").success()) return;
             } catch (Exception ignored) {
                 var instance = startupState(name);
-                if (!vm && isVm(instance)) {
+                if (!vm && machineType(instance) == MachineType.VM) {
                     vm = true;
                     deadline = start + t.vm().toNanos();
                 }
@@ -344,7 +344,7 @@ public class IncusClient {
         if (instance == null) return;
         var status = instance.path("status").asText("");
         if (!"Stopped".equals(status) && !"Error".equals(status)) return;
-        if (!isVm(instance)) {
+        if (machineType(instance) == MachineType.CONTAINER) {
             throw new IncusException("Container " + name + " died during startup (status: " + status + ")");
         }
         var msg = "VM " + name + " died during startup (status: " + status + ")";
@@ -1466,8 +1466,8 @@ public class IncusClient {
      * does not understand the "remote:alias" CLI shorthand and needs the full
      * server URL instead.
      */
-    public void launch(String image, String name, boolean vm) {
-        create(image, name, vm);
+    public void launch(String image, String name, MachineType type) {
+        create(image, name, type);
         start(name);
     }
 
@@ -1476,11 +1476,11 @@ public class IncusClient {
      * Use this when you need to configure the instance (e.g. disk size)
      * before first boot.
      */
-    public void create(String image, String name, boolean vm) {
+    public void create(String image, String name, MachineType type) {
         var http = http();
         var body = new LinkedHashMap<String, Object>();
         body.put("name", name);
-        body.put("type", vm ? "virtual-machine" : "container");
+        body.put("type", type.incusApiType());
         body.put("source", resolveImageSource(image));
         body.put("storage", requireCowPool());
         var resp = http.requestAndWait("POST", "/1.0/instances", body);
@@ -2026,16 +2026,14 @@ public class IncusClient {
         return resp.body().path("metadata").path("status").asText("");
     }
 
-    public boolean isVm(String name) {
+    public MachineType machineType(String name) {
         var resp = http().get("/1.0/instances/" + name);
-        if (!resp.isSuccess()) return false;
-        return isVm(resp.body().path("metadata"));
+        if (!resp.isSuccess()) return MachineType.CONTAINER;
+        return MachineType.fromIncus(resp.body().path("metadata"));
     }
 
-    /** Whether instance metadata, as {@code GET /1.0/instances/<name>} returns it, is a VM's. */
-    public static boolean isVm(JsonNode instanceMetadata) {
-        return instanceMetadata != null
-                && "virtual-machine".equals(instanceMetadata.path("type").asText(""));
+    public static MachineType machineType(JsonNode instanceMetadata) {
+        return MachineType.fromIncus(instanceMetadata);
     }
 
     /**

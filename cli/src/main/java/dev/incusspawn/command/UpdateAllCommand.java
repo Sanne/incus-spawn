@@ -114,7 +114,7 @@ public class UpdateAllCommand extends BaseCommand {
 
     private UpdateResult updateImage(IncusClient incus, String name, ImageDef imageDef) {
         incus.start(name);
-        incus.waitForReady(name, incus.isVm(name));
+        incus.waitForReady(name, incus.machineType(name));
 
         // System updates
         BuildOutput.stepStart("Running system updates...");
