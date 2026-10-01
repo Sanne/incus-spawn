@@ -30,7 +30,7 @@ Key design:
   The proxy is relaunched frequently (macOS launchd `KeepAlive`), and re-minting on a host whose clock has jumped ahead of a lagging container clock (e.g. an Incus VM after macOS resume) produced certs the container rejected as "not yet valid".
   Certs are keyed by domain, never by container (a leaf is a function of `(domain, CA)`), so this composes with future per-container interception, which is a routing/DNS concern.
   `CertificateAuthority.BACKDATE_MS` backdates `notBefore` as a skew margin for the rare fresh-mint moments.
-- **Certs are chosen per SNI name** by `InterceptedCertOptions` (Vert.x `keyManagerFactoryMapper`, run on a worker thread), not by a fixed keystore.
+- **Certs are chosen per SNI name** by `InterceptedCertOptions` (Vert.x `keyManagerFactoryMapper`, run on a worker thread only because `MitmProxy.mitmServerOptions()` sets `JdkSSLEngineOptions.setUseWorkerThread(true)`: Vert.x 5 otherwise runs it on the event loop, and minting a leaf there would stall every connection on it -- `MitmTlsTest` pins this), not by a fixed keystore.
   dnsmasq sends names at *any* depth under an intercepted domain, but a wildcard SAN covers one label, so `certNameFor()` gives the exact domain or a wildcard for the name's own parent, minted on demand through `CertStore`.
   Two bounds, because the container picks the names: `MAX_ON_DEMAND_CERTS` counts on-demand certs **on disk** (so reloads/restarts don't reset it), and `MAX_SERVED_NAMES` counts distinct SNI names answered, since Vert.x caches an `SslContext` per answered name forever.
   With the old `<domain>`/`*.<domain>` JKS, a deeper name matched no alias and Vert.x served an arbitrary entry: `*.api.openai.com` for a GitHub host (#783).
@@ -298,8 +298,18 @@ Key design:
   It answers from `allInterceptedDomains` (every account's domains, as bridge DNS and certificates have them), never the default account's entries alone: an instance pinned to an account whose entry the default lacks would be relayed with nothing injected.
   `ProxyCredentials` only has Anthropic-specific fields (`anthropicApiKey`, `oauthToken`, Vertex settings) -- `ghToken`/`bobApiKey`/`openaiApiKey` have been removed
 - WebSocket passthrough: handles Upgrade requests by establishing an upstream WebSocket connection (with credential injection via both Anthropic auth and tool proxy lookup), then relaying frames bidirectionally with keepalive pings and close-code propagation.
-  `routeWebSocket` completes the client's handshake (`completeHandshake`, the deprecated `ServerWebSocket.accept()` on purpose) before injecting anything or dialling, because the handler runs before Netty validates the handshake (#972); keep any new rejection (e.g. `reject(502)`) before it.
+  `routeWebSocket` is the `webSocketHandshakeHandler`: it decides the `ServerWebSocketHandshake` once the caller's account is resolved, and dials only once `accept()` has succeeded, i.e. Netty validated the handshake (#972); keep any new rejection (e.g. `reject(502)`) before the `accept()`.
   Used by Codex CLI for `api.openai.com`
+- **Vert.x 5 rules that the compiler does not enforce** (full rationale in `docs/quarkus-4/MIGRATION.md`):
+  - Every path through `routeWebSocket` must `accept()` or `reject()` the `ServerWebSocketHandshake`: Vert.x 5 leaves an undecided one, even one whose handler threw, hanging until the MITM idle timeout.
+  - `pause()` must stay the first call on the accepted socket.
+    The disabled test in `WebSocketProxyTest` documents a frame pipelined with the upgrade request, which Vert.x 5 drops before we see the socket.
+  - Cert reloads build their `ServerSSLOptions` from `mitmServerOptions()`, never a bare object, because the update replaces client auth, protocols and ciphers.
+  - `proxy/pom.xml` excludes Jackson 3 `jackson-databind` from `quarkus-vertx`.
+    `vertx-core`'s JDK-activated profile pulls it in, and the proxy never uses Vert.x JSON.
+    Remove the exclusion only if Vert.x JSON mapping is needed.
+  - `graal/VertxDnsSubstitutions` cuts Netty's async DNS resolver from the native image.
+    That is only safe while Quarkus forces `vertx.disableDnsResolver=true` in native, which it does unconditionally.
 - Caches OCI blobs by SHA256, Maven/Gradle artifacts by repository path (confirmed with upstream per `ArtifactCacheTiers`, see below), and npm tarballs from `registry.npmjs.org` with ETag-based packument verification.
   The caching lives in `ArtifactCacheHandler`, built only from `Upstream` (the upstream clients, async DNS, backoff, relay and response helpers it shares with `MitmProxy`) and given no `RequestContext`, so by its types it cannot inject a credential; keep it that way.
   npm's per-version digest lookups go through `probeClient` (`fetchNpmVersion` → `fetchSmallBody`) like Maven/Gradle checksums.
@@ -356,7 +366,7 @@ Key design:
   Send every `probeClient` request through `Upstream.sendProbe()`, with `probeReadIdleSeconds` below `probeOptions()`' request timeout: it closes a connection with nothing read since the request, the only thing that evicts a silently dead h2 connection (a request timeout resets just its stream).
   Don't give `probeClient` a read-idle or all-idle timeout instead: Netty ticks the first from the last read, cutting a request just sent on a long-pooled connection, and requests' writes restart the second (#1007).
   `Upstream.resolveHost` keeps the expired entry's address while the refreshed answer still lists it, since connections pool per address; `requestWithAsyncDns` drops it on a failed connect so the stickiness never pins a dead address (#862).
-  Keep `setHttp2MaxPoolSize` above 1, or bursts to HTTP/1.1-only or unreachable hosts serialize.
+  Keep `PoolOptions.setHttp2MaxSize` above 1, or bursts to HTTP/1.1-only or unreachable hosts serialize.
   `~/.m2` imports copy/reflink, never hardlink.
   Commit/reconcile/evict go through `VerifiedArtifactStore`'s striped lock; don't touch the cache files around it
 - **Proxy lifecycle locking**: `ProxyService` guards mutating operations (`restart`, `stop`, `install`, `uninstall`, `startService`, `reinstallIfChanged`, `upgradeIfNeeded`) with a `HostLock` (`proxy.lock` in `configDir()`).

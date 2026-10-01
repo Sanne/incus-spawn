@@ -43,7 +43,7 @@ Other sandboxes for coding agents make it differently, and `docs/SANDBOXES.md`, 
 
 ## Tech Stack
 
-- **Java 25**, **Quarkus 3.x** with aesh for CLI commands
+- **Java 25**, **Quarkus 4.x** with aesh for CLI commands (the proxy runs on Vert.x 5 / Netty 4.2; see [docs/quarkus-4/MIGRATION.md](docs/quarkus-4/MIGRATION.md))
 - **Tamboui** (https://tamboui.dev/) for interactive TUI (list view, modal dialogs, inline actions)
 - **GraalVM native image** for optional zero-dependency distribution
 - **jjq** for YAML and JSON (see "jjq rather than Jackson" under Technical Tradeoffs)
@@ -1418,11 +1418,15 @@ No Vertex-specific environment variables are needed inside the container; `ANTHR
 **WebSocket passthrough:** The proxy also handles WebSocket upgrade requests.
 When a client sends an HTTP Upgrade to a proxied domain, the proxy establishes a corresponding upstream WebSocket connection (injecting credentials on the initial handshake), then relays frames bidirectionally.
 The client socket is paused until the upstream connection is established to prevent frame drops.
-The client's handshake is completed (`ServerWebSocket.accept()`) before any of this, and a refused one goes no further.
-Vert.x 4 runs the WebSocket handler before Netty validates the handshake, and only completes it once the handler returns.
+The client's handshake is completed (`ServerWebSocketHandshake.accept()`) before any of this, and a refused one goes no further.
+Vert.x 4 ran the WebSocket handler before Netty validated the handshake, and only completed it once the handler returned.
 So a request Netty refused (no key, no `Upgrade` token in `Connection`, ...) was answered 400 after the credential had been injected and an upstream socket opened for it (#972).
 Copying Netty's checks into the handler was rejected: Vert.x's own pre-checks are looser than Netty's (a substring match on `Connection`), so a copy misses refusals and drifts with Netty.
-`accept()` is deprecated and gone in Vert.x 5; a regression test covering each refused shape pins the behaviour for whatever replaces it.
+Vert.x 5 splits the handshake from the socket: `routeWebSocket` is a `webSocketHandshakeHandler`, which resolves the caller's account and then calls `reject(status)` or `accept()`, and the relay is wired only once `accept()` has succeeded; a refused handshake fails that future.
+Every path must decide the handshake, because Vert.x 5 holds an undecided one (a handler that threw, say) open until the idle timeout.
+The accepted socket is paused first thing: Vert.x 5 hands it over only once the 101 is written, and it starts flowing.
+A frame pipelined with the upgrade request, which the Vert.x 4 proxy relayed, is dropped inside Vert.x 5.1.8 before the proxy sees the socket (RFC 6455 says a client must wait for the 101; `docs/quarkus-4/MIGRATION.md` V-W1); its test is disabled.
+A regression test covering each refused shape pins the behaviour.
 Keepalive pings are sent on both legs, and close codes are propagated.
 This is used by Codex CLI, which communicates with `api.openai.com` over WebSocket.
 
@@ -1576,7 +1580,7 @@ A deeper name such as `results-receiver.actions.githubusercontent.com` (where `g
 Vert.x then fell back to an arbitrary keystore entry.
 The container was offered `*.api.openai.com` for a GitHub host, an error that points at the wrong domain entirely.
 `InterceptedCertOptions` (proxy module) now implements Vert.x's `KeyCertOptions.keyManagerFactoryMapper`: `certNameFor()` maps the SNI name to the exact domain, or to a wildcard for the name's own parent (`*.actions.githubusercontent.com`), minted through `CertStore` on first use and so persisted like every other leaf.
-Vert.x runs this mapping on a worker thread, so the RSA key generation never blocks the event loop.
+The MITM server sets `JdkSSLEngineOptions.setUseWorkerThread(true)` so this mapping runs on a worker thread and the RSA key generation never blocks the event loop: Vert.x 4 always ran it on a worker, Vert.x 5 runs it wherever the SSL engine's delegated tasks run, which is the event loop by default.
 The `<domain>`/`*.<domain>` certs are still pre-minted at start.
 Because the container picks the names, two bounds apply.
 `MAX_ON_DEMAND_CERTS` limits on-demand certs *stored on the host*: it is counted from the cert directory at construction, so neither a reload nor a restart grants a fresh batch.
@@ -1684,7 +1688,7 @@ Only an unreachable upstream serves an older one.
   A domain that can withdraw releases never gets the tiers (`Revalidation.mayWithdraw`: the Plugin Portal), so its every hit is confirmed first.
   npm tarballs get the same tiers, keyed on the stored shasum's modification time (see "Proxy caching" above).
   `artifact-cache:` is read from the raw YAML value, so a mistyped section (`artifact-cache: 0`) is warned about and ignored instead of failing config.yaml, which would leave the proxy with no credentials.
-  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 4.5 has no `sendFile` from an open handle).
+  The stored checksum goes out as `X-Checksum-SHA1` with bytes the proxy opens by path (Vert.x 5 added `sendFile(FileChannel)`, but it is marked unstable and HTTP/1-only, so the proxy still opens by path).
   So just before `sendFile` the path is checked to still be the file the checksum was read with, and a copy replaced meanwhile is confirmed first.
   The window left is the few microseconds between that stat and the open, on the same thread.
   The hit path reads the copy without the store's lock (commits hold it across an fsync), re-reading under it when the artifact changed between the reads.
@@ -1814,7 +1818,7 @@ Being shorter than the exchange's own timeout (30s) it closes the dead connectio
 It is not the client's read-idle timeout: Netty ticks that from the connection's last read, so a request on a connection pooled idle for longer could be cut by a tick just after it went out, while upstream was answering.
 Nor an all-idle timeout, which a request's write restarts: confirmations going out every few seconds would then keep a dead connection open.
 Without it an HTTP/2 connection would never be evicted: a timed-out exchange resets only its own stream, and every later confirmation would wait out 30s on the dead connection and be served unconfirmed.
-Up to four HTTP/2 connections per host (`setHttp2MaxPoolSize`): with one, Vert.x admits a single connect at a time, so a burst to a host that falls back to HTTP/1.1 (a nested isx's own proxy, the benchmark stub) ran one request at a time, and a burst to one that does not answer failed one connect timeout after another.
+Up to four HTTP/2 connections per host (`PoolOptions.setHttp2MaxSize`): with one, Vert.x admits a single connect at a time, so a burst to a host that falls back to HTTP/1.1 (a nested isx's own proxy, the benchmark stub) ran one request at a time, and a burst to one that does not answer failed one connect timeout after another.
 Connections are pooled per resolved address, so the DNS cache (60s) keeps a host's address across a refresh for as long as the answer still lists it, whatever order it comes in (#862).
 Central's and Gradle's CDNs answer with two addresses in a random order, which moved about half of all refreshes to the other one and its fresh TLS handshake.
 A failed connect drops the cached address (a connect timeout cut short to fit a client's budget does not), so the next request resolves again and takes the first one listed instead of staying on one that stopped answering.
