@@ -23,7 +23,11 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.ServerWebSocketHandshake;
+import io.vertx.core.http.WebSocketClient;
+import io.vertx.core.http.WebSocketClientOptions;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.SocketAddress;
 
@@ -158,7 +162,7 @@ public class MitmProxy {
     // Cache confirmations (HEADs, sidecars) get their own pool, so a cache hit never
     // queues behind large downloads on upstreamClient's
     private HttpClient probeClient;
-    private HttpClient wsUpstreamClient;
+    private WebSocketClient wsUpstreamClient;
     private CountDownLatch stopLatch;
 
     private ApiTrafficLog debugLog;
@@ -659,7 +663,7 @@ public class MitmProxy {
             refreshInstanceRegistry();
             var keyCertOptions = buildKeyCertOptions();
             if (mitmServer != null) {
-                var sslOptions = new io.vertx.core.net.SSLOptions()
+                var sslOptions = new io.vertx.core.net.ServerSSLOptions()
                         .setKeyCertOptions(keyCertOptions);
                 mitmServer.updateSSLOptions(sslOptions)
                         .toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -720,7 +724,6 @@ public class MitmProxy {
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
-                .setMaxPoolSize(20)
                 .setKeepAliveTimeout(30)
                 .setConnectTimeout(UPSTREAM_CONNECT_TIMEOUT_MILLIS)
                 // Outlasts the MITM server's idle timeout, so a stalled relay is dropped by that,
@@ -729,7 +732,7 @@ public class MitmProxy {
                 .setReadIdleTimeout(300);
         var upstreamTrust = upstreamTrust();
         if (upstreamTrust != null) clientOptions.setTrustOptions(upstreamTrust);
-        upstreamClient = vertx.createHttpClient(clientOptions);
+        upstreamClient = vertx.createHttpClient(clientOptions, new PoolOptions().setHttp1MaxSize(20));
 
         // Every cache hit waits on one of these: h2 (via ALPN) shares a connection.
         // The read-idle timeout only fires while an exchange is waiting, and being
@@ -744,27 +747,26 @@ public class MitmProxy {
                 .setProtocolVersion(HttpVersion.HTTP_2)
                 .setUseAlpn(true)
                 .setHttp2KeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
-                .setHttp2MaxPoolSize(4)
-                .setMaxPoolSize(32)
                 .setKeepAliveTimeout(PROBE_KEEP_ALIVE_SECONDS)
                 .setConnectTimeout(10_000)
                 .setReadIdleTimeout(probeReadIdleSeconds);
         if (upstreamTrust != null) probeOptions.setTrustOptions(upstreamTrust);
-        probeClient = vertx.createHttpClient(probeOptions);
+        probeClient = vertx.createHttpClient(probeOptions,
+                new PoolOptions().setHttp2MaxSize(4).setHttp1MaxSize(32));
 
         // Separate client for WebSocket: no read-idle timeout (WebSocket
         // connections are long-lived and may be idle between prompts) and
         // no connection pooling (each WebSocket is its own connection).
-        var wsClientOptions = new HttpClientOptions()
+        var wsClientOptions = new WebSocketClientOptions()
                 .setSsl(true)
                 .setVerifyHost(!upstreamTrustAll)
                 .setTrustAll(upstreamTrustAll)
                 .setConnectTimeout(30_000)
                 .setReadIdleTimeout(0)
-                .setMaxWebSocketFrameSize(1024 * 1024)
-                .setMaxWebSocketMessageSize(16 * 1024 * 1024);
+                .setMaxFrameSize(1024 * 1024)
+                .setMaxMessageSize(16 * 1024 * 1024);
         if (upstreamTrust != null) wsClientOptions.setTrustOptions(upstreamTrust);
-        wsUpstreamClient = vertx.createHttpClient(wsClientOptions);
+        wsUpstreamClient = vertx.createWebSocketClient(wsClientOptions);
 
         int maxRetries = 30;
         for (int attempt = 1; ; attempt++) {
@@ -789,7 +791,7 @@ public class MitmProxy {
                 err.printStackTrace(System.err);
             });
             mitmServer.requestHandler(this::routeRequest);
-            mitmServer.webSocketHandler(this::routeWebSocket);
+            mitmServer.webSocketHandshakeHandler(this::routeWebSocket);
             try {
                 mitmServer.listen()
                         .toCompletionStage().toCompletableFuture().get();
@@ -998,7 +1000,7 @@ public class MitmProxy {
         return remote == null ? null : remote.hostAddress();
     }
 
-    private static String sourceAddressOf(ServerWebSocket ws) {
+    private static String sourceAddressOf(ServerWebSocketHandshake ws) {
         var remote = ws.remoteAddress();
         return remote == null ? null : remote.hostAddress();
     }
@@ -1027,7 +1029,7 @@ public class MitmProxy {
 
     // --- WebSocket passthrough ---
 
-    private void routeWebSocket(ServerWebSocket clientWs) {
+    private void routeWebSocket(ServerWebSocketHandshake clientWs) {
         var host = clientWs.headers().get("Host");
         if (host == null) {
             clientWs.reject(400);
@@ -1052,7 +1054,7 @@ public class MitmProxy {
             clientWs.reject(502);
             return;
         }
-        handleWebSocketUpgrade(clientWs, ctx);
+        clientWs.accept().onSuccess(ws -> handleWebSocketUpgrade(ws, ctx));
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx) {
@@ -1089,7 +1091,7 @@ public class MitmProxy {
         // so manual resolveHost() + setHost(ip) would break TLS SNI.
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
-        wsUpstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
+        wsUpstreamClient.connect(wsOptions).onSuccess(upstreamWs -> {
             if (clientWs.isClosed()) {
                 upstreamWs.close();
                 return;
@@ -1565,7 +1567,7 @@ public class MitmProxy {
         }
 
         var from = upResp.request();
-        var redirectUri = redirectTarget(from.getHost(), from.getPort(), from.getURI(), location);
+        var redirectUri = redirectTarget(from.authority().host(), from.authority().port(), from.getURI(), location);
         if (redirectUri == null) {
             System.err.println("Invalid redirect Location for " + ref + ": " + location);
             sendError(clientReq.response(), 502, "Invalid redirect Location");
@@ -1921,8 +1923,8 @@ public class MitmProxy {
             var from = first.request();
             var options = new RequestOptions()
                     .setMethod(HttpMethod.GET)
-                    .setHost(from.getHost())
-                    .setPort(from.getPort())
+                    .setHost(from.authority().host())
+                    .setPort(from.authority().port())
                     .setURI(from.getURI())
                     .setConnectTimeout(resumeTimeoutMillis(UPSTREAM_CONNECT_TIMEOUT_MILLIS));
             var headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap().setAll(from.headers());
