@@ -98,10 +98,15 @@ class BridgeSubnetCheckTest {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
-        var result = BridgeSubnetCheck.detectAndFix(incus);
-        assertFalse(result.conflictDetected());
-        assertNull(result.conflictingRoute());
-        assertNull(result.newSubnet());
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(List.of(
+                    "default via 192.168.1.1 dev wlp3s0",
+                    "192.168.1.0/24 dev wlp3s0 proto kernel scope link src 192.168.1.100"));
+            var result = BridgeSubnetCheck.detectAndFix(incus);
+            assertFalse(result.conflictDetected());
+            assertNull(result.conflictingRoute());
+            assertNull(result.newSubnet());
+        }
     }
 
     @Test
@@ -109,8 +114,13 @@ class BridgeSubnetCheckTest {
         var incus = mock(IncusClient.class);
         when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("172.20.0.1/24");
 
-        var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-        assertNull(diagnostic);
+        try (var routes = mockStatic(BridgeSubnetCheck.class, CALLS_REAL_METHODS)) {
+            routes.when(BridgeSubnetCheck::getHostRoutes).thenReturn(List.of(
+                    "default via 192.168.1.1 dev wlp3s0",
+                    "192.168.1.0/24 dev wlp3s0 proto kernel scope link src 192.168.1.100"));
+            var diagnostic = BridgeSubnetCheck.detectConflictDiagnostic(incus);
+            assertNull(diagnostic);
+        }
     }
 
     // VPN routes in a policy routing table (e.g. table 75) must be detected as
