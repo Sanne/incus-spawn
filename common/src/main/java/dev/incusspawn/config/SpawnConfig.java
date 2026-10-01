@@ -72,6 +72,9 @@ public class SpawnConfig {
     @JsonProperty("artifact-cache")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Object artifactCache;
+    @JsonProperty("ready-timeouts")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Object readyTimeouts;
     private Map<String, Object> extras = new java.util.LinkedHashMap<>();
 
     /** How a Claude account authenticates. Named for what the credential is, not what isx uses it for. */
@@ -621,6 +624,8 @@ public class SpawnConfig {
     public void setTuiLiveRefresh(Boolean enabled) { this.tuiLiveRefresh = enabled; }
     /** The {@code artifact-cache:} section, or null when there is none. */
     public ArtifactCacheConfig artifactCache() { return ArtifactCacheConfig.of(artifactCache); }
+    /** The {@code ready-timeouts:} section, or null when there is none. */
+    public ReadyTimeoutsConfig readyTimeouts() { return ReadyTimeoutsConfig.of(readyTimeouts); }
     public void setAutoCloneRepos(String autoCloneRepos) { this.autoCloneRepos = autoCloneRepos == null ? "" : autoCloneRepos; }
     @JsonAnySetter
     public void setExtra(String key, Object value) { extras.put(key, value); }
@@ -710,6 +715,7 @@ public class SpawnConfig {
         this.autoCloneRepos = other.autoCloneRepos;
         this.tuiLiveRefresh = other.tuiLiveRefresh;
         this.artifactCache = other.artifactCache;
+        this.readyTimeouts = other.readyTimeouts;
         this.extras = other.extras;
     }
 

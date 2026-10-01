@@ -261,18 +261,26 @@ public class IncusClient {
      * A VM whose console log shows the agent failing gets {@code agentFailureGrace} more to
      * recover, since systemd restarts it, then fails fast instead of waiting out the whole budget.
      */
-    record ReadyTimeouts(Duration container, Duration vm, Duration agentFailureGrace,
-                         Duration consoleCheckInterval) {
-        static final ReadyTimeouts DEFAULT = new ReadyTimeouts(Duration.ofSeconds(30),
+    public record ReadyTimeouts(Duration container, Duration vm, Duration agentFailureGrace,
+                                Duration consoleCheckInterval) {
+        public static final ReadyTimeouts DEFAULT = new ReadyTimeouts(Duration.ofSeconds(30),
                 Duration.ofSeconds(120), Duration.ofSeconds(20), Duration.ofSeconds(2));
     }
 
     /** A VM's agent takes seconds to come up, so probing it at the container cadence buys nothing. */
     private static final long VM_POLL_INTERVAL_MS = 250;
 
-    private ReadyTimeouts readyTimeouts = ReadyTimeouts.DEFAULT;
+    private volatile ReadyTimeouts readyTimeouts;
 
-    /** Shorten {@link #waitForReady}'s waits; tests only. */
+    private ReadyTimeouts readyTimeouts() {
+        var t = readyTimeouts;
+        if (t != null) return t;
+        var config = dev.incusspawn.config.ReadyTimeoutsConfig.fromConfig();
+        readyTimeouts = config;
+        return config;
+    }
+
+    /** Override {@link #waitForReady}'s timeouts; tests only. */
     void readyTimeouts(ReadyTimeouts timeouts) {
         this.readyTimeouts = timeouts;
     }
@@ -292,7 +300,7 @@ public class IncusClient {
 
     /** See {@link #waitForReady(String)}. */
     public void waitForReady(String name, Boolean isVm) {
-        var t = readyTimeouts;
+        var t = readyTimeouts();
         long start = System.nanoTime();
         long deadline = start + (isVm == Boolean.TRUE ? t.vm() : t.container()).toNanos();
         boolean vm = isVm == Boolean.TRUE;
