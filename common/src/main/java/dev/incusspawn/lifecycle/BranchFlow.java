@@ -241,7 +241,7 @@ public final class BranchFlow {
 
         if (isVm) {
             BuildOutput.stepStart("Waiting for VM agent...");
-            incus.waitForReady(name);
+            incus.waitForReady(name, true);
             BuildOutput.stepDone();
             InstanceLifecycle.pushDeferredVmFiles(incus, name, networkMode);
         }

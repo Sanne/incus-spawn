@@ -5503,7 +5503,7 @@ public class ListCommand extends BaseCommand {
             // protection (#905) and startInstance falls back where the host cannot enforce it.
             InstanceLifecycle.prepareHostDevicesForStart(incus, containerName, warningLog::add);
             InstanceLifecycle.startInstance(incus, containerName, warningLog::add);
-            incus.waitForReady(containerName);
+            incus.waitForReady(containerName, incus.isVm(containerName));
         }
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }
