@@ -16,6 +16,18 @@ public class ShellStatusBar {
     private static final String TYPE_URL = "url";
     private static final String TYPE_COMMAND = "command";
 
+    private static final String SAVE_CURSOR = "\0337";
+    private static final String RESTORE_CURSOR = "\0338";
+    private static final String CLEAR_SCREEN = "\033[2J";
+    private static final String CURSOR_HOME = "\033[1;1H";
+    private static final String RESET_SCROLL_REGION = "\033[r";
+    private static final String ERASE_BELOW = "\033[J";
+    private static final String RESET_STYLE = "\033[0m";
+    private static final String STYLE_REVERSE_VIDEO = "\033[0;7m";
+    private static final String STYLE_DIM = "\033[0;2m";
+    private static final String ERASE_LINE_RIGHT = "\033[K";
+    private static final byte ESC = 0x1B;
+
     private final String instanceName;
     private final String templateName;
     private final OutputStream out;
@@ -70,9 +82,11 @@ public class ShellStatusBar {
         this.height = height;
         synchronized (lock) {
             emit(setScrollRegion(1, height - BAR_LINES));
-            emit("\033[2J");
-            emit("\033[1;1H");
+            emit(CLEAR_SCREEN);
+            emit(CURSOR_HOME);
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
@@ -82,9 +96,11 @@ public class ShellStatusBar {
         this.height = newHeight;
         synchronized (lock) {
             emit(setScrollRegion(1, newHeight - BAR_LINES));
-            emit("\033[2J");
-            emit("\033[1;1H");
+            emit(CLEAR_SCREEN);
+            emit(CURSOR_HOME);
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
@@ -92,24 +108,28 @@ public class ShellStatusBar {
     public void writeOutput(byte[] data, int off, int len) throws IOException {
         synchronized (lock) {
             out.write(data, off, len);
+            emit(SAVE_CURSOR);
             emit(setScrollRegion(1, height - BAR_LINES));
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
 
     public void renderBar() {
         synchronized (lock) {
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
 
     public void cleanup() {
         synchronized (lock) {
-            emit("\033[r");
+            emit(RESET_SCROLL_REGION);
             emit("\033[" + height + ";1H");
-            emit("\033[J");
+            emit(ERASE_BELOW);
             flush();
         }
     }
@@ -117,7 +137,9 @@ public class ShellStatusBar {
     public void showMenu() {
         menuActive = true;
         synchronized (lock) {
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
@@ -126,13 +148,15 @@ public class ShellStatusBar {
         menuActive = false;
         clearFlash();
         synchronized (lock) {
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
     }
 
     public void handleMenuKey(byte key) {
-        if (key == 0x1B) {
+        if (key == ESC) {
             hideMenu();
             return;
         }
@@ -162,7 +186,9 @@ public class ShellStatusBar {
 
     private void renderMenuFlashUnsync(String hint) {
         int bottomRow = height;
+        emit(SAVE_CURSOR);
         emitLine(bottomRow, " " + hint, true);
+        emit(RESTORE_CURSOR);
         flush();
         var prev = flashThread;
         if (prev != null) prev.interrupt();
@@ -171,7 +197,9 @@ public class ShellStatusBar {
                 Thread.sleep(1500);
                 synchronized (lock) {
                     if (menuActive) {
+                        emit(SAVE_CURSOR);
                         renderBarUnsync();
+                        emit(RESTORE_CURSOR);
                         flush();
                     }
                 }
@@ -205,7 +233,9 @@ public class ShellStatusBar {
         this.flashMessage = message;
         this.flashIsError = isError;
         synchronized (lock) {
+            emit(SAVE_CURSOR);
             renderBarUnsync();
+            emit(RESTORE_CURSOR);
             flush();
         }
         var prev = flashThread;
@@ -217,7 +247,9 @@ public class ShellStatusBar {
                     clearFlash();
                     synchronized (lock) {
                         if (!menuActive) {
+                            emit(SAVE_CURSOR);
                             renderBarUnsync();
+                            emit(RESTORE_CURSOR);
                             flush();
                         }
                     }
@@ -332,15 +364,13 @@ public class ShellStatusBar {
             line = line + " ".repeat(pad);
         }
 
-        emit("\0337");
         emit("\033[" + row + ";1H");
         if (highlight) {
-            emit("\033[0;7m" + line + "\033[0m");
+            emit(STYLE_REVERSE_VIDEO + line + RESET_STYLE);
         } else {
-            emit("\033[0;2m" + line + "\033[0m");
+            emit(STYLE_DIM + line + RESET_STYLE);
         }
-        emit("\033[K");
-        emit("\0338");
+        emit(ERASE_LINE_RIGHT);
     }
 
     private void emit(String seq) {
