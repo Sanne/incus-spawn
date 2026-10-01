@@ -1040,6 +1040,25 @@ class ArtifactCacheProxyTest {
     }
 
     @Test
+    void relativeRedirectIsFollowedAndResumedOnTheHostItCameFrom() throws Exception {
+        // A relative Location resolves against the request's authority: the domain and port the
+        // request named, never the address it was sent to (requestWithAsyncDns pins an IP)
+        var content = randomText(128 * 1024);
+        var bytes = content.getBytes(StandardCharsets.UTF_8);
+        var cdnPath = "/cdn/lib-1.0.jar";
+        routes.put(CENTRAL + " " + JAR, new Reply(302, null, cdnPath));
+        routes.put(CENTRAL + " " + cdnPath, new Reply(200, bytes, null, hex("SHA-1", bytes)));
+        etag = ETAG;
+        getsToCut.set(1);
+        proxy.downloadIdleSeconds = 1;
+
+        assertEquals(content, get(CENTRAL, JAR).text());
+        assertEquals(1, hitsOn(CENTRAL, JAR));
+        assertEquals(2, hitsOn(CENTRAL, cdnPath), "the resume goes to the redirect target's host");
+        awaitFile(cached(CENTRAL, JAR), content);
+    }
+
+    @Test
     void downloadGoesOnIntoTheCacheWhenTheClientLeaves() throws Exception {
         var content = randomText(64 * 1024).repeat(256);
         publishJar(CENTRAL, JAR, content);
