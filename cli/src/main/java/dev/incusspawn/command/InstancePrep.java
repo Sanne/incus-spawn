@@ -97,7 +97,7 @@ public class InstancePrep {
         if ("Stopped".equalsIgnoreCase(incus.getInstanceStatus(container))) {
             InstanceLifecycle.prepareHostDevicesForStart(incus, container);
             InstanceLifecycle.startInstance(incus, container);
-            incus.waitForReady(container);
+            incus.waitForReady(container, incus.isVm(container));
         }
 
         if (CertificateAuthority.fixContainerCaIfNeeded(incus, container)) {

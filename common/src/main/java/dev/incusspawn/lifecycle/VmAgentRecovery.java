@@ -42,7 +42,7 @@ public final class VmAgentRecovery {
             // systemd may still be restarting the agent: waitForReady gives it that grace,
             // then reports the failure it logged.
             try {
-                incus.waitForReady(name);
+                incus.waitForReady(name, true);
                 return;
             } catch (IncusException failed) {
                 throw refusal(name, failed.getMessage()
@@ -71,7 +71,7 @@ public final class VmAgentRecovery {
         // however the wait ends.
         long restarted = incus.pid(name);
         if (restarted > 0) incus.configSet(name, Metadata.AGENT_RESTART_BOOT, Long.toString(restarted));
-        incus.waitForReady(name);
+        incus.waitForReady(name, true);
     }
 
     private static IncusException refusal(String name, String why) {

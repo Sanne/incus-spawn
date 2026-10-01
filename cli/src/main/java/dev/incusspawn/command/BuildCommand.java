@@ -1038,7 +1038,7 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName);
+        incus.waitForReady(buildName, effectiveVm);
 
         var container = new Container(incus, buildName);
         if (!effectiveVm) {
@@ -1205,7 +1205,7 @@ public class BuildCommand extends BaseCommand {
         var hostResources = HostResourceSetup.collectEffective(imageDef, defs);
         var dnfCacheWarning = attachBootDevices(buildName, hostResources, effectiveVm);
         var started = startBuild(buildName, imageDef, defs);
-        incus.waitForReady(buildName);
+        incus.waitForReady(buildName, effectiveVm);
         BuildOutput.stepDone();
         announceBuildAccounts(imageDef, defs);
         warnDnfCacheUnavailable(dnfCacheWarning);

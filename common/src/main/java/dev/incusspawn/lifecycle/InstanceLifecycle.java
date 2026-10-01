@@ -581,7 +581,7 @@ public final class InstanceLifecycle {
             say.accept("Starting " + name + "...");
             prepareHostDevicesForStart(incus, name, say);
             startInstance(incus, name, say);
-            incus.waitForReady(name);
+            incus.waitForReady(name, incus.isVm(name));
         } else if (incus.isVm(name) && !agentAnswers(incus, name)) {
             VmAgentRecovery.restartForAgent(incus, name, say);
         }
