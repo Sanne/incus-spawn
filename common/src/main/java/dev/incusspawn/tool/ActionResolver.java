@@ -235,13 +235,10 @@ public class ActionResolver {
 
         return new ActionContext(
                 instanceName,
-                ipv4,
-                status,
-                parentTemplate,
+                incus.machineType(instanceName),
                 installedTools,
-                networkMode,
                 repos,
-                incus.machineType(instanceName)
+                new ActionContext.InstanceState(ipv4, status, parentTemplate, networkMode)
         );
     }
 

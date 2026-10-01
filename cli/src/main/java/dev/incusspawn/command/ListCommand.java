@@ -269,14 +269,10 @@ public class ListCommand extends BaseCommand {
     private boolean deferredBuildForBranch;
 
     private enum PendingAction { NONE, SHELL, SHELL_WITH_COMMAND, BRANCH, BUILD_TEMPLATE, BUILD_THEN_BRANCH, EDIT_TEMPLATE, NEW_TEMPLATE, EXECUTE_ACTION }
-    private record PendingTarget(String name, MachineType machineType) {
-        PendingTarget(String name) { this(name, null); }
-    }
     private PendingAction pendingAction = PendingAction.NONE;
-    private PendingTarget pendingActionTarget;
+    private ActionContext pendingActionTarget;
     private String pendingShellCommand;
     private ToolAction pendingToolAction;
-    private ActionContext pendingToolActionContext;
     // After returning from a shell/branch, focus this instance in the instances panel
     private String returnToInstance;
     private String returnToTemplate;
@@ -545,11 +541,11 @@ public class ListCommand extends BaseCommand {
             switch (pendingAction) {
                 case SHELL -> {
                     returnToInstance = pendingActionTarget.name();
-                    shellInto(pendingActionTarget.name(), pendingActionTarget.machineType());
+                    shellInto(pendingActionTarget);
                 }
                 case SHELL_WITH_COMMAND -> {
                     returnToInstance = pendingActionTarget.name();
-                    shellInto(pendingActionTarget.name(), pendingActionTarget.machineType(), pendingShellCommand);
+                    shellInto(pendingActionTarget, pendingShellCommand);
                 }
                 case BRANCH -> {
                     returnToInstance = pendingActionTarget.name();
@@ -608,7 +604,7 @@ public class ListCommand extends BaseCommand {
                     catch (Exception e) { statusMessage = "Edit failed: " + e.getMessage(); }
                 }
                 case EXECUTE_ACTION -> {
-                    var result = pendingToolAction.execute(pendingToolActionContext);
+                    var result = pendingToolAction.execute(pendingActionTarget);
                     System.out.println(result.message());
                     if (pendingToolAction instanceof YamlToolAction yamlAction && !yamlAction.shouldAutoReturn()) {
                         waitForKeypress();
@@ -1497,9 +1493,10 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.F2)) {
-            if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
+            var target = new ActionContext(selected.name, selected.machineType());
+            if (showProxyErrorIfNeeded(target)) return true;
             pendingAction = PendingAction.SHELL;
-            pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
+            pendingActionTarget = target;
             tui.quit();
             return true;
         }
@@ -1508,7 +1505,7 @@ public class ListCommand extends BaseCommand {
             return true;
         }
         if (key.isKey(KeyCode.ENTER)) {
-            if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
+            if (showProxyErrorIfNeeded(new ActionContext(selected.name, selected.machineType()))) return true;
             if (dispatchDefaultAction(selected)) tui.quit();
             return true;
         }
@@ -1772,7 +1769,7 @@ public class ListCommand extends BaseCommand {
             }
             if (vanished(branchSourceName)) return true;
             pendingAction = PendingAction.BRANCH;
-            pendingActionTarget = new PendingTarget(name);
+            pendingActionTarget = new ActionContext(name, null);
             tui.quit();
             return true;
         }
@@ -1895,7 +1892,7 @@ public class ListCommand extends BaseCommand {
                 return true;
             }
             pendingAction = PendingAction.NEW_TEMPLATE;
-            pendingActionTarget = new PendingTarget(name);
+            pendingActionTarget = new ActionContext(name, null);
             mode = Mode.BROWSE;
             tui.quit();
             return true;
@@ -3256,7 +3253,7 @@ public class ListCommand extends BaseCommand {
             var template = selectedTemplate();
             if (template != null) {
                 pendingAction = PendingAction.EDIT_TEMPLATE;
-                pendingActionTarget = new PendingTarget(template.name);
+                pendingActionTarget = new ActionContext(template.name, null);
                 mode = Mode.BROWSE;
                 tui.quit();
             }
@@ -3293,9 +3290,10 @@ public class ListCommand extends BaseCommand {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
                 if (vanished(selected.name)) return true;
-                if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
+                var target = new ActionContext(selected.name, selected.machineType());
+                if (showProxyErrorIfNeeded(target)) return true;
                 pendingAction = PendingAction.SHELL;
-                pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
+                pendingActionTarget = target;
                 mode = Mode.BROWSE;
                 tui.quit();
             }
@@ -3305,7 +3303,7 @@ public class ListCommand extends BaseCommand {
             var selected = selectedEntry(instanceTableState);
             if (selected != null) {
                 if (vanished(selected.name)) return true;
-                if (showProxyErrorIfNeeded(selected.name, selected.machineType())) return true;
+                if (showProxyErrorIfNeeded(new ActionContext(selected.name, selected.machineType()))) return true;
                 mode = Mode.BROWSE;
                 if (dispatchDefaultAction(selected)) tui.quit();
             }
@@ -4329,7 +4327,7 @@ public class ListCommand extends BaseCommand {
         var ref = defaultActionRef.get(selected.name);
         if (ref == null || ref.isBlank()) {
             pendingAction = PendingAction.SHELL;
-            pendingActionTarget = new PendingTarget(selected.name, selected.machineType());
+            pendingActionTarget = new ActionContext(selected.name, selected.machineType());
             return true;
         }
         var result = findDefaultAction(ref, selected);
@@ -4344,14 +4342,13 @@ public class ListCommand extends BaseCommand {
         if (cmd.isPresent()) {
             pendingAction = PendingAction.SHELL_WITH_COMMAND;
             pendingShellCommand = cmd.get();
-            pendingActionTarget = new PendingTarget(context.instanceName(), context.machineType());
+            pendingActionTarget = context;
             return true;
         }
         if (action.needsDeferredExecution()) {
             pendingAction = PendingAction.EXECUTE_ACTION;
             pendingToolAction = action;
-            pendingToolActionContext = context;
-            pendingActionTarget = new PendingTarget(context.instanceName(), context.machineType());
+            pendingActionTarget = context;
             return true;
         }
         var execResult = action.execute(context);
@@ -4545,9 +4542,10 @@ public class ListCommand extends BaseCommand {
         var tools = collectInstalledTools(instance);
         var repos = collectRepos(instance);
         return new ActionContext(
-                instance.name, instance.ipv4, instance.status,
-                instance.parent, tools, instance.networkMode, repos,
-                instance.machineType());
+                instance.name, instance.machineType(),
+                tools, repos,
+                new ActionContext.InstanceState(instance.ipv4, instance.status,
+                        instance.parent, instance.networkMode));
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5448,15 +5446,15 @@ public class ListCommand extends BaseCommand {
         return true;
     }
 
-    private boolean showProxyErrorIfNeeded(String containerName, MachineType machineType) {
+    private boolean showProxyErrorIfNeeded(ActionContext target) {
         try {
-            var networkModeStr = incus.configGet(containerName, Metadata.NETWORK_MODE);
+            var networkModeStr = incus.configGet(target.name(), Metadata.NETWORK_MODE);
             if (NetworkMode.AIRGAP.name().equals(networkModeStr)) return false;
             if (showProxyError()) return true;
             showSubnetWarning();
-            fixStaticIpIfNeeded(containerName, machineType);
-            fixCaMismatchIfNeeded(containerName, machineType);
-            fixResolvConfIfNeeded(containerName);
+            fixStaticIpIfNeeded(target.name(), target.machineType());
+            fixCaMismatchIfNeeded(target.name(), target.machineType());
+            fixResolvConfIfNeeded(target.name());
             return false;
         } catch (IncusException e) {
             errorMessage = "Cannot reach Incus: " + e.getMessage();
@@ -5513,11 +5511,13 @@ public class ListCommand extends BaseCommand {
         CertificateAuthority.fixContainerCaIfNeeded(incus, containerName);
     }
 
-    private void shellInto(String name, MachineType machineType) {
-        shellInto(name, machineType, null);
+    private void shellInto(ActionContext target) {
+        shellInto(target, null);
     }
 
-    private void shellInto(String name, MachineType machineType, String commandOverride) {
+    private void shellInto(ActionContext target, String commandOverride) {
+        var name = target.name();
+        var machineType = target.machineType();
         var status = incus.getInstanceStatus(name);
         // An empty status means any failed lookup, not just a missing instance, so confirm before
         // giving up: a daemon hiccup must not cancel a shell on an instance that's still there.

@@ -33,8 +33,9 @@ class YamlToolActionTest {
         var repo = new ActionContext.RepoInfo("my-project", "/home/agentuser/my-project", "https://github.com/user/my-project");
         var action = new YamlToolAction("idea-backend", entry, repo);
 
-        var context = new ActionContext("test-instance", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of("idea-backend"), "host", List.of(repo), MachineType.CONTAINER);
+        var context = new ActionContext("test-instance", MachineType.CONTAINER,
+                Set.of("idea-backend"), List.of(repo),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var resolvedUrl = action.resolveUrl(context);
         assertTrue(resolvedUrl.contains("10.0.0.1"));
@@ -98,8 +99,9 @@ class YamlToolActionTest {
         // No URL set
 
         var action = new YamlToolAction("test-tool", entry);
-        var context = new ActionContext("test", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(), MachineType.CONTAINER);
+        var context = new ActionContext("test", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var result = action.execute(context);
 
@@ -115,8 +117,9 @@ class YamlToolActionTest {
         // No command set
 
         var action = new YamlToolAction("test-tool", entry);
-        var context = new ActionContext("test", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(), MachineType.CONTAINER);
+        var context = new ActionContext("test", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var result = action.execute(context);
 
@@ -132,8 +135,9 @@ class YamlToolActionTest {
         // No text set
 
         var action = new YamlToolAction("test-tool", entry);
-        var context = new ActionContext("test", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(), MachineType.CONTAINER);
+        var context = new ActionContext("test", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var result = action.execute(context);
 
@@ -148,8 +152,9 @@ class YamlToolActionTest {
         // No type set
 
         var action = new YamlToolAction("test-tool", entry);
-        var context = new ActionContext("test", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(), MachineType.CONTAINER);
+        var context = new ActionContext("test", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var result = action.execute(context);
 
@@ -164,8 +169,9 @@ class YamlToolActionTest {
         entry.setType("unknown-type");
 
         var action = new YamlToolAction("test-tool", entry);
-        var context = new ActionContext("test", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(), MachineType.CONTAINER);
+        var context = new ActionContext("test", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         var result = action.execute(context);
 
@@ -249,8 +255,9 @@ class YamlToolActionTest {
         var repo = new ActionContext.RepoInfo("my-project", "/home/agentuser/my-project", "https://github.com/user/my-project");
         var action = new YamlToolAction("test-tool", entry, repo);
 
-        var context = new ActionContext("test-instance", "10.0.0.1", "RUNNING", "tpl-dev",
-                Set.of(), "host", List.of(repo), MachineType.CONTAINER);
+        var context = new ActionContext("test-instance", MachineType.CONTAINER,
+                Set.of(), List.of(repo),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl-dev", "host"));
 
         assertEquals("my-project", action.label());
         assertEquals("test-tool", action.toolName());
@@ -287,8 +294,9 @@ class YamlToolActionTest {
         entry.setType("shell");
         var action = new YamlToolAction("test", entry);
         assertTrue(action.shellCommand(null).isEmpty());
-        var result = action.execute(new ActionContext("t", "10.0.0.1", "RUNNING", "tpl",
-                Set.of(), "host", List.of(), MachineType.CONTAINER));
+        var result = action.execute(new ActionContext("t", MachineType.CONTAINER,
+                Set.of(), List.of(),
+                new ActionContext.InstanceState("10.0.0.1", "RUNNING", "tpl", "host")));
         assertFalse(result.success());
         assertTrue(result.message().contains("Missing command"));
     }
