@@ -204,7 +204,6 @@ public class ActionResolver {
             return repos;
         }
 
-        var config = SpawnConfig.load();
         var chain = getInheritanceChain(parentTemplate);
         for (var def : chain) {
             for (var repo : def.getRepos()) {
@@ -214,20 +213,10 @@ public class ActionResolver {
                         ? "/home/agentuser" + path.substring(1)
                         : path;
                 var name = repoPath.substring(repoPath.lastIndexOf('/') + 1);
-                var hostPath = resolveHostPath(name, config);
-                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl(), hostPath));
+                repos.add(new ActionContext.RepoInfo(name, repoPath, repo.getUrl()));
             }
         }
         return repos;
-    }
-
-    private static String resolveHostPath(String repoName, SpawnConfig config) {
-        try {
-            var path = dev.incusspawn.git.GitRemoteUtils.resolveHostRepoPath(repoName, config);
-            return path != null ? path.toString() : null;
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     /**
