@@ -7,13 +7,16 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ShellStatusBarTest {
@@ -33,12 +36,23 @@ class ShellStatusBarTest {
     }
 
     private static ToolAction urlAction(String shortcut, ActionResult result, AtomicInteger runs) {
+        var released = new CountDownLatch(0);
+        return urlAction(shortcut, result, runs, released);
+    }
+
+    private static ToolAction urlAction(String shortcut, ActionResult result, AtomicInteger runs,
+                                        CountDownLatch release) {
         return new ToolAction() {
             @Override public String toolName() { return "vscode-remote"; }
             @Override public String label() { return "Open in VS Code"; }
             @Override public Optional<String> type() { return Optional.of("url"); }
             @Override public Optional<String> shortcut() { return Optional.of(shortcut); }
             @Override public ActionResult execute(ActionContext context) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 runs.incrementAndGet();
                 return result;
             }
@@ -74,16 +88,23 @@ class ShellStatusBarTest {
     }
 
     @Test
-    void aShortcutRunsItsActionAndFlashesTheResultAsUtf8() {
+    void aShortcutRunsItsActionOffTheInputThreadAndFlashesTheResultAsUtf8() throws Exception {
         var runs = new AtomicInteger();
-        bar.setMenuActions(List.of(urlAction("v", ActionResult.error("no handler"), runs)), context());
+        var release = new CountDownLatch(1);
+        var action = urlAction("v", ActionResult.error("no handler"), runs, release);
+        bar.setMenuActions(List.of(action), context());
         bar.setup(80, 24);
         bar.showMenu();
-        drained();
 
-        bar.handleMenuKey((byte) 'V');
-        assertEquals(1, runs.get());
+        // handleMenuKey runs on the thread relaying keystrokes: it must return while the
+        // action is still blocked.
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> bar.handleMenuKey((byte) 'V'));
         assertFalse(bar.isMenuActive());
+        release.countDown();
+        for (int i = 0; i < 200 && !terminal.toString(StandardCharsets.UTF_8).contains("✗ no handler"); i++) {
+            Thread.sleep(10);
+        }
+        assertEquals(1, runs.get());
         assertTrue(drained().contains("✗ no handler"));
     }
 
@@ -108,5 +129,42 @@ class ShellStatusBarTest {
         var out = drained();
         assertTrue(out.contains(" isx an-instance-wit"), out);
         assertFalse(out.contains("very-long-name"), out);
+    }
+
+    @Test
+    void theBarWaitsForAnEscapeSequenceSplitAcrossFramesToEnd() throws Exception {
+        // ls --color can end a frame mid-sequence; a repaint there would cancel it.
+        bar.setup(80, 24);
+        drained();
+        var first = "\033[3".getBytes(StandardCharsets.UTF_8);
+        bar.writeOutput(first, 0, first.length);
+        assertEquals("\033[3", drained(), "nothing may follow an unfinished sequence");
+
+        var rest = "1mred".getBytes(StandardCharsets.UTF_8);
+        bar.writeOutput(rest, 0, rest.length);
+        var out = drained();
+        assertTrue(out.startsWith("1mred\0337"), "repainted once the sequence ended: " + out);
+    }
+
+    @Test
+    void theBarWaitsForACharacterSplitAcrossFramesToEnd() throws Exception {
+        bar.setup(80, 24);
+        drained();
+        var check = "✓".getBytes(StandardCharsets.UTF_8);
+        bar.writeOutput(check, 0, 1);
+        bar.writeOutput(check, 1, check.length - 1);
+        var out = drained();
+        assertTrue(out.startsWith("✓\0337"), out);
+    }
+
+    @Test
+    void anOscTitleSplitAcrossFramesIsNotCutShort() throws Exception {
+        bar.setup(80, 24);
+        drained();
+        var title = "\033]0;my title\007$ ".getBytes(StandardCharsets.UTF_8);
+        bar.writeOutput(title, 0, 6);
+        assertEquals("\033]0;my", drained());
+        bar.writeOutput(title, 6, title.length - 6);
+        assertTrue(drained().startsWith(" title\007$ \0337"));
     }
 }

@@ -93,14 +93,22 @@ class ShellMenuTest {
     }
 
     @Test
-    void offersOnlyHostSideActionsThatOptIn() {
+    void offersOnlyUrlActionsThatOptIn() {
+        // A command action's process would share the session's raw tty with the shell.
         var url = action("vscode-remote", "open", "url", true, null);
         var command = action("tool", "cmd", "command", true, null);
         var notOptedIn = action("tool", "quiet", "url", false, null);
         var inContainer = action("tool", "sh", "shell", true, null);
 
         var menu = ShellMenu.of(List.of(url, notOptedIn, command, inContainer), null, null);
-        assertEquals(List.of(url, command), menu.actions());
+        assertEquals(List.of(url), menu.actions());
+    }
+
+    @Test
+    void actionsWithoutAnIdAreAllOffered() {
+        var docs = action("tool", null, "url", true, null);
+        var site = action("tool", null, "url", true, null);
+        assertEquals(List.of(docs, site), ShellMenu.of(List.of(docs, site), null, null).actions());
     }
 
     @Test
@@ -111,6 +119,8 @@ class ShellMenuTest {
         var openB = action("vscode-remote", "open", "url", true, b);
 
         assertEquals(List.of(openB), ShellMenu.of(List.of(openA, openB), "/home/agentuser/b", null).actions());
+        assertEquals(List.of(openB), ShellMenu.of(List.of(openA, openB), "/home/agentuser/b/src", null).actions());
+        assertEquals(List.of(openA), ShellMenu.of(List.of(openA, openB), "/home/agentuser/bb", null).actions());
         assertEquals(List.of(openA), ShellMenu.of(List.of(openA, openB), "/elsewhere", null).actions());
         assertEquals(List.of(openA), ShellMenu.of(List.of(openA, openB), null, null).actions());
     }

@@ -2,7 +2,6 @@ package dev.incusspawn.incus;
 
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ToolAction;
-import dev.incusspawn.tool.YamlToolAction;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -30,6 +29,7 @@ public class ShellStatusBar {
     private String templateName;
     private final OutputStream out;
     private final Object lock = new Object();
+    private final OutputBoundary childOutput = new OutputBoundary();
 
     private int width;
     private int height;
@@ -87,11 +87,59 @@ public class ShellStatusBar {
     public void writeOutput(byte[] data, int off, int len) throws IOException {
         synchronized (lock) {
             out.write(data, off, len);
-            emit(SAVE_CURSOR);
-            emit(setScrollRegion(1, height - BAR_LINES));
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
+            // A frame can end inside an escape sequence or a UTF-8 character; anything written
+            // there would cut it short, so the fixup waits for a frame that ends between them.
+            if (childOutput.atBoundaryAfter(data, off, len)) {
+                emit(SAVE_CURSOR);
+                emit(setScrollRegion(1, height - BAR_LINES));
+                renderBarUnsync();
+                emit(RESTORE_CURSOR);
+            }
             flush();
+        }
+    }
+
+    /**
+     * Just enough of a terminal's parser to tell whether the child's output stream stands between
+     * escape sequences and characters, across frames: ESC, CSI, string sequences (OSC, DCS, APC,
+     * PM, SOS, ended by BEL or ST) and UTF-8 continuation bytes.
+     */
+    static final class OutputBoundary {
+        private enum State { GROUND, ESC, CSI, STRING, STRING_ESC }
+
+        private State state = State.GROUND;
+        private int continuationBytes;
+
+        boolean atBoundaryAfter(byte[] data, int off, int len) {
+            for (int i = off; i < off + len; i++) {
+                int b = data[i] & 0xFF;
+                switch (state) {
+                    case GROUND -> {
+                        if (b == 0x1B) {
+                            state = State.ESC;
+                            continuationBytes = 0;
+                        } else if ((b & 0xC0) == 0x80) {
+                            if (continuationBytes > 0) continuationBytes--;
+                        } else {
+                            continuationBytes = b >= 0xF0 ? 3 : b >= 0xE0 ? 2 : b >= 0xC0 ? 1 : 0;
+                        }
+                    }
+                    case ESC -> state = switch (b) {
+                        case '[' -> State.CSI;
+                        case ']', 'P', '_', '^', 'X' -> State.STRING;
+                        default -> b >= 0x20 && b <= 0x2F ? State.ESC : State.GROUND;
+                    };
+                    case CSI -> {
+                        if (b >= 0x40 && b <= 0x7E) state = State.GROUND;
+                    }
+                    case STRING -> {
+                        if (b == 0x07) state = State.GROUND;
+                        else if (b == 0x1B) state = State.STRING_ESC;
+                    }
+                    case STRING_ESC -> state = b == '\\' ? State.GROUND : State.STRING;
+                }
+            }
+            return state == State.GROUND && continuationBytes == 0;
         }
     }
 
@@ -175,13 +223,9 @@ public class ShellStatusBar {
     }
 
     private void executeAction(ToolAction action) {
-        var type = action.type().orElse("");
-        if (YamlToolAction.TYPE_URL.equals(type)) {
-            flashResult(action);
-        } else if (YamlToolAction.TYPE_COMMAND.equals(type)) {
-            showFlash("Running: " + action.label() + "...", false);
-            Thread.ofVirtual().start(() -> flashResult(action));
-        }
+        // Off the stdin thread: opening a URL can wait seconds on a launcher, and the shell
+        // must keep getting keystrokes meanwhile.
+        Thread.ofVirtual().start(() -> flashResult(action));
     }
 
     private void flashResult(ToolAction action) {
