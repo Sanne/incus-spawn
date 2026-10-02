@@ -7,6 +7,7 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ReadyTimeoutsConfig;
+import dev.incusspawn.tool.ShellMenu;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -418,12 +419,11 @@ public class IncusClient {
      */
     public record ShellPrep(String workdir, String shellCommand,
                             boolean autoAttachTmux, boolean autoAttachZmx,
-                            String subnetDiagnostic, boolean terminfoHandled,
-                            String templateName) {
+                            String subnetDiagnostic, boolean terminfoHandled) {
 
         public ShellPrep withActionCommand(String command) {
             return new ShellPrep(workdir, command, false, autoAttachZmx,
-                    subnetDiagnostic, terminfoHandled, templateName);
+                    subnetDiagnostic, terminfoHandled);
         }
 
         public static ShellPrep from(IncusClient incus, String container) {
@@ -431,27 +431,23 @@ public class IncusClient {
             var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
             var buildSource = incus.configGet(container, Metadata.BUILD_SOURCE);
             var diag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-            var profile = incus.configGet(container, Metadata.PROFILE);
-            if (profile.isBlank()) profile = incus.configGet(container, Metadata.PARENT);
             return new ShellPrep(
                     workdir.isBlank() ? null : workdir,
                     shellCmd.isBlank() ? null : shellCmd,
                     shouldAutoAttach(buildSource, "tmux"),
                     shouldAutoAttach(buildSource, "zmx"),
-                    diag, false,
-                    profile.isBlank() ? null : profile);
+                    diag, false);
         }
 
         public static ShellPrep fromPrefetched(String workdir, String shellCommand,
                                                String buildSourceJson, String subnetDiagnostic,
-                                               boolean terminfoHandled, String templateName) {
+                                               boolean terminfoHandled) {
             return new ShellPrep(
                     workdir != null && !workdir.isBlank() ? workdir : null,
                     shellCommand != null && !shellCommand.isBlank() ? shellCommand : null,
                     shouldAutoAttach(buildSourceJson, "tmux"),
                     shouldAutoAttach(buildSourceJson, "zmx"),
-                    subnetDiagnostic, terminfoHandled,
-                    templateName != null && !templateName.isBlank() ? templateName : null);
+                    subnetDiagnostic, terminfoHandled);
         }
 
         private static boolean shouldAutoAttach(String buildSourceJson, String toolName) {
@@ -478,12 +474,10 @@ public class IncusClient {
     }
 
     public void interactiveShell(String container, String user, ShellPrep prep) {
-        interactiveShell(container, user, prep, java.util.List.of(), null);
+        interactiveShell(container, user, prep, ShellMenu.NONE);
     }
 
-    public void interactiveShell(String container, String user, ShellPrep prep,
-                                 java.util.List<dev.incusspawn.tool.ToolAction> shellMenuActions,
-                                 dev.incusspawn.tool.ActionContext actionContext) {
+    public void interactiveShell(String container, String user, ShellPrep prep, ShellMenu menu) {
         System.out.print("\033]0;isx:" + container + "\007");
         System.out.flush();
 
@@ -545,12 +539,10 @@ public class IncusClient {
 
             var env = Map.of("HOME", homeDir);
 
-            var statusBarEnabled = dev.incusspawn.config.SpawnConfig.load()
-                    .isFeatureEnabled("shell-status-bar");
             ShellStatusBar statusBar = null;
-            if (statusBarEnabled) {
-                statusBar = new ShellStatusBar(container, prep.templateName(), System.out);
-                statusBar.setMenuActions(shellMenuActions, actionContext);
+            if (ShellMenu.enabled()) {
+                statusBar = new ShellStatusBar(container, System.out);
+                statusBar.setMenuActions(menu.actions(), menu.context());
             }
 
             for (int reconnectAttempt = 0; ; reconnectAttempt++) {

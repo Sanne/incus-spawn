@@ -33,6 +33,7 @@ import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tui.BackgroundTaskManager;
 import dev.incusspawn.tui.InstanceEventWatcher;
 import dev.incusspawn.tui.InstanceLockManager;
+import dev.incusspawn.tool.ShellMenu;
 import dev.incusspawn.tool.ToolAction;
 import dev.incusspawn.tool.ToolDefLoader;
 import dev.incusspawn.tool.ToolSetup;
@@ -4553,48 +4554,12 @@ public class ListCommand extends BaseCommand {
                         instance.parent, instance.networkMode));
     }
 
-    private record ShellMenuResult(java.util.List<ToolAction> actions, ActionContext context) {}
-
-    private ShellMenuResult resolveShellMenuActions(String instanceName) {
-        var instance = allEntries != null
-                ? allEntries.stream().filter(i -> i.name.equals(instanceName)).findFirst().orElse(null)
-                : null;
-        if (instance == null) {
-            return new ShellMenuResult(java.util.List.of(), null);
-        }
-
-        var allActions = actionsCache.getOrDefault(instanceName, java.util.List.of());
-
-        var workdir = incus.configGet(instanceName, dev.incusspawn.incus.Metadata.WORKDIR);
-        var effectiveWorkdir = workdir.isBlank() ? "/home/agentuser" : workdir;
-
-        var candidates = allActions.stream()
-                .filter(ToolAction::isShellMenu)
-                .filter(a -> a.type().map(t -> "url".equals(t) || "command".equals(t)).orElse(false))
-                .toList();
-
-        var menuActions = new ArrayList<ToolAction>();
-        var seen = new java.util.HashSet<String>();
-        for (var action : candidates) {
-            if (action.repoPath().isPresent()) {
-                var groupKey = action.toolName();
-                if (!seen.add(groupKey)) continue;
-                var match = candidates.stream()
-                        .filter(a -> a.toolName().equals(groupKey))
-                        .filter(a -> a.repoPath().map(effectiveWorkdir::equals).orElse(false))
-                        .findFirst()
-                        .orElse(action);
-                menuActions.add(match);
-            } else {
-                var key = action.toolName() + ":" + action.id().orElse("");
-                if (seen.add(key)) {
-                    menuActions.add(action);
-                }
-            }
-        }
-
-        var context = buildActionContext(instance);
-        return new ShellMenuResult(menuActions, context);
+    private ShellMenu shellMenu(String instanceName, String workdir) {
+        if (!ShellMenu.enabled() || allEntries == null) return ShellMenu.NONE;
+        var instance = allEntries.stream().filter(i -> i.name.equals(instanceName)).findFirst().orElse(null);
+        if (instance == null) return ShellMenu.NONE;
+        return ShellMenu.of(actionsCache.getOrDefault(instanceName, java.util.List.of()), workdir,
+                buildActionContext(instance));
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5403,9 +5368,7 @@ public class ListCommand extends BaseCommand {
         if (defaultCmd != null) {
             shellPrep = shellPrep.withActionCommand(defaultCmd);
         }
-        var shellMenuActions = resolveShellMenuActions(name);
-        incus.interactiveShell(name, "agentuser", shellPrep,
-                shellMenuActions.actions(), shellMenuActions.context());
+        incus.interactiveShell(name, "agentuser", shellPrep, shellMenu(name, shellPrep.workdir()));
         System.out.println();
     }
 
@@ -5593,19 +5556,11 @@ public class ListCommand extends BaseCommand {
         ZmxSocketForward.ensureSymlink(name);
         checkGuiHealth(name);
         System.out.println("Connecting to " + name + "...\n");
-
-        var shellMenuActions = resolveShellMenuActions(name);
         var titleMonitor = startAuthTitleMonitor(name);
         try {
-            if (commandOverride != null) {
-                var prep = IncusClient.ShellPrep.from(incus, name).withActionCommand(commandOverride);
-                incus.interactiveShell(name, "agentuser", prep,
-                        shellMenuActions.actions(), shellMenuActions.context());
-            } else {
-                var prep = IncusClient.ShellPrep.from(incus, name);
-                incus.interactiveShell(name, "agentuser", prep,
-                        shellMenuActions.actions(), shellMenuActions.context());
-            }
+            var prep = IncusClient.ShellPrep.from(incus, name);
+            if (commandOverride != null) prep = prep.withActionCommand(commandOverride);
+            incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep.workdir()));
         } finally {
             titleMonitor.interrupt();
         }

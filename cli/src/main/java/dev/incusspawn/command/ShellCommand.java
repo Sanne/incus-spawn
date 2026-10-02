@@ -5,6 +5,7 @@ import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ActionResolver;
+import dev.incusspawn.tool.ShellMenu;
 import org.aesh.command.CommandDefinition;
 import org.aesh.command.CommandResult;
 import org.aesh.command.option.Argument;
@@ -30,22 +31,17 @@ public class ShellCommand extends BaseCommand {
 
         System.out.println("Connecting to " + name + "...\n");
         var prep = IncusClient.ShellPrep.from(incus, name);
-
-        var templateName = incus.configGet(name, Metadata.PROFILE);
-        if (templateName == null || templateName.isBlank()) {
-            templateName = incus.configGet(name, Metadata.PARENT);
+        var menu = ShellMenu.NONE;
+        if (ShellMenu.enabled()) {
+            // PROFILE is the leaf template; PARENT may be a clone when branched from one.
+            var stamps = incus.configByPrefix(name, Metadata.PREFIX);
+            var templateName = stamps.getOrDefault("profile", "");
+            if (templateName.isBlank()) templateName = stamps.getOrDefault("parent", "");
+            menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                    RuntimeServices.toolSetups(), ImageDef.loadAll(w -> {}))
+                    .shellMenu(name, templateName, prep.workdir());
         }
-
-        if (templateName != null && !templateName.isBlank()) {
-            var imageDefs = ImageDef.loadAll(w -> {});
-            var toolDefLoader = RuntimeServices.toolDefLoader();
-            var resolver = new ActionResolver(incus, toolDefLoader, RuntimeServices.toolSetups(), imageDefs);
-            var menuActions = resolver.resolveShellMenuActions(name, templateName);
-            var context = resolver.buildActionContext(name, templateName);
-            incus.interactiveShell(name, "agentuser", prep, menuActions, context);
-        } else {
-            incus.interactiveShell(name, "agentuser", prep);
-        }
+        incus.interactiveShell(name, "agentuser", prep, menu);
         return CommandResult.SUCCESS;
     }
 

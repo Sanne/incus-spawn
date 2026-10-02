@@ -110,16 +110,10 @@ public class BranchCommand extends BaseCommand {
                 shellPrep = shellPrep.withActionCommand(defaultCmd);
             }
         }
-        var templateName = shellPrep.templateName();
-        if (templateName != null && !templateName.isBlank()) {
-            var resolver = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
-                    RuntimeServices.toolSetups(), preflight.defs());
-            var menuActions = resolver.resolveShellMenuActions(name, templateName);
-            var context = resolver.buildActionContext(name, templateName);
-            incus.interactiveShell(name, "agentuser", shellPrep, menuActions, context);
-        } else {
-            incus.interactiveShell(name, "agentuser", shellPrep);
-        }
+        var menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
+                RuntimeServices.toolSetups(), preflight.defs())
+                .shellMenu(name, prefetched.templateName(), prefetched.workdir());
+        incus.interactiveShell(name, "agentuser", shellPrep, menu);
         return CommandResult.SUCCESS;
     }
 
