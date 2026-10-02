@@ -47,9 +47,6 @@ public final class BranchFlow {
 
     private BranchFlow() {}
 
-    /** Tells the proxy to re-read the instance list; replaced by tests, which have no proxy. */
-    static Runnable proxyRefresh = ProxyService::signalAccountRefresh;
-
     /** Whether the proxy is up, warning if not; replaced by tests, which have no proxy. */
     static java.util.function.Predicate<IncusClient> proxyHealthCheck = ProxyHealthCheck::checkOrWarn;
 
@@ -403,7 +400,7 @@ public final class BranchFlow {
         // would still map that address to the old instance and hand its account to this one.
         // Cheap (SIGUSR1 re-reads the instance list only) and happens before the guest boots,
         // so the first request from inside already sees the right answer.
-        proxyRefresh.run();
+        ProxyService.signalAccountRefresh();
     }
 
     private static void warnIfTemplateWantsGui(IncusClient incus, String source,

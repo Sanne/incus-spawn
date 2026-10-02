@@ -8,16 +8,21 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.incusspawn.Environment;
 import dev.incusspawn.config.AccountResolver;
 import dev.incusspawn.config.SpawnConfig;
+import dev.incusspawn.proxy.ProxyService;
 
 /**
  * Points {@code user.home} at a fresh directory for each test, so anything that calls
  * {@code SpawnConfig.save()} writes there rather than over the developer's own
  * {@code ~/.config/incus-spawn/config.yaml}. The static helpers read and write that file for
  * the tests using it, so they can assert on what actually reached disk.
+ *
+ * <p>It also stands in for the proxy's account-refresh signal, which would otherwise reach
+ * whatever isx proxy runs on the developer's machine; {@link #proxySignals()} counts the calls.
  */
 final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
 
@@ -52,6 +57,13 @@ final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
 
     private static final ExtensionContext.Namespace NS = ExtensionContext.Namespace.create(IsolatedHome.class);
 
+    private static final AtomicInteger PROXY_SIGNALS = new AtomicInteger();
+
+    /** How often the code under test signalled the proxy to re-read its accounts. */
+    static int proxySignals() {
+        return PROXY_SIGNALS.get();
+    }
+
     @Override
     public void beforeEach(ExtensionContext context) throws IOException {
         var store = context.getStore(NS);
@@ -59,11 +71,15 @@ final class IsolatedHome implements BeforeEachCallback, AfterEachCallback {
         var home = Files.createTempDirectory("isx-home");
         store.put("home", home);
         System.setProperty("user.home", home.toString());
+        PROXY_SIGNALS.set(0);
+        store.put("signal", ProxyService.replaceAccountRefreshSignal(PROXY_SIGNALS::incrementAndGet));
     }
 
     @Override
     public void afterEach(ExtensionContext context) throws IOException {
         var store = context.getStore(NS);
+        var signal = store.get("signal", Runnable.class);
+        if (signal != null) ProxyService.replaceAccountRefreshSignal(signal);
         var original = store.get("original", String.class);
         if (original == null) {
             System.clearProperty("user.home");

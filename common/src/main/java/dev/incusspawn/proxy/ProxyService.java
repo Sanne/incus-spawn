@@ -511,6 +511,24 @@ public final class ProxyService {
      * state, and taking the lock would serialise every branch behind it.
      */
     public static void signalAccountRefresh() {
+        accountRefreshSignal.run();
+    }
+
+    /**
+     * What {@link #signalAccountRefresh()} does. The real one signals whatever proxy runs on the
+     * developer's machine, so a test reaching any caller -- branch, destroy, clean, an account
+     * change -- runs under a test home ({@code TempHome}, {@code IsolatedHome}), which replaces it.
+     */
+    private static volatile Runnable accountRefreshSignal = ProxyService::sendAccountRefreshSignal;
+
+    /** Replace what {@link #signalAccountRefresh()} does, returning what it did before. For tests. */
+    public static Runnable replaceAccountRefreshSignal(Runnable signal) {
+        var previous = accountRefreshSignal;
+        accountRefreshSignal = signal;
+        return previous;
+    }
+
+    private static void sendAccountRefreshSignal() {
         // Asked at signalling time rather than remembered from an earlier health check, so a
         // proxy restarted in between is never signalled by a stale PID. fuser is the fallback
         // for proxies that predate reporting it: 45-90 ms scanning every process on a desktop.

@@ -5,7 +5,7 @@ import dev.incusspawn.config.NetworkMode;
 import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
-import org.junit.jupiter.api.AfterEach;
+import dev.incusspawn.proxy.ProxyService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,7 +32,6 @@ class BranchFlowAccountsTest {
     /** The branch's pin each time the proxy was signalled. */
     private final List<String> pinAtRefresh = new ArrayList<>();
     private FakeIncusDaemon daemon;
-    private Runnable originalRefresh;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -49,13 +48,8 @@ class BranchFlowAccountsTest {
                       token: "ghp_bot"
                   default: personal
                 """);
-        originalRefresh = BranchFlow.proxyRefresh;
-        BranchFlow.proxyRefresh = () -> pinAtRefresh.add(pin());
-    }
-
-    @AfterEach
-    void tearDown() {
-        BranchFlow.proxyRefresh = originalRefresh;
+        // Replaces TempHome's counter; TempHome puts the real signaller back after the test
+        ProxyService.replaceAccountRefreshSignal(() -> pinAtRefresh.add(pin()));
     }
 
     private static Map<String, ImageDef> templateWithAccount(String account) throws Exception {

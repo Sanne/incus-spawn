@@ -8,6 +8,7 @@ import dev.incusspawn.config.SpawnConfig;
 import dev.incusspawn.incus.FakeIncusDaemon;
 import dev.incusspawn.incus.Metadata;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -16,6 +17,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** The one path by which 'isx account set/unset' and the TUI change an instance's accounts. */
+@ExtendWith(TempHome.class)
 class ChangeAccountsTest {
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
@@ -87,6 +89,18 @@ class ChangeAccountsTest {
                 () -> change(daemon, Map.of("github", "ghost")));
         assertTrue(daemon.requests().stream().noneMatch(r -> r.startsWith("PATCH") || r.startsWith("PUT")),
                 daemon.requests().toString());
+        assertEquals(0, TempHome.proxySignals(), "nothing changed, so there is nothing for the proxy to re-read");
+    }
+
+    /**
+     * A change tells the proxy -- through the test home's stand-in, never the developer's own
+     * running proxy, which signalling for real would reach (#871).
+     */
+    @Test
+    void aChangeSignalsTheProxyOnce() throws Exception {
+        var daemon = daemon(Map.of(Metadata.accountKey("github"), "bot"));
+        change(daemon, Map.of("github", "me"));
+        assertEquals(1, TempHome.proxySignals());
     }
 
     /** Built for a Pro/Max token: an API-key account would need a different environment. */
