@@ -844,15 +844,22 @@ public final class VmManager {
         pb.environment().remove("PERL5OPT");
         pb.environment().remove("PERL5LIB");
         pb.redirectErrorStream(true);
-        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        // perl's own stderr (a broken POSIX module, a missing target) would otherwise vanish and
+        // leave only "vfkit could not be started"; vm.log is where the VM's console already goes.
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(Environment.vmLogFile().toFile()));
         var process = pb.start();
         long pid = process.pid();
-        awaitExec(process, "vfkit");
-
-        Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
-        Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
+        try {
+            awaitExec(process, "vfkit");
+            Files.writeString(Environment.vmPidFile(), String.valueOf(pid));
+            Files.writeString(Environment.vmRestUriFile(), "http://localhost:" + restPort);
+        } catch (IOException e) {
+            // Nothing was recorded, so nothing else will ever find this process to stop it.
+            process.destroyForcibly();
+            throw e;
+        }
         BuildOutput.stepDone("pid=" + pid + ", rest=localhost:" + restPort
-                + (launch == cmd ? "; no " + PERL + ", so it stops with this terminal" : ""));
+                + (launch == cmd ? "; no " + PERL + ", so it stops when the command that started it exits" : ""));
     }
 
     private static final Path PERL = Path.of("/usr/bin/perl");
@@ -888,17 +895,23 @@ public final class VmManager {
      * used to report itself, now shows only as perl exiting.
      */
     static void awaitExec(Process process, String program) throws IOException {
+        Optional<String> last = Optional.empty();
         for (int i = 0; i < 100; i++) {
             if (!process.isAlive()) {
                 throw new IOException(program + " could not be started (exit " + process.exitValue() + ")");
             }
-            if (process.info().command().orElse("").contains(program)) return;
+            last = process.info().command();
+            if (last.map(c -> c.contains(program)).orElse(false)) return;
             try {
                 Thread.sleep(20);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("interrupted while starting " + program);
             }
+        }
+        if (last.isPresent()) {
+            // Still perl two seconds in: something is wrong with the exec, not with reading it.
+            throw new IOException(program + " did not exec within 2s (still " + last.get() + ")");
         }
         // The command could not be read at all; a live process is the best answer there is.
     }
