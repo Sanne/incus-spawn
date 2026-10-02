@@ -30,6 +30,7 @@ import dev.incusspawn.proxy.ProxyLog;
 import dev.incusspawn.lifecycle.ZmxSocketForward;
 import dev.incusspawn.ssh.SshKeyManager;
 import dev.incusspawn.tool.ActionContext;
+import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tui.BackgroundTaskManager;
 import dev.incusspawn.tui.InstanceEventWatcher;
 import dev.incusspawn.tui.InstanceLockManager;
@@ -4548,12 +4549,12 @@ public class ListCommand extends BaseCommand {
                         instance.parent, instance.networkMode));
     }
 
-    private ShellMenu shellMenu(String instanceName, String workdir) {
-        if (!ShellMenu.enabled() || allEntries == null) return ShellMenu.NONE;
-        var instance = allEntries.stream().filter(i -> i.name.equals(instanceName)).findFirst().orElse(null);
-        if (instance == null) return ShellMenu.NONE;
-        return ShellMenu.of(actionsCache.getOrDefault(instanceName, java.util.List.of()), workdir,
-                buildActionContext(instance));
+    private ShellMenu shellMenu(String instanceName, IncusClient.ShellPrep prep) {
+        // Read fresh, as isx shell does, not from the list's cache: its entry can predate the
+        // instance (a branch just made from the dialog) or its start (no IP yet), and its parent
+        // is the direct one where the bar shows the leaf template.
+        return new ActionResolver(incus, toolDefLoader, cdiTools, imageDefs)
+                .shellMenu(instanceName, prep.templateName(), prep.workdir());
     }
 
     private String suggestBranchName(String sourceName) {
@@ -5362,7 +5363,7 @@ public class ListCommand extends BaseCommand {
         if (defaultCmd != null) {
             shellPrep = shellPrep.withActionCommand(defaultCmd);
         }
-        incus.interactiveShell(name, "agentuser", shellPrep, shellMenu(name, shellPrep.workdir()));
+        incus.interactiveShell(name, "agentuser", shellPrep, shellMenu(name, shellPrep));
         System.out.println();
     }
 
@@ -5554,7 +5555,7 @@ public class ListCommand extends BaseCommand {
         try {
             var prep = IncusClient.ShellPrep.from(incus, name);
             if (commandOverride != null) prep = prep.withActionCommand(commandOverride);
-            incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep.workdir()));
+            incus.interactiveShell(name, "agentuser", prep, shellMenu(name, prep));
         } finally {
             titleMonitor.interrupt();
         }
