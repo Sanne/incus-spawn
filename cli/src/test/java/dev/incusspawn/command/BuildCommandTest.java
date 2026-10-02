@@ -2852,12 +2852,12 @@ class BuildCommandTest {
 
     @Test
     void disableSelinuxRewritesAnEnforcingConfigFromAnOlderParent(@TempDir Path tempDir) throws Exception {
-        assumeTrue(Platform.isLinux(), "runs a guest script with the host's tools, and BSD sed -i takes"
-                + " a backup suffix");
         var config = tempDir.resolve("config");
         Files.writeString(config, "# comment SELINUX=enforcing\n  SELINUX=enforcing\nSELINUXTYPE=targeted\n");
         assertEquals(1, runSh(BuildCommand.selinuxNotEnforcingScript(config.toString())));
 
+        assumeTrue(Platform.isLinux(), "the rest runs a guest script with the host's tools, and BSD sed -i"
+                + " takes a backup suffix");
         assertEquals(0, runSh(BuildCommand.disableSelinuxScript(config.toString())));
         assertEquals("# comment SELINUX=enforcing\nSELINUX=disabled\nSELINUXTYPE=targeted\n",
                 Files.readString(config));

@@ -40,7 +40,12 @@ class HostResourceBuildDevicesTest {
     @BeforeEach
     void onALinuxHost() {
         platform = mockStatic(Platform.class, CALLS_REAL_METHODS);
-        platform.when(Platform::isMacOS).thenReturn(false);
+        host(false);
+    }
+
+    private void host(boolean macOs) {
+        platform.when(Platform::isMacOS).thenReturn(macOs);
+        platform.when(Platform::isLinux).thenReturn(!macOs);
     }
 
     @AfterEach
@@ -48,18 +53,23 @@ class HostResourceBuildDevicesTest {
         platform.close();
     }
 
+    /** Both halves of a build refuse it: the devices before the start, the mount after it. */
     @Test
     void overlayIsRefusedOnAMacOsHost(@TempDir Path tmp) throws Exception {
-        platform.when(Platform::isMacOS).thenReturn(true);
+        host(true);
         var ov = Files.createDirectories(tmp.resolve("ov"));
+        var overlay = List.of(new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay"));
         var incus = mock(IncusClient.class);
 
-        var refused = assertThrows(IllegalStateException.class, () ->
-                HostResourceSetup.attachBuildDevices(incus, "b", List.of(
-                        new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay")), MachineType.VM));
+        var attach = assertThrows(IllegalStateException.class, () ->
+                HostResourceSetup.attachBuildDevices(incus, "b", overlay, MachineType.VM));
+        var apply = assertThrows(IllegalStateException.class, () ->
+                HostResourceSetup.applyForBuild(incus, new Container(incus, "b"), overlay, MachineType.VM));
 
-        assertTrue(refused.getMessage().contains("not yet supported on macOS"), refused.getMessage());
+        assertTrue(attach.getMessage().contains("not yet supported on macOS"), attach.getMessage());
+        assertTrue(apply.getMessage().contains("not yet supported on macOS"), apply.getMessage());
         verify(incus, never()).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
+        verify(incus, never()).shellExec(anyString(), any(String[].class));
     }
 
     @Test
