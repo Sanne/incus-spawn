@@ -2,6 +2,7 @@ package dev.incusspawn.incus;
 
 import dev.incusspawn.tool.ActionContext;
 import dev.incusspawn.tool.ToolAction;
+import dev.incusspawn.tool.YamlToolAction;
 
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -12,9 +13,6 @@ import java.util.List;
 public class ShellStatusBar {
 
     static final int BAR_LINES = 2;
-
-    private static final String TYPE_URL = "url";
-    private static final String TYPE_COMMAND = "command";
 
     private static final String SAVE_CURSOR = "\0337";
     private static final String RESTORE_CURSOR = "\0338";
@@ -40,7 +38,6 @@ public class ShellStatusBar {
     private ActionContext actionContext;
     private volatile boolean menuActive = false;
     private volatile String flashMessage;
-    private volatile boolean flashIsError;
     private volatile Thread flashThread;
 
     public ShellStatusBar(String instanceName, OutputStream out) {
@@ -50,21 +47,13 @@ public class ShellStatusBar {
         this.out = new BufferedOutputStream(out, 131072);
     }
 
-    public Object renderLock() {
-        return lock;
-    }
-
     public int effectiveHeight(int realHeight) {
         return Math.max(realHeight - BAR_LINES, 1);
     }
 
+    /** The menu's actions, as {@code ShellMenu.of} selected them: host-side, opted in. */
     public void setMenuActions(List<ToolAction> actions, ActionContext context) {
-        this.menuActions = actions != null ? actions.stream()
-                .filter(a -> {
-                    var type = a.type();
-                    return type.isPresent() && (TYPE_URL.equals(type.get()) || TYPE_COMMAND.equals(type.get()));
-                })
-                .toList() : List.of();
+        this.menuActions = actions != null ? actions : List.of();
         this.actionContext = context;
         this.templateName = context != null && !context.parent().isBlank() ? context.parent() : null;
     }
@@ -78,17 +67,7 @@ public class ShellStatusBar {
     }
 
     public void setup(int width, int height) {
-        this.width = width;
-        this.height = height;
-        synchronized (lock) {
-            emit(setScrollRegion(1, height - BAR_LINES));
-            emit(CLEAR_SCREEN);
-            emit(CURSOR_HOME);
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
-        }
+        resize(width, height);
     }
 
     public void resize(int newWidth, int newHeight) {
@@ -116,7 +95,8 @@ public class ShellStatusBar {
         }
     }
 
-    public void renderBar() {
+    /** Repaint the bar, leaving the cursor where the shell has it. */
+    private void repaint() {
         synchronized (lock) {
             emit(SAVE_CURSOR);
             renderBarUnsync();
@@ -140,23 +120,13 @@ public class ShellStatusBar {
 
     public void showMenu() {
         menuActive = true;
-        synchronized (lock) {
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
-        }
+        repaint();
     }
 
     public void hideMenu() {
         menuActive = false;
         clearFlash();
-        synchronized (lock) {
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
-        }
+        repaint();
     }
 
     public void handleMenuKey(byte key) {
@@ -199,49 +169,33 @@ public class ShellStatusBar {
         flashThread = Thread.ofVirtual().start(() -> {
             try {
                 Thread.sleep(1500);
-                synchronized (lock) {
-                    if (menuActive) {
-                        emit(SAVE_CURSOR);
-                        renderBarUnsync();
-                        emit(RESTORE_CURSOR);
-                        flush();
-                    }
-                }
+                if (menuActive) repaint();
             } catch (InterruptedException ignored) {}
         });
     }
 
     private void executeAction(ToolAction action) {
         var type = action.type().orElse("");
-        if (TYPE_URL.equals(type)) {
-            var result = action.execute(actionContext);
-            if (result.success()) {
-                showFlash("✓ " + action.label(), false);
-            } else {
-                showFlash("✗ " + result.message(), true);
-            }
-        } else if (TYPE_COMMAND.equals(type)) {
+        if (YamlToolAction.TYPE_URL.equals(type)) {
+            flashResult(action);
+        } else if (YamlToolAction.TYPE_COMMAND.equals(type)) {
             showFlash("Running: " + action.label() + "...", false);
-            Thread.ofVirtual().start(() -> {
-                var result = action.execute(actionContext);
-                if (result.success()) {
-                    showFlash("✓ " + action.label(), false);
-                } else {
-                    showFlash("✗ " + result.message(), true);
-                }
-            });
+            Thread.ofVirtual().start(() -> flashResult(action));
+        }
+    }
+
+    private void flashResult(ToolAction action) {
+        var result = action.execute(actionContext);
+        if (result.success()) {
+            showFlash("✓ " + action.label(), false);
+        } else {
+            showFlash("✗ " + result.message(), true);
         }
     }
 
     private void showFlash(String message, boolean isError) {
         this.flashMessage = message;
-        this.flashIsError = isError;
-        synchronized (lock) {
-            emit(SAVE_CURSOR);
-            renderBarUnsync();
-            emit(RESTORE_CURSOR);
-            flush();
-        }
+        repaint();
         var prev = flashThread;
         if (prev != null) prev.interrupt();
         if (!isError) {
@@ -249,14 +203,7 @@ public class ShellStatusBar {
                 try {
                     Thread.sleep(3000);
                     clearFlash();
-                    synchronized (lock) {
-                        if (!menuActive) {
-                            emit(SAVE_CURSOR);
-                            renderBarUnsync();
-                            emit(RESTORE_CURSOR);
-                            flush();
-                        }
-                    }
+                    if (!menuActive) repaint();
                 } catch (InterruptedException ignored) {}
             });
         }
@@ -264,7 +211,6 @@ public class ShellStatusBar {
 
     private void clearFlash() {
         flashMessage = null;
-        flashIsError = false;
         var prev = flashThread;
         if (prev != null) prev.interrupt();
         flashThread = null;
@@ -280,12 +226,7 @@ public class ShellStatusBar {
         }
 
         // Top line: instance info + context (IP, network, repos)
-        var left = " isx " + instanceName;
-        if (templateName != null) {
-            left += " [" + templateName + "]";
-        }
-        var info = buildInfoLine();
-        emitLine(topRow, padLine(left, info), true);
+        emitLine(topRow, padLine(header(), buildInfoLine()), true);
 
         // Bottom line: flash message or F12 hint
         String bottomContent;
@@ -297,6 +238,10 @@ public class ShellStatusBar {
             bottomContent = "";
         }
         emitLine(bottomRow, bottomContent, false);
+    }
+
+    private String header() {
+        return " isx " + instanceName + (templateName != null ? " [" + templateName + "]" : "");
     }
 
     private String buildInfoLine() {
@@ -325,11 +270,7 @@ public class ShellStatusBar {
 
     private void renderMenuUnsync(int topRow, int bottomRow) {
         // Top line: instance name
-        var left = " isx " + instanceName;
-        if (templateName != null) {
-            left += " [" + templateName + "]";
-        }
-        emitLine(topRow, padLine(left, "[Esc] Close "), true);
+        emitLine(topRow, padLine(header(), "[Esc] Close "), true);
 
         // Bottom line: action shortcuts
         var sb = new StringBuilder(" ");

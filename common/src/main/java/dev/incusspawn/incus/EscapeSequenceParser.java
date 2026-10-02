@@ -211,17 +211,4 @@ public class EscapeSequenceParser {
         return pending[0] == 0x1B && pending[1] == 0x5B
                 && pending[2] == 0x32 && pending[3] == 0x34;
     }
-
-    /**
-     * Flush any buffered partial sequence. Call when the session ends
-     * to avoid losing trailing bytes.
-     */
-    public byte[] flush() {
-        if (pendingLen == 0) return new byte[0];
-        var result = new byte[pendingLen];
-        System.arraycopy(pending, 0, result, 0, pendingLen);
-        pendingLen = 0;
-        state = State.NORMAL;
-        return result;
-    }
 }
