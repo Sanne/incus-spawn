@@ -44,6 +44,16 @@ The work is on branch `try-quarkus-4`, one concern per commit.
 8. **`VertxDnsSubstitutions`** substitutes `AddressResolverProvider.factory` so Netty's async DNS resolver stays out of the native proxy (-1.2 MB). Quarkus 3 had this substitution and its Vert.x 5 port dropped it (Q-1). It is safe because Quarkus forces `vertx.disableDnsResolver=true` in every native image (`VertxCoreProcessor`).
 9. **Docs** (CLAUDE.md, DESIGN.md, `.claude/rules/proxy.md`) now name the Vert.x 5 APIs and the rules that the compiler does not enforce.
 
+## Split out ahead of the upgrade
+
+These parts need no Quarkus 4, so they go to `main` as separate PRs, which keeps this branch smaller:
+- #964: experimental native-image options wrapped in unlock/lock (change 7).
+- #961: relative-redirect test (pins the `authority()` switch).
+- #962: `MitmTlsTest` (pins V-T1 and the reload behaviour; fails on the Vert.x 5 port without change 4).
+- #963: WebSocket early-frame tests (the pipelined-frame test passes on 4.5 and fails on 5.1.8, see V-W1).
+
+Still to split out: dropping `quarkus-jackson` (change 2), and the `PoolOptions` and `WebSocketClient` parts of change 1, which both exist in Vert.x 4.5.
+
 ## Open decisions for us
 
 - **D-1: Migrate our own code to Jackson 3 now?** We recommend yes, because Beta1 is to be treated as final and the BOM calls Jackson 2 transitional. The scope was measured by running OpenRewrite `UpgradeJackson_2_3` on a scratch branch:
@@ -55,6 +65,7 @@ The work is on branch `try-quarkus-4`, one concern per commit.
 - **D-2: Connect upstream before accepting a client WebSocket?** The handshake split now allows it, and it would pass upstream's 401/403/429 on as a real HTTP status instead of a 101 followed by close 1011. It is not complete yet: `reject(int)` cannot carry headers or a body, and `accept()` cannot choose the sub-protocol (V-W4). We suggest a follow-up, not part of this migration.
 - **D-3: Netty allocator.** Netty 4.2 defaults to `AdaptiveByteBufAllocator`, and Quarkus 4 sets `io.netty.noUnsafe=true` in native (Q-7). A quick JVM-mode test of four 32 MB TLS relays measured peak RSS of 625 MB on Vert.x 4, 533 MB on Vert.x 5 with the pooled allocator, and 448 MB on Vert.x 5 with the adaptive one. The adaptive allocator kept 68 MB of direct memory after the burst, against 8 MB with the pooled one. The native proxy runs with `-R:MaxRAM=256m`, so `bench/run.sh` on the native binary has to decide whether we pin an allocator.
 - **D-4: Use `sendFile(FileChannel)`?** It is new in Vert.x 5. It would close the stat-then-open window in `serveTrusted` and move the blocking open off the event loop. It is marked unstable and works over HTTP/1 only. Revisit once it is stable.
+- **D-6: Possibly flaky test under Vert.x 5.** `ArtifactCacheProxyTest.clientThatStopsReadingIsNotTakenForAStalledUpstream` failed once on this branch during a full class run and passed on reruns. It has not been seen failing on `main`. We need to find out whether this is load noise or a Vert.x 5 backpressure timing change.
 - **D-5: Reconsider `InterceptedCertOptions.MAX_SERVED_NAMES`.** This one predates the migration. Its javadoc and DESIGN.md say Vert.x caches an `SslContext` per SNI name forever, but both 4.5 and 5 keep a 16-entry LRU (`SslContextProvider.DEFAULT_SNI_CACHE_SIZE`). The cap therefore guards nothing on Vert.x's side. The real cost runs the other way: with more than 16 hot names, every miss rebuilds an `SslContext`.
 
 ## Feedback for the Quarkus team
