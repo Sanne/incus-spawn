@@ -24,6 +24,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.net.SocketAddress;
 
@@ -1052,7 +1053,43 @@ public class MitmProxy {
             clientWs.reject(502);
             return;
         }
-        handleWebSocketUpgrade(clientWs, ctx);
+        if (!completeHandshake(clientWs, domain)) return;
+        try {
+            handleWebSocketUpgrade(clientWs, ctx);
+        } catch (RuntimeException e) {
+            // The 101 has gone out, so a refusal can only be a close: a paused socket with
+            // no relay would otherwise hang until the idle timeout
+            ProxyLog.warn("WebSocket relay setup failed (" + domain + "): " + e.getMessage());
+            if (!clientWs.isClosed()) clientWs.close((short) 1011, "Proxy error");
+        }
+    }
+
+    /**
+     * Completes the client's handshake, or reports that Netty refused it. Vert.x 4 calls the
+     * WebSocket handler before Netty has validated the request, and would only complete the
+     * handshake once the handler returned; a request Netty then refused (no key, no
+     * {@code Upgrade} token in {@code Connection}, ...) had by then been given a credential
+     * and an upstream socket (#972). A valid client sees no difference: its 101 used to go
+     * out as soon as the handler returned, before the upstream connection was up, too.
+     * <p>
+     * {@code accept()} runs Netty's handshake in this call and throws its refusal, after
+     * Vert.x has answered it with a 400. It is deprecated and gone in Vert.x 5;
+     * {@code WebSocketProxyTest#refusedUpgradeIsAnswered400AndNeverDialled} pins the
+     * behaviour for whatever replaces it.
+     */
+    @SuppressWarnings("deprecation")
+    private boolean completeHandshake(ServerWebSocket clientWs, String domain) {
+        // Paused before the 101, so frames arriving before the upstream connection is
+        // ready are buffered, not dropped
+        clientWs.pause();
+        try {
+            clientWs.accept();
+            return true;
+        } catch (RuntimeException e) {
+            ProxyLog.warn("Refusing WebSocket to " + domain + " for "
+                    + describeCaller(sourceAddressOf(clientWs)) + ": " + e.getMessage());
+            return false;
+        }
     }
 
     private void handleWebSocketUpgrade(ServerWebSocket clientWs, RequestContext ctx) {
@@ -1080,16 +1117,12 @@ public class MitmProxy {
 
         injectWebSocketAuth(wsOptions, ctx);
 
-        // Pause the client socket so frames arriving before the upstream
-        // connection is ready are buffered, not dropped.
-        clientWs.pause();
-
         // Let Vert.x resolve DNS via its built-in resolver (configured on the
         // Vertx instance).  Unlike HTTP requests, WebSocket ignores setServer(),
         // so manual resolveHost() + setHost(ip) would break TLS SNI.
         // Uses wsUpstreamClient which has no read-idle timeout (WebSocket
         // sessions can be idle between prompts for minutes).
-        wsUpstreamClient.webSocket(wsOptions).onSuccess(upstreamWs -> {
+        connectUpstreamWebSocket(wsOptions).onSuccess(upstreamWs -> {
             if (clientWs.isClosed()) {
                 upstreamWs.close();
                 return;
@@ -1175,6 +1208,11 @@ public class MitmProxy {
             System.err.println("WebSocket upstream connect failed (" + domain + "): " + err.getMessage());
             if (!clientWs.isClosed()) clientWs.close((short) 1011, "Upstream connection failed");
         });
+    }
+
+    /** Opens the upstream leg of a relayed WebSocket; overridable so tests can see every dial. */
+    Future<WebSocket> connectUpstreamWebSocket(WebSocketConnectOptions options) {
+        return wsUpstreamClient.webSocket(options);
     }
 
     private void injectWebSocketAuth(WebSocketConnectOptions options, RequestContext ctx) {

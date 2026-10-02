@@ -23,6 +23,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
@@ -50,6 +53,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -73,6 +77,8 @@ class WebSocketProxyTest {
     static final ConcurrentLinkedQueue<String> capturedAuthHeaders = new ConcurrentLinkedQueue<>();
     // Per path: a test that leaves its socket to close late must not satisfy another's wait
     static final Map<String, AtomicInteger> upstreamCloses = new ConcurrentHashMap<>();
+    // Every upstream dial the proxy starts, with the options it dials with
+    static final ConcurrentLinkedQueue<WebSocketConnectOptions> upstreamDials = new ConcurrentLinkedQueue<>();
 
     @BeforeAll
     static void startProxy() throws Exception {
@@ -137,7 +143,13 @@ class WebSocketProxyTest {
         var credentials = new ProxyCredentials(
                 "", "", false, "", "", toolProxies);
         proxy = new MitmProxy(serverVertx, "127.0.0.1", mitmPort, healthPort,
-                "127.0.0.1", credentials);
+                "127.0.0.1", credentials) {
+            @Override
+            Future<WebSocket> connectUpstreamWebSocket(WebSocketConnectOptions options) {
+                upstreamDials.add(options);
+                return super.connectUpstreamWebSocket(options);
+            }
+        };
         proxy.upstreamWsPort = mockPort;
         proxy.upstreamWsSsl = true;
         proxy.upstreamTrustAll = true;
@@ -173,6 +185,7 @@ class WebSocketProxyTest {
     @BeforeEach
     void clearCaptured() {
         capturedAuthHeaders.clear();
+        upstreamDials.clear();
     }
 
     private WebSocketConnectOptions connectOptions(String path) {
@@ -417,21 +430,47 @@ class WebSocketProxyTest {
         close(client);
     }
 
-    /** An upgrade request without {@code Sec-WebSocket-Key} is refused with a 400, not left hanging. */
-    @Test
-    void malformedUpgradeIsAnswered400() throws Exception {
+    /**
+     * Upgrade requests that Netty refuses: no key; a {@code Connection} header without the
+     * {@code Upgrade} token, which Vert.x's substring check lets through; no version and no
+     * {@code Origin}, which Netty takes for a Hixie-76 request.
+     */
+    static Stream<Arguments> refusedUpgrades() {
+        // RFC 6455's sample nonce, encoded here so a secret scanner does not mistake it for a key
+        var key = Base64.getEncoder().encodeToString("the sample nonce".getBytes(StandardCharsets.US_ASCII));
+        return Stream.of(
+                Arguments.of("/v1/no-key", "Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"),
+                Arguments.of("/v1/no-upgrade-token", "Connection: x-upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                        + "Sec-WebSocket-Key: " + key + "\r\n"),
+                Arguments.of("/v1/no-version", "Connection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\n"));
+    }
+
+    /**
+     * A refused upgrade is answered with a 400, not left hanging, and never reaches upstream:
+     * no credential is injected and no upstream socket is opened for it (#972). A dial would
+     * start in the event-loop turn that answers the request, before the 400 is written, so
+     * once the 400 has arrived any dial is already recorded.
+     */
+    @ParameterizedTest
+    @MethodSource("refusedUpgrades")
+    void refusedUpgradeIsAnswered400AndNeverDialled(String path, String headers) throws Exception {
         try (var socket = openTls()) {
             var out = socket.getOutputStream();
-            out.write(("GET /v1/no-key HTTP/1.1\r\n"
+            out.write(("GET " + path + " HTTP/1.1\r\n"
                     + "Host: api.openai.com\r\n"
+                    + "Authorization: Bearer sk-placeholder\r\n"
                     + "Upgrade: websocket\r\n"
-                    + "Connection: Upgrade\r\n"
-                    + "Sec-WebSocket-Version: 13\r\n\r\n")
+                    + headers + "\r\n")
                     .getBytes(StandardCharsets.US_ASCII));
             out.flush();
             var head = readHead(socket.getInputStream());
             assertTrue(head.startsWith("HTTP/1.1 400"), "Expected a 400, got: " + head);
         }
+        var dials = upstreamDials.stream()
+                .filter(o -> o.getURI().equals(path))
+                .map(o -> o.getURI() + " " + o.getHeaders())
+                .toList();
+        assertEquals(List.of(), dials, "A refused upgrade must not be dialled upstream");
     }
 
     /**
