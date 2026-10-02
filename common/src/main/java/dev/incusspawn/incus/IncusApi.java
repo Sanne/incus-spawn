@@ -1209,13 +1209,9 @@ class IncusApi {
 
     // ---- Terminal raw mode (for interactive PTY shell) ----
 
-    /**
-     * The parser that takes F12 and the menu's keys out of the input, or null to forward every
-     * byte: with no status bar, or one whose menu is empty -- then F12 is the shell's, as it is
-     * without the feature (mc and others bind it).
-     */
+    /** The parser that takes F12 and the menu's keys out of the input, or null to forward every byte. */
     static EscapeSequenceParser inputParserFor(ShellStatusBar statusBar) {
-        return statusBar != null && !statusBar.menuActions().isEmpty() ? new EscapeSequenceParser() : null;
+        return statusBar != null && statusBar.interceptsF12() ? new EscapeSequenceParser() : null;
     }
 
     /**

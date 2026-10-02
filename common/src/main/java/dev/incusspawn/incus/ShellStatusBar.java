@@ -71,6 +71,14 @@ public class ShellStatusBar {
         return menuActions;
     }
 
+    /**
+     * Whether F12 is the bar's. Not with an empty menu: then it is the shell's, as without the
+     * feature (mc and others bind it).
+     */
+    public boolean interceptsF12() {
+        return !menuActions.isEmpty();
+    }
+
     public boolean isMenuActive() {
         return menuActive;
     }
@@ -232,7 +240,7 @@ public class ShellStatusBar {
             if (shortcut.isPresent() && shortcut.get().length() == 1
                     && Character.toLowerCase(shortcut.get().charAt(0)) == Character.toLowerCase(ch)) {
                 hideMenu();
-                executeAction(action);
+                runAction(action);
                 return;
             }
         }
@@ -267,10 +275,6 @@ public class ShellStatusBar {
         return Thread.ofVirtual().start(() -> flashResult(action));
     }
 
-    private void executeAction(ToolAction action) {
-        runAction(action);
-    }
-
     private void flashResult(ToolAction action) {
         var result = action.executeWithoutPrompting(actionContext);
         if (result.success()) {
@@ -283,8 +287,7 @@ public class ShellStatusBar {
     private void showFlash(String message, boolean isError) {
         synchronized (lock) {
             if (!open) return;
-            // One row, so the first line only: an action's error can span several, and a bare
-            // LF in raw mode would step out of the bar.
+            // One row: an action's error can span several lines, and the first says what failed.
             this.flashMessage = message.lines().findFirst().orElse("");
             paintUnsync(false);
         }
