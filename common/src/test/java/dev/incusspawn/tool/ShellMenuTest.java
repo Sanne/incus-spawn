@@ -115,8 +115,13 @@ class ShellMenuTest {
     void aRepoActionIsOfferedOnceForTheRepoTheSessionStartsIn() {
         var a = new ActionContext.RepoInfo("a", "/home/agentuser/a", "u");
         var b = new ActionContext.RepoInfo("b", "/home/agentuser/b", "u");
-        var openA = action("vscode-remote", "open", "url", true, a);
-        var openB = action("vscode-remote", "open", "url", true, b);
+        // One declaration, expanded once per repo.
+        var open = new ActionEntry();
+        open.setId("open");
+        open.setType("url");
+        open.setShellMenu(true);
+        ToolAction openA = new YamlToolAction("vscode-remote", open, a);
+        ToolAction openB = new YamlToolAction("vscode-remote", open, b);
 
         assertEquals(List.of(openB), ShellMenu.of(List.of(openA, openB), "/home/agentuser/b", null).actions());
         assertEquals(List.of(openB), ShellMenu.of(List.of(openA, openB), "/home/agentuser/b/src", null).actions());
@@ -133,5 +138,23 @@ class ShellMenuTest {
 
         var menu = ShellMenu.of(List.of(open, other), "/home/agentuser/a", null);
         assertTrue(menu.actions().containsAll(List.of(open, other)));
+    }
+
+    @Test
+    void twoIdLessRepoActionsOfOneToolAreBothOffered() {
+        var a = new ActionContext.RepoInfo("a", "/home/agentuser/a", "u");
+        var b = new ActionContext.RepoInfo("b", "/home/agentuser/b", "u");
+        var gateway = new ActionEntry();
+        gateway.setType("url");
+        gateway.setShellMenu(true);
+        var docs = new ActionEntry();
+        docs.setType("url");
+        docs.setShellMenu(true);
+        List<ToolAction> actions = List.of(
+                new YamlToolAction("idea-backend", gateway, a), new YamlToolAction("idea-backend", gateway, b),
+                new YamlToolAction("idea-backend", docs, a), new YamlToolAction("idea-backend", docs, b));
+
+        var menu = ShellMenu.of(actions, "/home/agentuser/b", null).actions();
+        assertEquals(List.of(actions.get(1), actions.get(3)), menu);
     }
 }

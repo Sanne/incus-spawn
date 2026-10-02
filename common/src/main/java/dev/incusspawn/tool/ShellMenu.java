@@ -41,7 +41,7 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
                 continue;
             }
             // One entry per expanded action, whichever of its repos the session starts in.
-            var key = action.toolName() + ":" + action.baseId().orElse("");
+            var key = action.expandedFrom();
             var repo = action.repoPath().get();
             var inWorkdir = effectiveWorkdir.equals(repo) || effectiveWorkdir.startsWith(repo + "/");
             if (!chosen.containsKey(key) || inWorkdir) {
