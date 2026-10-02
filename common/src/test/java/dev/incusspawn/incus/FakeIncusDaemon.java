@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +43,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     private final List<String> apiExtensions = new ArrayList<>();
     private final Map<String, String> pushedModes = new LinkedHashMap<>();
     private final Map<String, String> consoleLogs = new LinkedHashMap<>();
+    /** The {@code processes} each state read reports, consumed in order; the last one sticks. */
+    private final Map<String, ArrayDeque<Integer>> agentProcesses = new LinkedHashMap<>();
     /** Running instances' init pids; every start gets a fresh one, as a new QEMU process would. */
     private final Map<String, Long> pids = new LinkedHashMap<>();
     private final List<String> shutdownIgnored = new ArrayList<>();
@@ -185,6 +188,18 @@ public final class FakeIncusDaemon implements IncusTransport {
         return this;
     }
 
+    /**
+     * Have the VM's state report {@code processes} as each read in turn, then the last value
+     * from there on: -1 while its agent is not connected, as Incus reports it, then a real count.
+     * Without this the state carries no {@code processes} at all.
+     */
+    public FakeIncusDaemon agentProcesses(String instanceName, int... reads) {
+        var queue = new ArrayDeque<Integer>();
+        for (int r : reads) queue.add(r);
+        agentProcesses.put(instanceName, queue);
+        return this;
+    }
+
     /** The instance as a GET would return it. */
     public JsonNode instance(String name) {
         return instances.get(name).deepCopy();
@@ -212,7 +227,8 @@ public final class FakeIncusDaemon implements IncusTransport {
     public IncusClient clientWithShortReadyWait() {
         var client = client();
         client.readyTimeouts(new IncusClient.ReadyTimeouts(java.time.Duration.ofMillis(20),
-                java.time.Duration.ofMillis(20), java.time.Duration.ofMillis(10), java.time.Duration.ofMillis(5)));
+                java.time.Duration.ofMillis(20), java.time.Duration.ofMillis(10), java.time.Duration.ofMillis(5),
+                java.time.Duration.ofMillis(5)));
         return client;
     }
 
@@ -366,6 +382,10 @@ public final class FakeIncusDaemon implements IncusTransport {
             var state = JSON.createObjectNode();
             state.put("status", instance.path("status").asText());
             state.put("pid", pids.getOrDefault(name, 0L));
+            var processes = agentProcesses.get(name);
+            if (processes != null) {
+                state.put("processes", processes.size() > 1 ? processes.poll() : processes.peek());
+            }
             // A running guest holds what DHCP gave it: its reservation, unless told otherwise
             var held = dhcpAnswers.getOrDefault(name, bridgeNicAddress(instance));
             if (instance.path("status").asText().equals("Running")) {

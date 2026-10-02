@@ -264,11 +264,14 @@ public class IncusClient {
      * (cloud-init, growpart) or nested virtualization can stretch well past a container's budget.
      * A VM whose console log shows the agent failing gets {@code agentFailureGrace} more to
      * recover, since systemd restarts it, then fails fast instead of waiting out the whole budget.
+     * A VM whose state says its agent is not connected still gets an exec probe every
+     * {@code gatedProbeInterval}, in case the state is wrong.
      */
     public record ReadyTimeouts(Duration container, Duration vm, Duration agentFailureGrace,
-                                Duration consoleCheckInterval) {
+                                Duration consoleCheckInterval, Duration gatedProbeInterval) {
         public static final ReadyTimeouts DEFAULT = new ReadyTimeouts(Duration.ofSeconds(30),
-                Duration.ofSeconds(120), Duration.ofSeconds(20), Duration.ofSeconds(2));
+                Duration.ofSeconds(120), Duration.ofSeconds(20), Duration.ofSeconds(2),
+                Duration.ofSeconds(5));
     }
 
     /** A VM's agent takes seconds to come up, so probing it at the container cadence buys nothing. */
@@ -290,6 +293,12 @@ public class IncusClient {
      * costs no extra request. Pass {@link MachineType#VM} when the caller already knows the
      * instance is a VM: this avoids type-detection overhead and guarantees the 120s VM timeout
      * applies from the start.
+     *
+     * <p>A VM is probed with exec on every poll only once its {@code GET /state} reports its agent
+     * connected ({@code processes >= 0}): until then a probe is a POST and WebSockets that can
+     * almost only fail, so it gets one per {@code gatedProbeInterval} (#954). Exec still decides
+     * when the wait ends. A state without {@code processes} probes as before. A container is never
+     * gated, as its first probe usually answers.
      */
     public void waitForReady(String name) {
         waitForReady(name, MachineType.CONTAINER);
@@ -301,15 +310,39 @@ public class IncusClient {
         long start = System.nanoTime();
         long deadline = start + (type == MachineType.VM ? t.vm() : t.container()).toNanos();
         boolean vm = type == MachineType.VM;
+        // A VM is not probed with exec while its state says the agent is not connected (#954)
+        boolean execGateOpen = !vm;
         boolean agentFailed = false;
         long nextConsoleCheck = start;
+        long nextGatedProbe = start + t.gatedProbeInterval().toNanos();
         while (System.nanoTime() < deadline) {
-            try {
-                if (shellExec(name, "echo", "ready").success()) return;
-            } catch (Exception ignored) {
+            boolean probe = true;
+            if (!execGateOpen) {
+                var state = runtimeState(name);
+                if (state != null) {
+                    failIfDied(name, state.path("status").asText(""), MachineType.VM);
+                    var processes = state.get("processes");
+                    execGateOpen = processes == null || processes.asInt() >= 0;
+                    probe = execGateOpen;
+                }
+                // Incus also reports -1 when its own state query to a connected agent fails, so
+                // exec, which decides, still gets an occasional probe while the gate is shut
+                if (!probe && System.nanoTime() >= nextGatedProbe) {
+                    probe = true;
+                    nextGatedProbe = System.nanoTime() + t.gatedProbeInterval().toNanos();
+                }
+            }
+            if (probe) {
+                ExecResult result = null;
+                try {
+                    result = shellExec(name, "echo", "ready");
+                } catch (Exception ignored) {
+                }
+                if (result != null && answeredReady(result)) return;
                 var instance = startupState(name);
                 if (!vm && machineType(instance) == MachineType.VM) {
                     vm = true;
+                    execGateOpen = false;
                     deadline = start + t.vm().toNanos();
                 }
                 failIfDied(name, instance);
@@ -335,12 +368,23 @@ public class IncusClient {
                 + waited + " seconds.\nIts boot log may say why: incus console " + name + " --show-log");
     }
 
+    /**
+     * Whether a readiness probe ran: its exit code alone cannot say, since an exec Incus could not
+     * hand to a VM's agent has been seen to end with exit 0 and the error on stdout.
+     */
+    static boolean answeredReady(ExecResult result) {
+        return result.success() && result.stdout().strip().equals("ready");
+    }
+
     /** Throw if {@code instance} has stopped or errored: waiting any longer cannot help. */
     private void failIfDied(String name, JsonNode instance) {
         if (instance == null) return;
-        var status = instance.path("status").asText("");
+        failIfDied(name, instance.path("status").asText(""), machineType(instance));
+    }
+
+    private void failIfDied(String name, String status, MachineType type) {
         if (!"Stopped".equals(status) && !"Error".equals(status)) return;
-        if (machineType(instance) == MachineType.CONTAINER) {
+        if (type == MachineType.CONTAINER) {
             throw new IncusException("Container " + name + " died during startup (status: " + status + ")");
         }
         var msg = "VM " + name + " died during startup (status: " + status + ")";
@@ -355,6 +399,20 @@ public class IncusClient {
      */
     public List<String> agentFailureLines(String name) {
         return VmAgentFailure.unrecoveredLines(consoleLog(name));
+    }
+
+    /**
+     * The instance's {@code GET /state}, or null when the daemon cannot say. Incus reports a VM's
+     * {@code processes} as -1 until its agent connects, the moment exec starts working, so one
+     * GET answers what an exec probe would, without the exec's POST and WebSockets.
+     */
+    private JsonNode runtimeState(String name) {
+        try {
+            var resp = http().get("/1.0/instances/" + name + "/state");
+            return resp.isSuccess() ? resp.body().path("metadata") : null;
+        } catch (Exception daemonUnreachable) {
+            return null;
+        }
     }
 
     /** The instance's metadata, or null when the daemon cannot say (retry rather than crash). */
@@ -1090,13 +1148,8 @@ public class IncusClient {
      * the daemon cannot say. It changes at every start, so it tells one boot from the next.
      */
     public long pid(String name) {
-        try {
-            var resp = http().get("/1.0/instances/" + name + "/state");
-            if (!resp.isSuccess()) return 0;
-            return Math.max(0, resp.body().path("metadata").path("pid").asLong(0));
-        } catch (Exception e) {
-            return 0;
-        }
+        var state = runtimeState(name);
+        return state == null ? 0 : Math.max(0, state.path("pid").asLong(0));
     }
 
     /** Every global IPv4 address a running instance's interfaces hold, as its state reports them. */

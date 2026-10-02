@@ -48,7 +48,8 @@ public record ReadyTimeoutsConfig(String container, String vm) {
                 or(ArtifactCacheConfig.parseDuration(container), d.container()),
                 or(ArtifactCacheConfig.parseDuration(vm), d.vm()),
                 d.agentFailureGrace(),
-                d.consoleCheckInterval());
+                d.consoleCheckInterval(),
+                d.gatedProbeInterval());
     }
 
     private static Duration or(Duration parsed, Duration fallback) {

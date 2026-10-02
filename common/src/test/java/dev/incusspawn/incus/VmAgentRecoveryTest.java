@@ -29,7 +29,7 @@ class VmAgentRecoveryTest {
     private IncusClient client() {
         var client = daemon.client();
         client.readyTimeouts(new IncusClient.ReadyTimeouts(Duration.ofMillis(50),
-                Duration.ofMillis(100), Duration.ofMillis(50), Duration.ofMillis(20)));
+                Duration.ofMillis(100), Duration.ofMillis(50), Duration.ofMillis(20), Duration.ofMillis(20)));
         return client;
     }
 

@@ -3,6 +3,7 @@ package dev.incusspawn.incus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,9 +23,14 @@ class WaitForReadyTest {
     private final FakeIncusDaemon daemon = new FakeIncusDaemon();
 
     private IncusClient client(long containerMs, long vmMs, long graceMs) {
+        return client(containerMs, vmMs, graceMs, 60_000);
+    }
+
+    private IncusClient client(long containerMs, long vmMs, long graceMs, long gatedProbeMs) {
         var client = daemon.client();
         client.readyTimeouts(new IncusClient.ReadyTimeouts(Duration.ofMillis(containerMs),
-                Duration.ofMillis(vmMs), Duration.ofMillis(graceMs), Duration.ofMillis(20)));
+                Duration.ofMillis(vmMs), Duration.ofMillis(graceMs), Duration.ofMillis(20),
+                Duration.ofMillis(gatedProbeMs)));
         return client;
     }
 
@@ -83,6 +89,73 @@ class WaitForReadyTest {
         var msg = e.getMessage();
         assertTrue(msg.startsWith("VM vm1 died during startup (status: Stopped)"), msg);
         assertTrue(msg.contains(FAILED), msg);
+    }
+
+    private List<String> requestsEndingWith(String suffix) {
+        return daemon.requests().stream().filter(r -> r.endsWith(suffix)).toList();
+    }
+
+    @Test
+    void vmWhoseAgentIsNotConnectedIsNeverProbedWithExec() {
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).agentProcesses("vm1", -1);
+        var e = assertThrows(IncusException.class, () -> client(50, 300, 100).waitForReady("vm1", MachineType.VM));
+
+        assertTrue(e.getMessage().startsWith("VM vm1 is running, but its incus-agent did not come up within"),
+                e.getMessage());
+        assertEquals(List.of(), requestsEndingWith("/exec"),
+                "while its state says the agent is not connected, an exec probe can only fail (#954)");
+        assertFalse(requestsEndingWith("/state").isEmpty(), daemon.requests().toString());
+    }
+
+    @Test
+    void vmWhoseStateNeverShowsTheAgentIsStillProbedNowAndThen() {
+        // Incus also reports -1 when its state query to a connected agent fails: exec must get a say
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).agentProcesses("vm1", -1);
+        assertThrows(IncusException.class, () -> client(50, 1_500, 100, 500).waitForReady("vm1", MachineType.VM));
+
+        int execs = requestsEndingWith("/exec").size();
+        int states = requestsEndingWith("/state").size();
+        assertTrue(execs >= 1, "a shut gate still lets exec answer: " + daemon.requests());
+        assertTrue(states >= 2 * execs, "one probe per gated interval, not per poll: " + daemon.requests());
+    }
+
+    @Test
+    void vmIsProbedWithExecOnlyOnceItsAgentConnects() {
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of()).agentProcesses("vm1", -1, -1, -1, 16);
+        assertThrows(IncusException.class, () -> client(50, 2_000, 100).waitForReady("vm1", MachineType.VM));
+
+        var requests = daemon.requests();
+        assertEquals(4, requestsEndingWith("/state").size(),
+                "once the agent is connected the state is not read again: " + requests);
+        int fourthState = requests.lastIndexOf("GET /1.0/instances/vm1/state");
+        int firstExec = requests.indexOf("POST /1.0/instances/vm1/exec");
+        assertTrue(firstExec > fourthState, "the first exec follows the state read that saw the agent: " + requests);
+    }
+
+    @Test
+    void vmWhoseStateDoesNotReportProcessesIsProbedWithExec() {
+        daemon.instance("vm1", "virtual-machine", "Running", Map.of());
+        assertThrows(IncusException.class, () -> client(50, 300, 100).waitForReady("vm1", MachineType.VM));
+
+        assertEquals(1, requestsEndingWith("/state").size(), daemon.requests().toString());
+        assertTrue(requestsEndingWith("/exec").size() > 1, "falls back to probing exec: " + daemon.requests());
+    }
+
+    @Test
+    void containerNeverReadsItsState() {
+        daemon.instance("c1", "container", "Running", Map.of()).agentProcesses("c1", -1);
+        assertThrows(IncusException.class, () -> client(200, 5_000, 100).waitForReady("c1", MachineType.CONTAINER));
+
+        assertEquals(List.of(), requestsEndingWith("/state"), "a container's wait costs no state read");
+    }
+
+    @Test
+    void onlyAProbeThatPrintedReadyCountsAsAnswered() {
+        assertTrue(IncusClient.answeredReady(new IncusClient.ExecResult(0, "ready\n", "")));
+        assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(0, "Error: VM agent isn't currently running\n", "")),
+                "an exit 0 that did not run the probe must not end the wait");
+        assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(0, "", "")));
+        assertFalse(IncusClient.answeredReady(new IncusClient.ExecResult(1, "ready\n", "")));
     }
 
     @Test
