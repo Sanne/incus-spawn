@@ -102,6 +102,15 @@ public final class ProxyConfig {
         return gatewayIp(bridge);
     }
 
+    /**
+     * What to check when {@link #resolveGatewayIp} fails. On macOS Incus runs inside the VM and
+     * the host has no {@code incus} CLI, so the hint points at the VM instead (#939).
+     */
+    public static String gatewayUnavailableHint(boolean macOS) {
+        return macOS ? "Is the VM running? Try 'isx vm status'."
+                : "Is Incus running? Try 'incus network list'.";
+    }
+
     private static String gatewayIp(Optional<BridgeAddress> bridge) {
         return bridge.map(BridgeAddress::gateway).orElseGet(() -> cachedGatewayIp(
                 new IncusException("Bridge incusbr0 has no ipv4.address configured")));

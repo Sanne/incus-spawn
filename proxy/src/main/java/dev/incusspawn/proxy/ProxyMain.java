@@ -246,7 +246,7 @@ public class ProxyMain implements QuarkusApplication {
             gatewayIp = VmNetwork.discoverHostBridgeIp();
             if (gatewayIp == null) {
                 System.err.println("Error: could not discover VM-facing bridge interface.");
-                System.err.println("Is the VM running? Try 'isx vm status'.");
+                System.err.println(ProxyConfig.gatewayUnavailableHint(true));
                 return null;
             }
         } else {
@@ -254,7 +254,7 @@ public class ProxyMain implements QuarkusApplication {
                 gatewayIp = ProxyConfig.resolveGatewayIp(incus);
             } catch (Exception e) {
                 System.err.println("Error: could not determine Incus bridge gateway IP.");
-                System.err.println("Is Incus running? Try 'incus network list'.");
+                System.err.println(ProxyConfig.gatewayUnavailableHint(false));
                 return null;
             }
         }

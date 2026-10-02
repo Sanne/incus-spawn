@@ -53,19 +53,20 @@ public class ProxyCommand extends BaseCommand {
         @Override
         protected CommandResult doExecute() throws Exception {
             var incus = RuntimeServices.incus();
-            String gatewayIp;
+            // On macOS a healthy proxy answers on loopback without asking Incus, so the gateway
+            // is only looked up, and only fails, when the check actually needs it.
+            ProxyHealthCheck.ProxyStatus status;
+            String healthIp;
             try {
-                gatewayIp = ProxyConfig.resolveGatewayIp(incus);
+                status = ProxyHealthCheck.check(incus);
+                healthIp = ProxyHealthCheck.healthAddress(incus);
             } catch (Exception e) {
-                System.err.println("Could not determine Incus bridge gateway IP.");
-                System.err.println("Is Incus running? Try 'incus network list'.");
+                System.err.println("Could not determine Incus bridge gateway IP: " + e.getMessage());
+                System.err.println(ProxyConfig.gatewayUnavailableHint(Platform.isMacOS()));
                 return CommandResult.valueOf(1);
             }
-
-            var status = ProxyHealthCheck.check(incus);
             var serviceInstalled = ProxyService.isInstalled();
             var serviceActive = serviceInstalled && ProxyService.isActive();
-            var healthIp = ProxyHealthCheck.healthAddress(incus);
             switch (status) {
                 case RUNNING, WAITING_FOR_DNS -> {
                     System.out.println(status == ProxyHealthCheck.ProxyStatus.RUNNING
