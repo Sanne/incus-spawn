@@ -264,43 +264,18 @@ public class ActionResolver {
     }
 
     /**
-     * Resolve shell menu actions for an instance: actions with shell_menu=true,
-     * filtered to host-side types (url/command), with expand:repos collapsed
-     * to a single entry matching the effective workdir.
+     * The shell status bar's F12 menu for an instance, or {@link ShellMenu#NONE} without a single
+     * Incus request when the feature is off or the instance has no template. The menu's actions
+     * come from the context it builds, so tools and repos are collected once.
      */
-    public List<ToolAction> resolveShellMenuActions(String instanceName, String parentTemplate) {
-        var installedTools = collectInstalledTools(instanceName, parentTemplate);
-        var repos = collectRepos(parentTemplate);
-        var allActions = resolveActionsForInstance(instanceName, parentTemplate, installedTools, repos);
-
-        var workdir = incus.configGet(instanceName, Metadata.WORKDIR);
-        var effectiveWorkdir = (workdir == null || workdir.isBlank()) ? "/home/agentuser" : workdir;
-
-        var candidates = allActions.stream()
-                .filter(ToolAction::isShellMenu)
-                .filter(a -> a.type().map(t -> "url".equals(t) || "command".equals(t)).orElse(false))
-                .toList();
-
-        var menuActions = new ArrayList<ToolAction>();
-        var seen = new java.util.HashSet<String>();
-        for (var action : candidates) {
-            if (action.repoPath().isPresent()) {
-                var groupKey = action.toolName();
-                if (!seen.add(groupKey)) continue;
-                var match = candidates.stream()
-                        .filter(a -> a.toolName().equals(groupKey))
-                        .filter(a -> a.repoPath().map(effectiveWorkdir::equals).orElse(false))
-                        .findFirst()
-                        .orElse(action);
-                menuActions.add(match);
-            } else {
-                var key = action.toolName() + ":" + action.id().orElse("");
-                if (seen.add(key)) {
-                    menuActions.add(action);
-                }
-            }
+    public ShellMenu shellMenu(String instanceName, String templateName, String workdir) {
+        if (templateName == null || templateName.isBlank() || !ShellMenu.enabled()) {
+            return ShellMenu.NONE;
         }
-        return menuActions;
+        var context = buildActionContext(instanceName, templateName);
+        var actions = resolveActionsForInstance(instanceName, templateName,
+                context.installedTools(), context.repos());
+        return ShellMenu.of(actions, workdir, context);
     }
 
     // --- Private helpers ---

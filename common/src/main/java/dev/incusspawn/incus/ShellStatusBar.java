@@ -29,7 +29,7 @@ public class ShellStatusBar {
     private static final byte ESC = 0x1B;
 
     private final String instanceName;
-    private final String templateName;
+    private String templateName;
     private final OutputStream out;
     private final Object lock = new Object();
 
@@ -43,9 +43,8 @@ public class ShellStatusBar {
     private volatile boolean flashIsError;
     private volatile Thread flashThread;
 
-    public ShellStatusBar(String instanceName, String templateName, OutputStream out) {
+    public ShellStatusBar(String instanceName, OutputStream out) {
         this.instanceName = instanceName;
-        this.templateName = templateName;
         // Buffer all writes so child output + scroll region fixup + bar repaint
         // reach the terminal in one write syscall (one rendering frame).
         this.out = new BufferedOutputStream(out, 131072);
@@ -67,6 +66,7 @@ public class ShellStatusBar {
                 })
                 .toList() : List.of();
         this.actionContext = context;
+        this.templateName = context != null && !context.parent().isBlank() ? context.parent() : null;
     }
 
     public List<ToolAction> menuActions() {

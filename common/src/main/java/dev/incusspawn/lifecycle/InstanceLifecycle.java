@@ -1133,7 +1133,7 @@ public final class InstanceLifecycle {
         public IncusClient.ShellPrep toShellPrep() {
             return IncusClient.ShellPrep.fromPrefetched(
                     workdir, shellCommand, buildSourceJson, subnetDiagnostic,
-                    terminfo != null, templateName);
+                    terminfo != null);
         }
     }
 
