@@ -69,10 +69,14 @@ final class LaunchdJob {
         return launchctl.run("print", target).ok();
     }
 
-    /** Start the job, loading it first when it is not loaded. Returns whether it stays up. */
+    /**
+     * Loads the job and starts it. Only reached when it is not already loaded: {@code
+     * ProxyService.startService()} returns early whenever {@code isActive()} — which on macOS
+     * means loaded, including a job that is being unloaded — is already true, and the "loaded but
+     * not responding" case goes through {@link #restart} instead (review on #916).
+     */
     boolean start(Consumer<String> log) {
-        if (!isLoaded()) return load(log);
-        return kick(log, "kickstart", target);
+        return load(log);
     }
 
     /**
@@ -132,11 +136,6 @@ final class LaunchdJob {
             pause.run();
         }
         return !Thread.currentThread().isInterrupted() && condition.getAsBoolean();
-    }
-
-    /** Whether the job's process is up, as opposed to loaded and waiting to be spawned. */
-    boolean isRunning() {
-        return runningPid() != null;
     }
 
     /** The pid of the job's process when launchd reports the job as running, else null. */

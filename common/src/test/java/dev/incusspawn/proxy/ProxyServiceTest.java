@@ -200,6 +200,31 @@ class ProxyServiceTest {
                 "launchd KeepAlive plus `isx proxy start` is the same self-restart loop");
     }
 
+    /**
+     * Review on #916: several `isx` commands finding the proxy down at once must not each
+     * restart it — the second one through the lock would {@code kickstart -k} (or, on macOS,
+     * bootout+bootstrap) a proxy the first one just brought up.
+     */
+    @Test
+    void restartIfUnhealthyDoesNotRestartAnAlreadyHealthyProxy() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/health", exchange -> {
+            var body = "{\"status\":\"ok\"}".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var log = new java.util.ArrayList<String>();
+            assertTrue(ProxyService.restartIfUnhealthy("127.0.0.1", server.getAddress().getPort(), log::add));
+            assertEquals(java.util.List.of(), log, "already healthy: nothing should have been restarted");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     // --- JBang launcher scripts ---------------------------------------------------
 
     @Test

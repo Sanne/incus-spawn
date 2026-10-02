@@ -178,18 +178,6 @@ class LaunchdJobTest {
         assertEquals(List.of(), log);
     }
 
-    /** The same, through `isx proxy start`. */
-    @Test
-    void startWaitsOutAJobThatIsBeingUnloaded() {
-        aRunningJob();
-        launchd.run("bootout", TARGET);
-
-        assertTrue(job.start(log::add), log.toString());
-
-        assertTrue(launchd.loaded && launchd.running);
-        assertEquals(List.of(), log);
-    }
-
     /** Only "being unloaded" is answered by loading afresh; anything else must not unload a loaded job. */
     @Test
     void aRefusedRestartLeavesTheJobLoaded() {
@@ -228,13 +216,12 @@ class LaunchdJobTest {
         assertTrue(job.isLoaded(), "it is loaded all the same, so launchd will try again");
     }
 
+    /** start() only ever reaches a job that is not loaded (review on #916: see LaunchdJob#start). */
     @Test
-    void startLeavesALoadedJobLoaded() {
-        launchd.loaded = true;
-
+    void startLoadsAJobThatIsNotLoaded() {
         assertTrue(job.start(log::add), log.toString());
 
-        assertEquals(0, launchd.count("bootstrap"), "bootstrapping a loaded job fails with 5");
-        assertTrue(launchd.running);
+        assertEquals(1, launchd.count("bootstrap"));
+        assertTrue(launchd.loaded && launchd.running);
     }
 }
