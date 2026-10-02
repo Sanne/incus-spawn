@@ -84,6 +84,20 @@ class InstanceLifecycleRequestBudgetTest {
     }
 
     @Test
+    void preparingAShellReadsTheInstanceOnce() {
+        // isx shell, isx run and the TUI's shell: one instance read, plus the bridge lookup.
+        var daemon = new FakeIncusDaemon().container(NAME, Map.of(
+                Metadata.WORKDIR, "/home/agentuser/project",
+                Metadata.SHELL_COMMAND, "zsh"));
+        var prep = IncusClient.ShellPrep.from(daemon.client(), NAME);
+        assertBudget(2, daemon, "ShellPrep.from");
+
+        assertEquals("/home/agentuser/project", prep.workdir());
+        assertEquals("zsh", prep.shellCommand());
+        assertFalse(prep.autoAttachTmux());
+    }
+
+    @Test
     void prefetchingRuntimeConfigOfAMissingInstanceFails() {
         var daemon = new FakeIncusDaemon();
         assertThrows(IncusException.class,

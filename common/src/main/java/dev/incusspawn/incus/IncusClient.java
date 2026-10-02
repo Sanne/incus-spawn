@@ -499,16 +499,11 @@ public class IncusClient {
         }
 
         public static ShellPrep from(IncusClient incus, String container) {
-            var workdir = incus.configGet(container, Metadata.WORKDIR);
-            var shellCmd = incus.configGet(container, Metadata.SHELL_COMMAND);
-            var buildSource = incus.configGet(container, Metadata.BUILD_SOURCE);
-            var diag = BridgeSubnetCheck.detectConflictDiagnostic(incus);
-            return new ShellPrep(
-                    workdir.isBlank() ? null : workdir,
-                    shellCmd.isBlank() ? null : shellCmd,
-                    shouldAutoAttach(buildSource, "tmux"),
-                    shouldAutoAttach(buildSource, "zmx"),
-                    diag, false);
+            // One instance read for all three keys: configGet costs a round trip per key.
+            var config = incus.configByPrefix(container, "");
+            return fromPrefetched(config.get(Metadata.WORKDIR), config.get(Metadata.SHELL_COMMAND),
+                    config.get(Metadata.BUILD_SOURCE),
+                    BridgeSubnetCheck.detectConflictDiagnostic(incus), false);
         }
 
         public static ShellPrep fromPrefetched(String workdir, String shellCommand,
