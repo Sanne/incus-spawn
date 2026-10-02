@@ -2,32 +2,20 @@ package dev.incusspawn.command;
 
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(IsolatedHome.class)
 class CleanCommandTest {
-
-    private final AtomicInteger refreshes = new AtomicInteger();
-    private final Runnable realRefresh = CleanCommand.proxyRefresh;
-
-    {
-        CleanCommand.proxyRefresh = refreshes::incrementAndGet;
-    }
-
-    @AfterEach
-    void restoreRefresh() {
-        CleanCommand.proxyRefresh = realRefresh;
-    }
 
     private static IncusClient withInstances(String... names) {
         var incus = mock(IncusClient.class);
@@ -48,7 +36,7 @@ class CleanCommandTest {
         verify(incus).delete("tpl-a-failed-build", true);
         verify(incus).delete("tpl-b-failed-build", true);
         verify(incus, never()).delete(eq("dev-1"), anyBoolean());
-        assertEquals(1, refreshes.get());
+        assertEquals(1, IsolatedHome.proxySignals());
         assertEquals(List.of(), warnings);
     }
 
@@ -60,7 +48,7 @@ class CleanCommandTest {
 
         assertEquals(0, CleanCommand.deleteFailedBuilds(incus, warnings));
 
-        assertEquals(0, refreshes.get());
+        assertEquals(0, IsolatedHome.proxySignals());
         assertEquals(1, warnings.size());
     }
 
@@ -74,7 +62,7 @@ class CleanCommandTest {
                 deleted::add, (name, e) -> { throw new AssertionError(name, e); }));
 
         assertEquals(List.of("tpl-a-failed-build", "tpl-b-failed-build"), deleted);
-        assertEquals(1, refreshes.get());
+        assertEquals(1, IsolatedHome.proxySignals());
     }
 
     @Test
@@ -82,7 +70,7 @@ class CleanCommandTest {
         var incus = withInstances();
         CleanCommand.deleteFailedBuild(incus, "tpl-a-failed-build");
         verify(incus).delete("tpl-a-failed-build", true);
-        assertEquals(1, refreshes.get());
+        assertEquals(1, IsolatedHome.proxySignals());
     }
 
     private static IncusClient.ImageInfo image(String fingerprint, String... aliases) {

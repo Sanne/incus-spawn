@@ -365,9 +365,6 @@ public class CleanCommand extends BaseCommand {
         return images.stream().mapToLong(IncusClient.ImageInfo::size).sum();
     }
 
-    /** Tells the proxy to re-read which instance holds which address; a seam for tests. */
-    static Runnable proxyRefresh = InstanceDestroyer::refreshProxy;
-
     /**
      * Delete every failed build, then tell the proxy once. A failed build keeps the static IP
      * and account pins its build was given (#903), so until the proxy re-reads, the next
@@ -391,14 +388,14 @@ public class CleanCommand extends BaseCommand {
                 failed.accept(name, e);
             }
         }
-        if (count > 0) proxyRefresh.run();
+        if (count > 0) InstanceDestroyer.refreshProxy();
         return count;
     }
 
     /** Delete one failed build and tell the proxy, as {@link #deleteFailedBuilds} does. */
     static void deleteFailedBuild(IncusClient incus, String name) {
         incus.delete(name, true);
-        proxyRefresh.run();
+        InstanceDestroyer.refreshProxy();
     }
 
     static List<String> findFailedBuilds(IncusClient incus) {
