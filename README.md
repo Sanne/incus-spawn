@@ -948,6 +948,7 @@ Type-specific fields:
 Action visibility fields:
 
 - `shell_menu` -- when `true`, the action also appears in the **F12 shell status bar menu** during `isx shell` sessions (only `url` and `command` types)
+- `shortcut` -- the single key that runs the action from that menu
 
 Template variables available in `label`, `url`, `command`, and `text`: `${ip}`, `${name}`, `${parent}`. When `expand: repos` is set, repo-specific variables are also available: `${repo_name}`, `${repo_path}`, `${repo_url}`.
 
