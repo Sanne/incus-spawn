@@ -491,30 +491,32 @@ public class IncusClient {
      */
     public record ShellPrep(String workdir, String shellCommand,
                             boolean autoAttachTmux, boolean autoAttachZmx,
-                            String subnetDiagnostic, boolean terminfoHandled) {
+                            String subnetDiagnostic, boolean terminfoHandled,
+                            String templateName) {
 
         public ShellPrep withActionCommand(String command) {
             return new ShellPrep(workdir, command, false, autoAttachZmx,
-                    subnetDiagnostic, terminfoHandled);
+                    subnetDiagnostic, terminfoHandled, templateName);
         }
 
         public static ShellPrep from(IncusClient incus, String container) {
-            // One instance read for all three keys: configGet costs a round trip per key.
+            // One instance read for every key: configGet costs a round trip per key.
             var config = incus.configByPrefix(container, "");
             return fromPrefetched(config.get(Metadata.WORKDIR), config.get(Metadata.SHELL_COMMAND),
                     config.get(Metadata.BUILD_SOURCE),
-                    BridgeSubnetCheck.detectConflictDiagnostic(incus), false);
+                    BridgeSubnetCheck.detectConflictDiagnostic(incus), false,
+                    Metadata.templateOf(config));
         }
 
         public static ShellPrep fromPrefetched(String workdir, String shellCommand,
                                                String buildSourceJson, String subnetDiagnostic,
-                                               boolean terminfoHandled) {
+                                               boolean terminfoHandled, String templateName) {
             return new ShellPrep(
                     workdir != null && !workdir.isBlank() ? workdir : null,
                     shellCommand != null && !shellCommand.isBlank() ? shellCommand : null,
                     shouldAutoAttach(buildSourceJson, "tmux"),
                     shouldAutoAttach(buildSourceJson, "zmx"),
-                    subnetDiagnostic, terminfoHandled);
+                    subnetDiagnostic, terminfoHandled, templateName);
         }
 
         private static boolean shouldAutoAttach(String buildSourceJson, String toolName) {

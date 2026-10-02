@@ -103,7 +103,7 @@ public class RunCommand extends BaseCommand {
             var shellCmd = cmd.get();
             var updatedPrep = new dev.incusspawn.incus.IncusClient.ShellPrep(
                     prep.workdir(), shellCmd, prep.autoAttachTmux(), prep.autoAttachZmx(),
-                    prep.subnetDiagnostic(), prep.terminfoHandled());
+                    prep.subnetDiagnostic(), prep.terminfoHandled(), prep.templateName());
             var menu = ShellMenu.enabled()
                     ? ShellMenu.of(resolver.resolveActionsForInstance(name, parent, installedTools, repos),
                             prep.workdir(), context)

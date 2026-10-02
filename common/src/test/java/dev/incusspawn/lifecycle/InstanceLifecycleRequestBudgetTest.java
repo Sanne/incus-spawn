@@ -88,13 +88,16 @@ class InstanceLifecycleRequestBudgetTest {
         // isx shell, isx run and the TUI's shell: one instance read, plus the bridge lookup.
         var daemon = new FakeIncusDaemon().container(NAME, Map.of(
                 Metadata.WORKDIR, "/home/agentuser/project",
-                Metadata.SHELL_COMMAND, "zsh"));
+                Metadata.SHELL_COMMAND, "zsh",
+                Metadata.PARENT, "dev-0",
+                Metadata.PROFILE, "tpl-dev"));
         var prep = IncusClient.ShellPrep.from(daemon.client(), NAME);
         assertBudget(2, daemon, "ShellPrep.from");
 
         assertEquals("/home/agentuser/project", prep.workdir());
         assertEquals("zsh", prep.shellCommand());
         assertFalse(prep.autoAttachTmux());
+        assertEquals("tpl-dev", prep.templateName(), "the leaf template, not the clone it came from");
     }
 
     @Test

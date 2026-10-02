@@ -32,13 +32,12 @@ public record ShellMenu(List<ToolAction> actions, ActionContext context) {
         var effectiveWorkdir = workdir == null || workdir.isBlank() ? DEFAULT_WORKDIR : workdir;
         var chosen = new LinkedHashMap<String, ToolAction>();
         for (var action : actions) {
-            if (!action.isShellMenu() || !action.type().map(t -> "url".equals(t) || "command".equals(t)).orElse(false)) {
+            var type = action.type().orElse("");
+            if (!action.isShellMenu()
+                    || !(YamlToolAction.TYPE_URL.equals(type) || YamlToolAction.TYPE_COMMAND.equals(type))) {
                 continue;
             }
-            // An expanded action's id is "<id>/<repo>"; group its copies under the bare id.
-            var id = action.id().orElse("");
-            if (action.repoPath().isPresent() && id.contains("/")) id = id.substring(0, id.lastIndexOf('/'));
-            var key = action.toolName() + ":" + id;
+            var key = action.toolName() + ":" + action.baseId().orElse("");
             var inWorkdir = action.repoPath().map(effectiveWorkdir::equals).orElse(false);
             if (!chosen.containsKey(key) || inWorkdir) {
                 chosen.put(key, action);

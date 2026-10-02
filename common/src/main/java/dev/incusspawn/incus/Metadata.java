@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
 
 /**
  * Constants and helpers for incus-spawn metadata stored on containers.
@@ -16,6 +17,16 @@ public final class Metadata {
     public static final String CREATED = PREFIX + "created";
     public static final String PARENT = PREFIX + "parent";
     public static final String PROFILE = PREFIX + "profile";
+
+    /**
+     * The leaf template of an instance, from its full config: {@link #PROFILE}, else {@link #PARENT}
+     * (which names a clone when the instance was branched from one). Null when neither is set.
+     */
+    public static String templateOf(Map<String, String> config) {
+        var profile = config.getOrDefault(PROFILE, "");
+        var template = profile.isBlank() ? config.getOrDefault(PARENT, "") : profile;
+        return template.isBlank() ? null : template;
+    }
     public static final String NETWORK_MODE = PREFIX + "network-mode";
     public static final String PROXY_GATEWAY = PREFIX + "proxy-gateway";
     public static final String BUILD_VERSION = PREFIX + "build-version";

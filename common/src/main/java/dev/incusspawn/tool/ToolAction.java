@@ -58,6 +58,11 @@ public interface ToolAction {
         return java.util.Optional.empty();
     }
 
+    /** The action's id before {@code expand: repos} qualified it with a repo; {@link #id()} otherwise. */
+    default java.util.Optional<String> baseId() {
+        return id();
+    }
+
     default java.util.Optional<String> repoPath() {
         return java.util.Optional.empty();
     }

@@ -9,8 +9,8 @@ import java.io.IOException;
  */
 public class YamlToolAction implements ToolAction {
 
-    private static final String TYPE_URL = "url";
-    private static final String TYPE_COMMAND = "command";
+    public static final String TYPE_URL = "url";
+    public static final String TYPE_COMMAND = "command";
     private static final String TYPE_SHELL = "shell";
     private static final String TYPE_COPY_TO_CLIPBOARD = "copy-to-clipboard";
     public static final String EXPAND_REPOS = "repos";
@@ -67,6 +67,11 @@ public class YamlToolAction implements ToolAction {
     public java.util.Optional<String> type() {
         var t = entry.getType();
         return t == null || t.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(t);
+    }
+
+    @Override
+    public java.util.Optional<String> baseId() {
+        return java.util.Optional.ofNullable(entry.getId());
     }
 
     @Override
