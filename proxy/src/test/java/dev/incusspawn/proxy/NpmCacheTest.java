@@ -6,7 +6,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -299,7 +298,7 @@ class NpmCacheTest {
         }
     }
 
-    // --- checkNpmTarballCache: ETag fast path ---
+    // --- freshNpmHit: ETag fast path ---
 
     @Test
     void cacheHitEtagMatchServesDirectly(@TempDir Path tmp) throws Exception {
@@ -309,15 +308,12 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"abc\"");
         Files.writeString(Path.of(cacheFile + ".shasum"), "someshasum");
 
-        var shasumCalled = new AtomicBoolean(false);
-        var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"abc\"", "ref",
-                () -> { shasumCalled.set(true); return "should-not-call"; });
+        var result = MitmProxy.freshNpmHit(cacheFile, "\"abc\"");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
         assertEquals(Files.size(cacheFile), result.size());
         assertNull(result.digest());
-        assertFalse(shasumCalled.get(), "shasum supplier should not be called when ETag matches");
     }
 
     @Test
@@ -328,8 +324,9 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "");
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
+        assertNull(MitmProxy.freshNpmHit(cacheFile, ""), "an empty ETag vouches for nothing");
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "", "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -346,7 +343,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -364,7 +361,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -383,7 +380,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old-etag\"");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new-etag\"", "ref",
-                () -> "new-shasum");
+                "new-shasum");
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
@@ -403,7 +400,7 @@ class NpmCacheTest {
         // no .shasum file
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                () -> "fresh-shasum");
+                "fresh-shasum");
 
         assertNotNull(result);
         assertFalse(result.cacheHit(), "missing stored shasum should trigger eviction");
@@ -420,7 +417,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".etag"), "\"old\"");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"new\"", "ref",
-                () -> null);
+                null);
 
         assertNotNull(result);
         assertTrue(result.cacheHit(),
@@ -438,7 +435,7 @@ class NpmCacheTest {
         // no .etag files at all
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -452,7 +449,7 @@ class NpmCacheTest {
         Files.writeString(Path.of(cacheFile + ".shasum"), "abc123");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertTrue(result.cacheHit());
@@ -465,7 +462,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertFalse(result.cacheHit());
@@ -481,7 +478,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, "\"etag\"", "ref",
-                () -> null);
+                null);
 
         assertNull(result, "should return null to trigger relay when shasum unavailable");
     }
@@ -491,7 +488,7 @@ class NpmCacheTest {
         var cacheFile = tmp.resolve("pkg/-/pkg-1.0.0.tgz");
 
         var result = MitmProxy.checkNpmTarballCache(cacheFile, null, "ref",
-                () -> "abc123");
+                "abc123");
 
         assertNotNull(result);
         assertFalse(result.cacheHit());

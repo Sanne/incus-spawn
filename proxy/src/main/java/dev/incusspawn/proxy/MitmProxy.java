@@ -2213,14 +2213,21 @@ public class MitmProxy {
     private void fetchNpmTarballAndServe(HttpServerRequest clientReq, long started, String domain,
                                           Path cacheFile, String ref,
                                           String packageName, String version) {
-        vertx.<NpmVerifyResult>executeBlocking(() -> {
+        // The disk work stays ordered, behind the packument's ETag write (relayNpmPackument) and
+        // other tarballs' sidecar writes. That queue is the one every request on this server
+        // shares, so the shasum lookup waits outside it: inside, a cold install's lookups ran
+        // one at a time (#960).
+        vertx.executeBlocking(() -> {
             var cacheDir = npmCacheDir();
             var etagFile = cacheDir.resolve(packageName).resolve(".etag").normalize();
             var packageEtag = etagFile.startsWith(cacheDir)
                     ? readFileOrNull(etagFile) : null;
-            return checkNpmTarballCache(cacheFile, packageEtag, ref,
-                    () -> fetchNpmShasum(domain, packageName, version));
-        }).onSuccess(result -> {
+            return new NpmCacheState(packageEtag, freshNpmHit(cacheFile, packageEtag));
+        }).compose(state -> state.hit() != null
+                ? Future.succeededFuture(state.hit())
+                : fetchNpmVersion(domain, packageName, version).compose(document -> vertx.executeBlocking(
+                        () -> checkNpmTarballCache(cacheFile, state.packageEtag(), ref, npmShasum(document))))
+        ).onSuccess(result -> {
             if (result == null) {
                 // Said here, since a relay that stalls is dropped without a line (#929)
                 ProxyLog.warn("No npm shasum for " + ref + "; relaying it uncached");
@@ -2240,22 +2247,27 @@ public class MitmProxy {
         });
     }
 
+    /** The package's stored ETag, and the cached tarball when that ETag vouches for it without a lookup. */
+    record NpmCacheState(String packageEtag, NpmVerifyResult hit) {}
+
+    /** A hit on the cached tarball when the package's ETag is the one it was verified under, else null. */
+    static NpmVerifyResult freshNpmHit(Path cacheFile, String packageEtag) throws IOException {
+        if (packageEtag == null || packageEtag.isEmpty() || !Files.isRegularFile(cacheFile)) return null;
+        return packageEtag.equals(readFileOrNull(Path.of(cacheFile + ".etag")))
+                ? new NpmVerifyResult(true, Files.size(cacheFile), null) : null;
+    }
+
+    /**
+     * Settle a tarball that {@link #freshNpmHit} could not serve, given its current upstream
+     * {@code shasum} (null when the lookup failed).
+     */
     static NpmVerifyResult checkNpmTarballCache(Path cacheFile, String packageEtag,
-                                                 String ref,
-                                                 java.util.function.Supplier<String> shasumSupplier)
+                                                 String ref, String shasum)
             throws IOException {
         var etagPath = Path.of(cacheFile + ".etag");
         var shasumPath = Path.of(cacheFile + ".shasum");
 
         if (Files.isRegularFile(cacheFile)) {
-            var tarballEtag = readFileOrNull(etagPath);
-
-            if (packageEtag != null && !packageEtag.isEmpty()
-                    && packageEtag.equals(tarballEtag)) {
-                return new NpmVerifyResult(true, Files.size(cacheFile), null);
-            }
-
-            var shasum = shasumSupplier.get();
             if (shasum == null) {
                 return new NpmVerifyResult(true, Files.size(cacheFile), null);
             }
@@ -2278,7 +2290,6 @@ public class MitmProxy {
             return new NpmVerifyResult(false, 0, digest);
         }
 
-        var shasum = shasumSupplier.get();
         if (shasum == null) return null;
         var digest = "sha1:" + shasum;
         writeNpmSidecarFiles(cacheFile, shasum, packageEtag);
@@ -2298,15 +2309,23 @@ public class MitmProxy {
         }
     }
 
+    // A version document is a few KB; old ones can carry their readme
+    private static final int MAX_NPM_VERSION_BYTES = 1024 * 1024;
+
     /**
-     * Fetch the SHA-1 checksum for an npm package version from the registry's
-     * per-version metadata endpoint ({@code /<package>/<version>}).
-     * Returns the 40-char hex shasum, or null on any failure.
+     * Fetch an npm package version's metadata document ({@code /<package>/<version>}),
+     * which carries its shasum, through {@code probeClient} like every other checksum, so
+     * lookups run concurrently on shared connections. Completes with the document, or null
+     * on any failure; {@link #npmShasum} parses it, on a worker thread.
      */
-    static String fetchNpmShasum(String domain, String packageName, String version) {
+    Future<byte[]> fetchNpmVersion(String domain, String packageName, String version) {
         var encodedName = packageName.replace("/", "%2F");
-        var body = fetchUpstreamBody(domain, "/" + encodedName + "/" + version,
-                "Accept: application/json");
+        return fetchSmallBody(domain, "/" + encodedName + "/" + version, MAX_NPM_VERSION_BYTES)
+                .map(answer -> answer.status() == 200 ? answer.body() : null);
+    }
+
+    /** The {@code dist.shasum} of a version document, or null when it has none we can use. */
+    static String npmShasum(byte[] body) {
         if (body == null) return null;
         try {
             var dist = JSON.readTree(body).path("dist").path("shasum");
@@ -2857,7 +2876,12 @@ public class MitmProxy {
      * host). Never fails; see {@link SidecarAnswer} for what comes back instead.
      */
     Future<SidecarAnswer> fetchSidecar(String domain, String path) {
-        return retryOnceAfterConnect(() -> fetchSidecar(domain, 443, path, 0))
+        return fetchSmallBody(domain, path, MAX_SIDECAR_BYTES);
+    }
+
+    /** {@link #fetchSidecar} for any small document, of at most {@code maxBytes}. */
+    Future<SidecarAnswer> fetchSmallBody(String domain, String path, int maxBytes) {
+        return retryOnceAfterConnect(() -> fetchSmallBody(domain, 443, path, 0, maxBytes))
                 .recover(err -> Future.succeededFuture(SidecarAnswer.UNREACHABLE));
     }
 
@@ -2921,25 +2945,26 @@ public class MitmProxy {
                 ? exchange.get() : Future.failedFuture(err));
     }
 
-    // Fails when no connection could be made or the exchange broke (fetchSidecar maps
+    // Fails when no connection could be made or the exchange broke (fetchSmallBody maps
     // both to UNREACHABLE); an answer we cannot use is UNUSABLE.
-    private Future<SidecarAnswer> fetchSidecar(String host, int port, String uri, int depth) {
+    private Future<SidecarAnswer> fetchSmallBody(String host, int port, String uri, int depth, int maxBytes) {
         return requestWithAsyncDns(probeClient, probeOptions(HttpMethod.GET, host, port, uri))
                 .compose(req -> afterConnect(req.send().compose(resp -> {
                     var location = resp.getHeader("Location");
                     if (resp.statusCode() >= 300 && resp.statusCode() < 400 && location != null) {
                         var target = redirectTarget(host, port, uri, location);
                         if (depth >= MAX_REDIRECTS || target == null) {
-                            ProxyLog.warn("Not following sidecar redirect to " + location + " for " + host + uri);
+                            ProxyLog.warn("Not following redirect to " + location + " for " + host + uri);
                             // Over h2 the reset reaches this response as an error; it is the one we asked for
                             resp.exceptionHandler(ignored -> {});
                             resp.request().reset();
                             return Future.succeededFuture(SidecarAnswer.UNUSABLE);
                         }
-                        return resp.end().compose(v -> fetchSidecar(target.getHost(),
-                                target.getPort() > 0 ? target.getPort() : 443, rawPathAndQuery(target), depth + 1));
+                        return resp.end().compose(v -> fetchSmallBody(target.getHost(),
+                                target.getPort() > 0 ? target.getPort() : 443, rawPathAndQuery(target), depth + 1,
+                                maxBytes));
                     }
-                    return readSidecarBody(resp);
+                    return readSmallBody(resp, maxBytes);
                 })));
     }
 
@@ -2970,11 +2995,11 @@ public class MitmProxy {
         return uri.getRawPath() + (uri.getRawQuery() != null ? "?" + uri.getRawQuery() : "");
     }
 
-    private static Future<SidecarAnswer> readSidecarBody(HttpClientResponse resp) {
+    private static Future<SidecarAnswer> readSmallBody(HttpClientResponse resp, int maxBytes) {
         var promise = Promise.<SidecarAnswer>promise();
         var body = Buffer.buffer();
         resp.handler(chunk -> {
-            if (body.length() + chunk.length() > MAX_SIDECAR_BYTES) {
+            if (body.length() + chunk.length() > maxBytes) {
                 resp.handler(null);
                 // An oversized sidecar is unusable; an oversized error page is still that error
                 promise.tryComplete(resp.statusCode() == 200
@@ -3358,53 +3383,6 @@ public class MitmProxy {
         var domainRoot = mavenCacheDir().resolve(domain);
         var file = domainRoot.resolve(urlPath.substring(1)).normalize();
         return file.startsWith(domainRoot) && !file.equals(domainRoot) ? file : null;
-    }
-
-    /**
-     * Fetch a resource body from upstream via a raw SSL GET.
-     * Returns the response body, or null on any failure (non-200, network error).
-     */
-    static byte[] fetchUpstreamBody(String domain, String path, String... extraHeaders) {
-        try {
-            var socket = (javax.net.ssl.SSLSocket) javax.net.ssl.SSLSocketFactory.getDefault()
-                    .createSocket(domain, 443);
-            socket.setSoTimeout(30_000);
-
-            try (socket) {
-                socket.startHandshake();
-                var out = socket.getOutputStream();
-                var in = socket.getInputStream();
-
-                var sb = new StringBuilder();
-                sb.append("GET ").append(path).append(" HTTP/1.1\r\n");
-                sb.append("Host: ").append(domain).append("\r\n");
-                for (var header : extraHeaders) {
-                    sb.append(header).append("\r\n");
-                }
-                sb.append("Connection: close\r\n\r\n");
-                out.write(sb.toString().getBytes());
-                out.flush();
-
-                var response = HttpMessage.readResponse(in);
-                if (response == null || response.statusCode() != 200) return null;
-
-                var clHeader = response.header("Content-Length");
-                if (clHeader != null) {
-                    int len = Integer.parseInt(clHeader.trim());
-                    var body = new byte[len];
-                    int offset = 0;
-                    while (offset < len) {
-                        int n = in.read(body, offset, len - offset);
-                        if (n == -1) break;
-                        offset += n;
-                    }
-                    return body;
-                }
-                return in.readAllBytes();
-            }
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     static String formatSize(long bytes) {
