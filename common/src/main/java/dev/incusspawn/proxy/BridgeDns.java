@@ -57,14 +57,7 @@ public final class BridgeDns {
      * {@code gatewayIp}, the bridge's current address.
      */
     public static Status status(String config, Set<String> domains, String gatewayIp) {
-        var managed = new HashSet<String>();
-        var inBlock = false;
-        for (var line : config.lines().toList()) {
-            var l = line.strip();
-            if (l.equals(BEGIN)) inBlock = true;
-            else if (l.equals(END)) inBlock = false;
-            else if (inBlock) managed.add(l);
-        }
+        var managed = managedLines(config);
         var addressed = managed.stream()
                 .map(BridgeDns::addressDomain)
                 .filter(d -> d != null)
@@ -86,6 +79,27 @@ public final class BridgeDns {
                 .sorted()
                 .toList();
         return new Status(missing, stale, gatewayIp, legacy.stream().sorted().toList());
+    }
+
+    /** The addresses isx's block sends its domains to: the gateway of the proxy that wrote it. */
+    public static Set<String> overrideAddresses(String config) {
+        return managedLines(config).stream()
+                .filter(l -> addressDomain(l) != null)
+                .map(BridgeDns::addressTarget)
+                .collect(Collectors.toSet());
+    }
+
+    /** The stripped lines inside isx's block. */
+    private static Set<String> managedLines(String config) {
+        var managed = new HashSet<String>();
+        var inBlock = false;
+        for (var line : config.lines().toList()) {
+            var l = line.strip();
+            if (l.equals(BEGIN)) inBlock = true;
+            else if (l.equals(END)) inBlock = false;
+            else if (inBlock) managed.add(l);
+        }
+        return managed;
     }
 
     /**
@@ -149,6 +163,11 @@ public final class BridgeDns {
 
     private static String addressLine(String domain, String ip) {
         return "address=/" + domain + "/" + ip;
+    }
+
+    /** The {@code <ip>} of an {@code address=/<domain>/<ip>} line. */
+    private static String addressTarget(String line) {
+        return line.substring(line.lastIndexOf('/') + 1);
     }
 
     /** The domain of an {@code address=/<domain>/<ip>} line, or null for any other line. */

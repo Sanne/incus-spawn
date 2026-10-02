@@ -112,6 +112,12 @@ public class ProxyCommand extends BaseCommand {
                     System.err.println("Start the proxy to restore connectivity: isx proxy start");
                     return CommandResult.valueOf(2);
                 }
+                case STALE_GATEWAY -> {
+                    System.err.println("Proxy is running, but on an old address of incusbr0 that instances cannot reach.");
+                    System.err.println("Restart it to bind the current address: "
+                            + (serviceActive ? "isx proxy restart" : "isx proxy stop && isx proxy start"));
+                    return CommandResult.valueOf(3);
+                }
             }
             return CommandResult.SUCCESS;
         }

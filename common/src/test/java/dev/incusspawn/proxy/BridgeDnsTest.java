@@ -34,6 +34,13 @@ class BridgeDnsTest {
     }
 
     @Test
+    void overrideAddressesAreTheOnesInIsxsBlockOnly() {
+        var config = "address=/corp.example/10.9.9.9\naddress=/github.com/::\n" + GITHUB_BLOCK;
+        assertEquals(Set.of("10.0.0.1"), BridgeDns.overrideAddresses(config));
+        assertEquals(Set.of(), BridgeDns.overrideAddresses("address=/corp.example/10.9.9.9"));
+    }
+
+    @Test
     void migratesTheReleasedLayoutAndKeepsEveryUserLine() {
         var released = """
                 server=/corp/10.1.1.1

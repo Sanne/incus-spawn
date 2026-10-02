@@ -5407,7 +5407,9 @@ public class ListCommand extends BaseCommand {
         }
         if (ProxyService.isInstalled()) {
             proxyRestartInProgress = true;
-            setStatusMessage("Proxy not running, restarting service...");
+            setStatusMessage(proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY
+                    ? "Proxy on an old bridge address, restarting service..."
+                    : "Proxy not running, restarting service...");
             var thread = new Thread(() -> {
                 try {
                     if (ProxyHealthCheck.tryAutoRestart(incus, msg -> {})) {
@@ -5423,7 +5425,14 @@ public class ListCommand extends BaseCommand {
             thread.start();
             return true;
         }
-        if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
+        if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY) {
+            errorMessage = "The MITM proxy is running, but on an old address\n"
+                    + "of the Incus bridge that instances cannot reach.\n"
+                    + "\n"
+                    + "Restart it to bind the current address:\n"
+                    + "\n"
+                    + "  isx proxy stop && isx proxy start";
+        } else if (proxyStatus == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             errorMessage = "The MITM proxy is not running, but DNS overrides\n"
                     + "are still active from a previous session.\n"
                     + "\n"

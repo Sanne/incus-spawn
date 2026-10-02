@@ -7,7 +7,12 @@ import dev.incusspawn.Environment;
 import dev.incusspawn.incus.IncusClient;
 
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 public final class ProxyHealthCheck {
 
@@ -15,7 +20,8 @@ public final class ProxyHealthCheck {
         RUNNING,
         WAITING_FOR_DNS,
         NOT_RUNNING,
-        STALE_DNS
+        STALE_DNS,
+        STALE_GATEWAY
     }
 
     /**
@@ -131,9 +137,70 @@ public final class ProxyHealthCheck {
         }
         var dnsOverrides = ProxyConfig.getDnsOverrides(incus);
         if (!dnsOverrides.isEmpty() && dnsOverrides.contains("address=/")) {
-            return ProxyStatus.STALE_DNS;
+            return listensOnFormerGateway(dnsOverrides, gatewayIp)
+                    ? ProxyStatus.STALE_GATEWAY : ProxyStatus.STALE_DNS;
         }
         return ProxyStatus.NOT_RUNNING;
+    }
+
+    /**
+     * Whether a proxy still holds the health port on the address the overrides point at, when
+     * the host no longer has that address (#919). Probing it cannot tell: once the bridge drops
+     * the address nothing answers there, though the socket bound to it lives on. An address the
+     * host still has is a proxy started on it on purpose ({@code --gateway-ip}, #933), which a
+     * restart would not move.
+     */
+    private static boolean listensOnFormerGateway(String dnsOverrides, String gatewayIp) {
+        var procNet = Path.of("/proc/net");
+        return BridgeDns.overrideAddresses(dnsOverrides).stream()
+                .filter(ip -> !ip.equals(gatewayIp))
+                .anyMatch(ip -> listensOn(ip, ProxyConfig.DEFAULT_HEALTH_PORT, procNet) && !isHostAddress(ip));
+    }
+
+    private static boolean isHostAddress(String ip) {
+        try {
+            return java.net.NetworkInterface.getByInetAddress(InetAddress.ofLiteral(ip)) != null;
+        } catch (Exception e) {
+            // Unknown: keep the weaker STALE_DNS diagnosis rather than advise a restart.
+            return true;
+        }
+    }
+
+    /**
+     * Whether a socket on this host listens on IPv4 {@code ip}:{@code port}, read from
+     * {@code procNet}'s {@code tcp} and {@code tcp6} (where Java's dual-stack sockets bind
+     * {@code ::ffff:<ip>}). The kernel prints each address word in host byte order.
+     */
+    static boolean listensOn(String ip, int port, Path procNet) {
+        byte[] bytes;
+        try {
+            bytes = InetAddress.ofLiteral(ip).getAddress();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        if (bytes.length != 4) return false;
+        var v4 = hexWord(bytes);
+        var portHex = String.format(":%04X", port);
+        return hasListener(procNet.resolve("tcp"), v4 + portHex)
+                || hasListener(procNet.resolve("tcp6"), V4_MAPPED_PREFIX + v4 + portHex);
+    }
+
+    private static final String TCP_LISTEN = "0A";
+    /** The first three words of {@code ::ffff:a.b.c.d} as {@code tcp6} prints them. */
+    private static final String V4_MAPPED_PREFIX =
+            "0000000000000000" + hexWord(new byte[] {0, 0, (byte) 0xff, (byte) 0xff});
+
+    private static String hexWord(byte[] bytes) {
+        return String.format("%08X", ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder()).getInt());
+    }
+
+    private static boolean hasListener(Path table, String localAddress) {
+        try (var lines = Files.lines(table)) {
+            return lines.map(l -> l.strip().split("\\s+"))
+                    .anyMatch(f -> f.length > 3 && f[1].equals(localAddress) && f[3].equals(TCP_LISTEN));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static HealthResult checkHealth(String addr) {
@@ -288,6 +355,15 @@ public final class ProxyHealthCheck {
                     + "  \033[1misx proxy start\033[0m\n\n"
                     + "Then re-run this command.\n"
                     + separator;
+            case STALE_GATEWAY -> separator + "\n"
+                    + "\033[1mThe MITM proxy is running, but on an old address of\n"
+                    + "the Incus bridge.\033[0m\n\n"
+                    + "The address of incusbr0 changed after the proxy started, so\n"
+                    + "intercepted domains resolve to an address nothing answers on.\n\n"
+                    + "Restart the proxy so it binds the bridge's current address:\n"
+                    + "  \033[1misx proxy stop && isx proxy start\033[0m\n\n"
+                    + "Then re-run this command.\n"
+                    + separator;
             case NOT_RUNNING -> separator + "\n"
                     + "\033[1mThe MITM proxy is not running.\033[0m\n\n"
                     + "The proxy provides authentication for Claude, GitHub,\n"
@@ -353,7 +429,7 @@ public final class ProxyHealthCheck {
 
     public static boolean tryAutoRestart(IncusClient incus, java.util.function.Consumer<String> log) {
         if (!ProxyService.isInstalled()) return false;
-        log.accept("Proxy is not running, restarting service...");
+        log.accept("Proxy is not reachable, restarting service...");
         ProxyService.restart(log);
         var addr = healthAddress(incus);
         for (int i = 0; i < 30; i++) {

@@ -598,6 +598,25 @@ class DoctorCommandTest {
     }
 
     @Test
+    void bridgeDnsIsNotRepairedWhileTheProxyIsOnAnOldGateway() {
+        // #919: the overrides point where the proxy listens; the bridge no longer has that address.
+        var f = dnsFinding(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY, overridesFor("github.com"));
+        assertEquals(DoctorCommand.Status.NOTE, f.status());
+        assertNull(f.remediation());
+    }
+
+    @Test
+    void aProxyOnAnOldGatewayIsToldToRestartNotToStart() {
+        // Only a running service is restarted for the user: an installed service beside a
+        // foreground proxy would start next to it and leave the stale one in place.
+        var service = DoctorCommand.staleGatewayFinding(true);
+        assertEquals(DoctorCommand.Status.FAIL, service.status());
+        assertNotNull(service.remediation().action());
+        var foreground = DoctorCommand.staleGatewayFinding(false);
+        assertTrue(foreground.remediation().description().contains("isx proxy stop && isx proxy start"));
+    }
+
+    @Test
     void bridgeDnsIsNotRepairedWhileTheProxyIsDown() {
         // Writing overrides now would point every intercepted domain at a gateway where nothing
         // listens, which is worse than bypassing the proxy.

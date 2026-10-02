@@ -6,7 +6,14 @@ import dev.incusspawn.incus.IncusClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.*;
@@ -68,6 +75,73 @@ class ProxyHealthCheckTest {
     }
 
     @Test
+    void aProxyStillListeningOnTheOldGatewayIsNotReportedAsNotRunning() throws Exception {
+        // #919: incusbr0's address changed under a running proxy. Probing the new gateway finds
+        // nothing, and the old address is gone from the bridge so it does not answer either,
+        // but the proxy's socket on it is still there. 127.0.0.2 routes to lo but is not assigned.
+        assertEquals(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY, checkWithHealthListenerOn("127.0.0.2"));
+    }
+
+    @Test
+    void aProxyOnAnAddressTheHostStillHasIsNotOnAnOldGateway() throws Exception {
+        // A proxy started with --gateway-ip on another host address (#933): restarting it
+        // would bind the same address again, so the restart advice would be wrong.
+        assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, checkWithHealthListenerOn("127.0.0.1"));
+    }
+
+    /** The status with the bridge at 10.0.0.1, its overrides at {@code ip}, and a socket on that health port. */
+    private static ProxyHealthCheck.ProxyStatus checkWithHealthListenerOn(String ip) throws Exception {
+        assumeTrue(Files.isReadable(Path.of("/proc/net/tcp")), "needs Linux /proc");
+        assumeFalse(ProxyHealthCheck.isHealthy("127.0.0.1"), "A real proxy is running on localhost");
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq"))
+                .thenReturn(BridgeDns.render("", Set.of("github.com"), ip));
+        try (var listener = new ServerSocket()) {
+            try {
+                listener.bind(new InetSocketAddress(ip, ProxyConfig.DEFAULT_HEALTH_PORT));
+            } catch (IOException e) {
+                assumeTrue(false, "cannot bind " + ip + ":" + ProxyConfig.DEFAULT_HEALTH_PORT);
+            }
+            return ProxyHealthCheck.check(incus);
+        }
+    }
+
+    @Test
+    void listensOnReadsListenersFromBothTables(@TempDir Path procNet)
+            throws Exception {
+        assumeTrue(java.nio.ByteOrder.nativeOrder() == java.nio.ByteOrder.LITTLE_ENDIAN,
+                "the fixture is in little-endian word order");
+        var header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+        Files.writeString(procNet.resolve("tcp"), header
+                + "   0: 0200000A:4A37 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1\n"
+                + "   1: 0300000A:4A37 0100000A:D431 01 00000000:00000000 00:00000000 00000000  1000        0 2\n");
+        Files.writeString(procNet.resolve("tcp6"), header
+                + "   0: 0000000000000000FFFF00000400000A:4A37 00000000000000000000000000000000:0000 0A"
+                + " 00000000:00000000 00:00000000 00000000  1000        0 3\n");
+
+        assertTrue(ProxyHealthCheck.listensOn("10.0.0.2", 0x4A37, procNet));
+        assertTrue(ProxyHealthCheck.listensOn("10.0.0.4", 0x4A37, procNet), "dual-stack socket in tcp6");
+        assertFalse(ProxyHealthCheck.listensOn("10.0.0.3", 0x4A37, procNet), "established, not listening");
+        assertFalse(ProxyHealthCheck.listensOn("10.0.0.2", 18080, procNet));
+        assertFalse(ProxyHealthCheck.listensOn("::", 0x4A37, procNet));
+        assertFalse(ProxyHealthCheck.listensOn("not-an-ip", 0x4A37, procNet));
+        assertFalse(ProxyHealthCheck.listensOn("10.0.0.2", 0x4A37, procNet.resolve("absent")));
+    }
+
+    @Test
+    void overridesStillPointingAtTheCurrentGatewayAreStaleDns() {
+        // Nothing listens there, so the proxy is down, not bound elsewhere.
+        assumeFalse(ProxyHealthCheck.isHealthy("127.0.0.1"),
+                "A real proxy is running on localhost — cannot test STALE_DNS");
+        var incus = mock(IncusClient.class);
+        when(incus.networkConfigGet("incusbr0", "ipv4.address")).thenReturn("10.0.0.1/24");
+        when(incus.networkConfigGet("incusbr0", "raw.dnsmasq")).thenReturn(BridgeDns.render(
+                "", Set.of("github.com"), "10.0.0.1"));
+        assertEquals(ProxyHealthCheck.ProxyStatus.STALE_DNS, ProxyHealthCheck.check(incus));
+    }
+
+    @Test
     void formatErrorContainsActionableCommand() {
         var notRunning = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.NOT_RUNNING);
         assertTrue(notRunning.contains("isx proxy"));
@@ -76,6 +150,10 @@ class ProxyHealthCheckTest {
         var staleDns = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.STALE_DNS);
         assertTrue(staleDns.contains("isx proxy"));
         assertTrue(staleDns.contains("DNS overrides"));
+
+        var staleGateway = ProxyHealthCheck.formatError(ProxyHealthCheck.ProxyStatus.STALE_GATEWAY);
+        assertTrue(staleGateway.contains("isx proxy stop && isx proxy start"));
+        assertFalse(staleGateway.contains("not running"));
     }
 
     @Test

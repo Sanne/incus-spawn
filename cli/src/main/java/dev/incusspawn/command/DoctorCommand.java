@@ -994,7 +994,19 @@ public class DoctorCommand extends BaseCommand {
                             ProxyService.isInstalled(), ProxyService.failedWithConfigError());
             case STALE_DNS -> Finding.fail("Proxy not running", "(stale DNS overrides still active)",
                     new Remediation("Start proxy to restore connectivity", false, null));
+            case STALE_GATEWAY -> staleGatewayFinding(ProxyService.isActive());
         };
+    }
+
+    /**
+     * The proxy outlived a change of the bridge's address (#919): only a restart rebinds it. A
+     * service restart only helps when the service is what runs it, not a foreground proxy.
+     */
+    static Finding staleGatewayFinding(boolean serviceActive) {
+        var detail = "(running, but on an old address of incusbr0 that instances can no longer reach)";
+        return Finding.fail("Proxy unreachable", detail, serviceActive
+                ? new Remediation("Restart proxy service", false, () -> ProxyService.restart())
+                : new Remediation("Restart with 'isx proxy stop && isx proxy start'", false, null));
     }
 
     /**
@@ -1115,6 +1127,10 @@ public class DoctorCommand extends BaseCommand {
         if (proxy == ProxyHealthCheck.ProxyStatus.NOT_RUNNING
                 || proxy == ProxyHealthCheck.ProxyStatus.STALE_DNS) {
             return Finding.note("Bridge DNS overrides", "(not checked: the proxy is not running)");
+        }
+        if (proxy == ProxyHealthCheck.ProxyStatus.STALE_GATEWAY) {
+            // Rewriting them to the current gateway would only move them to where nothing listens.
+            return Finding.note("Bridge DNS overrides", "(not checked: the proxy must be restarted first)");
         }
         if (status.complete()) {
             return Finding.ok("Bridge DNS overrides", "all " + domains.size() + " domains configured");
