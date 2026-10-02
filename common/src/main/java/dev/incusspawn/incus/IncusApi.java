@@ -742,8 +742,9 @@ class IncusApi {
                             if (size[0] != lastWidth || size[1] != lastHeight) {
                                 lastWidth = size[0];
                                 lastHeight = size[1];
-                                var reportedHeight = statusBar != null ? statusBar.effectiveHeight(lastHeight) : lastHeight;
+                                var reportedHeight = lastHeight;
                                 if (statusBar != null) {
+                                    reportedHeight = statusBar.effectiveHeight(lastHeight);
                                     statusBar.resize(lastWidth, lastHeight);
                                 }
                                 try {
@@ -768,32 +769,7 @@ class IncusApi {
                         while (stdinChannel.read(buf) != -1) {
                             buf.flip();
                             if (f12Parser != null) {
-                                var data = new byte[buf.remaining()];
-                                buf.get(data);
-                                int off = 0;
-                                while (off < data.length) {
-                                    var result = f12Parser.feed(data, off, data.length - off);
-                                    off += result.consumed();
-                                    if (result.f12Detected()) {
-                                        if (statusBar.isMenuActive()) {
-                                            statusBar.hideMenu();
-                                            f12Parser.setMenuMode(false);
-                                        } else if (!statusBar.menuActions().isEmpty()) {
-                                            statusBar.showMenu();
-                                            f12Parser.setMenuMode(true);
-                                        }
-                                        if (result.toForward().length > 0) {
-                                            ws.sendData(result.toForward(), 0, result.toForward().length);
-                                        }
-                                    } else if (f12Parser.isMenuMode() && result.menuKey() != 0) {
-                                        statusBar.handleMenuKey(result.menuKey());
-                                        if (!statusBar.isMenuActive()) {
-                                            f12Parser.setMenuMode(false);
-                                        }
-                                    } else if (result.toForward().length > 0) {
-                                        ws.sendData(result.toForward(), 0, result.toForward().length);
-                                    }
-                                }
+                                relayInput(buf.array(), buf.remaining(), f12Parser, statusBar, ws);
                             } else {
                                 ws.sendData(buf.array(), 0, buf.remaining());
                             }
@@ -801,9 +777,8 @@ class IncusApi {
                         }
                     } catch (IOException ignored) {}
                 });
-                final var statusBarRef = statusBar;
                 var terminalHook = new Thread(() -> {
-                    if (statusBarRef != null) statusBarRef.cleanup();
+                    if (statusBar != null) statusBar.cleanup();
                     restoreTerminal();
                 });
                 Runtime.getRuntime().addShutdownHook(terminalHook);
@@ -1233,6 +1208,33 @@ class IncusApi {
     }
 
     // ---- Terminal raw mode (for interactive PTY shell) ----
+
+    /**
+     * Forward one read of typed input to the shell, except what the status bar takes: F12, which
+     * toggles its menu, and the keys typed while the menu is open.
+     */
+    private static void relayInput(byte[] data, int len, EscapeSequenceParser parser,
+                                   ShellStatusBar statusBar, IncusTransport.WsConnection ws) throws IOException {
+        for (int off = 0; off < len; ) {
+            var result = parser.feed(data, off, len - off);
+            off += result.consumed();
+            if (result.toForward().length > 0) {
+                ws.sendData(result.toForward(), 0, result.toForward().length);
+            }
+            if (result.f12Detected()) {
+                if (statusBar.isMenuActive()) {
+                    statusBar.hideMenu();
+                    parser.setMenuMode(false);
+                } else if (!statusBar.menuActions().isEmpty()) {
+                    statusBar.showMenu();
+                    parser.setMenuMode(true);
+                }
+            } else if (parser.isMenuMode() && result.menuKey() != 0) {
+                statusBar.handleMenuKey(result.menuKey());
+                if (!statusBar.isMenuActive()) parser.setMenuMode(false);
+            }
+        }
+    }
 
     private static void setRawTerminal() {
         try {
