@@ -76,6 +76,18 @@ fixed:
   never re-enters the CLI — and converts such a unit's loop into a single `EXIT_CONFIG` failure
   that `RestartPreventExitStatus` halts, or, once `isx-proxy` is installed, into a working proxy.
 
+`isx init` marks itself complete *before* its last step touches the service. `isx-proxy` exits
+`EXIT_CONFIG` until that marker exists, so a service installed ahead of it failed its first
+start on every first-time install: launchd retried only after the ten-second `ThrottleInterval`,
+by which time init had given up waiting and reported "proxy is not responding" about a proxy
+that came up by itself moments later (#938), and systemd, told not to restart that exit code,
+did not retry at all. The step therefore asks, marks, then acts. Waiting longer was rejected: it
+would cost every first install those ten seconds for a start that takes well under one, and
+would change nothing on Linux. Dropping the proxy's check was rejected too: it is what turns a
+proxy started on a half-configured host into a clear message. The price is that an install
+which fails after the marker leaves init recorded as complete, and nothing offers the service
+again; it is optional, its failure is printed, and `isx proxy install` remains.
+
 In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a
 shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds,
 longer than the proxy's own 10-second forced exit. Ctrl+C reaches both through the process group,

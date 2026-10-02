@@ -296,12 +296,11 @@ public class InitCommand extends BaseCommand {
                 "it as a systemd service means it starts automatically on",
                 "boot — otherwise you'll need to run 'isx proxy start'",
                 "before launching containers.");
-        boolean proxyServiceInstalled = offerProxyService();
+        boolean proxyServiceInstalled = completeWithProxyService(Prompts.console());
 
         var proxyStep = proxyServiceInstalled
                 ? "   2. Proxy is running as a systemd service"
                 : "   2. Start the auth proxy:  isx proxy start";
-        markInitComplete();
         printCompletionBox(
                 "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
                 "",
@@ -362,9 +361,8 @@ public class InitCommand extends BaseCommand {
                 "reboots. Without this you'll need to manually run",
                 "'isx vm start' and 'isx proxy start' before launching",
                 "containers.");
-        offerMacOsServices();
+        completeWithMacOsServices(Prompts.console());
 
-        markInitComplete();
         printCompletionBox(
                 "   " + GREEN_BOLD + "✓" + RESET + BOLD + " Setup complete!" + RESET,
                 "",
@@ -417,6 +415,24 @@ public class InitCommand extends BaseCommand {
 
     boolean openUrl(String url) {
         return Platform.openUrl(url);
+    }
+
+    boolean proxyServiceActive() {
+        return ProxyService.isActive();
+    }
+
+    boolean macOsServicesInstalled() {
+        return ProxyService.isMacOsServiceInstalled();
+    }
+
+    /** Brings a running service's files up to date, restarting it when they changed. */
+    void upgradeProxyService() {
+        ProxyService.upgradeIfNeeded();
+    }
+
+    /** Installs and starts the proxy service; on macOS, the VM launch agent with it. */
+    boolean installProxyService() {
+        return ProxyService.install();
     }
 
     private void installDependencies() {
@@ -3406,42 +3422,68 @@ public class InitCommand extends BaseCommand {
                 "  or editing ~/.config/incus-spawn/config.yaml");
     }
 
-    private void offerMacOsServices() {
-        if (ProxyService.isMacOsServiceInstalled()) {
+    /**
+     * The last step of the macOS flow: asks about the launch agents, marks init complete, and
+     * only then installs them.
+     * <p>
+     * The marker comes before the install because {@code isx-proxy} exits
+     * {@link ProxyService#EXIT_CONFIG} until init has completed, so a service installed ahead of
+     * it fails its first start and init reports a proxy that is not responding (#938; DESIGN.md
+     * has the full account). It comes after the question so that an init abandoned at the prompt
+     * is still run again. The services are optional: declining them leaves init complete.
+     */
+    void completeWithMacOsServices(Prompts prompts) {
+        var install = wantsMacOsServices(prompts);
+        markInitComplete();
+        if (install) installProxyService();
+    }
+
+    private boolean wantsMacOsServices(Prompts prompts) {
+        if (macOsServicesInstalled()) {
             System.out.println("  macOS services already installed.");
-            return;
+            return false;
         }
         System.out.println();
         System.out.println("  Optional: install VM and proxy as macOS services so they start");
         System.out.println("  automatically on login and survive reboots.");
         System.out.println();
-        var console = System.console();
-        if (console == null) return;
-        if (!askConfirmation(console, "  Install services?", true)) {
+        if (prompts == null) return false;
+        if (!askConfirmation(prompts, "  Install services?", true)) {
             System.out.println("  Skipped. Start manually with: isx vm start && isx proxy start");
-            return;
+            return false;
         }
-        ProxyService.install();
+        return true;
     }
 
-    private boolean offerProxyService() {
-        if (ProxyService.isActive()) {
-            ProxyService.upgradeIfNeeded();
+    /**
+     * The last step of the Linux flow, in the order {@link #completeWithMacOsServices} explains.
+     * A service that is already running is covered too: on a re-run after an
+     * {@code INIT_VERSION} bump, a restart by the upgrade would otherwise meet an outdated marker.
+     */
+    boolean completeWithProxyService(Prompts prompts) {
+        var active = proxyServiceActive();
+        var install = !active && wantsProxyService(prompts);
+        markInitComplete();
+        if (active) {
+            upgradeProxyService();
             System.out.println();
             System.out.println("  Proxy service is already running.");
             return true;
         }
+        return install && installProxyService();
+    }
+
+    private boolean wantsProxyService(Prompts prompts) {
         System.out.println();
         System.out.println("  Optional: install the proxy as a systemd service so it starts");
         System.out.println("  automatically and survives reboots.");
         System.out.println();
-        var console = System.console();
-        if (console == null) return false;
-        if (!askConfirmation(console, "  Install proxy service?", true)) {
+        if (prompts == null) return false;
+        if (!askConfirmation(prompts, "  Install proxy service?", true)) {
             System.out.println("  Skipped. You can start the proxy manually with: isx proxy start");
             return false;
         }
-        return ProxyService.install();
+        return true;
     }
 
     private void installGitRemoteShim() {
