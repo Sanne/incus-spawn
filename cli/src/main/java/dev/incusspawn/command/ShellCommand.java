@@ -3,7 +3,6 @@ package dev.incusspawn.command;
 import dev.incusspawn.RuntimeServices;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.IncusClient;
-import dev.incusspawn.incus.Metadata;
 import dev.incusspawn.tool.ActionResolver;
 import dev.incusspawn.tool.ShellMenu;
 import org.aesh.command.CommandDefinition;
@@ -33,13 +32,9 @@ public class ShellCommand extends BaseCommand {
         var prep = IncusClient.ShellPrep.from(incus, name);
         var menu = ShellMenu.NONE;
         if (ShellMenu.enabled()) {
-            // PROFILE is the leaf template; PARENT may be a clone when branched from one.
-            var stamps = incus.configByPrefix(name, Metadata.PREFIX);
-            var templateName = stamps.getOrDefault("profile", "");
-            if (templateName.isBlank()) templateName = stamps.getOrDefault("parent", "");
             menu = new ActionResolver(incus, RuntimeServices.toolDefLoader(),
                     RuntimeServices.toolSetups(), ImageDef.loadAll(w -> {}))
-                    .shellMenu(name, templateName, prep.workdir());
+                    .shellMenu(name, prep.templateName(), prep.workdir());
         }
         incus.interactiveShell(name, "agentuser", prep, menu);
         return CommandResult.SUCCESS;
