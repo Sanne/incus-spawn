@@ -192,7 +192,7 @@ public class InitCommand extends BaseCommand {
         return Environment.hasBeenInitialized();
     }
 
-    private static void markInitComplete() {
+    private static void markInitComplete() throws IOException {
         Environment.markInitComplete();
     }
 
@@ -3432,7 +3432,7 @@ public class InitCommand extends BaseCommand {
      * has the full account). It comes after the question so that an init abandoned at the prompt
      * is still run again. The services are optional: declining them leaves init complete.
      */
-    void completeWithMacOsServices(Prompts prompts) {
+    void completeWithMacOsServices(Prompts prompts) throws IOException {
         var install = wantsMacOsServices(prompts);
         markInitComplete();
         if (install) installProxyService();
@@ -3460,7 +3460,7 @@ public class InitCommand extends BaseCommand {
      * A service that is already running is covered too: on a re-run after an
      * {@code INIT_VERSION} bump, a restart by the upgrade would otherwise meet an outdated marker.
      */
-    boolean completeWithProxyService(Prompts prompts) {
+    boolean completeWithProxyService(Prompts prompts) throws IOException {
         var active = proxyServiceActive();
         var install = !active && wantsProxyService(prompts);
         markInitComplete();

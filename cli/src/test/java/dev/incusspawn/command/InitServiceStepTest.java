@@ -67,7 +67,7 @@ class InitServiceStepTest {
     }
 
     @Test
-    void macOsServicesAreInstalledOnlyOnceInitIsMarkedComplete() {
+    void macOsServicesAreInstalledOnlyOnceInitIsMarkedComplete() throws IOException {
         var prompts = ScriptedPrompts.lines("y");
         init.completeWithMacOsServices(prompts);
         prompts.assertFullyConsumed();
@@ -75,7 +75,7 @@ class InitServiceStepTest {
     }
 
     @Test
-    void theLinuxProxyServiceIsInstalledOnlyOnceInitIsMarkedComplete() {
+    void theLinuxProxyServiceIsInstalledOnlyOnceInitIsMarkedComplete() throws IOException {
         var prompts = ScriptedPrompts.lines("y");
         assertTrue(init.completeWithProxyService(prompts));
         prompts.assertFullyConsumed();
@@ -84,7 +84,7 @@ class InitServiceStepTest {
 
     /** A re-run after an {@code INIT_VERSION} bump: the upgrade may restart the proxy. */
     @Test
-    void aRunningLinuxProxyServiceIsUpgradedOnlyOnceInitIsMarkedComplete() {
+    void aRunningLinuxProxyServiceIsUpgradedOnlyOnceInitIsMarkedComplete() throws IOException {
         init.serviceActive = true;
         var prompts = ScriptedPrompts.lines();
         assertTrue(init.completeWithProxyService(prompts));
@@ -93,7 +93,7 @@ class InitServiceStepTest {
     }
 
     @Test
-    void macOsServicesAlreadyInstalledAreLeftAloneAndInitCompletes() {
+    void macOsServicesAlreadyInstalledAreLeftAloneAndInitCompletes() throws IOException {
         init.macOsServicesInstalled = true;
         var prompts = ScriptedPrompts.lines();
         init.completeWithMacOsServices(prompts);
@@ -102,7 +102,7 @@ class InitServiceStepTest {
     }
 
     @Test
-    void decliningTheMacOsServicesStillCompletesInit() {
+    void decliningTheMacOsServicesStillCompletesInit() throws IOException {
         var prompts = ScriptedPrompts.lines("n");
         init.completeWithMacOsServices(prompts);
         prompts.assertFullyConsumed();
@@ -110,7 +110,7 @@ class InitServiceStepTest {
     }
 
     @Test
-    void decliningTheLinuxProxyServiceStillCompletesInit() {
+    void decliningTheLinuxProxyServiceStillCompletesInit() throws IOException {
         var prompts = ScriptedPrompts.lines("n");
         assertFalse(init.completeWithProxyService(prompts));
         prompts.assertFullyConsumed();
@@ -119,14 +119,33 @@ class InitServiceStepTest {
 
     /** {@code isx init </dev/null}, as CI runs it. */
     @Test
-    void initCompletesWithoutATerminal() {
+    void initCompletesWithoutATerminal() throws IOException {
         init.completeWithMacOsServices(null);
         assertCompleteWithoutTouchingTheService();
     }
 
     @Test
-    void initCompletesWithoutATerminalOnLinux() {
+    void initCompletesWithoutATerminalOnLinux() throws IOException {
         assertFalse(init.completeWithProxyService(null));
         assertCompleteWithoutTouchingTheService();
+    }
+
+    /**
+     * The regression (review on #967): a marker that cannot be written must abort before the
+     * service is touched, not warn and continue into a proxy that refuses to start.
+     */
+    @Test
+    void aMarkerThatCannotBeWrittenAbortsBeforeTheServiceIsTouched() throws IOException {
+        var configDir = Environment.configDir();
+        Files.setPosixFilePermissions(configDir, java.util.Set.of());
+        try {
+            org.junit.jupiter.api.Assumptions.assumeFalse(Files.isWritable(configDir), "running as root");
+            var prompts = ScriptedPrompts.lines("y");
+            assertThrows(IOException.class, () -> init.completeWithMacOsServices(prompts));
+            assertEquals(List.of(), init.serviceActions);
+        } finally {
+            Files.setPosixFilePermissions(configDir,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
     }
 }

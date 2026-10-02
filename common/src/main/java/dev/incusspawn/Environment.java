@@ -64,12 +64,12 @@ public final class Environment {
         }
     }
 
-    public static void markInitComplete() {
-        try {
-            Files.writeString(initCompleteMarker(), String.valueOf(INIT_VERSION));
-        } catch (IOException e) {
-            System.err.println("Warning: could not write init marker: " + e.getMessage());
-        }
+    /**
+     * Throws rather than warns: a caller that could not record completion must not go on to
+     * install a service that depends on it (#938 was the silent case this created).
+     */
+    public static void markInitComplete() throws IOException {
+        Files.writeString(initCompleteMarker(), String.valueOf(INIT_VERSION));
     }
 
     public static Path sshDir() {
