@@ -60,6 +60,8 @@ class VmAgentClientTest {
                     case "forwarder-restart" -> "restarted";
                     case "btrfs-status cow" -> "enabled=1\ninconsistent=1\nmode=qgroup\ndrop_subtree_threshold=3";
                     case "btrfs-rescan cow" -> "started";
+                    case "btrfs-orphan-delete cow containers orphan-1" -> "deleted";
+                    case "btrfs-orphan-delete cow containers still-referenced" -> "error: still referenced by an instance";
                     default -> "error: unknown verb";
                 };
                 conn.write(java.nio.ByteBuffer.wrap((resp + "\n").getBytes(StandardCharsets.UTF_8)));
@@ -109,6 +111,30 @@ class VmAgentClientTest {
         // as "can't assess", so the host keeps its previous behaviour rather than trusting garbage.
         var reply = VmAgentClient.send(sock, "btrfs-status other").orElseThrow();
         assertFalse(dev.incusspawn.incus.BtrfsUsage.parseStatus(reply).available());
+    }
+
+    @Test
+    @Timeout(10)
+    void btrfsOrphanDeleteVerbRoundTrips() {
+        assertEquals("deleted",
+                VmAgentClient.send(sock, "btrfs-orphan-delete cow containers orphan-1").orElseThrow());
+        assertEquals("error: still referenced by an instance",
+                VmAgentClient.send(sock, "btrfs-orphan-delete cow containers still-referenced").orElseThrow());
+    }
+
+    @Test
+    void btrfsOrphanDeleteRejectsABadKind() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "snapshots", "orphan-1").isEmpty());
+    }
+
+    @Test
+    void btrfsOrphanDeleteRejectsAPathLikeName() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("cow", "containers", "../etc").isEmpty());
+    }
+
+    @Test
+    void btrfsOrphanDeleteRejectsABadPoolName() {
+        assertTrue(VmAgentClient.btrfsOrphanDelete("../x", "containers", "orphan-1").isEmpty());
     }
 
     @Test

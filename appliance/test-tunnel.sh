@@ -115,6 +115,24 @@ expect '[ "$(agent "btrfs-status ../x")" = "error: bad pool name" ]' "agent reje
 expect '[ "$(agent "btrfs-usage cow now")" = "error: bad option" ]' "agent rejects an unknown option"
 expect '[ "$(agent "sh -c id")" = "error: unknown verb" ]'           "agent rejects an unknown verb"
 
+# btrfs-orphan-delete validates before it ever asks Incus or touches a subvolume (#874): a bad
+# pool, kind or name, or a name that hides a nested path, must all be refused up front.
+expect '[ "$(agent "btrfs-orphan-delete ../x containers foo")" = "error: bad pool name" ]' \
+    "btrfs-orphan-delete rejects a path-like pool name"
+expect '[ "$(agent "btrfs-orphan-delete cow snapshots foo")" = "error: bad kind" ]' \
+    "btrfs-orphan-delete rejects a kind other than containers/virtual-machines"
+expect '[ "$(agent "btrfs-orphan-delete cow containers ../etc")" = "error: bad name" ]' \
+    "btrfs-orphan-delete rejects a path-like name"
+expect '[ "$(agent "btrfs-orphan-delete cow containers nested/path")" = "error: bad name" ]' \
+    "btrfs-orphan-delete rejects a name that hides a nested path"
+# A validated name this fresh appliance never built is not a subvolume at all: the Incus
+# re-check (any project, instances and volumes) and the delete must not be reached for it.
+# Refusing a name Incus *does* still hold needs a real instance or volume, which a bare-tunnel
+# boot has none of yet; that path is exercised once a template exists (test-with-isx.sh /
+# a branch workflow), not here.
+expect '[ "$(agent "btrfs-orphan-delete cow containers never-built")" = "error: not a subvolume" ]' \
+    "btrfs-orphan-delete refuses a name with no subvolume"
+
 echo
 echo "-- Forwarder connection accounting --"
 # Concurrent requests fork one forwarder child each. Every one must be accepted (one isx exec

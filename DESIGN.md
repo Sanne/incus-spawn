@@ -869,9 +869,20 @@ unprivileged host): refusing every delete there would be worse than the rare orp
 - `BuildCommand.buildSingleImage` refuses up front when either `<name>` or `<name>-rebuilding` is an orphan or a
   dangling record, since its swap would otherwise fail only after the whole build.
 - `isx doctor` reports orphans (FAIL when the name is a template's or its `-rebuilding` name, since that build cannot
-  succeed; WARN otherwise, with referenced sizes when qgroups have them) and dangling records (WARN). It offers no
-  automatic removal yet. On Linux it prints the `sudo btrfs subvolume delete -R` command instead of widening the
-  read-only sudoers rule. On macOS it points at `isx vm reset`.
+  succeed; WARN otherwise, with referenced sizes when qgroups have them) and dangling records (WARN). On Linux it
+  prints the `sudo btrfs subvolume delete -R` command instead of widening the read-only sudoers rule — removal stays
+  manual there. On macOS it offers a real remediation, one orphan at a time, through the `btrfs-orphan-delete` agent
+  verb (#874): wiping the whole pool with `isx vm reset` was the only option before, which is disproportionate for a
+  handful of stray subvolumes and loses every instance, not just the orphaned ones. The agent re-checks, from inside
+  the VM and across every Incus project, that nothing still references the name before it deletes anything — a
+  separate trust boundary from `isx doctor`'s own scan, which runs on the host and can be stale by the time a user
+  confirms the remediation (another branch could finish, or fail and get cleaned up, in between). It also confirms
+  the path is still a *subvolume*, not "exists": Incus 6.23 recreates a plain directory with `backup.yaml` at a
+  dangling record's path whenever it rewrites that record, and that directory is not the orphan's data.
+  `subvolumeFindings` stays pure (no agent call) so it is unit-testable without a VM; `DoctorCommand.checkSubvolumes`
+  is where the live action is wired in, replacing the finding's description and remediation only on macOS and only
+  when there are orphans. An appliance built before the verb existed answers `error: unknown verb`, same as the
+  other `btrfs-*` verbs, and the remediation falls back to pointing at `isx vm reset`.
 
 `isx vm reset` (`VmManager.resetDataDisk`) is the macOS last resort for a pool with nothing worth keeping. It lists
 what will be lost, booting a stopped VM to ask Incus, because the host keeps per-instance state (SSH config, git

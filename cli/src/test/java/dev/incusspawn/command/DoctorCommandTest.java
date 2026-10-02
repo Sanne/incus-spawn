@@ -718,4 +718,47 @@ class DoctorCommandTest {
         assertTrue(f.detail().contains("tpl-isx-rebuilding"));
         assertNull(f.remediation());
     }
+
+    // ---- deleteOrphans, the live macOS agent action (#874) ----
+
+    @Test
+    void deleteOrphansDeletesEveryOneThroughTheAgent() throws Exception {
+        var scan = subvolScan(List.of("a", "b"), List.of());
+        var asked = new ArrayList<String>();
+        DoctorCommand.deleteOrphans(scan, ref -> {
+            asked.add(ref.path());
+            return java.util.Optional.of("deleted");
+        });
+        assertEquals(List.of("containers/a", "containers/b"), asked);
+    }
+
+    @Test
+    void deleteOrphansStopsAtTheFirstUnknownVerbWithoutTryingTheRest() {
+        var scan = subvolScan(List.of("a", "b"), List.of());
+        var asked = new ArrayList<String>();
+        var failure = assertThrows(java.io.IOException.class, () -> DoctorCommand.deleteOrphans(scan, ref -> {
+            asked.add(ref.path());
+            return java.util.Optional.of("error: unknown verb");
+        }));
+        assertEquals(List.of("containers/a"), asked, "an appliance too old for one orphan is too old for all of them");
+        assertTrue(failure.getMessage().contains("isx vm reset"), failure.getMessage());
+    }
+
+    @Test
+    void deleteOrphansCollectsEveryFailureInsteadOfStoppingAtTheFirst() {
+        var scan = subvolScan(List.of("a", "b"), List.of());
+        var failure = assertThrows(java.io.IOException.class, () -> DoctorCommand.deleteOrphans(scan,
+                ref -> java.util.Optional.of("error: still referenced by Incus")));
+        assertTrue(failure.getMessage().contains("containers/a"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("containers/b"), failure.getMessage());
+    }
+
+    @Test
+    void deleteOrphansTreatsAnUnreachableAgentAsUnsupported() {
+        var scan = subvolScan(List.of("a"), List.of());
+        var failure = assertThrows(java.io.IOException.class,
+                () -> DoctorCommand.deleteOrphans(scan, ref -> java.util.Optional.empty()));
+        assertTrue(failure.getMessage().contains("isx vm reset"), failure.getMessage());
+    }
+
 }

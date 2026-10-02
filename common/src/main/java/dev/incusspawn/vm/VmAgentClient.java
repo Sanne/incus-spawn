@@ -149,4 +149,24 @@ public final class VmAgentClient {
         if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
         return send("btrfs-rescan " + poolName);
     }
+
+    /** The two top-level directories a pool keeps instance subvolumes under; mirrors the agent's check. */
+    private static boolean isSafeSubvolumeKind(String kindDir) {
+        return "containers".equals(kindDir) || "virtual-machines".equals(kindDir);
+    }
+
+    /**
+     * Ask the agent to delete one orphaned subvolume (#874): a top-level {@code kindDir/name} under
+     * the pool that Incus has no record of. The agent re-checks this itself, from inside the VM and
+     * against every project, before touching anything — a separate trust boundary from whatever the
+     * host believes, so a stale scan on this side cannot delete something that is no longer an
+     * orphan. Replies {@code deleted} or {@code error: ...}; an appliance that predates the verb
+     * answers {@code error: unknown verb}, same as the other {@code btrfs-*} verbs.
+     */
+    public static Optional<String> btrfsOrphanDelete(String poolName, String kindDir, String name) {
+        if (!dev.incusspawn.incus.BtrfsUsage.isSafePoolName(poolName)) return Optional.empty();
+        if (!isSafeSubvolumeKind(kindDir)) return Optional.empty();
+        if (name == null || !name.matches("[A-Za-z0-9._-]+")) return Optional.empty();
+        return send("btrfs-orphan-delete " + poolName + " " + kindDir + " " + name);
+    }
 }
