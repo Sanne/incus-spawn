@@ -253,15 +253,81 @@ class ShellStatusBarTest {
     }
 
     @Test
-    void aResizeMidSequenceRedrawsAtTheNextBoundary() throws Exception {
+    void aResizeMidSequenceRedrawsAtTheNextBoundaryWithoutClearingTheChildsRedraw() throws Exception {
+        // The next frame is typically the child's SIGWINCH redraw; a clear after it blanks vim.
         bar.setup(80, 24);
         write(bar, "\033[3");
         drained();
         bar.resize(100, 30);
         assertEquals("", drained());
-        write(bar, "1m");
+        write(bar, "1mredraw");
         var out = drained();
-        assertTrue(out.startsWith("1m\033[1;28r\033[2J"), out);
+        assertTrue(out.startsWith("1mredraw\0337\033[1;28r"), out);
+        assertFalse(out.contains("\033[2J"), out);
+    }
+
+    @Test
+    void aResizeAtABoundaryClearsAndRedraws() {
+        bar.setup(80, 24);
+        drained();
+        bar.resize(100, 30);
+        assertTrue(drained().startsWith("\033[1;28r\033[2J"));
+    }
+
+    @Test
+    void theMenuShowsEvenIfTheChildWentQuietInsideASequence() throws Exception {
+        // F12 already sent the parser to menu mode; a menu that never showed would eat every key.
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), new AtomicInteger())), context());
+        bar.setup(80, 24);
+        write(bar, "\033]0;a title never ended");
+        drained();
+        bar.showMenu();
+        assertEquals("", drained(), "not straight into the sequence");
+        var out = new StringBuilder();
+        for (int i = 0; i < 300 && !out.toString().contains("[Esc] Close"); i++) {
+            Thread.sleep(10);
+            out.append(drained());
+        }
+        assertTrue(out.toString().contains("[Esc] Close"), out.toString());
+    }
+
+    @Test
+    void aWrongKeysHintDoesNotOutliveTheMenu() {
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), new AtomicInteger())), context());
+        bar.setup(80, 24);
+        bar.showMenu();
+        bar.handleMenuKey((byte) 'x');
+        bar.hideMenu(); // within the hint's 1.5 s
+        drained();
+        bar.showMenu();
+        var out = drained();
+        assertTrue(out.contains("[v] Open in VS Code"), out);
+        assertFalse(out.contains("Press v"), out);
+    }
+
+    @Test
+    void aMenuOpenWhenTheConnectionDropsIsClosedOnReconnect() throws Exception {
+        // The reconnect builds a fresh input parser, which is not in menu mode.
+        bar.setMenuActions(List.of(urlAction("v", ActionResult.ok("ok"), new AtomicInteger())), context());
+        bar.setup(80, 24);
+        bar.showMenu();
+        bar.cleanup();
+        drained();
+        bar.setup(80, 24);
+        assertFalse(bar.isMenuActive());
+        assertFalse(drained().contains("[Esc] Close"));
+    }
+
+    @Test
+    void cancelledAndRestartedSequencesAreTrackedAsTheTerminalDoes() throws Exception {
+        bar.setup(80, 24);
+        drained();
+        write(bar, "\033]0;x\030"); // an OSC cancelled by CAN: the terminal is back in ground
+        assertTrue(drained().startsWith("\033]0;x\030\0337"));
+        write(bar, "\033[3\033[1"); // ESC restarts: the terminal is inside "\033[1" still
+        assertEquals("\033[3\033[1", drained());
+        write(bar, "m");
+        assertTrue(drained().startsWith("m\0337"));
     }
 
     // --- What the bottom row shows ---
@@ -280,15 +346,31 @@ class ShellStatusBarTest {
     }
 
     @Test
-    void theBarIsCutByCodePointsAndShowsNoControlCharacters() {
-        // 19 columns of text, then an emoji (a surrogate pair) at the 20th.
-        var bar = new ShellStatusBar("abcdefghijklmn\uD83D\uDE00xyz\u0007", terminal);
+    void theBarIsCutByColumnsAndShowsNoControlCharacters() {
+        // 19 columns of text, then a two-column emoji (a surrogate pair) that would need 20-21.
+        var bar = new ShellStatusBar("abcdefghijklmn\uD83D\uDE00xyz", terminal);
         bar.setup(20, 10);
         var out = drained();
-        assertTrue(out.contains(" isx abcdefghijklmn\uD83D\uDE00"), out);
-        assertFalse(out.contains("xyz"), out);
+        assertTrue(out.contains(" isx abcdefghijklmn \033[0m"), out);
+        assertFalse(out.contains("\uD83D"), out);
+        assertEquals(2, ShellStatusBar.columns("界"));
         var wide = new ShellStatusBar("bell\u0007", terminal);
         wide.setup(40, 10);
         assertFalse(drained().contains("\u0007"));
+    }
+
+    @Test
+    void anActionThatDoesNotSayItNeverPromptsIsNotRunFromTheMenu() {
+        var asked = new AtomicInteger();
+        ToolAction prompting = new ToolAction() {
+            @Override public String toolName() { return "t"; }
+            @Override public String label() { return "Ask"; }
+            @Override public ActionResult execute(ActionContext context) {
+                asked.incrementAndGet();
+                return ActionResult.ok("asked");
+            }
+        };
+        assertFalse(prompting.executeWithoutPrompting(context()).success());
+        assertEquals(0, asked.get());
     }
 }

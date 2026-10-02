@@ -26,6 +26,7 @@ public class ShellStatusBar {
     /** CAN: aborts whatever escape sequence the terminal is in the middle of. */
     private static final String CANCEL_SEQUENCE = "\030";
     private static final byte ESC = 0x1B;
+    static final long FORCED_PAINT_DELAY_MS = 150;
 
     private final String instanceName;
     private String templateName;
@@ -37,17 +38,20 @@ public class ShellStatusBar {
     // finishes after the session), and the TUI path keeps the JVM alive to see it.
     private boolean open;
     private OutputBoundary childOutput = new OutputBoundary();
-    /** A resize arrived while the child's output stood inside a sequence: clear at the next boundary. */
-    private boolean clearPending;
+    /** A paint the user is waiting for, held back while the child's output stands inside a sequence. */
+    private boolean userPaintPending;
+    private boolean forcedPaintScheduled;
+    /** The flash or hint timer; one at a time, and only the current one may act. */
+    private Thread timer;
     private int width;
     private int height;
 
     private List<ToolAction> menuActions = List.of();
     private ActionContext actionContext;
+    // Written under lock; volatile so the stdin thread can read menuActive without it.
     private volatile boolean menuActive = false;
     private volatile String flashMessage;
     private volatile String menuHint;
-    private volatile Thread flashThread;
 
     public ShellStatusBar(String instanceName, OutputStream out) {
         this.instanceName = instanceName;
@@ -98,7 +102,9 @@ public class ShellStatusBar {
         synchronized (lock) {
             this.width = newWidth;
             this.height = newHeight;
-            paintUnsync(true);
+            // Mid-sequence, a clear would land after the child's next frame -- its SIGWINCH
+            // redraw -- and blank it. The child redraws anyway, so the region and bar suffice.
+            paintUnsync(childOutput.atBoundary());
         }
     }
 
@@ -108,7 +114,7 @@ public class ShellStatusBar {
             childOutput.scan(data, off, len);
             // Every frame re-asserts the scroll region and the bar, which the child may have
             // reset or scrolled over.
-            paintUnsync(clearPending);
+            paintUnsync(false);
             flush();
         }
     }
@@ -118,16 +124,11 @@ public class ShellStatusBar {
      * {@code clear}, clear the screen first (after a resize, the old bar rows may be anywhere).
      * Nothing once closed. A frame can end inside an escape sequence or a UTF-8 character, and
      * anything written there would cut it short, so while the child's output stands inside one
-     * the paint waits for the next frame that ends between them.
+     * nothing is drawn: writeOutput paints again after every frame.
      */
     private void paintUnsync(boolean clear) {
-        if (!open) return;
-        if (!childOutput.atBoundary()) {
-            // writeOutput paints again after every frame, so this one is only deferred.
-            clearPending |= clear;
-            return;
-        }
-        clearPending = false;
+        if (!open || !childOutput.atBoundary()) return;
+        userPaintPending = false;
         if (clear) {
             emit(setScrollRegion(1, height - BAR_LINES));
             emit(CLEAR_SCREEN);
@@ -140,6 +141,61 @@ public class ShellStatusBar {
         renderBarUnsync();
         emit(RESTORE_CURSOR);
         flush();
+    }
+
+    /**
+     * A paint the user is waiting for: the menu, a hint, an action's result. Mid-sequence it
+     * waits like any other, usually only for the next frame; but a child that went quiet inside
+     * a sequence sends no next frame, so after {@link #FORCED_PAINT_DELAY_MS} it is drawn anyway
+     * -- a key the user pressed must show, and a stuck sequence is broken already.
+     */
+    private void requestPaintUnsync() {
+        if (!open) return;
+        if (childOutput.atBoundary()) {
+            paintUnsync(false);
+            return;
+        }
+        userPaintPending = true;
+        if (forcedPaintScheduled) return;
+        forcedPaintScheduled = true;
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(FORCED_PAINT_DELAY_MS);
+            } catch (InterruptedException e) {
+                return;
+            } finally {
+                synchronized (lock) { forcedPaintScheduled = false; }
+            }
+            synchronized (lock) {
+                if (!open || !userPaintPending) return;
+                childOutput = new OutputBoundary(); // the bar's own sequences end the stuck one
+                paintUnsync(false);
+            }
+        });
+    }
+
+    /** After {@code millis}, run {@code expire} under the lock -- unless replaced or cancelled first. */
+    private void restartTimerUnsync(long millis, Runnable expire) {
+        cancelTimerUnsync();
+        var started = Thread.ofVirtual().unstarted(() -> {
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException e) {
+                return;
+            }
+            synchronized (lock) {
+                if (timer != Thread.currentThread()) return;
+                timer = null;
+                expire.run();
+            }
+        });
+        timer = started;
+        started.start();
+    }
+
+    private void cancelTimerUnsync() {
+        if (timer != null) timer.interrupt();
+        timer = null;
     }
 
     /**
@@ -160,6 +216,10 @@ public class ShellStatusBar {
         void scan(byte[] data, int off, int len) {
             for (int i = off; i < off + len; i++) {
                 int b = data[i] & 0xFF;
+                if (state != State.GROUND && (b == 0x18 || b == 0x1A)) {
+                    state = State.GROUND; // CAN and SUB abort any sequence
+                    continue;
+                }
                 switch (state) {
                     case GROUND -> {
                         if (b == 0x1B) {
@@ -171,27 +231,28 @@ public class ShellStatusBar {
                             continuationBytes = b >= 0xF0 ? 3 : b >= 0xE0 ? 2 : b >= 0xC0 ? 1 : 0;
                         }
                     }
-                    case ESC -> state = switch (b) {
-                        case '[' -> State.CSI;
-                        case ']', 'P', '_', '^', 'X' -> State.STRING;
-                        default -> b >= 0x20 && b <= 0x2F ? State.ESC : State.GROUND;
-                    };
+                    case ESC -> state = afterEscape(b);
                     case CSI -> {
-                        if (b >= 0x40 && b <= 0x7E) state = State.GROUND;
+                        if (b == 0x1B) state = State.ESC; // starts a new sequence
+                        else if (b >= 0x40 && b <= 0x7E) state = State.GROUND;
                     }
                     case STRING -> {
                         if (b == 0x07) state = State.GROUND;
                         else if (b == 0x1B) state = State.STRING_ESC;
                     }
-                    case STRING_ESC -> state = b == '\\' ? State.GROUND : State.STRING;
+                    // ST ends the string; ESC and anything else aborts it and starts a sequence.
+                    case STRING_ESC -> state = b == '\\' ? State.GROUND : afterEscape(b);
                 }
             }
         }
-    }
 
-    private void repaint() {
-        synchronized (lock) {
-            paintUnsync(false);
+        private static State afterEscape(int b) {
+            return switch (b) {
+                case '[' -> State.CSI;
+                case ']', 'P', '_', '^', 'X' -> State.STRING;
+                case 0x1B -> State.ESC;
+                default -> b >= 0x20 && b <= 0x2F ? State.ESC : State.GROUND;
+            };
         }
     }
 
@@ -203,8 +264,12 @@ public class ShellStatusBar {
         synchronized (lock) {
             if (!open) return;
             open = false;
-            clearFlash();
+            // A reconnect starts with a fresh input parser, which knows nothing of an open menu.
+            menuActive = false;
             menuHint = null;
+            flashMessage = null;
+            userPaintPending = false;
+            cancelTimerUnsync();
             // A child killed mid-sequence would swallow what follows into it.
             if (!childOutput.atBoundary()) emit(CANCEL_SEQUENCE);
             // Erase both bar rows, and give back the full screen with the cursor where the
@@ -219,14 +284,21 @@ public class ShellStatusBar {
     }
 
     public void showMenu() {
-        menuActive = true;
-        repaint();
+        synchronized (lock) {
+            menuActive = true;
+            menuHint = null;
+            requestPaintUnsync();
+        }
     }
 
     public void hideMenu() {
-        menuActive = false;
-        clearFlash();
-        repaint();
+        synchronized (lock) {
+            menuActive = false;
+            menuHint = null;
+            flashMessage = null;
+            cancelTimerUnsync();
+            requestPaintUnsync();
+        }
     }
 
     public void handleMenuKey(byte key) {
@@ -253,17 +325,14 @@ public class ShellStatusBar {
             }
         }
         sb.append(" or Esc");
-        menuHint = sb.toString();
-        repaint();
-        var prev = flashThread;
-        if (prev != null) prev.interrupt();
-        flashThread = Thread.ofVirtual().start(() -> {
-            try {
-                Thread.sleep(1500);
+        synchronized (lock) {
+            menuHint = sb.toString();
+            requestPaintUnsync();
+            restartTimerUnsync(1500, () -> {
                 menuHint = null;
-                if (menuActive) repaint();
-            } catch (InterruptedException ignored) {}
-        });
+                if (menuActive) requestPaintUnsync();
+            });
+        }
     }
 
     /**
@@ -288,27 +357,17 @@ public class ShellStatusBar {
         synchronized (lock) {
             if (!open) return;
             // One row: an action's error can span several lines, and the first says what failed.
-            this.flashMessage = message.lines().findFirst().orElse("");
-            paintUnsync(false);
+            flashMessage = message.lines().findFirst().orElse("");
+            requestPaintUnsync();
+            if (isError) {
+                cancelTimerUnsync(); // an error stays until the menu is next used
+            } else {
+                restartTimerUnsync(3000, () -> {
+                    flashMessage = null;
+                    if (!menuActive) requestPaintUnsync();
+                });
+            }
         }
-        var prev = flashThread;
-        if (prev != null) prev.interrupt();
-        if (!isError) {
-            flashThread = Thread.ofVirtual().start(() -> {
-                try {
-                    Thread.sleep(3000);
-                    clearFlash();
-                    if (!menuActive) repaint();
-                } catch (InterruptedException ignored) {}
-            });
-        }
-    }
-
-    private void clearFlash() {
-        flashMessage = null;
-        var prev = flashThread;
-        if (prev != null) prev.interrupt();
-        flashThread = null;
     }
 
     private void renderBarUnsync() {
@@ -387,8 +446,23 @@ public class ShellStatusBar {
         emitLine(bottomRow, sb.toString(), true);
     }
 
+    /** Terminal columns a code point takes: two for East Asian wide characters and emoji. */
+    static int columns(int codePoint) {
+        int c = codePoint;
+        boolean wide = (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF && c != 0x303F)
+                || (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF)
+                || (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60)
+                || (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F300 && c <= 0x1F64F)
+                || (c >= 0x1F900 && c <= 0x1F9FF) || (c >= 0x20000 && c <= 0x3FFFD);
+        return wide ? 2 : 1;
+    }
+
+    static int columns(String s) {
+        return s.codePoints().map(ShellStatusBar::columns).sum();
+    }
+
     private String padLine(String left, String right) {
-        int padding = width - left.length() - right.length();
+        int padding = width - columns(left) - columns(right);
         var content = new StringBuilder(left);
         if (padding > 0) {
             content.append(" ".repeat(padding));
@@ -400,24 +474,24 @@ public class ShellStatusBar {
     }
 
     private void emitLine(int row, String content, boolean highlight) {
-        // Cut by code points, never inside a surrogate pair; control characters would move the
-        // cursor out of the row, so they show as spaces.
-        int[] codePoints = content.codePoints()
-                .map(c -> Character.isISOControl(c) ? ' ' : c)
-                .limit(Math.max(width, 0))
-                .toArray();
-        var line = new String(codePoints, 0, codePoints.length);
-        int pad = width - codePoints.length;
-        if (pad > 0) {
-            line = line + " ".repeat(pad);
+        // Cut to the terminal's columns, never inside a character, so the row cannot wrap and
+        // scroll the screen; control characters would move the cursor out of it, so they show
+        // as spaces.
+        var line = new StringBuilder();
+        int used = 0;
+        for (int c : content.codePoints().toArray()) {
+            if (Character.isISOControl(c)) c = ' ';
+            int w = columns(c);
+            if (used + w > width) break;
+            line.appendCodePoint(c);
+            used += w;
+        }
+        if (used < width) {
+            line.append(" ".repeat(width - used));
         }
 
         emit("\033[" + row + ";1H");
-        if (highlight) {
-            emit(STYLE_REVERSE_VIDEO + line + RESET_STYLE);
-        } else {
-            emit(STYLE_DIM + line + RESET_STYLE);
-        }
+        emit((highlight ? STYLE_REVERSE_VIDEO : STYLE_DIM) + line + RESET_STYLE);
         emit(ERASE_LINE_RIGHT);
     }
 

@@ -82,9 +82,10 @@ public interface ToolAction {
      * Execute the action without ever reading the terminal or printing to it, for a caller that
      * does not own the terminal -- the shell status bar's menu runs while the session holds it in
      * raw mode. Where {@link #execute} would ask the user something, this returns an error saying
-     * what to do instead.
+     * what to do instead. Refuses unless an implementation knows it never prompts: falling back to
+     * {@link #execute} would make that guarantee depend on every future action remembering it.
      */
     default ActionResult executeWithoutPrompting(ActionContext context) {
-        return execute(context);
+        return ActionResult.error("'" + label() + "' cannot run from here; use isx run or the TUI");
     }
 }
