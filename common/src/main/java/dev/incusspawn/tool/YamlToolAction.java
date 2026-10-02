@@ -105,30 +105,30 @@ public class YamlToolAction implements ToolAction {
 
     @Override
     public ActionResult execute(ActionContext context) {
+        return run(context, true);
+    }
+
+    @Override
+    public ActionResult executeWithoutPrompting(ActionContext context) {
+        // These take the terminal over; nothing that does not own it may run them.
+        if (TYPE_COMMAND.equals(entry.getType()) || TYPE_SHELL.equals(entry.getType())) {
+            return ActionResult.error("'" + entry.getLabel() + "' runs in the terminal; use isx run or the TUI");
+        }
+        return run(context, false);
+    }
+
+    private ActionResult run(ActionContext context, boolean mayPrompt) {
         var type = entry.getType();
         if (type == null || type.isBlank()) {
             return ActionResult.error("Missing action type for tool: " + toolName);
         }
 
         return switch (type) {
-            case TYPE_URL -> executeUrl(context, true);
+            case TYPE_URL -> executeUrl(context, mayPrompt);
             case TYPE_COMMAND -> executeCommand(context);
             case TYPE_SHELL -> ActionResult.error("Missing command for shell action: " + entry.getLabel());
             case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
             default -> ActionResult.error("Unknown action type: " + type);
-        };
-    }
-
-    @Override
-    public ActionResult executeWithoutPrompting(ActionContext context) {
-        var type = entry.getType();
-        return switch (type == null ? "" : type) {
-            case TYPE_URL -> executeUrl(context, false);
-            case TYPE_COPY_TO_CLIPBOARD -> executeCopyToClipboard(context);
-            // These take the terminal over; nothing that does not own it may run them.
-            case TYPE_COMMAND, TYPE_SHELL -> ActionResult.error(
-                    "'" + entry.getLabel() + "' runs in the terminal; use isx run or the TUI");
-            default -> execute(context);
         };
     }
 
