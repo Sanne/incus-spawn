@@ -762,7 +762,7 @@ class IncusApi {
                 // reader and eats the first keypress.
                 var stdinChannel = java.nio.channels.FileChannel.open(
                         Path.of("/dev/tty"), java.nio.file.StandardOpenOption.READ);
-                var f12Parser = statusBar != null ? new EscapeSequenceParser() : null;
+                var f12Parser = inputParserFor(statusBar);
                 var stdinThread = Thread.ofPlatform().daemon().start(() -> {
                     try {
                         var buf = java.nio.ByteBuffer.allocate(4096);
@@ -1210,10 +1210,19 @@ class IncusApi {
     // ---- Terminal raw mode (for interactive PTY shell) ----
 
     /**
+     * The parser that takes F12 and the menu's keys out of the input, or null to forward every
+     * byte: with no status bar, or one whose menu is empty -- then F12 is the shell's, as it is
+     * without the feature (mc and others bind it).
+     */
+    static EscapeSequenceParser inputParserFor(ShellStatusBar statusBar) {
+        return statusBar != null && !statusBar.menuActions().isEmpty() ? new EscapeSequenceParser() : null;
+    }
+
+    /**
      * Forward one read of typed input to the shell, except what the status bar takes: F12, which
      * toggles its menu, and the keys typed while the menu is open.
      */
-    private static void relayInput(byte[] data, int len, EscapeSequenceParser parser,
+    static void relayInput(byte[] data, int len, EscapeSequenceParser parser,
                                    ShellStatusBar statusBar, IncusTransport.WsConnection ws) throws IOException {
         for (int off = 0; off < len; ) {
             var result = parser.feed(data, off, len - off);
@@ -1225,7 +1234,7 @@ class IncusApi {
                 if (statusBar.isMenuActive()) {
                     statusBar.hideMenu();
                     parser.setMenuMode(false);
-                } else if (!statusBar.menuActions().isEmpty()) {
+                } else {
                     statusBar.showMenu();
                     parser.setMenuMode(true);
                 }
