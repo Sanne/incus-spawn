@@ -88,6 +88,19 @@ proxy started on a half-configured host into a clear message. The price is that 
 which fails after the marker leaves init recorded as complete, and nothing offers the service
 again; it is optional, its failure is printed, and `isx proxy install` remains.
 
+On macOS a restart of the service is `launchctl kickstart -k`, not `bootout` followed by
+`bootstrap`. `bootout` returns before launchd has removed the job: a proxy that does not exit on
+SIGTERM is killed about five seconds later, and until then `bootstrap` fails with
+`5: Input/output error` while `launchctl print` still finds the job. The old sequence took that
+`print` for success, reported "Proxy service restarted", and five seconds later nothing was loaded
+at all, so the automatic restart never recovered a hung proxy while a later `isx proxy start`,
+finding no job, simply loaded one (#916). `kickstart -k` is launchd's own restart: the job stays
+loaded, so there is no teardown to race. Only a changed plist has to be unloaded and loaded again,
+and then the restart waits until `print` no longer finds the job. In both cases the restart has
+worked when `launchctl` returned 0 and the job is running. Sleeping between `bootout` and
+`bootstrap` was rejected as timing-dependent and still blind to a failed `bootstrap`; retrying
+`bootstrap` on error 5 was rejected because 5 is also what a rejected plist returns.
+
 In the foreground, `isx proxy start` runs `isx-proxy` as a child sharing the terminal, and a
 shutdown hook stops that child when the CLI is terminated: SIGTERM, then SIGKILL after 15 seconds,
 longer than the proxy's own 10-second forced exit. Ctrl+C reaches both through the process group,
