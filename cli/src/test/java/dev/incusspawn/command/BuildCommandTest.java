@@ -3,6 +3,7 @@ package dev.incusspawn.command;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.incusspawn.Environment;
+import dev.incusspawn.Platform;
 import dev.incusspawn.config.BuildSource;
 import dev.incusspawn.config.ImageDef;
 import dev.incusspawn.incus.Container;
@@ -31,6 +32,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -2748,6 +2750,8 @@ class BuildCommandTest {
         // Host resources are attached before start, so a mount under the agent home can create it
         // as root before useradd runs: useradd -m then skips skel, and chown -R would hit the
         // read-only mount. Run the real script with chown and mountpoint stubbed.
+        assumeTrue(Platform.isLinux(), "runs a guest script with the host's tools, and BSD cp -n exits 1"
+                + " when it leaves a file alone");
         var home = Files.createDirectories(tempDir.resolve("home"));
         var skel = Files.createDirectories(tempDir.resolve("skel"));
         Files.writeString(skel.resolve(".bashrc"), "skel");
@@ -2848,6 +2852,8 @@ class BuildCommandTest {
 
     @Test
     void disableSelinuxRewritesAnEnforcingConfigFromAnOlderParent(@TempDir Path tempDir) throws Exception {
+        assumeTrue(Platform.isLinux(), "runs a guest script with the host's tools, and BSD sed -i takes"
+                + " a backup suffix");
         var config = tempDir.resolve("config");
         Files.writeString(config, "# comment SELINUX=enforcing\n  SELINUX=enforcing\nSELINUXTYPE=targeted\n");
         assertEquals(1, runSh(BuildCommand.selinuxNotEnforcingScript(config.toString())));

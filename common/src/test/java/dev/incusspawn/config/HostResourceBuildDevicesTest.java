@@ -1,11 +1,15 @@
 package dev.incusspawn.config;
 
+import dev.incusspawn.Platform;
 import dev.incusspawn.incus.Container;
 import dev.incusspawn.incus.IncusClient;
 import dev.incusspawn.incus.MachineType;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +29,38 @@ import static org.mockito.Mockito.*;
 class HostResourceBuildDevicesTest {
 
     private static final IncusClient.ExecResult OK = new IncusClient.ExecResult(0, "", "");
+
+    private MockedStatic<Platform> platform;
+
+    /**
+     * These tests describe a Linux host whatever host runs them. On a macOS host overlay mode is
+     * refused (#157) and device sources are translated to the VM's view of the host, so without
+     * this they failed there, though nothing they check depends on the machine.
+     */
+    @BeforeEach
+    void onALinuxHost() {
+        platform = mockStatic(Platform.class, CALLS_REAL_METHODS);
+        platform.when(Platform::isMacOS).thenReturn(false);
+    }
+
+    @AfterEach
+    void releasePlatform() {
+        platform.close();
+    }
+
+    @Test
+    void overlayIsRefusedOnAMacOsHost(@TempDir Path tmp) throws Exception {
+        platform.when(Platform::isMacOS).thenReturn(true);
+        var ov = Files.createDirectories(tmp.resolve("ov"));
+        var incus = mock(IncusClient.class);
+
+        var refused = assertThrows(IllegalStateException.class, () ->
+                HostResourceSetup.attachBuildDevices(incus, "b", List.of(
+                        new ImageDef.HostResource(ov.toString(), "/home/agentuser/ov", "overlay")), MachineType.VM));
+
+        assertTrue(refused.getMessage().contains("not yet supported on macOS"), refused.getMessage());
+        verify(incus, never()).deviceAdd(anyString(), anyString(), anyString(), any(String[].class));
+    }
 
     @Test
     void attachAddsReadonlyAndOverlayLowerDevicesWithoutTouchingTheGuest(@TempDir Path tmp) throws Exception {

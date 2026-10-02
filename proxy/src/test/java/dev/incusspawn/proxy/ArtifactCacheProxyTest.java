@@ -3,6 +3,7 @@ package dev.incusspawn.proxy;
 import dev.incusspawn.DerEncoder;
 import dev.incusspawn.Environment;
 import dev.incusspawn.FileTrees;
+import dev.incusspawn.Platform;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -46,6 +47,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The Maven/Gradle artifact cache end to end: a client talking to the proxy,
@@ -1112,7 +1114,11 @@ class ArtifactCacheProxyTest {
 
     @Test
     void connectCutShortByTheClientsBudgetDoesNotStartTheBackoff() throws Exception {
-        // A listener whose accept queue is full drops further SYNs: the connect times out
+        // A listener whose accept queue is full drops further SYNs: the connect times out.
+        // That is how Linux behaves; macOS completes or resets connections past the backlog, so
+        // there the connect does not time out and this would be testing something else.
+        assumeTrue(Platform.isLinux(),
+                "needs Linux's full-accept-queue behaviour to make a connect time out");
         publishJar(CENTRAL, JAR, "v1");
         try (var blackHole = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
              var first = new java.net.Socket();
