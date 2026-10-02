@@ -497,6 +497,23 @@ public final class ProxyService {
     }
 
     /**
+     * Waits for launchd to finish removing a job after {@code bootout} (#977). Unlike {@link
+     * #waitForProxyExit}, which polls the proxy's own {@code /health}, this works for any job —
+     * the VM login agent included, which answers nothing to poll — by asking {@code launchctl
+     * print} whether the target is still known at all. Up to 10s: launchd gives a process about
+     * five seconds to exit before killing it, the same bound {@code waitForProxyExit} assumes.
+     */
+    private static void waitForJobUnloaded(String target) {
+        for (int i = 0; i < 100; i++) {
+            if (!runQuiet("launchctl", "print", target)) return;
+            try { Thread.sleep(100); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /**
      * Ask a running proxy to re-read which accounts each instance uses, without restarting it
      * and without the full config reload SIGHUP triggers.
      *
@@ -797,24 +814,53 @@ public final class ProxyService {
 
     /**
      * True when this process <em>is</em> the proxy service rather than a user shell asking about
-     * it. Managing the service from inside it is a self-restart loop: the unit execs
+     * it. Managing the service from inside it is a self-restart loop: the unit/job execs
      * {@code isx proxy start}, that command finds the service installed and unhealthy, restarts
-     * it, and systemd starts the cycle again — with {@code reset-failed} clearing the start rate
-     * limiter each time round, so the loop never terminates on its own.
+     * it, and the service manager starts the cycle again — on Linux with {@code reset-failed}
+     * clearing the start rate limiter each time round, so the loop never terminates on its own.
      * <p>
-     * Only units written by older builds exec the CLI at all — this build's unit execs
-     * {@code isx-proxy} directly — so the check is aimed squarely at them: systemd sets
-     * {@code INVOCATION_ID} for every unit it starts, and comparing it against the proxy unit's
-     * own invocation confirms it is *this* unit rather than some other unit that happens to run
-     * isx. launchd offers no equivalent, so on macOS the loop is broken by the missing-binary
-     * check in {@code ProxyStartCommand} and by the plist being regenerated to exec the binary.
+     * Only a unit or plist written by older builds execs the CLI at all — this build's points
+     * straight at {@code isx-proxy} — so the check is aimed squarely at them. On Linux, systemd
+     * sets {@code INVOCATION_ID} for every unit it starts, and comparing it against the proxy
+     * unit's own invocation confirms it is <em>this</em> unit rather than some other unit that
+     * happens to run isx. On macOS there is no environment variable to read, but {@code
+     * launchctl print}'s {@code pid} for the job is this process's own pid in exactly the same
+     * case, which is just as conclusive. Either way, a positive answer here matters most on the
+     * restart path: this process attempting {@code bootout} on the very job it is running under
+     * can be ended by it before {@code bootstrap} runs again, leaving the job unloaded until the
+     * next isx command or login (#977) — the restart that matters is this process simply running
+     * the proxy in the foreground instead, which {@code ProxyStartCommand} already does whenever
+     * {@code isSupervisedInvocation()} is true.
      */
     public static boolean isSupervisedInvocation() {
-        if (Platform.isMacOS()) return false;
+        if (Platform.isMacOS()) {
+            var pid = proxyJobPid();
+            return pid != null && pid.equals(String.valueOf(ProcessHandle.current().pid()));
+        }
         var invocationId = System.getenv("INVOCATION_ID");
         if (invocationId == null || invocationId.isBlank()) return false;
         var shown = showProperties("InvocationID");
         return shown != null && shown.contains("InvocationID=" + invocationId);
+    }
+
+    /** The pid {@code launchctl print} reports for the proxy job, or null if not running or not found. */
+    private static String proxyJobPid() {
+        try {
+            var pb = new ProcessBuilder("launchctl", "print", "gui/" + getUid() + "/" + PROXY_LABEL);
+            pb.redirectErrorStream(true);
+            var process = pb.start();
+            var output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return process.waitFor() == 0 ? parseLaunchctlPrintPid(output) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** {@code launchctl print}'s {@code pid = N} line, for {@link #proxyJobPid()}; package-private for tests. */
+    static String parseLaunchctlPrintPid(String launchctlPrintOutput) {
+        return launchctlPrintOutput.lines().map(String::strip)
+                .filter(l -> l.startsWith("pid = "))
+                .findFirst().map(l -> l.substring("pid = ".length())).orElse(null);
     }
 
     private static Path proxyStartScript() {
@@ -1037,6 +1083,13 @@ public final class ProxyService {
         var uid = getUid();
         System.out.println("  Installing VM service...");
         runQuiet("launchctl", "bootout", "gui/" + uid, vmPlistFile().toString());
+        // bootout returns before launchd has actually removed the job — the same race #916 found
+        // for the proxy — and bootstrapping it again in that window fails with "Input/output
+        // error", leaving no VM login agent loaded at all until this runs a second time (#977).
+        // The window exists because the job is still running (isx vm start, under a previous
+        // install, or just logged in) when a reinstall reaches it; a finished one-shot job is
+        // already gone by the time bootout is asked to remove it, so this returns at once then.
+        waitForJobUnloaded("gui/" + uid + "/" + VM_LABEL);
         runQuiet("launchctl", "bootstrap", "gui/" + uid, vmPlistFile().toString());
 
         // Only the proxy agent needs the separate binary — the VM agent runs `isx vm start`, so it

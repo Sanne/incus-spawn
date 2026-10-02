@@ -200,6 +200,49 @@ class ProxyServiceTest {
                 "launchd KeepAlive plus `isx proxy start` is the same self-restart loop");
     }
 
+    // ---- isSupervisedInvocation's macOS pid match (#977) ----
+
+    /** A real `launchctl print` capture (this Mac, `com.apple.Finder`), tabs and all. */
+    private static final String REAL_LAUNCHCTL_PRINT = """
+            gui/502/com.apple.Finder = {
+            \tactive count = 5
+            \tpath = /System/Library/LaunchAgents/com.apple.Finder.plist
+            \ttype = LaunchAgent
+            \tstate = running
+            \tbundle id = com.apple.finder
+
+            \tprogram = /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
+            \tpid = 729
+            \tpid-local endpoints = {
+            \t\t8 = active
+            \t}
+            }
+            """;
+
+    @Test
+    void parseLaunchctlPrintPidReadsATabIndentedPidLine() {
+        assertEquals("729", ProxyService.parseLaunchctlPrintPid(REAL_LAUNCHCTL_PRINT));
+    }
+
+    @Test
+    void parseLaunchctlPrintPidIsNotConfusedByAPidPrefixedKey() {
+        // "pid-local endpoints = {" starts with "pid" but not "pid = ": must not be read as a pid.
+        assertEquals("729", ProxyService.parseLaunchctlPrintPid(
+                "\tpid-local endpoints = {\n\tpid = 729\n"));
+    }
+
+    @Test
+    void parseLaunchctlPrintPidIsNullWhenTheJobIsNotRunning() {
+        assertNull(ProxyService.parseLaunchctlPrintPid("""
+                gui/502/dev.incusspawn.proxy = {
+                \tactive count = 1
+                \tpath = /Users/someone/Library/LaunchAgents/dev.incusspawn.proxy.plist
+                \ttype = LaunchAgent
+                \tstate = not running
+                }
+                """));
+    }
+
     // --- JBang launcher scripts ---------------------------------------------------
 
     @Test

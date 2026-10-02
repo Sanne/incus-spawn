@@ -71,10 +71,14 @@ fixed:
   plist, which `isx init` rewrites once `isx-proxy` is present. It declines when the proxy is
   answering on 127.0.0.1, so a resolution quirk can never take down a working install.
 - `ProxyService.isSupervisedInvocation()` makes `isx proxy start` skip service management when it
-  *is* the service, by matching systemd's `INVOCATION_ID` against the proxy unit's own invocation.
-  It exists only for units written by older builds — this build's unit execs `isx-proxy`, which
-  never re-enters the CLI — and converts such a unit's loop into a single `EXIT_CONFIG` failure
-  that `RestartPreventExitStatus` halts, or, once `isx-proxy` is installed, into a working proxy.
+  *is* the service: on Linux by matching systemd's `INVOCATION_ID` against the proxy unit's own
+  invocation, on macOS by matching this process's own pid against what `launchctl print` reports
+  for the job (#977 — restarting the job from inside it can end this very process via `bootout`
+  before it reloads, which is worse than Linux's loop). It exists only for a unit/plist written by
+  an older build — this build's execs `isx-proxy`, which never re-enters the CLI — and converts
+  such a unit's loop into a single `EXIT_CONFIG` failure that `RestartPreventExitStatus` halts (or,
+  once `isx-proxy` is installed, into a working proxy), and turns macOS's `bootout` race into this
+  process just running the proxy in the foreground instead.
 
 `isx init` marks itself complete *before* its last step touches the service. `isx-proxy` exits
 `EXIT_CONFIG` until that marker exists, so a service installed ahead of it failed its first

@@ -42,11 +42,12 @@ public class ProxyStartCommand extends BaseCommand {
     @Override
     protected CommandResult doExecute() throws Exception {
         // Inside the service, this command *is* the proxy: it must launch the binary and nothing
-        // else. Managing the service from here restarts the unit that is running this very
-        // process, which systemd then starts again. Units written by older builds exec
-        // `isx proxy start`, so this guard is what stops the loop on an installation that
-        // predates the unit pointing straight at isx-proxy. It is checked last because it can
-        // fork `systemctl`, which the two cheap predicates often make unnecessary.
+        // else. Managing the service from here restarts the unit/job that is running this very
+        // process, which the service manager then starts again (systemd) or, worse, can end this
+        // process before it reloads (launchd bootout, #977). A unit/plist from an older build
+        // execs `isx proxy start` directly, so this guard is what stops that on an installation
+        // that predates it pointing straight at isx-proxy. It is checked last because it can fork
+        // `systemctl`/`launchctl`, which the two cheap predicates often make unnecessary.
         var serviceManaged = ProxyService.isInstalled() && !hasNonDefaultOptions()
                 && !ProxyService.isSupervisedInvocation();
 
